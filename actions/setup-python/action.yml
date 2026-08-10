@@ -1,0 +1,26 @@
+name: 'Setup Python'
+description: 'Setup Python with caching and common tools'
+inputs:
+  python-version:
+    description: 'Python version to install'
+    required: false
+    default: '3.12'
+  cache-key:
+    description: 'Custom cache key suffix'
+    required: false
+    default: ''
+runs:
+  using: 'composite'
+  steps:
+    - name: Setup Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python-version }}
+        cache: 'pip'
+        cache-key: ${{ inputs.cache-key }}
+
+    - name: Install common tools
+      shell: bash
+      run: |
+        python -m pip install --upgrade pip
+        pip install ruff pytest pytest-asyncio pytest-cov

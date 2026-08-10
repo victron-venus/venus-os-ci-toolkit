@@ -1,0 +1,98 @@
+name: 'Reusable Python CI'
+description: 'Reusable CI workflow for Python projects'
+on:
+  workflow_call:
+    inputs:
+      python-version:
+        description: 'Python version'
+        type: string
+        default: '3.12'
+      working-directory:
+        description: 'Working directory for the project'
+        type: string
+        default: '.'
+      install-dependencies:
+        description: 'Whether to install dependencies from pyproject.toml/requirements.txt'
+        type: boolean
+        default: true
+      run-lint:
+        description: 'Whether to run linting (ruff)'
+        type: boolean
+        default: true
+      run-type-check:
+        description: 'Whether to run type checking (mypy)'
+        type: boolean
+        default: true
+      run-tests:
+        description: 'Whether to run tests (pytest)'
+        type: boolean
+        default: true
+      test-args:
+        description: 'Additional pytest arguments'
+        type: string
+        default: ''
+      coverage-threshold:
+        description: 'Minimum coverage percentage'
+        type: number
+        default: 80
+    secrets:
+      GITHUB_TOKEN:
+        required: true
+jobs:
+  ci:
+    name: CI
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: victron-venus/venus-os-ci-toolkit/actions/setup-python@main
+        with:
+          python-version: ${{ inputs.python-version }}
+
+      - name: Install dependencies
+        if: inputs.install-dependencies
+        shell: bash
+        run: |
+          if [ -f pyproject.toml ]; then
+            pip install -e .[dev,test]
+          elif [ -f requirements.txt ]; then
+            pip install -r requirements.txt
+          elif [ -f requirements-dev.txt ]; then
+            pip install -r requirements-dev.txt
+          fi
+
+      - name: Run Ruff lint
+        if: inputs.run-lint
+        shell: bash
+        run: ruff check .
+
+      - name: Run Ruff format check
+        if: inputs.run-lint
+        shell: bash
+        run: ruff format --check .
+
+      - name: Run MyPy type check
+        if: inputs.run-type-check
+        shell: bash
+        run: |
+          if command -v mypy &> /dev/null; then
+            mypy .
+          fi
+
+      - name: Run Tests
+        if: inputs.run-tests
+        shell: bash
+        run: |
+          pytest ${{ inputs.test-args }} --cov=. --cov-report=xml --cov-report=term-missing --cov-fail-under=${{ inputs.coverage-threshold }}
+
+      - name: Upload coverage
+        if: inputs.run-tests
+        uses: codecov/codecov-action@v4
+        with:
+          files: ./coverage.xml
+          fail_ci_if_error: false

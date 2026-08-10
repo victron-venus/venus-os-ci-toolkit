@@ -1,0 +1,80 @@
+name: 'Reusable Docker Build & Publish'
+description: 'Reusable workflow to build and publish Docker images to GHCR'
+on:
+  workflow_call:
+    inputs:
+      image-name:
+        description: 'Docker image name (without registry prefix)'
+        type: string
+        required: true
+      dockerfile:
+        description: 'Path to Dockerfile'
+        type: string
+        default: 'Dockerfile'
+      context:
+        description: 'Build context path'
+        type: string
+        default: '.'
+      platforms:
+        description: 'Target platforms'
+        type: string
+        default: 'linux/amd64,linux/arm64'
+      tags:
+        description: 'Additional tags (comma-separated)'
+        type: string
+        default: ''
+      push:
+        description: 'Whether to push the image'
+        type: boolean
+        default: true
+      cache-from:
+        description: 'Cache from registry'
+        type: string
+        default: 'type=gha'
+      cache-to:
+        description: 'Cache to registry'
+        type: string
+        default: 'type=gha,mode=max'
+    secrets:
+      GITHUB_TOKEN:
+        required: true
+jobs:
+  build-and-push:
+    name: Build & Push
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Docker Buildx
+        uses: victron-venus/venus-os-ci-toolkit/actions/setup-docker@main
+        with:
+          platforms: ${{ inputs.platforms }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/${{ inputs.image-name }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha
+            ${{ inputs.tags }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ inputs.context }}
+          file: ${{ inputs.dockerfile }}
+          platforms: ${{ inputs.platforms }}
+          push: ${{ inputs.push }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: ${{ inputs.cache-from }}
+          cache-to: ${{ inputs.cache-to }}

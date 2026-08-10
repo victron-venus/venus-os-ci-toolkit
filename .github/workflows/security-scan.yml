@@ -1,0 +1,104 @@
+name: 'Reusable Security Scan'
+description: 'Reusable workflow for security scanning (CodeQL, Trivy, Dependency Review)'
+on:
+  workflow_call:
+    inputs:
+      languages:
+        description: 'CodeQL languages to analyze'
+        type: string
+        default: 'python,javascript,go'
+      working-directory:
+        description: 'Working directory'
+        type: string
+        default: '.'
+      run-codeql:
+        description: 'Run CodeQL analysis'
+        type: boolean
+        default: true
+      run-trivy:
+        description: 'Run Trivy filesystem scan'
+        type: boolean
+        default: true
+      run-dependency-review:
+        description: 'Run dependency review'
+        type: boolean
+        default: true
+      trivy-severity:
+        description: 'Trivy severity threshold'
+        type: string
+        default: 'HIGH,CRITICAL'
+    secrets:
+      GITHUB_TOKEN:
+        required: true
+jobs:
+  codeql:
+    name: CodeQL Analysis
+    if: inputs.run-codeql
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      actions: read
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        language: ${{ fromJson(format('["{0}"]', replace(inputs.languages, ',', '","'))) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          queries: security-extended,security-and-quality
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:${{matrix.language}}"
+
+  trivy:
+    name: Trivy Scan
+    if: inputs.run-trivy
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run Trivy
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: ${{ inputs.working-directory }}
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          severity: ${{ inputs.trivy-severity }}
+          exit-code: '1'
+          ignore-unfixed: true
+          vuln-type: 'os,library'
+
+      - name: Upload Trivy results
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: 'trivy-results.sarif'
+          category: trivy
+
+  dependency-review:
+    name: Dependency Review
+    if: inputs.run-dependency-review
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Dependency Review
+        uses: actions/dependency-review-action@v4
+        with:
+          config-file: '.github/dependency-review-config.yml'
+          fail-on-severity: high

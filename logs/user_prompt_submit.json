@@ -1,0 +1,20 @@
+[
+  {
+    "session_id": "ad9fbccd-9729-42d2-80d1-e0c11d5c7d58",
+    "transcript_path": "/Users/vmedvedev/.claude/projects/-Users-vmedvedev-victron/ad9fbccd-9729-42d2-80d1-e0c11d5c7d58.jsonl",
+    "cwd": "/Users/vmedvedev/victron/venus-os-ci-toolkit",
+    "prompt_id": "5e947cab-f374-439b-b7da-1add29d5f5d9",
+    "permission_mode": "bypassPermissions",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "go"
+  },
+  {
+    "session_id": "ad9fbccd-9729-42d2-80d1-e0c11d5c7d58",
+    "transcript_path": "/Users/vmedvedev/.claude/projects/-Users-vmedvedev-victron/ad9fbccd-9729-42d2-80d1-e0c11d5c7d58.jsonl",
+    "cwd": "/Users/vmedvedev/victron/venus-os-ci-toolkit",
+    "prompt_id": "cd1691e5-c45f-44bb-b105-78b03479b193",
+    "permission_mode": "bypassPermissions",
+    "hook_event_name": "UserPromptSubmit",
+    "prompt": "go"
+  }
+]

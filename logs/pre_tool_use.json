@@ -1,0 +1,359 @@
+[
+  {
+    "session_id": "ad9fbccd-9729-42d2-80d1-e0c11d5c7d58",
+    "transcript_path": "/Users/vmedvedev/.claude/projects/-Users-vmedvedev-victron/ad9fbccd-9729-42d2-80d1-e0c11d5c7d58.jsonl",
+    "cwd": "/Users/vmedvedev/victron/venus-os-ci-toolkit",
+    "prompt_id": "e4bac824-835c-4b13-ab7b-cecebf531497",
+    "permission_mode": "bypassPermissions",
+    "effort": {
+      "level": "high"
+    },
+    "hook_event_name": "PreToolUse",
+    "tool_name": "Read",
+    "tool_input": {
+      "file_path": "/Users/vmedvedev/victron/venus-os-ci-toolkit/LICENSE"
+    },
+    "tool_use_id": "call-0ef19279-4153-42f4-b0f3-8015f68071c5"
+  },
+  {
+    "session_id": "ad9fbccd-9729-42d2-80d1-e0c11d5c7d58",
+    "transcript_path": "/Users/vmedvedev/.claude/projects/-Users-vmedvedev-victron/ad9fbccd-9729-42d2-80d1-e0c11d5c7d58.jsonl",
+    "cwd": "/Users/vmedvedev/victron/venus-os-ci-toolkit",
+    "prompt_id": "5e947cab-f374-439b-b7da-1add29d5f5d9",
+    "permission_mode": "bypassPermissions",
+    "effort": {
+      "level": "high"
+    },
+    "hook_event_name": "PreToolUse",
+    "tool_name": "mcp__github__get_file_contents",
+    "tool_input": {
+      "path": "/",
+      "owner": "victron-venus",
+      "repo": "venus-os-ci-toolkit"
+    },
+    "tool_use_id": "call-4c62f683-8796-4f3d-ac49-584e65d7c7d9"
+  },
+  {
+    "session_id": "ad9fbccd-9729-42d2-80d1-e0c11d5c7d58",
+    "transcript_path": "/Users/vmedvedev/.claude/projects/-Users-vmedvedev-victron/ad9fbccd-9729-42d2-80d1-e0c11d5c7d58.jsonl",
+    "cwd": "/Users/vmedvedev/victron/venus-os-ci-toolkit",
+    "prompt_id": "5e947cab-f374-439b-b7da-1add29d5f5d9",
+    "permission_mode": "bypassPermissions",
+    "effort": {
+      "level": "high"
+    },
+    "hook_event_name": "PreToolUse",
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "ls -la /Users/vmedvedev/victron/inverter-control/.github/workflows/ 2>/dev/null || echo \"Not found\"",
+      "description": "Check existing workflows in inverter-control"
+    },
+    "tool_use_id": "call-ef77ff02-6a4d-45cd-bce5-a4d3dca6199f"
+  },
+  {
+    "session_id": "ad9fbccd-9729-42d2-80d1-e0c11d5c7d58",
+    "transcript_path": "/Users/vmedvedev/.claude/projects/-Users-vmedvedev-victron/ad9fbccd-9729-42d2-80d1-e0c11d5c7d58.jsonl",
+    "cwd": "/Users/vmedvedev/victron/venus-os-ci-toolkit",
+    "prompt_id": "5e947cab-f374-439b-b7da-1add29d5f5d9",
+    "permission_mode": "bypassPermissions",
+    "effort": {
+      "level": "high"
+    },
+    "hook_event_name": "PreToolUse",
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "ls -la /Users/vmedvedev/victron/inverter-dashboard-go/.github/workflows/ 2>/dev/null || echo \"Not found\"",
+      "description": "Check workflows in inverter-dashboard-go"
+    },
+    "tool_use_id": "call-9b3947d9-910c-4c88-bc9f-1e4c50116ae4"
+  },
+  {
+    "session_id": "ad9fbccd-9729-42d2-80d1-e0c11d5c7d58",
+    "transcript_path": "/Users/vmedvedev/.claude/projects/-Users-vmedvedev-victron/ad9fbccd-9729-42d2-80d1-e0c11d5c7d58.jsonl",
+    "cwd": "/Users/vmedvedev/victron/venus-os-ci-toolkit",
+    "prompt_id": "5e947cab-f374-439b-b7da-1add29d5f5d9",
+    "permission_mode": "bypassPermissions",
+    "effort": {
+      "level": "high"
+    },
+    "hook_event_name": "PreToolUse",
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "ls -la /Users/vmedvedev/victron/integration-tests/.github/workflows/ 2>/dev/null || echo \"Not found\"",
+      "description": "Check workflows in integration-tests"
+    },
+    "tool_use_id": "call-6e911c32-cf9d-485b-8eec-7c0988b9857d"
+  },
+  {
+    "session_id": "ad9fbccd-9729-42d2-80d1-e0c11d5c7d58",
+    "transcript_path": "/Users/vmedvedev/.claude/projects/-Users-vmedvedev-victron/ad9fbccd-9729-42d2-80d1-e0c11d5c7d58.jsonl",
+    "cwd": "/Users/vmedvedev/victron/venus-os-ci-toolkit",
+    "prompt_id": "5e947cab-f374-439b-b7da-1add29d5f5d9",
+    "permission_mode": "bypassPermissions",
+    "effort": {
+      "level": "high"
+    },
+    "hook_event_name": "PreToolUse",
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "mkdir -p /Users/vmedvedev/victron/venus-os-ci-toolkit/.github/workflows /Users/vmedvedev/victron/venus-os-ci-toolkit/actions /Users/vmedvedev/victron/venus-os-ci-toolkit/templates",
+      "description": "Create directory structure for ci-toolkit"
+    },
+    "tool_use_id": "call-8a5f31fe-971c-465c-8319-113582162c24"
+  },
+  {
+    "session_id": "ad9fbccd-9729-42d2-80d1-e0c11d5c7d58",
+    "transcript_path": "/Users/vmedvedev/.claude/projects/-Users-vmedvedev-victron/ad9fbccd-9729-42d2-80d1-e0c11d5c7d58.jsonl",
+    "cwd": "/Users/vmedvedev/victron/venus-os-ci-toolkit",
+    "prompt_id": "5e947cab-f374-439b-b7da-1add29d5f5d9",
+    "permission_mode": "bypassPermissions",
+    "effort": {
+      "level": "high"
+    },
+    "hook_event_name": "PreToolUse",
+    "tool_name": "Write",
+    "tool_input": {
+      "file_path": "/Users/vmedvedev/victron/venus-os-ci-toolkit/actions/setup-python/action.yml",
+      "content": "name: 'Setup Python'\ndescription: 'Setup Python with caching and common tools'\ninputs:\n  python-version:\n    description: 'Python version to install'\n    required: false\n    default: '3.12'\n  cache-key:\n    description: 'Custom cache key suffix'\n    required: false\n    default: ''\nruns:\n  using: 'composite'\n  steps:\n    - name: Setup Python\n      uses: actions/setup-python@v5\n      with:\n        python-version: ${{ inputs.python-version }}\n        cache: 'pip'\n        cache-key: ${{ inputs.cache-key }}\n\n    - name: Install common tools\n      shell: bash\n      run: |\n        python -m pip install --upgrade pip\n        pip install ruff pytest pytest-asyncio pytest-cov"
+    },
+    "tool_use_id": "call-5a13c5f3-faa7-4f73-bd14-68b546bde84e"
+  },
+  {
+    "session_id": "ad9fbccd-9729-42d2-80d1-e0c11d5c7d58",
+    "transcript_path": "/Users/vmedvedev/.claude/projects/-Users-vmedvedev-victron/ad9fbccd-9729-42d2-80d1-e0c11d5c7d58.jsonl",
+    "cwd": "/Users/vmedvedev/victron/venus-os-ci-toolkit",
+    "prompt_id": "5e947cab-f374-439b-b7da-1add29d5f5d9",
+    "permission_mode": "bypassPermissions",
+    "effort": {
+      "level": "high"
+    },
+    "hook_event_name": "PreToolUse",
+    "tool_name": "Write",
+    "tool_input": {
+      "file_path": "/Users/vmedvedev/victron/venus-os-ci-toolkit/actions/setup-go/action.yml",
+      "content": "name: 'Setup Go'\ndescription: 'Setup Go with caching and common tools'\ninputs:\n  go-version:\n    description: 'Go version to install'\n    required: false\n    default: '1.23'\n  cache-key:\n    description: 'Custom cache key suffix'\n    required: false\n    default: ''\nruns:\n  using: 'composite'\n  steps:\n    - name: Setup Go\n      uses: actions/setup-go@v5\n      with:\n        go-version: ${{ inputs.go-version }}\n        cache: true\n        cache-key: ${{ inputs.cache-key }}\n\n    - name: Install common tools\n      shell: bash\n      run: |\n        go install golang.org/x/vuln/cmd/govulncheck@latest\n        go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest"
+    },
+    "tool_use_id": "call-2481c67f-97f5-42df-a73a-0ab9e59f56af"
+  },
+  {
+    "session_id": "ad9fbccd-9729-42d2-80d1-e0c11d5c7d58",
+    "transcript_path": "/Users/vmedvedev/.claude/projects/-Users-vmedvedev-victron/ad9fbccd-9729-42d2-80d1-e0c11d5c7d58.jsonl",
+    "cwd": "/Users/vmedvedev/victron/venus-os-ci-toolkit",
+    "prompt_id": "5e947cab-f374-439b-b7da-1add29d5f5d9",
+    "permission_mode": "bypassPermissions",
+    "effort": {
+      "level": "high"
+    },
+    "hook_event_name": "PreToolUse",
+    "tool_name": "Write",
+    "tool_input": {
+      "file_path": "/Users/vmedvedev/victron/venus-os-ci-toolkit/actions/setup-docker/action.yml",
+      "content": "name: 'Setup Docker Buildx'\ndescription: 'Setup Docker Buildx with cache'\ninputs:\n  platforms:\n    description: 'Target platforms'\n    required: false\n    default: 'linux/amd64,linux/arm64'\nruns:\n  using: 'composite'\n  steps:\n    - name: Set up Docker Buildx\n      uses: docker/setup-buildx-action@v3\n      with:\n        platforms: ${{ inputs.platforms }}\n\n    - name: Login to GHCR\n      uses: docker/login-action@v3\n      with:\n        registry: ghcr.io\n        username: ${{ github.actor }}\n        password: ${{ secrets.GITHUB_TOKEN }}"
+    },
+    "tool_use_id": "call-dc512a4e-889b-463c-a632-3eca2e03b0f2"
+  },
+  {
+    "session_id": "ad9fbccd-9729-42d2-80d1-e0c11d5c7d58",
+    "transcript_path": "/Users/vmedvedev/.claude/projects/-Users-vmedvedev-victron/ad9fbccd-9729-42d2-80d1-e0c11d5c7d58.jsonl",
+    "cwd": "/Users/vmedvedev/victron/venus-os-ci-toolkit",
+    "prompt_id": "5e947cab-f374-439b-b7da-1add29d5f5d9",
+    "permission_mode": "bypassPermissions",
+    "effort": {
+      "level": "high"
+    },
+    "hook_event_name": "PreToolUse",
+    "tool_name": "Write",
+    "tool_input": {
+      "file_path": "/Users/vmedvedev/victron/venus-os-ci-toolkit/.github/workflows/python-ci.yml",
+      "content": "name: 'Reusable Python CI'\ndescription: 'Reusable CI workflow for Python projects'\non:\n  workflow_call:\n    inputs:\n      python-version:\n        description: 'Python version'\n        type: string\n        default: '3.12'\n      working-directory:\n        description: 'Working directory for the project'\n        type: string\n        default: '.'\n      install-dependencies:\n        description: 'Whether to install dependencies from pyproject.toml/requirements.txt'\n        type: boolean\n        default: true\n      run-lint:\n        description: 'Whether to run linting (ruff)'\n        type: boolean\n        default: true\n      run-type-check:\n        description: 'Whether to run type checking (mypy)'\n        type: boolean\n        default: true\n      run-tests:\n        description: 'Whether to run tests (pytest)'\n        type: boolean\n        default: true\n      test-args:\n        description: 'Additional pytest arguments'\n        type: string\n        default: ''\n      coverage-threshold:\n        description: 'Minimum coverage percentage'\n        type: number\n        default: 80\n    secrets:\n      GITHUB_TOKEN:\n        required: true\njobs:\n  ci:\n    name: CI\n    runs-on: ubuntu-latest\n    defaults:\n      run:\n        working-directory: ${{ inputs.working-directory }}\n    steps:\n      - name: Checkout\n        uses: actions/checkout@v4\n\n      - name: Setup Python\n        uses: victron-venus/venus-os-ci-toolkit/actions/setup-python@main\n        with:\n          python-version: ${{ inputs.python-version }}\n\n      - name: Install dependencies\n        if: inputs.install-dependencies\n        shell: bash\n        run: |\n          if [ -f pyproject.toml ]; then\n            pip install -e .[dev,test]\n          elif [ -f requirements.txt ]; then\n            pip install -r requirements.txt\n          elif [ -f requirements-dev.txt ]; then\n            pip install -r requirements-dev.txt\n          fi\n\n      - name: Run Ruff lint\n        if: inputs.run-lint\n        shell: bash\n        run: ruff check .\n\n      - name: Run Ruff format check\n        if: inputs.run-lint\n        shell: bash\n        run: ruff format --check .\n\n      - name: Run MyPy type check\n        if: inputs.run-type-check\n        shell: bash\n        run: |\n          if command -v mypy &> /dev/null; then\n            mypy .\n          fi\n\n      - name: Run Tests\n        if: inputs.run-tests\n        shell: bash\n        run: |\n          pytest ${{ inputs.test-args }} --cov=. --cov-report=xml --cov-report=term-missing --cov-fail-under=${{ inputs.coverage-threshold }}\n\n      - name: Upload coverage\n        if: inputs.run-tests\n        uses: codecov/codecov-action@v4\n        with:\n          files: ./coverage.xml\n          fail_ci_if_error: false"
+    },
+    "tool_use_id": "call-2be2a706-3135-426d-a1e1-cde07d9f88ef"
+  },
+  {
+    "session_id": "ad9fbccd-9729-42d2-80d1-e0c11d5c7d58",
+    "transcript_path": "/Users/vmedvedev/.claude/projects/-Users-vmedvedev-victron/ad9fbccd-9729-42d2-80d1-e0c11d5c7d58.jsonl",
+    "cwd": "/Users/vmedvedev/victron/venus-os-ci-toolkit",
+    "prompt_id": "5e947cab-f374-439b-b7da-1add29d5f5d9",
+    "permission_mode": "bypassPermissions",
+    "effort": {
+      "level": "high"
+    },
+    "hook_event_name": "PreToolUse",
+    "tool_name": "Write",
+    "tool_input": {
+      "file_path": "/Users/vmedvedev/victron/venus-os-ci-toolkit/.github/workflows/go-ci.yml",
+      "content": "name: 'Reusable Go CI'\ndescription: 'Reusable CI workflow for Go projects'\non:\n  workflow_call:\n    inputs:\n      go-version:\n        description: 'Go version'\n        type: string\n        default: '1.23'\n      working-directory:\n        description: 'Working directory for the project'\n        type: string\n        default: '.'\n      run-lint:\n        description: 'Whether to run linting (golangci-lint)'\n        type: boolean\n        default: true\n      run-tests:\n        description: 'Whether to run tests'\n        type: boolean\n        default: true\n      test-args:\n        description: 'Additional go test arguments'\n        type: string\n        default: '-race -coverprofile=coverage.out -covermode=atomic'\n      coverage-threshold:\n        description: 'Minimum coverage percentage'\n        type: number\n        default: 70\n      run-vulncheck:\n        description: 'Whether to run govulncheck'\n        type: boolean\n        default: true\n    secrets:\n      GITHUB_TOKEN:\n        required: true\njobs:\n  ci:\n    name: CI\n    runs-on: ubuntu-latest\n    defaults:\n      run:\n        working-directory: ${{ inputs.working-directory }}\n    steps:\n      - name: Checkout\n        uses: actions/checkout@v4\n\n      - name: Setup Go\n        uses: victron-venus/venus-os-ci-toolkit/actions/setup-go@main\n        with:\n          go-version: ${{ inputs.go-version }}\n\n      - name: Download dependencies\n        shell: bash\n        run: go mod download\n\n      - name: Run golangci-lint\n        if: inputs.run-lint\n        shell: bash\n        run: golangci-lint run ./...\n\n      - name: Run govulncheck\n        if: inputs.run-vulncheck\n        shell: bash\n        run: govulncheck ./...\n\n      - name: Run Tests\n        if: inputs.run-tests\n        shell: bash\n        run: go test ${{ inputs.test-args }} ./...\n\n      - name: Check coverage threshold\n        if: inputs.run-tests\n        shell: bash\n        run: |\n          coverage=$(go tool cover -func=coverage.out | grep total | awk '{print $3}' | sed 's/%//')\n          echo \"Coverage: ${coverage}%\"\n          if (( $(echo \"$coverage < ${{ inputs.coverage-threshold }}\" | bc -l) )); then\n            echo \"Coverage ${coverage}% is below threshold ${{ inputs.coverage-threshold }}%\"\n            exit 1\n          fi\n\n      - name: Upload coverage\n        if: inputs.run-tests\n        uses: codecov/codecov-action@v4\n        with:\n          files: ./coverage.out\n          fail_ci_if_error: false"
+    },
+    "tool_use_id": "call-cfa35ed2-a596-4af5-a9f7-3ebd6aeaaa70"
+  },
+  {
+    "session_id": "ad9fbccd-9729-42d2-80d1-e0c11d5c7d58",
+    "transcript_path": "/Users/vmedvedev/.claude/projects/-Users-vmedvedev-victron/ad9fbccd-9729-42d2-80d1-e0c11d5c7d58.jsonl",
+    "cwd": "/Users/vmedvedev/victron/venus-os-ci-toolkit",
+    "prompt_id": "5e947cab-f374-439b-b7da-1add29d5f5d9",
+    "permission_mode": "bypassPermissions",
+    "effort": {
+      "level": "high"
+    },
+    "hook_event_name": "PreToolUse",
+    "tool_name": "Write",
+    "tool_input": {
+      "file_path": "/Users/vmedvedev/victron/venus-os-ci-toolkit/.github/workflows/docker-build.yml",
+      "content": "name: 'Reusable Docker Build & Publish'\ndescription: 'Reusable workflow to build and publish Docker images to GHCR'\non:\n  workflow_call:\n    inputs:\n      image-name:\n        description: 'Docker image name (without registry prefix)'\n        type: string\n        required: true\n      dockerfile:\n        description: 'Path to Dockerfile'\n        type: string\n        default: 'Dockerfile'\n      context:\n        description: 'Build context path'\n        type: string\n        default: '.'\n      platforms:\n        description: 'Target platforms'\n        type: string\n        default: 'linux/amd64,linux/arm64'\n      tags:\n        description: 'Additional tags (comma-separated)'\n        type: string\n        default: ''\n      push:\n        description: 'Whether to push the image'\n        type: boolean\n        default: true\n      cache-from:\n        description: 'Cache from registry'\n        type: string\n        default: 'type=gha'\n      cache-to:\n        description: 'Cache to registry'\n        type: string\n        default: 'type=gha,mode=max'\n    secrets:\n      GITHUB_TOKEN:\n        required: true\njobs:\n  build-and-push:\n    name: Build & Push\n    runs-on: ubuntu-latest\n    permissions:\n      contents: read\n      packages: write\n    steps:\n      - name: Checkout\n        uses: actions/checkout@v4\n\n      - name: Setup Docker Buildx\n        uses: victron-venus/venus-os-ci-toolkit/actions/setup-docker@main\n        with:\n          platforms: ${{ inputs.platforms }}\n\n      - name: Extract metadata\n        id: meta\n        uses: docker/metadata-action@v5\n        with:\n          images: ghcr.io/${{ github.repository_owner }}/${{ inputs.image-name }}\n          tags: |\n            type=ref,event=branch\n            type=ref,event=pr\n            type=semver,pattern={{version}}\n            type=semver,pattern={{major}}.{{minor}}\n            type=sha\n            ${{ inputs.tags }}\n\n      - name: Build and push\n        uses: docker/build-push-action@v6\n        with:\n          context: ${{ inputs.context }}\n          file: ${{ inputs.dockerfile }}\n          platforms: ${{ inputs.platforms }}\n          push: ${{ inputs.push }}\n          tags: ${{ steps.meta.outputs.tags }}\n          labels: ${{ steps.meta.outputs.labels }}\n          cache-from: ${{ inputs.cache-from }}\n          cache-to: ${{ inputs.cache-to }}"
+    },
+    "tool_use_id": "call-a28200f5-fe7a-440d-a5ad-a8eac7191858"
+  },
+  {
+    "session_id": "ad9fbccd-9729-42d2-80d1-e0c11d5c7d58",
+    "transcript_path": "/Users/vmedvedev/.claude/projects/-Users-vmedvedev-victron/ad9fbccd-9729-42d2-80d1-e0c11d5c7d58.jsonl",
+    "cwd": "/Users/vmedvedev/victron/venus-os-ci-toolkit",
+    "prompt_id": "5e947cab-f374-439b-b7da-1add29d5f5d9",
+    "permission_mode": "bypassPermissions",
+    "effort": {
+      "level": "high"
+    },
+    "hook_event_name": "PreToolUse",
+    "tool_name": "Write",
+    "tool_input": {
+      "file_path": "/Users/vmedvedev/victron/venus-os-ci-toolkit/.github/workflows/release.yml",
+      "content": "name: 'Reusable Release'\ndescription: 'Reusable workflow to create GitHub releases from tags'\non:\n  workflow_call:\n    inputs:\n      tag-pattern:\n        description: 'Tag pattern to trigger release (regex)'\n        type: string\n        default: '^v[0-9]+\\.[0-9]+\\.[0-9]+$'\n      release-name:\n        description: 'Release name template'\n        type: string\n        default: 'Release ${{ github.ref_name }}'\n      draft:\n        description: 'Create as draft release'\n        type: boolean\n        default: false\n      prerelease:\n        description: 'Mark as prerelease'\n        type: boolean\n        default: false\n      generate-notes:\n        description: 'Auto-generate release notes'\n        type: boolean\n        default: true\n      body-file:\n        description: 'Path to release body file (optional)'\n        type: string\n        default: ''\n    secrets:\n      GITHUB_TOKEN:\n        required: true\njobs:\n  release:\n    name: Create Release\n    runs-on: ubuntu-latest\n    permissions:\n      contents: write\n    if: startsWith(github.ref, 'refs/tags/')\n    steps:\n      - name: Checkout\n        uses: actions/checkout@v4\n        with:\n          fetch-depth: 0\n\n      - name: Validate tag format\n        shell: bash\n        run: |\n          TAG=\"${{ github.ref_name }}\"\n          if [[ ! \"$TAG\" =~ ${{ inputs.tag-pattern }} ]]; then\n            echo \"Tag $TAG does not match pattern ${{ inputs.tag-pattern }}\"\n            exit 1\n          fi\n\n      - name: Generate changelog\n        if: inputs.generate-notes && inputs.body-file == ''\n        id: changelog\n        uses: triangletodd/changelog-generator@v2\n        with:\n          token: ${{ secrets.GITHUB_TOKEN }}\n          excludeTypes: '[\"chore\", \"ci\", \"docs\", \"style\", \"refactor\", \"test\"]'\n          excludeScopes: '[\"deps\", \"deps-dev\"]'\n\n      - name: Read body file\n        if: inputs.body-file != ''\n        id: body\n        shell: bash\n        run: |\n          echo \"body<<EOF\" >> $GITHUB_OUTPUT\n          cat ${{ inputs.body-file }} >> $GITHUB_OUTPUT\n          echo \"EOF\" >> $GITHUB_OUTPUT\n\n      - name: Create Release\n        uses: softprops/action-gh-release@v2\n        with:\n          name: ${{ inputs.release-name }}\n          draft: ${{ inputs.draft }}\n          prerelease: ${{ inputs.prerelease }}\n          body: ${{ inputs.generate-notes && inputs.body-file == '' && steps.changelog.outputs.changelog || inputs.body-file != '' && steps.body.outputs.body || '' }}\n          generate_release_notes: ${{ inputs.generate-notes && inputs.body-file == '' }}\n          files: |\n            dist/*\n            build/*\n            *.tar.gz\n            *.zip"
+    },
+    "tool_use_id": "call-268e8875-ca01-47bc-ba4a-7725c2c883b5"
+  },
+  {
+    "session_id": "ad9fbccd-9729-42d2-80d1-e0c11d5c7d58",
+    "transcript_path": "/Users/vmedvedev/.claude/projects/-Users-vmedvedev-victron/ad9fbccd-9729-42d2-80d1-e0c11d5c7d58.jsonl",
+    "cwd": "/Users/vmedvedev/victron/venus-os-ci-toolkit",
+    "prompt_id": "5e947cab-f374-439b-b7da-1add29d5f5d9",
+    "permission_mode": "bypassPermissions",
+    "effort": {
+      "level": "high"
+    },
+    "hook_event_name": "PreToolUse",
+    "tool_name": "Write",
+    "tool_input": {
+      "file_path": "/Users/vmedvedev/victron/venus-os-ci-toolkit/.github/workflows/security-scan.yml",
+      "content": "name: 'Reusable Security Scan'\ndescription: 'Reusable workflow for security scanning (CodeQL, Trivy, Dependency Review)'\non:\n  workflow_call:\n    inputs:\n      languages:\n        description: 'CodeQL languages to analyze'\n        type: string\n        default: 'python,javascript,go'\n      working-directory:\n        description: 'Working directory'\n        type: string\n        default: '.'\n      run-codeql:\n        description: 'Run CodeQL analysis'\n        type: boolean\n        default: true\n      run-trivy:\n        description: 'Run Trivy filesystem scan'\n        type: boolean\n        default: true\n      run-dependency-review:\n        description: 'Run dependency review'\n        type: boolean\n        default: true\n      trivy-severity:\n        description: 'Trivy severity threshold'\n        type: string\n        default: 'HIGH,CRITICAL'\n    secrets:\n      GITHUB_TOKEN:\n        required: true\njobs:\n  codeql:\n    name: CodeQL Analysis\n    if: inputs.run-codeql\n    runs-on: ubuntu-latest\n    permissions:\n      security-events: write\n      actions: read\n      contents: read\n    strategy:\n      fail-fast: false\n      matrix:\n        language: ${{ fromJson(format('[\"{0}\"]', replace(inputs.languages, ',', '\",\"'))) }}\n    steps:\n      - name: Checkout\n        uses: actions/checkout@v4\n\n      - name: Initialize CodeQL\n        uses: github/codeql-action/init@v3\n        with:\n          languages: ${{ matrix.language }}\n          queries: security-extended,security-and-quality\n\n      - name: Perform CodeQL Analysis\n        uses: github/codeql-action/analyze@v3\n        with:\n          category: \"/language:${{matrix.language}}\"\n\n  trivy:\n    name: Trivy Scan\n    if: inputs.run-trivy\n    runs-on: ubuntu-latest\n    permissions:\n      security-events: write\n      contents: read\n    steps:\n      - name: Checkout\n        uses: actions/checkout@v4\n\n      - name: Run Trivy\n        uses: aquasecurity/trivy-action@master\n        with:\n          scan-type: 'fs'\n          scan-ref: ${{ inputs.working-directory }}\n          format: 'sarif'\n          output: 'trivy-results.sarif'\n          severity: ${{ inputs.trivy-severity }}\n          exit-code: '1'\n          ignore-unfixed: true\n          vuln-type: 'os,library'\n\n      - name: Upload Trivy results\n        uses: github/codeql-action/upload-sarif@v3\n        with:\n          sarif_file: 'trivy-results.sarif'\n          category: trivy\n\n  dependency-review:\n    name: Dependency Review\n    if: inputs.run-dependency-review\n    runs-on: ubuntu-latest\n    permissions:\n      contents: read\n    steps:\n      - name: Checkout\n        uses: actions/checkout@v4\n\n      - name: Dependency Review\n        uses: actions/dependency-review-action@v4\n        with:\n          config-file: '.github/dependency-review-config.yml'\n          fail-on-severity: high"
+    },
+    "tool_use_id": "call-5e8c578f-4462-4b12-b4b8-cff65bd8131c"
+  },
+  {
+    "session_id": "ad9fbccd-9729-42d2-80d1-e0c11d5c7d58",
+    "transcript_path": "/Users/vmedvedev/.claude/projects/-Users-vmedvedev-victron/ad9fbccd-9729-42d2-80d1-e0c11d5c7d58.jsonl",
+    "cwd": "/Users/vmedvedev/victron/venus-os-ci-toolkit",
+    "prompt_id": "5e947cab-f374-439b-b7da-1add29d5f5d9",
+    "permission_mode": "bypassPermissions",
+    "effort": {
+      "level": "high"
+    },
+    "hook_event_name": "PreToolUse",
+    "tool_name": "Write",
+    "tool_input": {
+      "file_path": "/Users/vmedvedev/victron/venus-os-ci-toolkit/.github/workflows/scorecard.yml",
+      "content": "name: 'Reusable Scorecard'\ndescription: 'Reusable workflow for OpenSSF Scorecard'\non:\n  workflow_call:\n    inputs:\n      working-directory:\n        description: 'Working directory'\n        type: string\n        default: '.'\n    secrets:\n      GITHUB_TOKEN:\n        required: true\njobs:\n  scorecard:\n    name: Scorecard\n    runs-on: ubuntu-latest\n    permissions:\n      security-events: write\n      id-token: write\n      contents: read\n    steps:\n      - name: Checkout\n        uses: actions/checkout@v4\n\n      - name: Run Scorecard\n        uses: ossf/scorecard-action@v2.4.0\n        with:\n          repo_token: ${{ secrets.GITHUB_TOKEN }}\n          working_directory: ${{ inputs.working-directory }}\n          results_file: results.sarif\n          results_format: sarif\n          publish_results: true\n\n      - name: Upload Scorecard results\n        uses: github/codeql-action/upload-sarif@v3\n        with:\n          sarif_file: results.sarif\n          category: scorecard"
+    },
+    "tool_use_id": "call-8bb5aae8-2b9b-4663-be44-295bda7e7046"
+  },
+  {
+    "session_id": "ad9fbccd-9729-42d2-80d1-e0c11d5c7d58",
+    "transcript_path": "/Users/vmedvedev/.claude/projects/-Users-vmedvedev-victron/ad9fbccd-9729-42d2-80d1-e0c11d5c7d58.jsonl",
+    "cwd": "/Users/vmedvedev/victron/venus-os-ci-toolkit",
+    "prompt_id": "5e947cab-f374-439b-b7da-1add29d5f5d9",
+    "permission_mode": "bypassPermissions",
+    "effort": {
+      "level": "high"
+    },
+    "hook_event_name": "PreToolUse",
+    "tool_name": "Write",
+    "tool_input": {
+      "file_path": "/Users/vmedvedev/victron/venus-os-ci-toolkit/.github/workflows/auto-approve.yml",
+      "content": "name: 'Auto Approve'\ndescription: 'Auto-approve Dependabot and Renovate PRs'\non:\n  workflow_call:\n    inputs:\n      pr-author:\n        description: 'PR author to auto-approve (comma-separated)'\n        type: string\n        default: 'dependabot[bot],renovate[bot]'\n      required-reviews:\n        description: 'Number of required approvals'\n        type: string\n        default: '1'\n      pr-types:\n        description: 'PR types to auto-approve (comma-separated: dependencies, all)'\n        type: string\n        default: 'dependencies'\n      secrets:\n      GITHUB_TOKEN:\n        required: true\njobs:\n  auto-approve:\n    name: Auto Approve\n    runs-on: ubuntu-latest\n    permissions:\n      contents: read\n      pull-requests: write\n    steps:\n      - name: Auto Approve\n        uses: hmarr/auto-approve-action@v4\n        with:\n          github-token: ${{ secrets.GITHUB_TOKEN }}\n          pr-author: ${{ inputs.pr-author }}\n          required-reviews: ${{ inputs.required-reviews }}\n          pr-types: ${{ inputs.pr-types }}"
+    },
+    "tool_use_id": "call-cbfe1d96-a352-4af4-88e7-47e3c03f19ef"
+  },
+  {
+    "session_id": "ad9fbccd-9729-42d2-80d1-e0c11d5c7d58",
+    "transcript_path": "/Users/vmedvedev/.claude/projects/-Users-vmedvedev-victron/ad9fbccd-9729-42d2-80d1-e0c11d5c7d58.jsonl",
+    "cwd": "/Users/vmedvedev/victron/venus-os-ci-toolkit",
+    "prompt_id": "5e947cab-f374-439b-b7da-1add29d5f5d9",
+    "permission_mode": "bypassPermissions",
+    "effort": {
+      "level": "high"
+    },
+    "hook_event_name": "PreToolUse",
+    "tool_name": "Write",
+    "tool_input": {
+      "file_path": "/Users/vmedvedev/victron/venus-os-ci-toolkit/.github/workflows/auto-merge.yml",
+      "content": "name: 'Auto Merge'\ndescription: 'Auto-merge PRs when checks pass'\non:\n  workflow_call:\n    inputs:\n      pr-author:\n        description: 'PR author to auto-merge (comma-separated)'\n        type: string\n        default: 'dependabot[bot],renovate[bot]'\n      merge-method:\n        description: 'Merge method (merge, squash, rebase)'\n        type: string\n        default: 'squash'\n      required-status-checks:\n        description: 'Required status checks to pass (comma-separated)'\n        type: string\n        default: 'CI,codeql,trivy'\n      secrets:\n      GITHUB_TOKEN:\n        required: true\njobs:\n  auto-merge:\n    name: Auto Merge\n    runs-on: ubuntu-latest\n    permissions:\n      contents: read\n      pull-requests: write\n    steps:\n      - name: Auto Merge\n        uses: pascalgn/automerge-action@v0.16.4\n        env:\n          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}\n          MERGE_METHOD: ${{ inputs.merge-method }}\n          MERGE_LABELS: ''\n          MERGE_RETRIES: '3'\n          MERGE_RETRY_SLEEP: '5000'\n          REQUIRED_APPROVALS: '1'\n          REQUIRED_STATUS_CHECKS: ${{ inputs.required-status-checks }}"
+    },
+    "tool_use_id": "call-a75724ba-46d6-4c21-8d7d-3272903c8aa4"
+  },
+  {
+    "session_id": "ad9fbccd-9729-42d2-80d1-e0c11d5c7d58",
+    "transcript_path": "/Users/vmedvedev/.claude/projects/-Users-vmedvedev-victron/ad9fbccd-9729-42d2-80d1-e0c11d5c7d58.jsonl",
+    "cwd": "/Users/vmedvedev/victron/venus-os-ci-toolkit",
+    "prompt_id": "5e947cab-f374-439b-b7da-1add29d5f5d9",
+    "permission_mode": "bypassPermissions",
+    "effort": {
+      "level": "high"
+    },
+    "hook_event_name": "PreToolUse",
+    "tool_name": "Write",
+    "tool_input": {
+      "file_path": "/Users/vmedvedev/victron/venus-os-ci-toolkit/.github/workflows/nightly.yml",
+      "content": "name: 'Reusable Nightly Build'\ndescription: 'Reusable workflow for nightly builds'\non:\n  workflow_call:\n    inputs:\n      cron:\n        description: 'Cron schedule for nightly build'\n        type: string\n        default: '0 2 * * *'\n      workflow-to-trigger:\n        description: 'Workflow file to trigger (e.g., ci.yml, docker-build.yml)'\n        type: string\n        required: true\n      workflow-inputs:\n        description: 'JSON string of inputs to pass to triggered workflow'\n        type: string\n        default: '{}'\n      secrets:\n      GITHUB_TOKEN:\n        required: true\njobs:\n  nightly:\n    name: Nightly Build\n    runs-on: ubuntu-latest\n    permissions:\n      contents: read\n    steps:\n      - name: Trigger nightly workflow\n        uses: actions/github-script@v7\n        with:\n          script: |\n            const inputs = ${{ inputs.workflow-inputs }};\n            await github.rest.actions.createWorkflowDispatch({\n              owner: context.repo.owner,\n              repo: context.repo.repo,\n              workflow_id: '${{ inputs.workflow-to-trigger }}',\n              ref: 'main',\n              inputs: inputs\n            });"
+    },
+    "tool_use_id": "call-11547554-3ec9-4dd7-89a9-9197d29bf441"
+  },
+  {
+    "session_id": "ad9fbccd-9729-42d2-80d1-e0c11d5c7d58",
+    "transcript_path": "/Users/vmedvedev/.claude/projects/-Users-vmedvedev-victron/ad9fbccd-9729-42d2-80d1-e0c11d5c7d58.jsonl",
+    "cwd": "/Users/vmedvedev/victron/venus-os-ci-toolkit",
+    "prompt_id": "5e947cab-f374-439b-b7da-1add29d5f5d9",
+    "permission_mode": "bypassPermissions",
+    "effort": {
+      "level": "high"
+    },
+    "hook_event_name": "PreToolUse",
+    "tool_name": "Write",
+    "tool_input": {
+      "file_path": "/Users/vmedvedev/victron/venus-os-ci-toolkit/templates/starter-workflows.md",
+      "content": "# Venus OS CI Toolkit - Starter Workflows\n\nCopy these workflow files to your project's `.github/workflows/` directory and customize as needed.\n\n## For Python Projects\n\n### `.github/workflows/ci.yml`\n```yaml\nname: CI\non:\n  push:\n    branches: [main]\n  pull_request:\n    branches: [main]\n\njobs:\n  ci:\n    uses: victron-venus/venus-os-ci-toolkit/.github/workflows/python-ci.yml@main\n    with:\n      python-version: '3.12'\n      working-directory: '.'\n      install-dependencies: true\n      run-lint: true\n      run-type-check: true\n      run-tests: true\n      test-args: '-v'\n      coverage-threshold: 80\n    secrets:\n      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}\n```\n\n### `.github/workflows/security.yml`\n```yaml\nname: Security\non:\n  push:\n    branches: [main]\n  pull_request:\n    branches: [main]\n  schedule:\n    - cron: '0 6 * * 1'  # Weekly on Monday\n\njobs:\n  security:\n    uses: victron-venus/venus-os-ci-toolkit/.github/workflows/security-scan.yml@main\n    with:\n      languages: 'python'\n      working-directory: '.'\n      run-codeql: true\n      run-trivy: true\n      run-dependency-review: true\n      trivy-severity: 'HIGH,CRITICAL'\n    secrets:\n      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}\n```\n\n### `.github/workflows/scorecard.yml`\n```yaml\nname: Scorecard\non:\n  push:\n    branches: [main]\n  schedule:\n    - cron: '0 6 * * 0'  # Weekly on Sunday\n\njobs:\n  scorecard:\n    uses: victron-venus/venus-os-ci-toolkit/.github/workflows/scorecard.yml@main\n    with:\n      working-directory: '.'\n    secrets:\n      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}\n```\n\n### `.github/workflows/auto-approve.yml`\n```yaml\nname: Auto Approve\non:\n  pull_request_target:\n    types: [opened, synchronize, reopened]\n\njobs:\n  auto-approve:\n    uses: victron-venus/venus-os-ci-toolkit/.github/workflows/auto-approve.yml@main\n    with:\n      pr-author: 'dependabot[bot],renovate[bot]'\n      required-reviews: '1'\n      pr-types: 'dependencies'\n    secrets:\n      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}\n```\n\n### `.github/workflows/auto-merge.yml`\n```yaml\nname: Auto Merge\non:\n  pull_request:\n    types: [opened, synchronize, reopened, ready_for_review]\n  pull_request_review:\n    types: [submitted]\n\njobs:\n  auto-merge:\n    uses: victron-venus/venus-os-ci-toolkit/.github/workflows/auto-merge.yml@main\n    with:\n      pr-author: 'dependabot[bot],renovate[bot]'\n      merge-method: 'squash'\n      required-status-checks: 'CI,codeql,trivy'\n    secrets:\n      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}\n```\n\n### `.github/workflows/release.yml`\n```yaml\nname: Release\non:\n  push:\n    tags:\n      - 'v*'\n\njobs:\n  release:\n    uses: victron-venus/venus-os-ci-toolkit/.github/workflows/release.yml@main\n    with:\n      tag-pattern: '^v[0-9]+\\\\.[0-9]+\\\\.[0-9]+$'\n      release-name: 'Release ${{ github.ref_name }}'\n      generate-notes: true\n    secrets:\n      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}\n```\n\n### `.github/workflows/docker.yml`\n```yaml\nname: Docker\non:\n  push:\n    branches: [main]\n    tags: ['v*']\n  pull_request:\n    branches: [main]\n\njobs:\n  docker:\n    uses: victron-venus/venus-os-ci-toolkit/.github/workflows/docker-build.yml@main\n    with:\n      image-name: 'your-project-name'\n      dockerfile: 'Dockerfile'\n      context: '.'\n      platforms: 'linux/amd64,linux/arm64'\n      push: ${{ github.event_name != 'pull_request' }}\n    secrets:\n      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}\n```\n\n---\n\n## For Go Projects\n\n### `.github/workflows/ci.yml`\n```yaml\nname: CI\non:\n  push:\n    branches: [main]\n  pull_request:\n    branches: [main]\n\njobs:\n  ci:\n    uses: victron-venus/venus-os-ci-toolkit/.github/workflows/go-ci.yml@main\n    with:\n      go-version: '1.23'\n      working-directory: '.'\n      run-lint: true\n      run-tests: true\n      test-args: '-race -coverprofile=coverage.out -covermode=atomic'\n      coverage-threshold: 70\n      run-vulncheck: true\n    secrets:\n      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}\n```\n\n### `.github/workflows/security.yml`\n```yaml\nname: Security\non:\n  push:\n    branches: [main]\n  pull_request:\n    branches: [main]\n  schedule:\n    - cron: '0 6 * * 1'\n\njobs:\n  security:\n    uses: victron-venus/venus-os-ci-toolkit/.github/workflows/security-scan.yml@main\n    with:\n      languages: 'go'\n      working-directory: '.'\n      run-codeql: true\n      run-trivy: true\n      run-dependency-review: true\n    secrets:\n      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}\n```\n\n### `.github/workflows/nightly.yml`\n```yaml\nname: Nightly\non:\n  schedule:\n    - cron: '0 2 * * *'  # 2 AM UTC daily\n  workflow_dispatch:\n\njobs:\n  nightly:\n    uses: victron-venus/venus-os-ci-toolkit/.github/workflows/nightly.yml@main\n    with:\n      cron: '0 2 * * *'\n      workflow-to-trigger: 'ci.yml'\n      workflow-inputs: '{}'\n    secrets:\n      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}\n```\n\n---\n\n## Required Setup\n\n1. **Enable GitHub Actions** in your repository settings\n2. **Enable \"Allow GitHub Actions to create and approve pull requests\"** in Settings \u2192 Actions \u2192 General \u2192 Workflow permissions\n3. **Add `GITHUB_TOKEN` secret** (automatically available)\n4. **For CodeQL**: Enable \"Code scanning alerts\" in Settings \u2192 Security \u2192 Code scanning\n\n## Customization\n\nOverride any input by changing the `with:` values in your workflow files.\n\nFor project-specific needs, copy the reusable workflow to your repo and modify directly."
+    },
+    "tool_use_id": "call-3e2ae494-e145-49c1-9089-d68cba29830f"
+  },
+  {
+    "session_id": "ad9fbccd-9729-42d2-80d1-e0c11d5c7d58",
+    "transcript_path": "/Users/vmedvedev/.claude/projects/-Users-vmedvedev-victron/ad9fbccd-9729-42d2-80d1-e0c11d5c7d58.jsonl",
+    "cwd": "/Users/vmedvedev/victron/venus-os-ci-toolkit",
+    "prompt_id": "5e947cab-f374-439b-b7da-1add29d5f5d9",
+    "permission_mode": "bypassPermissions",
+    "effort": {
+      "level": "high"
+    },
+    "hook_event_name": "PreToolUse",
+    "tool_name": "Write",
+    "tool_input": {
+      "file_path": "/Users/vmedvedev/victron/venus-os-ci-toolkit/README.md",
+      "content": "# Venus OS CI Toolkit\n\nReusable GitHub Actions workflows and composite actions for Victron Venus OS projects.\n\n## Overview\n\nThis toolkit provides standardized, reusable CI/CD workflows that can be referenced by any repository in the `victron-venus` organization. It eliminates duplication and ensures consistent practices across all projects.\n\n## Structure\n\n```\nvenus-os-ci-toolkit/\n\u251c\u2500\u2500 .github/workflows/          # Reusable workflows\n\u2502   \u251c\u2500\u2500 python-ci.yml           # Python CI (lint, type-check, test, coverage)\n\u2502   \u251c\u2500\u2500 go-ci.yml               # Go CI (lint, vulncheck, test, coverage)\n\u2502   \u251c\u2500\u2500 docker-build.yml        # Docker build & publish to GHCR\n\u2502   \u251c\u2500\u2500 release.yml             # GitHub release automation\n\u2502   \u251c\u2500\u2500 security-scan.yml       # Security scanning (CodeQL, Trivy, Dependency Review)\n\u2502   \u251c\u2500\u2500 scorecard.yml           # OpenSSF Scorecard\n\u2502   \u251c\u2500\u2500 auto-approve.yml        # Auto-approve Dependabot/Renovate PRs\n\u2502   \u251c\u2500\u2500 auto-merge.yml          # Auto-merge when checks pass\n\u2502   \u2514\u2500\u2500 nightly.yml             # Nightly build trigger\n\u251c\u2500\u2500 actions/                    # Composite actions\n\u2502   \u251c\u2500\u2500 setup-python/           # Python setup with caching\n\u2502   \u251c\u2500\u2500 setup-go/               # Go setup with caching\n\u2502   \u2514\u2500\u2500 setup-docker/           # Docker Buildx setup\n\u2514\u2500\u2500 templates/                  # Starter workflow templates\n    \u2514\u2500\u2500 starter-workflows.md    # Copy-paste templates for projects\n```\n\n## Quick Start\n\n### For Python Projects\n\nCreate `.github/workflows/ci.yml` in your project:\n\n```yaml\nname: CI\non:\n  push:\n    branches: [main]\n  pull_request:\n    branches: [main]\n\njobs:\n  ci:\n    uses: victron-venus/venus-os-ci-toolkit/.github/workflows/python-ci.yml@main\n    with:\n      python-version: '3.12'\n      working-directory: '.'\n    secrets:\n      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}\n```\n\nAdd security scanning (`.github/workflows/security.yml`):\n\n```yaml\nname: Security\non:\n  push:\n    branches: [main]\n  pull_request:\n    branches: [main]\n  schedule:\n    - cron: '0 6 * * 1'\n\njobs:\n  security:\n    uses: victron-venus/venus-os-ci-toolkit/.github/workflows/security-scan.yml@main\n    with:\n      languages: 'python'\n    secrets:\n      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}\n```\n\n### For Go Projects\n\nCreate `.github/workflows/ci.yml`:\n\n```yaml\nname: CI\non:\n  push:\n    branches: [main]\n  pull_request:\n    branches: [main]\n\njobs:\n  ci:\n    uses: victron-venus/venus-os-ci-toolkit/.github/workflows/go-ci.yml@main\n    with:\n      go-version: '1.23'\n      working-directory: '.'\n    secrets:\n      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}\n```\n\n## Available Workflows\n\n| Workflow | Description | Inputs |\n|----------|-------------|--------|\n| `python-ci.yml` | Python lint, type-check, test, coverage | python-version, working-directory, coverage-threshold |\n| `go-ci.yml` | Go lint, vulncheck, test, coverage | go-version, working-directory, coverage-threshold |\n| `docker-build.yml` | Multi-platform Docker build & push | image-name, dockerfile, platforms, push |\n| `release.yml` | GitHub release from tags | tag-pattern, release-name, draft, prerelease |\n| `security-scan.yml` | CodeQL, Trivy, Dependency Review | languages, trivy-severity |\n| `scorecard.yml` | OpenSSF Scorecard | working-directory |\n| `auto-approve.yml` | Auto-approve bot PRs | pr-author, required-reviews |\n| `auto-merge.yml` | Auto-merge when checks pass | pr-author, merge-method, required-status-checks |\n| `nightly.yml` | Trigger workflow on schedule | cron, workflow-to-trigger |\n\n## Composite Actions\n\n| Action | Description |\n|--------|-------------|\n| `actions/setup-python` | Python + pip cache + ruff/pytest |\n| `actions/setup-go` | Go + module cache + golangci-lint/govulncheck |\n| `actions/setup-docker` | Docker Buildx + GHCR login |\n\n## Full Example: Complete Python Project Setup\n\n```yaml\n# .github/workflows/ci.yml\nname: CI\non:\n  push:\n    branches: [main]\n  pull_request:\n    branches: [main]\n\njobs:\n  ci:\n    uses: victron-venus/venus-os-ci-toolkit/.github/workflows/python-ci.yml@main\n    with:\n      python-version: '3.12'\n      test-args: '-v --tb=short'\n      coverage-threshold: 85\n\n# .github/workflows/security.yml\nname: Security\non:\n  push:\n    branches: [main]\n  pull_request:\n    branches: [main]\n  schedule:\n    - cron: '0 6 * * 1'\n\njobs:\n  security:\n    uses: victron-venus/venus-os-ci-toolkit/.github/workflows/security-scan.yml@main\n    with:\n      languages: 'python'\n\n# .github/workflows/docker.yml\nname: Docker\non:\n  push:\n    branches: [main]\n    tags: ['v*']\n  pull_request:\n    branches: [main]\n\njobs:\n  docker:\n    uses: victron-venus/venus-os-ci-toolkit/.github/workflows/docker-build.yml@main\n    with:\n      image-name: 'my-python-service'\n      push: ${{ github.event_name != 'pull_request' }}\n\n# .github/workflows/release.yml\nname: Release\non:\n  push:\n    tags: ['v*']\n\njobs:\n  release:\n    uses: victron-venus/venus-os-ci-toolkit/.github/workflows/release.yml@main\n    with:\n      generate-notes: true\n```\n\n## Required Repository Settings\n\n1. **Settings \u2192 Actions \u2192 General \u2192 Workflow permissions**: Enable \"Allow GitHub Actions to create and approve pull requests\"\n2. **Settings \u2192 Security \u2192 Code scanning**: Enable CodeQL (for CodeQL workflow)\n3. **Branch protection**: Require status checks (CI, CodeQL, Trivy) before merge\n\n## Contributing\n\n1. Changes to reusable workflows should be backwards compatible\n2. Test changes by referencing `@main` in a test repository\n3. Tag releases for stable versions (e.g., `v1.0.0`)\n4. Update `templates/starter-workflows.md` when adding new workflows\n\n## License\n\nMIT License - see [LICENSE](LICENSE)"
+    },
+    "tool_use_id": "call-cf3085b7-79a4-4723-8943-0deb740bb116"
+  },
+  {
+    "session_id": "ad9fbccd-9729-42d2-80d1-e0c11d5c7d58",
+    "transcript_path": "/Users/vmedvedev/.claude/projects/-Users-vmedvedev-victron/ad9fbccd-9729-42d2-80d1-e0c11d5c7d58.jsonl",
+    "cwd": "/Users/vmedvedev/victron/venus-os-ci-toolkit",
+    "prompt_id": "cd1691e5-c45f-44bb-b105-78b03479b193",
+    "permission_mode": "bypassPermissions",
+    "effort": {
+      "level": "high"
+    },
+    "hook_event_name": "PreToolUse",
+    "tool_name": "Bash",
+    "tool_input": {
+      "command": "git add -A && git commit -m \"feat: initial ci-toolkit with reusable workflows and actions\n\n- Add reusable workflows: python-ci, go-ci, docker-build, release, security-scan, scorecard, auto-approve, auto-merge, nightly\n- Add composite actions: setup-python, setup-go, setup-docker\n- Add starter workflow templates for Python and Go projects\n- Add comprehensive README with usage examples\"",
+      "description": "Commit ci-toolkit initial implementation"
+    },
+    "tool_use_id": "call-0e9015af-ec13-4bfa-befd-4db93043f191"
+  }
+]

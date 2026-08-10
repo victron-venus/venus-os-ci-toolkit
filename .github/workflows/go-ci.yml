@@ -1,0 +1,88 @@
+name: 'Reusable Go CI'
+description: 'Reusable CI workflow for Go projects'
+on:
+  workflow_call:
+    inputs:
+      go-version:
+        description: 'Go version'
+        type: string
+        default: '1.23'
+      working-directory:
+        description: 'Working directory for the project'
+        type: string
+        default: '.'
+      run-lint:
+        description: 'Whether to run linting (golangci-lint)'
+        type: boolean
+        default: true
+      run-tests:
+        description: 'Whether to run tests'
+        type: boolean
+        default: true
+      test-args:
+        description: 'Additional go test arguments'
+        type: string
+        default: '-race -coverprofile=coverage.out -covermode=atomic'
+      coverage-threshold:
+        description: 'Minimum coverage percentage'
+        type: number
+        default: 70
+      run-vulncheck:
+        description: 'Whether to run govulncheck'
+        type: boolean
+        default: true
+    secrets:
+      GITHUB_TOKEN:
+        required: true
+jobs:
+  ci:
+    name: CI
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: victron-venus/venus-os-ci-toolkit/actions/setup-go@main
+        with:
+          go-version: ${{ inputs.go-version }}
+
+      - name: Download dependencies
+        shell: bash
+        run: go mod download
+
+      - name: Run golangci-lint
+        if: inputs.run-lint
+        shell: bash
+        run: golangci-lint run ./...
+
+      - name: Run govulncheck
+        if: inputs.run-vulncheck
+        shell: bash
+        run: govulncheck ./...
+
+      - name: Run Tests
+        if: inputs.run-tests
+        shell: bash
+        run: go test ${{ inputs.test-args }} ./...
+
+      - name: Check coverage threshold
+        if: inputs.run-tests
+        shell: bash
+        run: |
+          coverage=$(go tool cover -func=coverage.out | grep total | awk '{print $3}' | sed 's/%//')
+          echo "Coverage: ${coverage}%"
+          if (( $(echo "$coverage < ${{ inputs.coverage-threshold }}" | bc -l) )); then
+            echo "Coverage ${coverage}% is below threshold ${{ inputs.coverage-threshold }}%"
+            exit 1
+          fi
+
+      - name: Upload coverage
+        if: inputs.run-tests
+        uses: codecov/codecov-action@v4
+        with:
+          files: ./coverage.out
+          fail_ci_if_error: false

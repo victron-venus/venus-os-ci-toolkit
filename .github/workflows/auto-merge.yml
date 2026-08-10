@@ -1,0 +1,38 @@
+name: 'Auto Merge'
+description: 'Auto-merge PRs when checks pass'
+on:
+  workflow_call:
+    inputs:
+      pr-author:
+        description: 'PR author to auto-merge (comma-separated)'
+        type: string
+        default: 'dependabot[bot],renovate[bot]'
+      merge-method:
+        description: 'Merge method (merge, squash, rebase)'
+        type: string
+        default: 'squash'
+      required-status-checks:
+        description: 'Required status checks to pass (comma-separated)'
+        type: string
+        default: 'CI,codeql,trivy'
+      secrets:
+      GITHUB_TOKEN:
+        required: true
+jobs:
+  auto-merge:
+    name: Auto Merge
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - name: Auto Merge
+        uses: pascalgn/automerge-action@v0.16.4
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MERGE_METHOD: ${{ inputs.merge-method }}
+          MERGE_LABELS: ''
+          MERGE_RETRIES: '3'
+          MERGE_RETRY_SLEEP: '5000'
+          REQUIRED_APPROVALS: '1'
+          REQUIRED_STATUS_CHECKS: ${{ inputs.required-status-checks }}

@@ -1,0 +1,85 @@
+name: 'Reusable Release'
+description: 'Reusable workflow to create GitHub releases from tags'
+on:
+  workflow_call:
+    inputs:
+      tag-pattern:
+        description: 'Tag pattern to trigger release (regex)'
+        type: string
+        default: '^v[0-9]+\.[0-9]+\.[0-9]+$'
+      release-name:
+        description: 'Release name template'
+        type: string
+        default: 'Release ${{ github.ref_name }}'
+      draft:
+        description: 'Create as draft release'
+        type: boolean
+        default: false
+      prerelease:
+        description: 'Mark as prerelease'
+        type: boolean
+        default: false
+      generate-notes:
+        description: 'Auto-generate release notes'
+        type: boolean
+        default: true
+      body-file:
+        description: 'Path to release body file (optional)'
+        type: string
+        default: ''
+    secrets:
+      GITHUB_TOKEN:
+        required: true
+jobs:
+  release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate tag format
+        shell: bash
+        run: |
+          TAG="${{ github.ref_name }}"
+          if [[ ! "$TAG" =~ ${{ inputs.tag-pattern }} ]]; then
+            echo "Tag $TAG does not match pattern ${{ inputs.tag-pattern }}"
+            exit 1
+          fi
+
+      - name: Generate changelog
+        if: inputs.generate-notes && inputs.body-file == ''
+        id: changelog
+        uses: triangletodd/changelog-generator@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          excludeTypes: '["chore", "ci", "docs", "style", "refactor", "test"]'
+          excludeScopes: '["deps", "deps-dev"]'
+
+      - name: Read body file
+        if: inputs.body-file != ''
+        id: body
+        shell: bash
+        run: |
+          echo "body<<EOF" >> $GITHUB_OUTPUT
+          cat ${{ inputs.body-file }} >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ inputs.release-name }}
+          draft: ${{ inputs.draft }}
+          prerelease: ${{ inputs.prerelease }}
+          body: ${{ inputs.generate-notes && inputs.body-file == '' && steps.changelog.outputs.changelog || inputs.body-file != '' && steps.body.outputs.body || '' }}
+          generate_release_notes: ${{ inputs.generate-notes && inputs.body-file == '' }}
+          files: |
+            dist/*
+            build/*
+            *.tar.gz
+            *.zip
