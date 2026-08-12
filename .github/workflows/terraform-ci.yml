@@ -1,0 +1,51 @@
+name: 'Reusable Terraform CI'
+description: 'Reusable CI workflow for Terraform projects'
+on:
+  workflow_call:
+    inputs:
+      working-directory:
+        description: 'Working directory for the project'
+        type: string
+        default: '.'
+      terraform-version:
+        description: 'Terraform version'
+        type: string
+        default: '1.5.x'
+      tflint-enabled:
+        description: 'Whether to run TFLint'
+        type: boolean
+        default: true
+    secrets:
+      GITHUB_TOKEN:
+        required: true
+jobs:
+  ci:
+    name: Terraform CI
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform-version: ${{ inputs.terraform-version }}
+          terraform-wrapper: false
+
+      - name: Install tflint
+        if: inputs.tflint-enabled
+        run: |
+          curl -s https://raw.githubusercontent.com/terraform-linters/tflint/master/install_linux.sh | bash
+
+      - name: Terraform fmt
+        run: terraform fmt -check -recursive
+
+      - name: Terraform Validate
+        run: terraform validate
+
+      - name: TFLint
+        if: inputs.tflint-enabled
+        run: tflint --init --enable-plugin=terraform

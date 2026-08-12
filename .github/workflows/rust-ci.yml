@@ -1,0 +1,106 @@
+name: 'Reusable Rust CI'
+description: 'Reusable CI workflow for Rust projects'
+on:
+  workflow_call:
+    inputs:
+      working-directory:
+        description: 'Working directory for the project'
+        type: string
+        default: '.'
+      rust-toolchain:
+        description: 'Rust toolchain (stable, beta, nightly)'
+        type: string
+        default: 'stable'
+      components:
+        description: 'Rust components to install (clippy, rustfmt, etc.)'
+        type: string
+        default: 'clippy,rustfmt'
+      enable-clippy:
+        description: 'Whether to run cargo clippy'
+        type: boolean
+        default: true
+      enable-fmt:
+        description: 'Whether to run cargo fmt check'
+        type: boolean
+        default: true
+      enable-tests:
+        description: 'Whether to run cargo test'
+        type: boolean
+        default: true
+      test-args:
+        description: 'Additional arguments for cargo test'
+        type: string
+        default: ''
+      # Frontend-related inputs (optional)
+      enable-frontend:
+        description: 'Whether to build/check frontend (Node.js)'
+        type: boolean
+        default: false
+      node-version:
+        description: 'Node.js version for frontend builds'
+        type: string
+        default: '24'
+      frontend-working-directory:
+        description: 'Working directory for frontend (if different from main)'
+        type: string
+        default: ''
+    secrets:
+      GITHUB_TOKEN:
+        required: true
+jobs:
+  rust-ci:
+    name: Rust CI
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Setup Rust Toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ inputs.rust-toolchain }}
+          components: ${{ inputs.components }}
+
+      - name: Setup Rust Cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: ${{ inputs.working-directory }} -> target
+
+      - name: Check Rust Formatting
+        if: inputs.enable-fmt
+        run: cargo fmt -- --check
+
+      - name: Run Clippy
+        if: inputs.enable-clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Run Tests
+        if: inputs.enable-tests
+        run: cargo test --all-targets ${{ inputs.test-args }}
+
+  # Optional frontend job
+  frontend:
+    name: Frontend CI
+    needs: rust-ci
+    if: ${{ inputs.enable-frontend }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@b09bb98e06d4d774595224525879c09bc6e98c40 # v2.20.1
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: npm
+      - working-directory: ${{ inputs.frontend-working-directory || inputs.working-directory }}
+      - run: npm ci --ignore-scripts
+      - name: Prettier check
+        run: npm run format:check
+      - name: Build frontend
+        run: npm run build

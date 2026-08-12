@@ -1,5 +1,5 @@
 name: 'Reusable Docker Build & Publish'
-description: 'Reusable workflow to build and publish Docker images to GHCR'
+description: 'Reusable workflow to build and publish Docker images to a registry'
 on:
   workflow_call:
     inputs:
@@ -7,6 +7,18 @@ on:
         description: 'Docker image name (without registry prefix)'
         type: string
         required: true
+      registry:
+        description: 'Registry hostname (e.g., ghcr.io, docker.io). Default: ghcr.io'
+        type: string
+        default: 'ghcr.io'
+      registry-owner:
+        description: 'Registry owner or organization. Default: github.repository_owner'
+        type: string
+        default: '${{ github.repository_owner }}'
+      image:
+        description: 'Full image reference (registry/owner/image). If provided, overrides registry, registry-owner, and image-name.'
+        type: string
+        default: ''
       dockerfile:
         description: 'Path to Dockerfile'
         type: string
@@ -27,6 +39,14 @@ on:
         description: 'Whether to push the image'
         type: boolean
         default: true
+      sbom:
+        description: 'Generate SBOM (Software Bill of Materials)'
+        type: boolean
+        default: false
+      provenance:
+        description: 'Generate provenance attestation'
+        type: boolean
+        default: false
       cache-from:
         description: 'Cache from registry'
         type: string
@@ -37,7 +57,14 @@ on:
         default: 'type=gha,mode=max'
     secrets:
       GITHUB_TOKEN:
-        required: true
+        required: false
+        description: 'Token for pushing to GHCR (if needed)'
+      REGISTRY_USERNAME:
+        description: 'Username for registry login (if not using GITHUB_TOKEN)'
+        required: false
+      REGISTRY_PASSWORD:
+        description: 'Password or token for registry login (if not using GITHUB_TOKEN)'
+        required: false
 jobs:
   build-and-push:
     name: Build & Push
@@ -45,20 +72,42 @@ jobs:
     permissions:
       contents: read
       packages: write
+      # id-token: write  # for provenance if needed
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
 
       - name: Setup Docker Buildx
         uses: victron-venus/venus-os-ci-toolkit/actions/setup-docker@main
         with:
           platforms: ${{ inputs.platforms }}
 
-      - name: Extract metadata
+      - name: Login to registry
+        if: |
+          (inputs.registry == 'docker.io' || inputs.registry == 'index.docker.io') &&
+          (secrets.REGISTRY_USERNAME != '' && secrets.REGISTRY_PASSWORD != '')
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ inputs.registry }}
+          username: ${{ secrets.REGISTRY_USERNAME }}
+          password: ${{ secrets.REGISTRY_PASSWORD }}
+
+      - name: Set image reference
+        id: image_ref
+        run: |
+          if [ "${{ inputs.image }}" != '' ]; then
+            echo "image=${{ inputs.image }}" >> $GITHUB_OUTPUT
+          else
+            echo "image=${{ inputs.registry }}/${{ inputs.registry-owner }}/${{ inputs.image-name }}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Extract metadata (tags, labels)
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ghcr.io/${{ github.repository_owner }}/${{ inputs.image-name }}
+          images: ${{ steps.image_ref.outputs.image }}
           tags: |
             type=ref,event=branch
             type=ref,event=pr
@@ -78,3 +127,7 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: ${{ inputs.cache-from }}
           cache-to: ${{ inputs.cache-to }}
+          sbom: ${{ inputs.sbom }}
+          provenance: ${{ inputs.provenance }}
+          # GLBProvenance and attestations for SBOM/provenance require id-token write permission
+          # We'll add permissions if needed later.
