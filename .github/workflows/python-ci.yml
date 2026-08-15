@@ -35,9 +35,6 @@ on:
         description: 'Minimum coverage percentage'
         type: number
         default: 80
-    secrets:
-      GITHUB_TOKEN:
-        required: true
 jobs:
   ci:
     name: CI
