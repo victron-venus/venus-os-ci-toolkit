@@ -4,18 +4,10 @@ description: 'Auto-approve Dependabot and Renovate PRs'
 on:
   workflow_call:
     inputs:
-      pr-author:
-        description: 'PR author to auto-approve (comma-separated)'
+      review-message:
+        description: 'Review message for auto-approval'
         type: string
-        default: 'dependabot[bot],renovate[bot],4alvit'
-      required-reviews:
-        description: 'Number of required approvals'
-        type: string
-        default: '1'
-      pr-types:
-        description: 'PR types to auto-approve (comma-separated: dependencies, all)'
-        type: string
-        default: 'dependencies'
+        default: 'Auto-approved by CI'
     secrets:
       GITHUB_TOKEN:
         description: 'GitHub token for approving PRs'
@@ -32,6 +24,4 @@ on:
             uses: hmarr/auto-approve-action@f0939ea97e9205ef24d872e76833fa908a770363
             with:
               github-token: ${{ secrets.GITHUB_TOKEN }}
-              pr-author: ${{ inputs.pr-author }}
-              required-reviews: ${{ inputs.required-reviews }}
-              pr-types: ${{ inputs.pr-types }}
+              review-message: ${{ inputs.review-message }}
