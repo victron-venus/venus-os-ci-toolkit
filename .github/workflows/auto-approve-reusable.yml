@@ -17,8 +17,8 @@ on:
         type: string
         default: 'dependencies'
     secrets:
-      GITHUB_TOKEN:
-        description: 'GitHub token for approving PRs'
+      BOT_PAT:
+        description: 'GitHub token (BOT_PAT) for approving PRs'
         required: true
     jobs:
       auto-approve:
@@ -33,7 +33,7 @@ on:
           - name: Auto Approve
             uses: hmarr/auto-approve-action@f0939ea97e9205ef24d872e76833fa908a770363
             with:
-              github-token: ${{ secrets.GITHUB_TOKEN }}
+              github-token: ${{ secrets.BOT_PAT }}
               pr-author: ${{ inputs.pr-author }}
               required-reviews: ${{ inputs.required-reviews }}
               pr-types: ${{ inputs.pr-types }}
