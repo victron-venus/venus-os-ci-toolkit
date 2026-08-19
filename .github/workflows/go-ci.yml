@@ -31,9 +31,6 @@ on:
         description: 'Whether to run govulncheck'
         type: boolean
         default: true
-    secrets:
-      GITHUB_TOKEN:
-        required: true
 jobs:
   ci:
     name: CI
