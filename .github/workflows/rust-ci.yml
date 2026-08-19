@@ -44,9 +44,6 @@ on:
         description: 'Working directory for frontend (if different from main)'
         type: string
         default: ''
-    secrets:
-      GITHUB_TOKEN:
-        required: true
 jobs:
   rust-ci:
     name: Rust CI
