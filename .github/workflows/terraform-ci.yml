@@ -15,9 +15,6 @@ on:
         description: 'Whether to run TFLint'
         type: boolean
         default: true
-    secrets:
-      GITHUB_TOKEN:
-        required: true
 jobs:
   ci:
     name: Terraform CI
