@@ -31,9 +31,6 @@ on:
         description: 'Skip the checkout step'
         type: boolean
         default: false
-    secrets:
-      GITHUB_TOKEN:
-        required: true
 jobs:
   release:
     name: Create Release

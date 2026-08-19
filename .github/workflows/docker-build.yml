@@ -56,9 +56,6 @@ on:
         type: string
         default: 'type=gha,mode=max'
     secrets:
-      GITHUB_TOKEN:
-        required: false
-        description: 'Token for pushing to GHCR (if needed)'
       REGISTRY_USERNAME:
         description: 'Username for registry login (if not using GITHUB_TOKEN)'
         required: false

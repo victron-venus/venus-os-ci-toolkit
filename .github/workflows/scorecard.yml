@@ -7,9 +7,6 @@ on:
         description: 'Working directory'
         type: string
         default: '.'
-    secrets:
-      GITHUB_TOKEN:
-        required: true
 jobs:
   scorecard:
     name: Scorecard

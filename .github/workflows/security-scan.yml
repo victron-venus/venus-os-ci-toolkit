@@ -27,9 +27,6 @@ on:
         description: 'Trivy severity threshold'
         type: string
         default: 'HIGH,CRITICAL'
-    secrets:
-      GITHUB_TOKEN:
-        required: true
 jobs:
   codeql:
     name: CodeQL Analysis
