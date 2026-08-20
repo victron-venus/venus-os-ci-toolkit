@@ -51,6 +51,13 @@ jobs:
         with:
           python-version: ${{ inputs.python-version }}
 
+      - name: Install system dependencies
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libdbus-1-dev
+
       - name: Install dependencies
         if: inputs.install-dependencies
         shell: bash
