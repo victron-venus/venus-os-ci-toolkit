@@ -56,14 +56,8 @@ jobs:
         shell: bash
         run: |
           sudo apt-get update
-          # Install comprehensive set of dbus-related packages
-          sudo apt-get install -y \
-            libdbus-1-dev \
-            dbus-dev \
-            dbus \
-            dbus-x11 \
-            libdbus-glib-1-dev \
-            libdbus-1-3
+          # Install dbus development package (libdbus-1-dev provides dbus-1.pc)
+          sudo apt-get install -y libdbus-1-dev
           # Update library cache and pkgconfig path
           sudo ldconfig
           # Ensure pkgconfig path includes standard locations
