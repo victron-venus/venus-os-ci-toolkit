@@ -77,11 +77,11 @@ jobs:
         shell: bash
         run: |
           if [ -f pyproject.toml ]; then
-            pip install -e .[dev,test]
+            pip install --prefer-binary -e .[dev,test]
           elif [ -f requirements.txt ]; then
-            pip install -r requirements.txt
+            pip install --prefer-binary -r requirements.txt
           elif [ -f requirements-dev.txt ]; then
-            pip install -r requirements-dev.txt
+            pip install --prefer-binary -r requirements-dev.txt
           fi
 
       - name: Run Ruff lint
