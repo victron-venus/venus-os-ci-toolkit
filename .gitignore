@@ -1,0 +1,63 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.eggs/
+dist/
+build/
+logs
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# SSL certificates (generated locally)
+*.pem
+*.crt
+*.key
+
+# Logs
+*.log
+
+# Local config overrides
+config.local.py
+
+# Site config (contains API keys, tokens, IPs)
+site_config.py
+local_config.py
+HA_SENSORS.md
+
+LOGIC_RUS.md
+commit.txt
+release.sh
+release.txt
+postinstall.sh
+restart.sh
+PLAN.md
+
+# Coverage
+.coverage
+*.cover
+
+# Agent memory files
+CLAUDE.md
+
+# Agent MCP config (local, machine-specific)
+.mcp.json
+inverter-monitoring
+release.txt
+*.bak

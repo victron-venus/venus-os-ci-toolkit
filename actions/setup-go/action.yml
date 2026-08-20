@@ -5,10 +5,6 @@ inputs:
     description: 'Go version to install'
     required: false
     default: '1.23'
-  cache-key:
-    description: 'Custom cache key suffix'
-    required: false
-    default: ''
 runs:
   using: 'composite'
   steps:
@@ -17,7 +13,6 @@ runs:
       with:
         go-version: ${{ inputs.go-version }}
         cache: true
-        cache-key: ${{ inputs.cache-key }}
 
     - name: Install common tools
       shell: bash
