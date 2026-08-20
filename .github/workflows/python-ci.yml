@@ -56,14 +56,17 @@ jobs:
         shell: bash
         run: |
           sudo apt-get update
-          sudo apt-get install -y libdbus-1-dev
+          # Install multiple possible dbus development packages to ensure we get the right one
+          sudo apt-get install -y libdbus-1-dev dbus-dev
           # Verify dbus-1 is detectable by pkg-config
           if ! pkg-config --exists dbus-1; then
-            echo "ERROR: dbus-1 not found by pkg-config after installing libdbus-1-dev"
+            echo "ERROR: dbus-1 not found by pkg-config after installing dbus development packages"
             echo "Available dbus-related packages:"
             dpkg -l | grep dbus
             echo "Trying to locate dbus-1.pc file:"
             find /usr -name "dbus-1.pc" 2>/dev/null || echo "Not found"
+            echo "PKG_CONFIG_PATH: $PKG_CONFIG_PATH"
+            pkg-config --list-all | grep dbus || echo "No dbus packages found via pkg-config"
             exit 1
           fi
           echo "SUCCESS: dbus-1 found by pkg-config"
