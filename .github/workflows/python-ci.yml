@@ -56,14 +56,14 @@ jobs:
         shell: bash
         run: |
           sudo apt-get update
-          # Install dbus development package (libdbus-1-dev provides dbus-1.pc)
-          sudo apt-get install -y libdbus-1-dev
+          # Install dbus and glib development packages needed for dbus-python compilation
+          sudo apt-get install -y libdbus-1-dev libglib2.0-dev
           # Update library cache and pkgconfig path
           sudo ldconfig
           # Ensure pkgconfig path includes standard locations
           export PKG_CONFIG_PATH="${PKG_CONFIG_PATH}:/usr/lib/x86_64-linux-gnu/pkgconfig:/usr/lib/pkgconfig:/usr/share/pkgconfig"
-          # Verify dbus-1 is detectable by pkg-config with detailed diagnostics
-          echo "Checking for dbus-1 via pkg-config..."
+          # Verify both dbus-1 and glib-2.0 are detectable by pkg-config
+          echo "Checking for dbus-1 and glib-2.0 via pkg-config..."
           if ! pkg-config --exists dbus-1; then
             echo "ERROR: dbus-1 not found by pkg-config"
             echo "PKG_CONFIG_PATH: $PKG_CONFIG_PATH"
@@ -71,15 +71,22 @@ jobs:
             dpkg -l | grep dbus
             echo "Trying to locate dbus-1.pc file:"
             find /usr/lib -name "dbus-1.pc" 2>/dev/null || find /usr/share -name "dbus-1.pc" 2>/dev/null || echo "Not found"
-            echo "All pc files containing dbus:"
-            find /usr/lib -name "*.pc" -exec grep -l dbus {} \; 2>/dev/null || echo "None found"
-            echo "Last 20 lines of pkg-config --debug output:"
-            pkg-config --debug --exists dbus-1 2>&1 | tail -20 || echo "Debug output unavailable"
             exit 1
           fi
-          echo "SUCCESS: dbus-1 found by pkg-config"
-          echo "CFLAGS: $(pkg-config --cflags dbus-1)"
-          echo "LIBS: $(pkg-config --libs dbus-1)"
+          if ! pkg-config --exists glib-2.0; then
+            echo "ERROR: glib-2.0 not found by pkg-config"
+            echo "PKG_CONFIG_PATH: $PKG_CONFIG_PATH"
+            echo "Available glib-related packages:"
+            dpkg -l | grep glib
+            echo "Trying to locate glib-2.0.pc file:"
+            find /usr/lib -name "glib-2.0.pc" 2>/dev/null || find /usr/share -name "glib-2.0.pc" 2>/dev/null || echo "Not found"
+            exit 1
+          fi
+          echo "SUCCESS: dbus-1 and glib-2.0 found by pkg-config"
+          echo "dbus-1 CFLAGS: $(pkg-config --cflags dbus-1)"
+          echo "dbus-1 LIBS: $(pkg-config --libs dbus-1)"
+          echo "glib-2.0 CFLAGS: $(pkg-config --cflags glib-2.0)"
+          echo "glib-2.0 LIBS: $(pkg-config --libs glib-2.0)"
 
       - name: Install dependencies
         if: inputs.install-dependencies
