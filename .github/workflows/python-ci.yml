@@ -57,6 +57,17 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libdbus-1-dev
+          # Verify dbus-1 is detectable by pkg-config
+          if ! pkg-config --exists dbus-1; then
+            echo "ERROR: dbus-1 not found by pkg-config after installing libdbus-1-dev"
+            echo "Available dbus-related packages:"
+            dpkg -l | grep dbus
+            echo "Trying to locate dbus-1.pc file:"
+            find /usr -name "dbus-1.pc" 2>/dev/null || echo "Not found"
+            exit 1
+          fi
+          echo "SUCCESS: dbus-1 found by pkg-config"
+          pkg-config --cflags --libs dbus-1
 
       - name: Install dependencies
         if: inputs.install-dependencies
