@@ -7,10 +7,18 @@ on:
       authors:
         description: 'JSON array of PR author logins whose PRs are auto-approved'
         type: string
-        default: '["dependabot[bot]","renovate[bot]","4alvit"]'
+        # Bots only by default. A human account CANNOT be approved by its own
+        # PAT ("Can not approve your own pull request"), so include a human
+        # login here ONLY together with a BOT_PAT from a different account
+        # dedicated to reviews.
+        default: '["dependabot[bot]","renovate[bot]"]'
     secrets:
       BOT_PAT:
-        description: 'GitHub token (BOT_PAT) for approving PRs; must belong to an account OTHER than the PR authors (GitHub forbids self-approval and GITHUB_TOKEN approvals)'
+        description: >-
+          GitHub token (BOT_PAT) used to create the approving review. Required
+          for the step to run at all: GITHUB_TOKEN can never approve PRs, and
+          the token must belong to an account OTHER than the PR authors above.
+          When unset, the step skips cleanly.
         required: false
 
 jobs:
