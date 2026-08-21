@@ -8,6 +8,14 @@ on:
         description: 'Comma-separated PR authors to auto-approve (exact login, no spaces)'
         type: string
         default: 'dependabot[bot],renovate[bot],4alvit'
+      required-reviews:
+        description: 'Unused, kept for caller compatibility'
+        type: string
+        default: '1'
+      pr-types:
+        description: 'Unused, kept for caller compatibility'
+        type: string
+        default: 'dependencies'
     secrets:
       BOT_PAT:
         description: 'GitHub token (BOT_PAT) for approving PRs; falls back to github.token'
