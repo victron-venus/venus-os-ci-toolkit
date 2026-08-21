@@ -1,21 +1,13 @@
 name: 'Auto Approve'
-description: 'Auto-approve Dependabot and Renovate PRs'
+description: 'Auto-approve PRs opened by configured authors'
 
 on:
   workflow_call:
     inputs:
       pr-author:
-        description: 'PR author to auto-approve (comma-separated)'
+        description: 'Comma-separated PR authors to auto-approve (exact login, no spaces)'
         type: string
         default: 'dependabot[bot],renovate[bot],4alvit'
-      required-reviews:
-        description: 'Number of required approvals'
-        type: string
-        default: '1'
-      pr-types:
-        description: 'PR types to auto-approve (comma-separated: dependencies, all)'
-        type: string
-        default: 'dependencies'
     secrets:
       BOT_PAT:
         description: 'GitHub token (BOT_PAT) for approving PRs; falls back to github.token'
@@ -30,14 +22,10 @@ jobs:
       pull-requests: write
     env:
       ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: "true"
+    # auto-approve-action v4 cannot filter by author/type, so gate here.
+    if: contains(split(inputs.pr-author, ','), github.actor)
     steps:
       - name: Auto Approve
         uses: hmarr/auto-approve-action@f0939ea97e9205ef24d872e76833fa908a770363
         with:
-          # pr-author/required-reviews/pr-types are accepted for caller
-          # compatibility but unused: auto-approve-action v4 has no such
-          # inputs and approves every triggering PR.
           github-token: ${{ secrets.BOT_PAT || github.token }}
-          pr-author: ${{ inputs.pr-author }}
-          required-reviews: ${{ inputs.required-reviews }}
-          pr-types: ${{ inputs.pr-types }}
