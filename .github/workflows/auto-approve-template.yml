@@ -12,9 +12,9 @@ permissions:
 jobs:
   auto-approve:
     name: Auto Approve
-    uses: victron-venus/venus-os-ci-toolkit/.github/workflows/auto-approve.yml@main
+    uses: victron-venus/venus-os-ci-toolkit/.github/workflows/auto-approve.yml@875762362bb31b4899bf02fdf9e835188dc5eb80
     # Pin to specific SHA for supply-chain security:
-    # uses: victron-venus/venus-os-ci-toolkit/.github/workflows/auto-approve.yml@875762362bb31b4899bf02fdf9e835188dc5eb80
+    # uses: victron-venus/venus-os-ci-toolkit/.github/workflows/auto-approve.yml@main
     with:
       pr-author: 'dependabot[bot],renovate[bot],4alvit'
       required-reviews: '0'

@@ -47,7 +47,7 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
 
       - name: Setup Python
-        uses: victron-venus/venus-os-ci-toolkit/actions/setup-python@main
+        uses: victron-venus/venus-os-ci-toolkit/actions/setup-python@6da015c8cece60541100e55c14829f2c34a01d6e
         with:
           python-version: ${{ inputs.python-version }}
 
@@ -57,13 +57,13 @@ jobs:
         run: |
           sudo apt-get update
           # Install dbus, glib, cairo and gobject-introspection development packages needed for dbus-python and PyGObject compilation
-          sudo apt-get install -y libdbus-1-dev libglib2.0-dev libcairo2-dev libgirepository1.0-dev
+          sudo apt-get install -y libdbus-1-dev libglib2.0-dev libcairo2-dev libgirepository-1.0-dev
           # Update library cache and pkgconfig path
           sudo ldconfig
           # Ensure pkgconfig path includes standard locations
           export PKG_CONFIG_PATH="${PKG_CONFIG_PATH}:/usr/lib/x86_64-linux-gnu/pkgconfig:/usr/lib/pkgconfig:/usr/share/pkgconfig"
           # Verify all required dependencies are detectable by pkg-config
-          echo "Checking for dbus-1, glib-2.0, cairo and girepository-1.0 via pkg-config..."
+          echo "Checking for dbus-1, glib-2.0, cairo and gobject-introspection-1.0 via pkg-config..."
           if ! pkg-config --exists dbus-1; then
             echo "ERROR: dbus-1 not found by pkg-config"
             echo "PKG_CONFIG_PATH: $PKG_CONFIG_PATH"
@@ -91,13 +91,19 @@ jobs:
             find /usr/lib -name "cairo.pc" 2>/dev/null || find /usr/share -name "cairo.pc" 2>/dev/null || echo "Not found"
             exit 1
           fi
-          if ! pkg-config --exists girepository-1.0; then
-            echo "ERROR: girepository-1.0 not found by pkg-config"
+          if ! pkg-config --exists gobject-introspection-1.0; then
+            echo "ERROR: gobject-introspection-1.0 not found by pkg-config"
             echo "PKG_CONFIG_PATH: $PKG_CONFIG_PATH"
             echo "Available girepository-related packages:"
             dpkg -l | grep girepository
-            echo "Trying to locate girepository-1.0.pc file:"
-            find /usr/lib -name "girepository-1.0.pc" 2>/dev/null || find /usr/share -name "girepository-1.0.pc" 2>/dev/null || echo "Not found"
+            echo "Available gir*-related packages:"
+            dpkg -l | grep '^ii  gir'
+            echo "Looking for gobject-introspection-1.0.pc file:"
+            find /usr/lib -name "gobject-introspection-1.0.pc" 2>/dev/null || find /usr/share -name "gobject-introspection-1.0.pc" 2>/dev/null || echo "Not found"
+            echo "Looking for any girepository*.pc files:"
+            find /usr/lib -name "girepository*.pc" 2>/dev/null || find /usr/share -name "girepository*.pc" 2>/dev/null || echo "Not found"
+            echo "Looking for any gir*.pc files:"
+            find /usr/lib -name "gir*.pc" 2>/dev/null || find /usr/share -name "gir*.pc" 2>/dev/null || echo "Not found"
             exit 1
           fi
           echo "SUCCESS: All dependencies found by pkg-config"
@@ -107,8 +113,8 @@ jobs:
           echo "glib-2.0 LIBS: $(pkg-config --libs glib-2.0)"
           echo "cairo CFLAGS: $(pkg-config --cflags cairo)"
           echo "cairo LIBS: $(pkg-config --libs cairo)"
-          echo "girepository-1.0 CFLAGS: $(pkg-config --cflags girepository-1.0)"
-          echo "girepository-1.0 LIBS: $(pkg-config --libs girepository-1.0)"
+          echo "gobject-introspection-1.0 CFLAGS: $(pkg-config --cflags gobject-introspection-1.0)"
+          echo "gobject-introspection-1.0 LIBS: $(pkg-config --libs gobject-introspection-1.0)"
 
       - name: Install dependencies
         if: inputs.install-dependencies

@@ -77,7 +77,7 @@ jobs:
           fetch-depth: 0
 
       - name: Setup Docker Buildx
-        uses: victron-venus/venus-os-ci-toolkit/actions/setup-docker@main
+        uses: victron-venus/venus-os-ci-toolkit/actions/setup-docker@6da015c8cece60541100e55c14829f2c34a01d6e
         with:
           platforms: ${{ inputs.platforms }}
 
