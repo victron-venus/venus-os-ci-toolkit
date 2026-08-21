@@ -22,10 +22,12 @@ jobs:
       pull-requests: write
     env:
       ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: "true"
-    # auto-approve-action v4 cannot filter by author/type, so gate here.
-    if: contains(split(inputs.pr-author, ','), github.actor)
     steps:
       - name: Auto Approve
+        # auto-approve-action v4 cannot filter by author/type, so gate here.
+        # Step-level (not job-level): inputs context is unreliable in a called
+        # job's if and fails workflow validation at startup.
+        if: contains(split(inputs.pr-author, ','), github.actor)
         uses: hmarr/auto-approve-action@f0939ea97e9205ef24d872e76833fa908a770363
         with:
           github-token: ${{ secrets.BOT_PAT || github.token }}
