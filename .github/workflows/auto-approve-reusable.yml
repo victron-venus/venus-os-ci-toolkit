@@ -10,7 +10,7 @@ on:
         default: '["dependabot[bot]","renovate[bot]","4alvit"]'
     secrets:
       BOT_PAT:
-        description: 'GitHub token (BOT_PAT) for approving PRs; falls back to github.token'
+        description: 'GitHub token (BOT_PAT) for approving PRs; must belong to an account OTHER than the PR authors (GitHub forbids self-approval and GITHUB_TOKEN approvals)'
         required: false
 
 jobs:
@@ -22,12 +22,19 @@ jobs:
       pull-requests: write
     env:
       ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: "true"
+      # secrets are not readable in step-level if:, so surface via env
+      BOT_PAT: ${{ secrets.BOT_PAT }}
     steps:
       - name: Auto Approve
         # auto-approve-action v4 has no author filtering, so gate here.
         # NB: split() in an if condition fails reusable-workflow validation,
         # hence the JSON-array input parsed with fromJSON().
-        if: contains(fromJSON(inputs.authors), github.actor)
+        # GITHUB_TOKEN can never approve PRs (GitHub policy), so when BOT_PAT
+        # is not configured we skip cleanly instead of failing every match.
+        # Callers MUST forward the secret: secrets: {BOT_PAT: ${{ secrets.BOT_PAT }}}
+        if: >-
+          contains(fromJSON(inputs.authors), github.event.pull_request.user.login) &&
+          env.BOT_PAT != ''
         uses: hmarr/auto-approve-action@f0939ea97e9205ef24d872e76833fa908a770363
         with:
-          github-token: ${{ secrets.BOT_PAT || github.token }}
+          github-token: ${{ env.BOT_PAT }}
