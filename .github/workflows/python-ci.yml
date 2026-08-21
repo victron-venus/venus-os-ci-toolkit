@@ -57,13 +57,15 @@ jobs:
         run: |
           sudo apt-get update
           # Install dbus, glib, cairo and gobject-introspection development packages needed for dbus-python and PyGObject compilation
-          sudo apt-get install -y libdbus-1-dev libglib2.0-dev libcairo2-dev libgirepository-1.0-dev
+          sudo apt-get install -y libdbus-1-dev libglib2.0-dev libcairo2-dev libgirepository-2.0-dev libgirepository1.0-dev
           # Update library cache and pkgconfig path
           sudo ldconfig
           # Ensure pkgconfig path includes standard locations
           export PKG_CONFIG_PATH="${PKG_CONFIG_PATH}:/usr/lib/x86_64-linux-gnu/pkgconfig:/usr/lib/pkgconfig:/usr/share/pkgconfig"
-          # Verify all required dependencies are detectable by pkg-config
-          echo "Checking for dbus-1, glib-2.0, cairo and gobject-introspection-1.0 via pkg-config..."
+          # Verify all required dependencies are detectable by pkg-config.
+          # Ubuntu 24.04 (glib 2.80) dropped girepository-1.0/gobject-introspection-1.0 .pc files;
+          # only girepository-2.0 exists there, older runners ship the 1.0 names.
+          echo "Checking for dbus-1, glib-2.0, cairo and gobject introspection via pkg-config..."
           if ! pkg-config --exists dbus-1; then
             echo "ERROR: dbus-1 not found by pkg-config"
             echo "PKG_CONFIG_PATH: $PKG_CONFIG_PATH"
@@ -91,21 +93,25 @@ jobs:
             find /usr/lib -name "cairo.pc" 2>/dev/null || find /usr/share -name "cairo.pc" 2>/dev/null || echo "Not found"
             exit 1
           fi
-          if ! pkg-config --exists gobject-introspection-1.0; then
-            echo "ERROR: gobject-introspection-1.0 not found by pkg-config"
+          GI_MOD=""
+          for mod in girepository-2.0 girepository-1.0 gobject-introspection-1.0; do
+            if pkg-config --exists "$mod"; then
+              GI_MOD="$mod"
+              break
+            fi
+          done
+          if [ -z "$GI_MOD" ]; then
+            echo "ERROR: no girepository/gobject-introspection module found by pkg-config"
             echo "PKG_CONFIG_PATH: $PKG_CONFIG_PATH"
             echo "Available girepository-related packages:"
             dpkg -l | grep girepository
             echo "Available gir*-related packages:"
             dpkg -l | grep '^ii  gir'
-            echo "Looking for gobject-introspection-1.0.pc file:"
-            find /usr/lib -name "gobject-introspection-1.0.pc" 2>/dev/null || find /usr/share -name "gobject-introspection-1.0.pc" 2>/dev/null || echo "Not found"
-            echo "Looking for any girepository*.pc files:"
-            find /usr/lib -name "girepository*.pc" 2>/dev/null || find /usr/share -name "girepository*.pc" 2>/dev/null || echo "Not found"
             echo "Looking for any gir*.pc files:"
-            find /usr/lib -name "gir*.pc" 2>/dev/null || find /usr/share -name "gir*.pc" 2>/dev/null || echo "Not found"
+            find /usr/lib -name "gir*.pc" 2>/dev/null; find /usr/share -name "gir*.pc" 2>/dev/null
             exit 1
           fi
+          echo "Using introspection module: $GI_MOD"
           echo "SUCCESS: All dependencies found by pkg-config"
           echo "dbus-1 CFLAGS: $(pkg-config --cflags dbus-1)"
           echo "dbus-1 LIBS: $(pkg-config --libs dbus-1)"
@@ -113,8 +119,8 @@ jobs:
           echo "glib-2.0 LIBS: $(pkg-config --libs glib-2.0)"
           echo "cairo CFLAGS: $(pkg-config --cflags cairo)"
           echo "cairo LIBS: $(pkg-config --libs cairo)"
-          echo "gobject-introspection-1.0 CFLAGS: $(pkg-config --cflags gobject-introspection-1.0)"
-          echo "gobject-introspection-1.0 LIBS: $(pkg-config --libs gobject-introspection-1.0)"
+          echo "$GI_MOD CFLAGS: $(pkg-config --cflags "$GI_MOD")"
+          echo "$GI_MOD LIBS: $(pkg-config --libs "$GI_MOD")"
 
       - name: Install dependencies
         if: inputs.install-dependencies
