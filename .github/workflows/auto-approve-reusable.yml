@@ -4,18 +4,10 @@ description: 'Auto-approve PRs opened by configured authors'
 on:
   workflow_call:
     inputs:
-      pr-author:
-        description: 'Comma-separated PR authors to auto-approve (exact login, no spaces)'
+      authors:
+        description: 'JSON array of PR author logins whose PRs are auto-approved'
         type: string
-        default: 'dependabot[bot],renovate[bot],4alvit'
-      required-reviews:
-        description: 'Unused, kept for caller compatibility'
-        type: string
-        default: '1'
-      pr-types:
-        description: 'Unused, kept for caller compatibility'
-        type: string
-        default: 'dependencies'
+        default: '["dependabot[bot]","renovate[bot]","4alvit"]'
     secrets:
       BOT_PAT:
         description: 'GitHub token (BOT_PAT) for approving PRs; falls back to github.token'
@@ -32,7 +24,10 @@ jobs:
       ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: "true"
     steps:
       - name: Auto Approve
-        if: contains(split(inputs['pr-author'], ','), github.actor)
+        # auto-approve-action v4 has no author filtering, so gate here.
+        # NB: split() in an if condition fails reusable-workflow validation,
+        # hence the JSON-array input parsed with fromJSON().
+        if: contains(fromJSON(inputs.authors), github.actor)
         uses: hmarr/auto-approve-action@f0939ea97e9205ef24d872e76833fa908a770363
         with:
           github-token: ${{ secrets.BOT_PAT || github.token }}
