@@ -20,23 +20,24 @@ on:
       BOT_PAT:
         description: 'GitHub token (BOT_PAT) for approving PRs; falls back to github.token'
         required: false
-    jobs:
-      auto-approve:
-        name: Auto Approve
-        runs-on: ubuntu-latest
-        permissions:
-          contents: read
-          pull-requests: write
-        env:
-          ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: "true"
-        steps:
-          - name: Auto Approve
-            uses: hmarr/auto-approve-action@f0939ea97e9205ef24d872e76833fa908a770363
-            with:
-              # pr-author/required-reviews/pr-types are accepted for caller
-              # compatibility but unused: auto-approve-action v4 has no such
-              # inputs and approves every triggering PR.
-              github-token: ${{ secrets.BOT_PAT || github.token }}
-              pr-author: ${{ inputs.pr-author }}
-              required-reviews: ${{ inputs.required-reviews }}
-              pr-types: ${{ inputs.pr-types }}
+
+jobs:
+  auto-approve:
+    name: Auto Approve
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    env:
+      ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: "true"
+    steps:
+      - name: Auto Approve
+        uses: hmarr/auto-approve-action@f0939ea97e9205ef24d872e76833fa908a770363
+        with:
+          # pr-author/required-reviews/pr-types are accepted for caller
+          # compatibility but unused: auto-approve-action v4 has no such
+          # inputs and approves every triggering PR.
+          github-token: ${{ secrets.BOT_PAT || github.token }}
+          pr-author: ${{ inputs.pr-author }}
+          required-reviews: ${{ inputs.required-reviews }}
+          pr-types: ${{ inputs.pr-types }}
