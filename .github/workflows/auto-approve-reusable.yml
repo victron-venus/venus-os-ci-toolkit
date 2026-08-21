@@ -7,11 +7,12 @@ on:
       authors:
         description: 'JSON array of PR author logins whose PRs are auto-approved'
         type: string
-        # Bots only by default. A human account CANNOT be approved by its own
-        # PAT ("Can not approve your own pull request"), so include a human
-        # login here ONLY together with a BOT_PAT from a different account
-        # dedicated to reviews.
-        default: '["dependabot[bot]","renovate[bot]"]'
+        # Bots plus the org's human owner. 4alvit PRs are approved by the
+        # dedicated bot account whose PAT is the org-level BOT_PAT secret -
+        # a human account CANNOT be approved by its own PAT ("Can not approve
+        # your own pull request"), so keep that invariant: every login listed
+        # here must differ from the account behind BOT_PAT.
+        default: '["dependabot[bot]","renovate[bot]","4alvit"]'
     secrets:
       BOT_PAT:
         description: >-
