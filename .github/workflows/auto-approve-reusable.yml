@@ -5,9 +5,13 @@ on:
   workflow_call:
     inputs:
       pr-author:
-        description: 'Comma-separated PR authors to auto-approve (exact login, no spaces)'
+        description: 'Unused, kept for caller compatibility'
         type: string
         default: 'dependabot[bot],renovate[bot],4alvit'
+      pr_author_json:
+        description: 'JSON array of PR authors to auto-approve'
+        type: string
+        default: '["dependabot[bot]","renovate[bot]","4alvit"]'
       required-reviews:
         description: 'Unused, kept for caller compatibility'
         type: string
@@ -32,6 +36,7 @@ jobs:
       ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: "true"
     steps:
       - name: Auto Approve
+        if: contains(fromJSON(inputs.pr_author_json), github.actor)
         uses: hmarr/auto-approve-action@f0939ea97e9205ef24d872e76833fa908a770363
         with:
           github-token: ${{ secrets.BOT_PAT || github.token }}
