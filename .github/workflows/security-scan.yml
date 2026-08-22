@@ -1,5 +1,5 @@
 name: 'Reusable Security Scan'
-description: 'Reusable workflow for security scanning (CodeQL, Trivy, Dependency Review)'
+# description: 'Reusable workflow for security scanning (CodeQL, Trivy, Dependency Review)'
 on:
   workflow_call:
     inputs:

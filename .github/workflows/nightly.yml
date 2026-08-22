@@ -1,5 +1,5 @@
 name: 'Reusable Nightly Build'
-description: 'Reusable workflow for nightly builds'
+# description: 'Reusable workflow for nightly builds'
 on:
   workflow_call:
     inputs:

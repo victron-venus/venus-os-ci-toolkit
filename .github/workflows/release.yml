@@ -1,5 +1,5 @@
 name: 'Reusable Release'
-description: 'Reusable workflow to create GitHub releases from tags'
+# description: 'Reusable workflow to create GitHub releases from tags'
 on:
   workflow_call:
     inputs:

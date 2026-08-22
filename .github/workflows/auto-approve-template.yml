@@ -1,5 +1,5 @@
 name: 'Auto Approve PRs'
-description: 'Auto-approve Dependabot, Renovate, and 4alvit PRs'
+# description: 'Auto-approve Dependabot, Renovate, and 4alvit PRs'
 
 on:
   pull_request:

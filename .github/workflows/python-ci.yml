@@ -1,5 +1,5 @@
 name: 'Reusable Python CI'
-description: 'Reusable CI workflow for Python projects'
+# description: 'Reusable CI workflow for Python projects'
 on:
   workflow_call:
     inputs:
