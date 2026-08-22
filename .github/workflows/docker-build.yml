@@ -1,5 +1,5 @@
 name: 'Reusable Docker Build & Publish'
-description: 'Reusable workflow to build and publish Docker images to a registry'
+# description: 'Reusable workflow to build and publish Docker images to a registry'
 on:
   workflow_call:
     inputs:

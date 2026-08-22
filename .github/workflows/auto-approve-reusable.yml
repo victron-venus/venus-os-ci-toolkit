@@ -1,5 +1,5 @@
 name: 'Auto Approve'
-description: 'Auto-approve PRs opened by configured authors'
+# description: 'Auto-approve PRs opened by configured authors'
 
 on:
   workflow_call:

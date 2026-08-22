@@ -1,5 +1,5 @@
 name: 'Reusable Go CI'
-description: 'Reusable CI workflow for Go projects'
+# description: 'Reusable CI workflow for Go projects'
 on:
   workflow_call:
     inputs:

@@ -1,5 +1,5 @@
 name: 'Auto Merge'
-description: 'Auto-merge PRs when checks pass'
+# description: 'Auto-merge PRs when checks pass'
 on:
   workflow_call:
     inputs:

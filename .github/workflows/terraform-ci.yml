@@ -1,5 +1,5 @@
 name: 'Reusable Terraform CI'
-description: 'Reusable CI workflow for Terraform projects'
+# description: 'Reusable CI workflow for Terraform projects'
 on:
   workflow_call:
     inputs:

@@ -1,5 +1,5 @@
 name: 'Reusable Scorecard'
-description: 'Reusable workflow for OpenSSF Scorecard'
+# description: 'Reusable workflow for OpenSSF Scorecard'
 on:
   workflow_call: {}
 jobs:

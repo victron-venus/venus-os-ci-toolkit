@@ -1,5 +1,5 @@
 name: 'Reusable Rust CI'
-description: 'Reusable CI workflow for Rust projects'
+# description: 'Reusable CI workflow for Rust projects'
 on:
   workflow_call:
     inputs:
