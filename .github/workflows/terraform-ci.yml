@@ -41,7 +41,9 @@ jobs:
         run: terraform fmt -check -recursive
 
       - name: Terraform Init
-        run: terraform init -input=false
+        # -backend=false: validate/lint never touch state, and remote backends
+        # (e.g. Terraform Cloud) would demand credentials CI does not have.
+        run: terraform init -input=false -backend=false
 
       - name: Terraform Validate
         run: terraform validate
