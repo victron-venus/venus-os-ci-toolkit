@@ -15,8 +15,11 @@ on:
         description: 'Required status checks to pass (comma-separated)'
         type: string
         default: 'CI,codeql,trivy'
-      secrets:
+    secrets:
       BOT_PAT:
+        description: >-
+          Token of the bot account that merges PRs. Must belong to an account
+          OTHER than the PR author.
         required: true
 jobs:
   auto-merge:
