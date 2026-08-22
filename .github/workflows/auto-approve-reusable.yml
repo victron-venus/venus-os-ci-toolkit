@@ -34,6 +34,27 @@ jobs:
       # secrets are not readable in step-level if:, so surface via env
       BOT_PAT: ${{ secrets.BOT_PAT }}
     steps:
+      - name: Dismiss stale approval
+        # Rulesets with require_last_push_approval invalidate the bot's old
+        # approval on every new push ("Review required" despite the standing
+        # APPROVED review). auto-approve-action only checks whether the user
+        # already approved and skips, so drop our own stale review first to
+        # let a fresh one land on the head commit.
+        if: >-
+          contains(fromJSON(inputs.authors), github.event.pull_request.user.login) &&
+          env.BOT_PAT != ''
+        env:
+          GH_TOKEN: ${{ secrets.BOT_PAT }}
+        run: |
+          pr="${{ github.event.pull_request.number }}"
+          me="$(gh api user --jq .login)"
+          ids="$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$pr/reviews" \
+            --jq ".[] | select(.user.login == \"$me\" and .state == \"APPROVED\") | .id")"
+          for id in $ids; do
+            gh api -X DELETE "repos/$GITHUB_REPOSITORY/pulls/$pr/reviews/$id" >/dev/null
+            echo "dismissed stale review $id"
+          done
+
       - name: Auto Approve
         # auto-approve-action v4 has no author filtering, so gate here.
         # NB: split() in an if condition fails reusable-workflow validation,
