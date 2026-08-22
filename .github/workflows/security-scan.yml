@@ -41,13 +41,13 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
 
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@v3
+        uses: github/codeql-action/init@42947a340483f03ba47bb1a039b2c519aab3df85 # v3
         with:
           languages: ${{ inputs.languages }}
           queries: security-extended,security-and-quality
 
       - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@v3
+        uses: github/codeql-action/analyze@42947a340483f03ba47bb1a039b2c519aab3df85 # v3
         with:
           category: "/language:${{ inputs.languages }}"
 
@@ -63,7 +63,7 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
 
       - name: Run Trivy
-        uses: aquasecurity/trivy-action@v0.28.0
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.35.0 (fixes GHSA-69fq-xp46-6x23)
         with:
           scan-type: 'fs'
           scan-ref: ${{ inputs.working-directory }}
@@ -75,7 +75,7 @@ jobs:
           vuln-type: 'os,library'
 
       - name: Upload Trivy results
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@42947a340483f03ba47bb1a039b2c519aab3df85 # v3
         with:
           sarif_file: 'trivy-results.sarif'
           category: trivy
@@ -91,7 +91,7 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
 
       - name: Dependency Review
-        uses: actions/dependency-review-action@v4
+        uses: actions/dependency-review-action@2031cfc080254a8a887f58cffee85186f0e49e48 # v4
         with:
           config-file: '.github/dependency-review-config.yml'
           fail-on-severity: high
