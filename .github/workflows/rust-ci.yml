@@ -95,9 +95,12 @@ jobs:
         with:
           node-version: ${{ inputs.node-version }}
           cache: npm
-      - working-directory: ${{ inputs.frontend-working-directory || inputs.working-directory }}
-      - run: npm ci --ignore-scripts
+      - name: Install dependencies
+        working-directory: ${{ inputs.frontend-working-directory || inputs.working-directory }}
+        run: npm ci --ignore-scripts
       - name: Prettier check
+        working-directory: ${{ inputs.frontend-working-directory || inputs.working-directory }}
         run: npm run format:check
       - name: Build frontend
+        working-directory: ${{ inputs.frontend-working-directory || inputs.working-directory }}
         run: npm run build

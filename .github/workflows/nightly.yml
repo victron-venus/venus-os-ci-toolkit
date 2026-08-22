@@ -19,15 +19,23 @@ jobs:
   nightly:
     name: Nightly Build
     runs-on: ubuntu-latest
+    # createWorkflowDispatch requires actions:write
     permissions:
       contents: read
+      actions: write
     steps:
       - name: Trigger nightly workflow
-        uses: actions/github-script@v7
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
+        with:
+          script: |
+            // Only forward the caller-supplied JSON inputs; the wrapper's own
+            // inputs (cron, workflow-to-trigger, workflow-inputs) are not
+            // inputs of the target workflow and would be rejected.
+            const target = JSON.parse(${{ toJSON(inputs) }}['workflow-inputs'] || '{}');
             await github.rest.actions.createWorkflowDispatch({
               owner: context.repo.owner,
               repo: context.repo.repo,
               workflow_id: '${{ inputs.workflow-to-trigger }}',
               ref: 'main',
-              inputs: inputs
+              inputs: target,
             });
