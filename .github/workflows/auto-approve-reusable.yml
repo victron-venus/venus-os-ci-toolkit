@@ -51,7 +51,10 @@ jobs:
           ids="$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$pr/reviews" \
             --jq ".[] | select(.user.login == \"$me\" and .state == \"APPROVED\") | .id")"
           for id in $ids; do
-            gh api -X DELETE "repos/$GITHUB_REPOSITORY/pulls/$pr/reviews/$id" >/dev/null
+            # DELETE /reviews/{id} only works on PENDING reviews; dismissing a
+            # submitted review requires the dismissals endpoint.
+            gh api -X PUT "repos/$GITHUB_REPOSITORY/pulls/$pr/reviews/$id/dismissals" \
+              -f message="Auto-approve: re-approving after new push" >/dev/null
             echo "dismissed stale review $id"
           done
 
