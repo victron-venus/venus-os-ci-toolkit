@@ -47,20 +47,92 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
 
       - name: Setup Python
-        uses: victron-venus/venus-os-ci-toolkit/actions/setup-python@main
+        uses: victron-venus/venus-os-ci-toolkit/actions/setup-python@6da015c8cece60541100e55c14829f2c34a01d6e
         with:
           python-version: ${{ inputs.python-version }}
+
+      - name: Install system dependencies
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo apt-get update
+          # Install dbus, glib, cairo and gobject-introspection development packages needed for dbus-python and PyGObject compilation
+          sudo apt-get install -y libdbus-1-dev libglib2.0-dev libcairo2-dev libgirepository-2.0-dev libgirepository1.0-dev
+          # Update library cache and pkgconfig path
+          sudo ldconfig
+          # Ensure pkgconfig path includes standard locations
+          export PKG_CONFIG_PATH="${PKG_CONFIG_PATH}:/usr/lib/x86_64-linux-gnu/pkgconfig:/usr/lib/pkgconfig:/usr/share/pkgconfig"
+          # Verify all required dependencies are detectable by pkg-config.
+          # Ubuntu 24.04 (glib 2.80) dropped girepository-1.0/gobject-introspection-1.0 .pc files;
+          # only girepository-2.0 exists there, older runners ship the 1.0 names.
+          echo "Checking for dbus-1, glib-2.0, cairo and gobject introspection via pkg-config..."
+          if ! pkg-config --exists dbus-1; then
+            echo "ERROR: dbus-1 not found by pkg-config"
+            echo "PKG_CONFIG_PATH: $PKG_CONFIG_PATH"
+            echo "Available dbus-related packages:"
+            dpkg -l | grep dbus
+            echo "Trying to locate dbus-1.pc file:"
+            find /usr/lib -name "dbus-1.pc" 2>/dev/null || find /usr/share -name "dbus-1.pc" 2>/dev/null || echo "Not found"
+            exit 1
+          fi
+          if ! pkg-config --exists glib-2.0; then
+            echo "ERROR: glib-2.0 not found by pkg-config"
+            echo "PKG_CONFIG_PATH: $PKG_CONFIG_PATH"
+            echo "Available glib-related packages:"
+            dpkg -l | grep glib
+            echo "Trying to locate glib-2.0.pc file:"
+            find /usr/lib -name "glib-2.0.pc" 2>/dev/null || find /usr/share -name "glib-2.0.pc" 2>/dev/null || echo "Not found"
+            exit 1
+          fi
+          if ! pkg-config --exists cairo; then
+            echo "ERROR: cairo not found by pkg-config"
+            echo "PKG_CONFIG_PATH: $PKG_CONFIG_PATH"
+            echo "Available cairo-related packages:"
+            dpkg -l | grep cairo
+            echo "Trying to locate cairo.pc file:"
+            find /usr/lib -name "cairo.pc" 2>/dev/null || find /usr/share -name "cairo.pc" 2>/dev/null || echo "Not found"
+            exit 1
+          fi
+          GI_MOD=""
+          for mod in girepository-2.0 girepository-1.0 gobject-introspection-1.0; do
+            if pkg-config --exists "$mod"; then
+              GI_MOD="$mod"
+              break
+            fi
+          done
+          if [ -z "$GI_MOD" ]; then
+            echo "ERROR: no girepository/gobject-introspection module found by pkg-config"
+            echo "PKG_CONFIG_PATH: $PKG_CONFIG_PATH"
+            echo "Available girepository-related packages:"
+            dpkg -l | grep girepository
+            echo "Available gir*-related packages:"
+            dpkg -l | grep '^ii  gir'
+            echo "Looking for any gir*.pc files:"
+            find /usr/lib -name "gir*.pc" 2>/dev/null; find /usr/share -name "gir*.pc" 2>/dev/null
+            exit 1
+          fi
+          echo "Using introspection module: $GI_MOD"
+          echo "SUCCESS: All dependencies found by pkg-config"
+          echo "dbus-1 CFLAGS: $(pkg-config --cflags dbus-1)"
+          echo "dbus-1 LIBS: $(pkg-config --libs dbus-1)"
+          echo "glib-2.0 CFLAGS: $(pkg-config --cflags glib-2.0)"
+          echo "glib-2.0 LIBS: $(pkg-config --libs glib-2.0)"
+          echo "cairo CFLAGS: $(pkg-config --cflags cairo)"
+          echo "cairo LIBS: $(pkg-config --libs cairo)"
+          echo "$GI_MOD CFLAGS: $(pkg-config --cflags "$GI_MOD")"
+          echo "$GI_MOD LIBS: $(pkg-config --libs "$GI_MOD")"
 
       - name: Install dependencies
         if: inputs.install-dependencies
         shell: bash
         run: |
+          # Prefer binary wheels to avoid compilation issues when possible
           if [ -f pyproject.toml ]; then
-            pip install -e .[dev,test]
+            pip install --prefer-binary -e .[dev,test]
           elif [ -f requirements.txt ]; then
-            pip install -r requirements.txt
+            pip install --prefer-binary -r requirements.txt
           elif [ -f requirements-dev.txt ]; then
-            pip install -r requirements-dev.txt
+            pip install --prefer-binary -r requirements-dev.txt
           fi
 
       - name: Run Ruff lint
@@ -89,7 +161,7 @@ jobs:
 
       - name: Upload coverage
         if: inputs.run-tests
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@b9fd7d16f6d7d1b5d2bec1a2887e65ceed900238 # v4
         with:
           files: ./coverage.xml
           fail_ci_if_error: false

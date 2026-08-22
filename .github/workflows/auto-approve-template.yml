@@ -12,12 +12,14 @@ permissions:
 jobs:
   auto-approve:
     name: Auto Approve
-    uses: victron-venus/venus-os-ci-toolkit/.github/workflows/auto-approve.yml@main
-    # Pin to specific SHA for supply-chain security:
-    # uses: victron-venus/venus-os-ci-toolkit/.github/workflows/auto-approve.yml@875762362bb31b4899bf02fdf9e835188dc5eb80
+    # Call the REUSABLE workflow (workflow_call), not auto-approve.yml,
+    # which is itself a pull_request-triggered caller and cannot be reused.
+    # Pin to specific SHA for supply-chain security.
+    uses: victron-venus/venus-os-ci-toolkit/.github/workflows/auto-approve-reusable.yml@4eaa91b6cdcc192a7ac3bc9d074042f70eb403cc
     with:
-      pr-author: 'dependabot[bot],renovate[bot],4alvit'
-      required-reviews: '0'
-      pr-types: 'all'
+      authors: '["dependabot[bot]","renovate[bot]","4alvit"]'
+    # BOT_PAT must be forwarded explicitly (reusable workflows receive no
+    # secrets by default) and must belong to an account OTHER than the
+    # authors listed above.
     secrets:
-      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      BOT_PAT: ${{ secrets.BOT_PAT }}

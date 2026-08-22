@@ -31,9 +31,6 @@ on:
         description: 'Whether to run govulncheck'
         type: boolean
         default: true
-    secrets:
-      GITHUB_TOKEN:
-        required: true
 jobs:
   ci:
     name: CI
@@ -46,7 +43,7 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
 
       - name: Setup Go
-        uses: victron-venus/venus-os-ci-toolkit/actions/setup-go@main
+        uses: victron-venus/venus-os-ci-toolkit/actions/setup-go@6da015c8cece60541100e55c14829f2c34a01d6e
         with:
           go-version: ${{ inputs.go-version }}
 
@@ -82,7 +79,7 @@ jobs:
 
       - name: Upload coverage
         if: inputs.run-tests
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@b9fd7d16f6d7d1b5d2bec1a2887e65ceed900238 # v4
         with:
           files: ./coverage.out
           fail_ci_if_error: false

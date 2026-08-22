@@ -15,9 +15,6 @@ on:
         description: 'Whether to run TFLint'
         type: boolean
         default: true
-    secrets:
-      GITHUB_TOKEN:
-        required: true
 jobs:
   ci:
     name: Terraform CI
@@ -30,7 +27,7 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
 
       - name: Set up Terraform
-        uses: hashicorp/setup-terraform@v3
+        uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
         with:
           terraform-version: ${{ inputs.terraform-version }}
           terraform-wrapper: false

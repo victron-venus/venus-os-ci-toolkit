@@ -1,27 +1,49 @@
 name: 'Auto Approve'
-description: 'Auto-approve Dependabot and Renovate PRs'
+description: 'Auto-approve PRs opened by configured authors'
 
 on:
   workflow_call:
     inputs:
-      review-message:
-        description: 'Review message for auto-approval'
+      authors:
+        description: 'JSON array of PR author logins whose PRs are auto-approved'
         type: string
-        default: 'Auto-approved by CI'
+        # Bots plus the org's human owner. 4alvit PRs are approved by the
+        # dedicated bot account whose PAT is the org-level BOT_PAT secret -
+        # a human account CANNOT be approved by its own PAT ("Can not approve
+        # your own pull request"), so keep that invariant: every login listed
+        # here must differ from the account behind BOT_PAT.
+        default: '["dependabot[bot]","renovate[bot]","4alvit"]'
     secrets:
-      GITHUB_TOKEN:
-        description: 'GitHub token for approving PRs'
-        required: true
-    jobs:
-      auto-approve:
-        name: Auto Approve
-        runs-on: ubuntu-latest
-        permissions:
-          contents: read
-          pull-requests: write
-        steps:
-          - name: Auto Approve
-            uses: hmarr/auto-approve-action@f0939ea97e9205ef24d872e76833fa908a770363
-            with:
-              github-token: ${{ secrets.GITHUB_TOKEN }}
-              review-message: ${{ inputs.review-message }}
+      BOT_PAT:
+        description: >-
+          GitHub token (BOT_PAT) used to create the approving review. Required
+          for the step to run at all: GITHUB_TOKEN can never approve PRs, and
+          the token must belong to an account OTHER than the PR authors above.
+          When unset, the step skips cleanly.
+        required: false
+
+jobs:
+  auto-approve:
+    name: Auto Approve
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    env:
+      ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: "true"
+      # secrets are not readable in step-level if:, so surface via env
+      BOT_PAT: ${{ secrets.BOT_PAT }}
+    steps:
+      - name: Auto Approve
+        # auto-approve-action v4 has no author filtering, so gate here.
+        # NB: split() in an if condition fails reusable-workflow validation,
+        # hence the JSON-array input parsed with fromJSON().
+        # GITHUB_TOKEN can never approve PRs (GitHub policy), so when BOT_PAT
+        # is not configured we skip cleanly instead of failing every match.
+        # Callers MUST forward the secret: secrets: {BOT_PAT: ${{ secrets.BOT_PAT }}}
+        if: >-
+          contains(fromJSON(inputs.authors), github.event.pull_request.user.login) &&
+          env.BOT_PAT != ''
+        uses: hmarr/auto-approve-action@f0939ea97e9205ef24d872e76833fa908a770363
+        with:
+          github-token: ${{ env.BOT_PAT }}

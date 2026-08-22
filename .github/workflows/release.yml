@@ -31,9 +31,6 @@ on:
         description: 'Skip the checkout step'
         type: boolean
         default: false
-    secrets:
-      GITHUB_TOKEN:
-        required: true
 jobs:
   release:
     name: Create Release
@@ -57,15 +54,6 @@ jobs:
             exit 1
           fi
 
-      - name: Generate changelog
-        if: inputs.generate-notes && inputs.body-file == ''
-        id: changelog
-        uses: triangletodd/changelog-generator@v2
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          excludeTypes: '["chore", "ci", "docs", "style", "refactor", "test"]'
-          excludeScopes: '["deps", "deps-dev"]'
-
       - name: Read body file
         if: inputs.body-file != ''
         id: body
@@ -76,12 +64,15 @@ jobs:
           echo "EOF" >> $GITHUB_OUTPUT
 
       - name: Create Release
+        # ponytail: changelog-generator repo was deleted; generate_notes now
+        # uses GitHub-native release notes (no chore/ci filtering). Restore a
+        # generator action only if filtered notes are actually needed.
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65
         with:
           name: ${{ inputs.release-name }}
           draft: ${{ inputs.draft }}
           prerelease: ${{ inputs.prerelease }}
-          body: ${{ inputs.generate-notes && inputs.body-file == '' && steps.changelog.outputs.changelog || inputs.body-file != '' && steps.body.outputs.body || '' }}
+          body: ${{ inputs.body-file != '' && steps.body.outputs.body || '' }}
           generate_release_notes: ${{ inputs.generate-notes && inputs.body-file == '' }}
           files: |
             dist/*
