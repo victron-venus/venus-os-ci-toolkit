@@ -15,7 +15,7 @@ jobs:
     # Call the REUSABLE workflow (workflow_call), not auto-approve.yml,
     # which is itself a pull_request-triggered caller and cannot be reused.
     # Pin to specific SHA for supply-chain security.
-    uses: victron-venus/venus-os-ci-toolkit/.github/workflows/auto-approve-reusable.yml@4eaa91b6cdcc192a7ac3bc9d074042f70eb403cc
+    uses: victron-venus/venus-os-ci-toolkit/.github/workflows/auto-approve-reusable.yml@5b18667880c7a0154b7c7e6686042eff5f47cdb7
     with:
       authors: '["dependabot[bot]","renovate[bot]","4alvit"]'
     # BOT_PAT must be forwarded explicitly (reusable workflows receive no
