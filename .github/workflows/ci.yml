@@ -1,0 +1,20 @@
+name: CI
+
+# Direct trigger for the reusable security scan so the repo's own
+# code_scanning branch ruleset (CodeQL required) can be satisfied on
+# push/PR. Without this the toolkit has no workflow that runs CodeQL
+# against its own commits.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  security:
+    uses: ./.github/workflows/security-scan.yml
+    with:
+      languages: 'python,javascript'
