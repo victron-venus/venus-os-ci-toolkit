@@ -35,7 +35,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.BOT_PAT }}
           MERGE_METHOD: ${{ inputs.merge-method }}
           MERGE_LABELS: ''
-          MERGE_RETRIES: '3'
-          MERGE_RETRY_SLEEP: '5000'
+          MERGE_RETRIES: '60'
+          MERGE_RETRY_SLEEP: '30000'
           REQUIRED_APPROVALS: '1'
           REQUIRED_STATUS_CHECKS: ${{ inputs.required-status-checks }}
