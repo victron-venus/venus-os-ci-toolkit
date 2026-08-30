@@ -1,0 +1,22 @@
+[project]
+name = "python-minimal"
+version = "0.1.0"
+description = "Minimal Python fixture for toolkit self-test"
+requires-python = ">=3.12"
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["ruff>=0.5.0"]
+test = ["pytest>=8.0.0", "pytest-cov>=4.1.0"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
+
+[tool.mypy]
+python_version = "3.12"
+warn_return_any = true
+warn_unused_ignores = true

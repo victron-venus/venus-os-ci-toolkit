@@ -1,0 +1,20 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  ci:
+    uses: victron-venus/venus-os-ci-toolkit/.github/workflows/go-ci.yml@7da67a5df3bf2b514008860459651ed3aa742314
+    with:
+      go-version: '1.23'
+      working-directory: '.'
+      run-lint: true
+      run-tests: true
+      run-vulncheck: true
+      test-args: '-race -coverprofile=coverage.out -covermode=atomic'
+      coverage-threshold: 50
+    secrets:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
