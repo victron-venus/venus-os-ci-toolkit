@@ -1,0 +1,21 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  ci:
+    uses: victron-venus/venus-os-ci-toolkit/.github/workflows/python-ci.yml@7da67a5df3bf2b514008860459651ed3aa742314
+    with:
+      python-version: '3.12'
+      working-directory: '.'
+      install-dependencies: true
+      run-lint: true
+      run-type-check: true
+      run-tests: true
+      test-args: '-v'
+      coverage-threshold: 50
+    secrets:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
