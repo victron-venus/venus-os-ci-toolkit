@@ -10,8 +10,20 @@ name: CI
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - '**.json'
+      - '**.yaml'
+      - '**.yml'
   pull_request:
     branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - '**.json'
+      - '**.yaml'
+      - '**.yml'
 
 jobs:
   ci:
@@ -154,6 +166,51 @@ jobs:
 
 ---
 
+---
+
+## For TypeScript Projects
+
+### `.github/workflows/ci.yml`
+```yaml
+name: CI
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - '**.json'
+      - '**.yaml'
+      - '**.yml'
+  pull_request:
+    branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - '**.json'
+      - '**.yaml'
+      - '**.yml'
+
+jobs:
+  ci:
+    uses: victron-venus/venus-os-ci-toolkit/.github/workflows/typescript-ci.yml@main
+    with:
+      node-version: '22'
+      working-directory: '.'
+      install-dependencies: true
+      run-lint: true
+      lint-command: 'npm run lint'
+      run-type-check: true
+      typecheck-command: 'npm run typecheck'
+      run-build: true
+      build-command: 'npm run build'
+      run-tests: false
+    secrets:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+```
+
+---
+
 ## For Go Projects
 
 ### `.github/workflows/ci.yml`
@@ -162,8 +219,20 @@ name: CI
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - '**.json'
+      - '**.yaml'
+      - '**.yml'
   pull_request:
     branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - '**.json'
+      - '**.yaml'
+      - '**.yml'
 
 jobs:
   ci:

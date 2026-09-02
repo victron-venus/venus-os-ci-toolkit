@@ -1,0 +1,95 @@
+name: 'Reusable TypeScript CI'
+# description: 'Reusable CI workflow for TypeScript projects (lint + typecheck + build + test)'
+on:
+  workflow_call:
+    inputs:
+      node-version:
+        description: 'Node.js version'
+        type: string
+        default: '22'
+      working-directory:
+        description: 'Working directory for the project'
+        type: string
+        default: '.'
+      install-dependencies:
+        description: 'Whether to install dependencies (npm ci)'
+        type: boolean
+        default: true
+      run-lint:
+        description: 'Whether to run linting'
+        type: boolean
+        default: true
+      lint-command:
+        description: 'Lint command'
+        type: string
+        default: 'npm run lint'
+      run-type-check:
+        description: 'Whether to run TypeScript type check'
+        type: boolean
+        default: true
+      typecheck-command:
+        description: 'Typecheck command'
+        type: string
+        default: 'npm run typecheck'
+      run-build:
+        description: 'Whether to run build'
+        type: boolean
+        default: true
+      build-command:
+        description: 'Build command'
+        type: string
+        default: 'npm run build'
+      run-tests:
+        description: 'Whether to run tests'
+        type: boolean
+        default: false
+      test-command:
+        description: 'Test command'
+        type: string
+        default: 'npm test'
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    name: CI
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Setup Node
+        if: ${{ inputs.install-dependencies }}
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: npm
+
+      - name: Install dependencies
+        if: ${{ inputs.install-dependencies }}
+        run: npm ci --ignore-scripts
+
+      - name: Lint
+        if: ${{ inputs.run-lint }}
+        run: ${{ inputs.lint-command }}
+
+      - name: Typecheck
+        if: ${{ inputs.run-type-check }}
+        run: ${{ inputs.typecheck-command }}
+
+      - name: Build
+        if: ${{ inputs.run-build }}
+        run: ${{ inputs.build-command }}
+
+      - name: Test
+        if: ${{ inputs.run-tests }}
+        run: ${{ inputs.test-command }}
