@@ -17,6 +17,8 @@ class PythonTypeCheckContract(unittest.TestCase):
     """Run the actual workflow commands with and without the optional check."""
 
     def setUp(self):
+        # enterContext closes this context after each test, including failures.
+        # pylint: disable-next=consider-using-with
         self.directory = Path(self.enterContext(tempfile.TemporaryDirectory()))
         environment = self.directory / "venv"
         venv.create(environment, with_pip=True)
