@@ -14,6 +14,10 @@ Minimal Python project: one module, one test, `pyproject.toml` with `[project.op
 
 **Validates:** `python-ci.yml` — lint, type-check, test, coverage upload.
 
+### `python-type-error/`
+
+An intentionally invalid return annotation used by `tests/test_python_typecheck.py`. The contract test executes the reusable workflow’s actual MyPy installation and check commands in a fresh virtual environment. It verifies that the invalid annotation fails, a corrected annotation passes, and `run-type-check: false` skips both installation and checking. Run it with `python -m unittest discover -s tests -p 'test_*.py' -v` after installing PyYAML. Network access is required to install MyPy into the isolated environment.
+
 ### `go-minimal/`
 
 Minimal Go module: one package, one test, `go.mod`.
