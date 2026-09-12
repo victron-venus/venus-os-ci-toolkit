@@ -18,8 +18,8 @@ ENDPOINT = f"repos/{REPOSITORY}/pulls/17"
 HEAD = "a" * 40
 
 
-# API fixtures deliberately retain separate initial/current snapshots and call history.
-# pylint: disable-next=too-many-instance-attributes
+# API fixtures retain separate snapshots and each public test covers a distinct contract.
+# pylint: disable-next=too-many-instance-attributes,too-many-public-methods
 class AutoApproveContract(unittest.TestCase):
     """Verify review decisions and exact API mutations, never submit live reviews."""
 
@@ -44,6 +44,7 @@ class AutoApproveContract(unittest.TestCase):
         }
         self.current = copy.deepcopy(self.pr)
         self.reviewer = "independent-reviewer"
+        self.token_reviewers = {}
         self.pages = [[]]
         self.calls = []
         self.read_count = 0
@@ -73,7 +74,11 @@ class AutoApproveContract(unittest.TestCase):
             result = self.pr if self.read_count == 1 else self.current
         elif path == "user":
             self.assertEqual(command[3:], [])
-            result = {"login": self.reviewer}
+            result = {
+                "login": self.token_reviewers.get(
+                    kwargs["env"]["GH_TOKEN"], self.reviewer
+                )
+            }
         elif path == f"{ENDPOINT}/reviews?per_page=100":
             self.assertEqual(command[3:], ["--paginate", "--slurp"])
             result = self.pages
@@ -147,14 +152,71 @@ class AutoApproveContract(unittest.TestCase):
             self.execute()
         self.assert_posts(0)
 
-    def test_independent_approval_token_takes_precedence(self):
-        """Use the independent token on every API request when configured."""
+    def test_independent_bot_token_remains_primary(self):
+        """A secondary owner token must not break ordinary owner-authored PRs."""
+        self.pr["user"]["login"] = "4alvit"
+        self.current = copy.deepcopy(self.pr)
         self.environment["APPROVAL_PAT"] = "test-independent-token"
+        self.token_reviewers = {
+            "test-bot-token": "californiantiramisu",
+            "test-independent-token": "4alvit",
+        }
         self.execute()
         self.assert_posts(1)
         self.assertTrue(
             all(
-                kwargs["env"]["GH_TOKEN"] == "test-independent-token"
+                kwargs["env"]["GH_TOKEN"] == "test-bot-token"
+                for _, kwargs in self.calls
+            )
+        )
+
+    def test_bot_author_uses_independent_fallback(self):
+        """Query both identities and submit the review only with the fallback."""
+        self.environment["APPROVAL_PAT"] = "test-independent-token"
+        self.token_reviewers = {
+            "test-bot-token": "CALIFORNIANTIRAMISU",
+            "test-independent-token": "4alvit",
+        }
+        self.execute()
+        self.assert_posts(1)
+        self.assertEqual(
+            [
+                kwargs["env"]["GH_TOKEN"]
+                for command, kwargs in self.calls
+                if "POST" in command
+            ],
+            ["test-independent-token"],
+        )
+
+    def test_both_tokens_belonging_to_author_fail(self):
+        """A second secret is not independent merely because its name differs."""
+        self.environment["APPROVAL_PAT"] = "test-independent-token"
+        self.reviewer = "CALIFORNIANTIRAMISU"
+        with self.assertRaisesRegex(RuntimeError, "cannot approve its own PR"):
+            self.execute()
+        self.assert_posts(0)
+
+    def test_invalid_primary_identity_does_not_fall_back(self):
+        """A failing identity lookup must remain visible even with a valid fallback."""
+        self.environment["APPROVAL_PAT"] = "test-independent-token"
+        original_process = self.api_process
+
+        def reject_primary_identity(command, **kwargs):
+            if command[2] == "user":
+                raise subprocess.CalledProcessError(
+                    1, command, stderr="Bad credentials"
+                )
+            return original_process(command, **kwargs)
+
+        with (
+            patch.object(self, "api_process", side_effect=reject_primary_identity),
+            self.assertRaisesRegex(RuntimeError, "Bad credentials"),
+        ):
+            self.execute()
+        self.assert_posts(0)
+        self.assertTrue(
+            all(
+                kwargs["env"]["GH_TOKEN"] == "test-bot-token"
                 for _, kwargs in self.calls
             )
         )

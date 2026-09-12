@@ -73,7 +73,7 @@ jobs:
               )
 
           def main():
-              token = os.environ.get("APPROVAL_PAT") or os.environ.get("BOT_PAT")
+              token = os.environ.get("BOT_PAT") or os.environ.get("APPROVAL_PAT")
               if not token:
                   raise RuntimeError("Configure BOT_PAT or APPROVAL_PAT with pull request write permission")
               authors = {author.lower() for author in json.loads(os.environ["TRUSTED_AUTHORS"])}
@@ -86,6 +86,10 @@ jobs:
                   print("Pull request is not eligible for automatic approval")
                   return
               reviewer = api("user", token)["login"]
+              fallback = os.environ.get("APPROVAL_PAT")
+              if reviewer.lower() == pr["user"]["login"].lower() and fallback and fallback != token:
+                  token = fallback
+                  reviewer = api("user", token)["login"]
               if reviewer.lower() == pr["user"]["login"].lower():
                   raise RuntimeError("The reviewer cannot approve its own PR; configure an independent APPROVAL_PAT")
               print(f"Reviewer: {reviewer}")
