@@ -83,5 +83,35 @@ class FleetIdentityTests(unittest.TestCase):
             run.assert_not_called()
 
 
+class GeneratedTrackingTests(unittest.TestCase):
+    """Ensure commit preparation includes every required generated release file."""
+
+    def setUp(self):
+        """Create an isolated Git repository with a broad legacy release ignore rule."""
+        # unittest cleanup owns the directory for the complete test lifetime.
+        temporary = tempfile.TemporaryDirectory()  # pylint: disable=consider-using-with
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        subprocess.run(["git", "init", "-q"], cwd=self.root, check=True)
+        (self.root / ".release-policy.json").write_text(
+            json.dumps({"repository": "owner/repo", "mode": "release"})
+        )
+        (self.root / ".gitignore").write_text("release.*\n")
+        (self.root / "scripts").mkdir()
+        (self.root / "scripts/release.py").write_text("# generated client\n")
+
+    def test_untracked_ignored_client_blocks_submission(self):
+        """Catch the required client that git add --all would leave out of a PR."""
+        with self.assertRaisesRegex(ValueError, r"scripts/release\.py"):
+            fleet.validate_generated_tracking(self.root)
+
+    def test_tracked_ignored_client_remains_addable(self):
+        """Permit tracked files whose names also match a legacy ignore pattern."""
+        subprocess.run(
+            ["git", "add", "--force", "scripts/release.py"], cwd=self.root, check=True
+        )
+        fleet.validate_generated_tracking(self.root)
+
+
 if __name__ == "__main__":
     unittest.main()

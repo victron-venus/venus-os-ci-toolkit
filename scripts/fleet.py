@@ -45,6 +45,38 @@ def validate_identity(directory, item):
             )
 
 
+def validate_generated_tracking(directory):
+    """Reject generated files that an ordinary git add would silently omit."""
+    policy = json.loads((directory / ".release-policy.json").read_text())
+    required = [
+        "scripts/release.py",
+        ".github/workflows/quality-gate.yml",
+        "docs/release-workflow.md",
+    ]
+    if policy.get("mode", "release") == "release":
+        required += [
+            "scripts/release_control.py",
+            ".github/workflows/release-pipeline.yml",
+            ".github/release-tests/test_release_control.py",
+        ]
+        if policy.get("container_assets") or policy.get("pypi_assets"):
+            required.append("scripts/publish_verified.py")
+        if policy.get("container_assets"):
+            required.append("scripts/verified_images.py")
+    # Do not pass --no-index: an already tracked path remains addable even if
+    # a repository's ignore rules would exclude a newly generated copy.
+    result = run(
+        ["git", "check-ignore", "--", *required], directory, capture=True, check=False
+    )
+    if result.returncode not in (0, 1):
+        result.check_returncode()
+    if result.stdout.strip():
+        raise ValueError(
+            "Required generated files are ignored by Git: "
+            + ", ".join(result.stdout.splitlines())
+        )
+
+
 def main():
     """Execute one fleet operation with repository identity and branch safeguards."""
     # Keep audited submission steps together; no writes occur outside --execute.
@@ -81,6 +113,7 @@ def main():
                 raise ValueError("Repository directory escapes the selected fleet root")
             if args.command in ["check", "submit"]:
                 validate_identity(directory, item)
+                validate_generated_tracking(directory)
             if args.command in ["check", "submit"]:
                 run(["git", "diff", "--check"], directory)
                 run(["git", "diff", "--cached", "--check"], directory)

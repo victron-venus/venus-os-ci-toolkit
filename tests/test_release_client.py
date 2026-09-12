@@ -66,15 +66,53 @@ class ClientTest(unittest.TestCase):
             root = Path(temp)
             (root / ".release-policy.json").write_text("{}")
             for platform in ["linux", "windows"]:
-                (root / platform).mkdir()
-                (root / platform / "checksums.txt").write_text(platform)
+                directory = root / ".release-download" / platform
+                directory.mkdir(parents=True)
+                (directory / "checksums.txt").write_text(platform)
             with (
                 mock.patch.object(client, "ROOT", root),
                 mock.patch(
-                    "sys.argv", ["release.py", "collect", str(root), str(root / "out")]
+                    "sys.argv",
+                    ["release.py", "collect", ".release-download", ".release-assets"],
                 ),
             ):
                 self.assertEqual(client.main(), 1)
+
+    def test_collection_copies_only_fixed_download_directory(self):
+        """Copy the exact artifact bytes without accepting arbitrary CLI paths."""
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = root / ".release-download" / "linux"
+            source.mkdir(parents=True)
+            (source / "app.tar.gz").write_bytes(b"approved bytes")
+            with mock.patch.object(client, "ROOT", root):
+                client.collect_assets()
+                self.assertEqual(
+                    (root / ".release-assets/app.tar.gz").read_bytes(),
+                    b"approved bytes",
+                )
+                with self.assertRaises(FileExistsError):
+                    client.collect_assets()
+            with (
+                mock.patch(
+                    "sys.argv", ["release.py", "collect", "../secrets", "../outside"]
+                ),
+                self.assertRaises(SystemExit) as error,
+            ):
+                client.arguments()
+            self.assertEqual(error.exception.code, 2)
+
+    def test_collection_rejects_symlink_escape_before_creating_output(self):
+        """Reject a download-root symlink rather than reading outside the checkout."""
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp) / "repo"
+            root.mkdir()
+            (root / ".release-download").symlink_to(
+                Path(temp), target_is_directory=True
+            )
+            with mock.patch.object(client, "ROOT", root), self.assertRaises(ValueError):
+                client.collect_assets()
+            self.assertFalse((root / ".release-assets").exists())
 
     def test_publication_commands_are_remote_workflow_dispatch(self):
         """Publish only by dispatching the default-branch workflow through the CLI."""
