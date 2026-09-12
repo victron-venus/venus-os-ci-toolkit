@@ -40,6 +40,7 @@ jobs:
           python3 - <<'PY'
           import json
           import os
+          import re
           import subprocess
           import time
 
@@ -64,19 +65,47 @@ jobs:
 
 
           def check_state(pr, required, run_id):
-              checks = []
-              for check in pr['statusCheckRollup'] or []:
+              latest = {}
+              own_identities = set()
+              for index, check in enumerate(pr['statusCheckRollup'] or []):
                   name = check.get('name', check.get('context', ''))
-                  # Exclude only this workflow run's own waiting job, never another check.
-                  if (run_id and f'/actions/runs/{run_id}/' in check.get('detailsUrl', '')
+                  workflow = check.get('workflowName', '')
+                  url = check.get('detailsUrl', check.get('targetUrl', ''))
+                  numbers = re.search(r'/actions/runs/(\d+)(?:/job/(\d+))?', url)
+                  # A queued replacement may have no start time yet; monotonic
+                  # run/job IDs still distinguish it from an older canceled run.
+                  attempt = (int(numbers[1]) if numbers else 0,
+                             int(numbers[2] or 0) if numbers else 0,
+                             check.get('startedAt', check.get('createdAt', '')) or '')
+                  # Workflow identity prevents unrelated same-name jobs masking failures.
+                  # Unknown external providers remain separate unless their URL also matches.
+                  identity = (workflow, name, '' if workflow else url or str(index))
+                  if (run_id and f'/actions/runs/{run_id}/' in url
                           and (name == 'Auto Merge' or name.endswith(' / Auto Merge'))):
+                      own_identities.add(identity)
+                  if identity not in latest or attempt > latest[identity][0]:
+                      latest[identity] = (attempt, check)
+              checks = []
+              own_registered = bool(own_identities) or not run_id
+              # Identify self in the raw rollup: the other event of a dual caller
+              # may register a newer skipped job with the same orchestration identity.
+              # Deduplicate first, then remove only that verified self identity.
+              for identity, (_, check) in latest.items():
+                  if identity in own_identities:
                       continue
                   state = check.get('conclusion') if check.get('status') == 'COMPLETED' else check.get('state')
-                  checks.append((name, state or 'PENDING'))
-              if any(state in {'FAILURE', 'ERROR', 'CANCELLED', 'TIMED_OUT', 'ACTION_REQUIRED', 'STALE', 'STARTUP_FAILURE'}
-                     for _, state in checks):
-                  raise RuntimeError('A PR check failed; fix or rerun that check before auto-merge.')
-              names = {name for name, _ in checks}
+                  checks.append((identity, state or 'PENDING'))
+              # GitHub can briefly return the previous run before registering this job.
+              # Wait for the current context rather than treating old attempts as current.
+              if not own_registered:
+                  return False, tuple(sorted(checks))
+              failed = [f'{identity[0] or "external"} / {identity[1]} ({state})'
+                        for identity, state in checks
+                        if state in {'FAILURE', 'ERROR', 'CANCELLED', 'TIMED_OUT', 'ACTION_REQUIRED', 'STALE', 'STARTUP_FAILURE'}]
+              if failed:
+                  raise RuntimeError('PR check failed: ' + '; '.join(failed)
+                                     + '. Fix or rerun the failed check before auto-merge.')
+              names = {identity[1] for identity, _ in checks}
               ready = (bool(checks) and required <= names
                        and all(state in {'SUCCESS', 'NEUTRAL', 'SKIPPED'} for _, state in checks))
               return ready, tuple(sorted(checks))

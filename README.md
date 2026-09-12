@@ -10,7 +10,7 @@ Add the `automerge` label to a ready PR targeting the default branch. The defaul
 
 Forward `BOT_PAT` explicitly. Its account needs repository write access; automatic merging must be enabled in repository settings. Approval uses an independent reviewer and applies to the current commit. To automate a PR authored by the account behind `BOT_PAT`, forward a separate reviewer's `APPROVAL_PAT`; the workflow never approves its own PR. Missing credentials fail with a configuration error instead of silently skipping an expected approval.
 
-Merging waits for all reported checks to pass, including optional checks, for up to two hours. It then requests GitHub native auto-merge for the verified head. Existing review requirements, CODEOWNERS, branch protection, and merge rules remain in force. If a check fails or the wait expires, fix or rerun that check and rerun the merge workflow. A new commit, label change, or ready transition starts a fresh evaluation.
+Merging waits for the latest attempt of each reported check to pass, including optional checks, for up to two hours. It then requests GitHub native auto-merge for the verified head. Existing review requirements, CODEOWNERS, branch protection, and merge rules remain in force. If a check fails or the wait expires, fix or rerun that check and rerun the merge workflow. A new commit, label change, or ready transition starts a fresh evaluation.
 
 ## Overview
 
