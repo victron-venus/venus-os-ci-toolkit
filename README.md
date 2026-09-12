@@ -20,32 +20,11 @@ GitHub can retain an enabled native auto-merge request when a contributor with w
 
 Concurrent GitHub runs can start in a different order from their numeric run IDs. Pending attempts always block merging; completed attempts are ordered by when their jobs started, with job IDs as a fallback. An earlier canceled attempt cannot replace a later successful result, and an earlier success cannot hide a later failure.
 
-## Gated release standard
+## CI and release documentation
 
-The current release process is defined by per-repository `.release-policy.json` files and the generator in `scripts/install_release.py`. The toolkit contains the complete fleet inventory in `fleet.json`.
+See the [fleet rollout guide](docs/FLEET_ROLLOUT.md), [local nightly runner](docs/LOCAL_NIGHTLY.md), and [toolkit operations](docs/release-workflow.md). Application repositories keep their strategy in `RELEASING.md` and commands in `docs/release-workflow.md`; README files only link to them. The canonical English strategy is [templates/release-strategy.md](templates/release-strategy.md).
 
-- PR and merge queue: an aggregate **CI gate** requires every declared validation workflow.
-- Nightly: staggered daily validation and build, with Actions artifacts.
-- Beta/RC: immutable prereleases published only after the complete validation/build gate.
-- Stable: a manual `release` environment approval promotes the exact RC bytes after source, run, evidence and checksum verification.
-- Production deployment and container/PyPI publication are explicit separate operations using verified stable assets.
-
-During rollout, candidate publication stays disabled until repository variable `RELEASE_CHANNELS_ENABLED=true`. Configure protected environments and migrate legacy auto-deploy webhooks before enabling it. Nightly checks/builds work while publication is disabled.
-
-See [operator instructions](docs/release-workflow.md), [fleet rollout](docs/FLEET_ROLLOUT.md), and the project-specific guide generated in every consumer. Infrastructure, template, profile and unversioned operational repositories use validation-only policy.
-
-```bash
-python3 scripts/fleet.py status
-python3 scripts/fleet.py render
-python3 scripts/fleet.py check
-# Inspect the isolated worktree diff and the project-specific validation evidence first.
-python3 scripts/fleet.py submit --repo OWNER/REPO
-python3 scripts/fleet.py submit --repo OWNER/REPO --execute
-```
-
-The submit command commits only the dedicated migration branch recorded in `fleet.json`, pushes that feature branch and opens a draft PR. It verifies both origin URLs and the repository policy before writing. It does not merge, apply Terraform, publish a release, or deploy production.
-
-Old reusable `release.yml`, `docker-build.yml` and `nightly.yml` entry points now fail with a migration message. Their historical implementations are preserved in `docs/legacy-workflows/`. Consumers pinned to an older toolkit SHA must migrate explicitly; changing this repository cannot rewrite an existing SHA. New integrations use the gated policy and build-only adapter.
+Private repositories use ordinary OSS checks and manual deployment approval without paid GitHub security or governance prerequisites. The reviewed inventory and visibility are recorded in [fleet.json](fleet.json).
 
 ## Validation
 

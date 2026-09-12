@@ -1,6 +1,7 @@
 """Offline contracts for stable assets, registry publication and image identity."""
 
 import json
+import io
 import subprocess
 import sys
 import tempfile
@@ -232,6 +233,106 @@ class RegistryPublicationTests(unittest.TestCase):
             ):
                 self.assertEqual(publisher.main(), 1)
             self.assertEqual(run.call_count, 1)
+
+    def test_each_target_writes_only_with_execute(self):
+        """A dry run may read registry inventory but never copy or upload payloads."""
+        for target in ("containers", "pypi"):
+            for execute in (False, True):
+                with (
+                    self.subTest(target=target, execute=execute),
+                    tempfile.TemporaryDirectory() as temp,
+                ):
+                    root = Path(temp)
+                    current = {**self.policy, "pypi_assets": ["*.whl"]}
+                    (root / ".release-policy.json").write_text(json.dumps(current))
+
+                    def assets(gh, tag, directory):
+                        manifest = self.assets(gh, tag, directory)
+                        (directory / "approved.whl").write_bytes(b"approved wheel")
+                        (directory / "unselected.tar.gz").write_bytes(b"source archive")
+                        return manifest
+
+                    argv = ["publish_verified.py", target, "--tag", "v1.2.3"]
+                    if execute:
+                        argv.append("--execute")
+                    with (
+                        mock.patch.object(publisher, "ROOT", root),
+                        mock.patch.object(
+                            publisher, "verified_assets", side_effect=assets
+                        ),
+                        mock.patch.object(
+                            publisher.subprocess,
+                            "run",
+                            return_value=subprocess.CompletedProcess(
+                                [], 0, '{"Tags":[]}', ""
+                            ),
+                        ) as run,
+                        mock.patch.object(sys, "argv", argv),
+                        mock.patch.object(
+                            sys, "stdout", new_callable=io.StringIO
+                        ) as out,
+                    ):
+                        self.assertEqual(publisher.main(), 0)
+                    plan = json.loads(out.getvalue())
+                    self.assertEqual(plan["execute"], execute)
+                    issued = [call.args[0] for call in run.call_args_list]
+                    if target == "containers":
+                        self.assertEqual(issued.pop(0)[1], "list-tags")
+                    else:
+                        self.assertEqual(plan["commands"][0][3], "check")
+                        self.assertEqual(plan["commands"][1][3], "upload")
+                        self.assertEqual(len(plan["commands"][0]), 5)
+                        self.assertTrue(
+                            plan["commands"][0][-1].endswith("approved.whl")
+                        )
+                    self.assertEqual(issued, plan["commands"] if execute else [])
+
+    def test_all_versions_precede_latest_from_the_same_approved_archives(self):
+        """Multiple images are preflighted before any version or latest write."""
+        with tempfile.TemporaryDirectory() as temp:
+            directory = Path(temp)
+            manifest = self.assets(None, None, directory)
+            (directory / "second.oci.tar").write_bytes(b"second approved image")
+            mapping = {
+                **self.policy["container_assets"],
+                "second.oci.tar": "ghcr.io/owner/second",
+            }
+            current = {**self.policy, "container_assets": mapping}
+            manifest["source_policy"]["data"]["container_assets"] = mapping
+            with mock.patch.object(
+                publisher.subprocess,
+                "run",
+                return_value=subprocess.CompletedProcess([], 0, '{"Tags":[]}', ""),
+            ) as run:
+                commands = publisher.container_commands(
+                    current, manifest, directory, latest=True
+                )
+            self.assertEqual(
+                [call.args[0][1] for call in run.call_args_list], ["list-tags"] * 2
+            )
+            self.assertEqual(len(commands), 4)
+            for index in range(2):
+                version, latest = commands[index], commands[index + 2]
+                self.assertEqual(version[:-1], latest[:-1])
+                self.assertTrue(version[-1].endswith(":1.2.3"))
+                self.assertTrue(latest[-1].endswith(":latest"))
+            with (
+                mock.patch.object(
+                    publisher.subprocess,
+                    "run",
+                    side_effect=[
+                        subprocess.CompletedProcess([], 0, '{"Tags":[]}', ""),
+                        subprocess.CompletedProcess([], 1, "", "access denied"),
+                    ],
+                ) as run,
+                self.assertRaisesRegex(
+                    ReleaseError, "Cannot establish registry tag inventory"
+                ),
+            ):
+                publisher.container_commands(current, manifest, directory, latest=True)
+            self.assertEqual(
+                [call.args[0][1] for call in run.call_args_list], ["list-tags"] * 2
+            )
 
     def test_deployment_uses_digest_and_rejects_registry_retag(self):
         """Deployment uses digest and rejects registry retag."""

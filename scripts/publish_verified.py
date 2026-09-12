@@ -34,6 +34,7 @@ from release_control import (
 )
 
 ROOT = Path(__file__).resolve().parents[1]
+DOCKER_TRANSPORT = "docker://"
 
 
 # Keep source policy, run evidence and downloaded bytes in one validation scope.
@@ -113,8 +114,88 @@ def verified_publication_config(policy, manifest, field):
     return original
 
 
-# Keep registry preflight and execution tied to the same private verified files.
-# pylint: disable-next=too-many-locals
+def require_unpublished_version(image, version):
+    """Fail closed unless registry inventory proves the version is unpublished."""
+    check = subprocess.run(
+        ["skopeo", "list-tags", DOCKER_TRANSPORT + image],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if check.returncode == 0:
+        require(
+            version not in json.loads(check.stdout).get("Tags", []),
+            f"Container version already exists: {image}:{version}",
+        )
+    elif (
+        "NAME_UNKNOWN" not in check.stderr
+        and "repository does not exist" not in check.stderr
+    ):
+        raise ReleaseError(
+            "Cannot establish registry tag inventory; authenticate and retry: " + image
+        )
+
+
+def image_copy_command(archive, image, tag):
+    """Copy every approved OCI platform without rebuilding or changing digests."""
+    return [
+        "skopeo",
+        "copy",
+        "--all",
+        "--preserve-digests",
+        "oci-archive:" + str(archive),
+        DOCKER_TRANSPORT + image + ":" + tag,
+    ]
+
+
+def container_commands(policy, manifest, directory, latest):
+    """Preflight all original destinations, then order version and latest copies."""
+    mapping = verified_publication_config(policy, manifest, "container_assets")
+    require(mapping, "No container archive mapping in .release-policy.json")
+    commands = []
+    for name, image in mapping.items():
+        require(
+            (directory / name).is_file() and Path(name).name == name,
+            f"Missing approved image archive: {name}",
+        )
+        require(
+            re.fullmatch(r"(?:ghcr\.io|docker\.io)/[a-z0-9][a-z0-9._/-]*", image),
+            f"Invalid configured image destination: {image}",
+        )
+        # Never overwrite an existing version tag, even on retries.
+        require_unpublished_version(image, manifest["version"])
+        commands.append(
+            image_copy_command(directory / name, image, manifest["version"])
+        )
+    if latest:
+        commands.extend(
+            image_copy_command(directory / name, image, "latest")
+            for name, image in mapping.items()
+        )
+    return commands
+
+
+def pypi_commands(policy, manifest, directory):
+    """Check and upload only distributions named by the original source policy."""
+    patterns = verified_publication_config(policy, manifest, "pypi_assets")
+    files = sorted(
+        {
+            str(path)
+            for pattern in patterns
+            for path in directory.iterdir()
+            if fnmatch.fnmatch(path.name, pattern)
+        }
+    )
+    require(
+        files and any(name.endswith(".whl") for name in files),
+        "No verified wheel assets configured for PyPI",
+    )
+    return [
+        ["python3", "-m", "twine", "check", *files],
+        ["python3", "-m", "twine", "upload", *files],
+    ]
+
+
 def main():
     """Display or execute registry publication from verified stable payloads."""
     parser = argparse.ArgumentParser(description=__doc__)
@@ -137,86 +218,10 @@ def main():
         with tempfile.TemporaryDirectory(prefix="verified-publication-") as temp:
             directory = Path(temp)
             manifest = verified_assets(gh, args.tag, directory)
-            commands = []
             if args.target == "containers":
-                mapping = verified_publication_config(
-                    policy, manifest, "container_assets"
-                )
-                require(mapping, "No container archive mapping in .release-policy.json")
-                for name, image in mapping.items():
-                    require(
-                        (directory / name).is_file() and Path(name).name == name,
-                        f"Missing approved image archive: {name}",
-                    )
-                    require(
-                        re.fullmatch(
-                            r"(?:ghcr\.io|docker\.io)/[a-z0-9][a-z0-9._/-]*", image
-                        ),
-                        f"Invalid configured image destination: {image}",
-                    )
-                    # Never overwrite an existing version tag, even on retries.
-                    check = subprocess.run(
-                        ["skopeo", "list-tags", "docker://" + image],
-                        capture_output=True,
-                        text=True,
-                        check=False,
-                    )
-                    if check.returncode == 0:
-                        require(
-                            manifest["version"]
-                            not in json.loads(check.stdout).get("Tags", []),
-                            f"Container version already exists: {image}:{manifest['version']}",
-                        )
-                    elif (
-                        "NAME_UNKNOWN" not in check.stderr
-                        and "repository does not exist" not in check.stderr
-                    ):
-                        raise ReleaseError(
-                            "Cannot establish registry tag inventory; authenticate and retry: "
-                            + image
-                        )
-                    commands.append(
-                        [
-                            "skopeo",
-                            "copy",
-                            "--all",
-                            "--preserve-digests",
-                            "oci-archive:" + str(directory / name),
-                            "docker://" + image + ":" + manifest["version"],
-                        ]
-                    )
-                if args.latest:
-                    commands.extend(
-                        [
-                            [
-                                "skopeo",
-                                "copy",
-                                "--all",
-                                "--preserve-digests",
-                                "oci-archive:" + str(directory / name),
-                                "docker://" + image + ":latest",
-                            ]
-                            for name, image in mapping.items()
-                        ]
-                    )
+                commands = container_commands(policy, manifest, directory, args.latest)
             else:
-                patterns = verified_publication_config(policy, manifest, "pypi_assets")
-                files = sorted(
-                    {
-                        str(path)
-                        for pattern in patterns
-                        for path in directory.iterdir()
-                        if fnmatch.fnmatch(path.name, pattern)
-                    }
-                )
-                require(
-                    files and any(name.endswith(".whl") for name in files),
-                    "No verified wheel assets configured for PyPI",
-                )
-                commands = [
-                    ["python3", "-m", "twine", "check", *files],
-                    ["python3", "-m", "twine", "upload", *files],
-                ]
+                commands = pypi_commands(policy, manifest, directory)
             print(
                 json.dumps(
                     {

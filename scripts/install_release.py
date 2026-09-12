@@ -25,6 +25,10 @@ DOWNLOAD = "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c"
 class Dumper(yaml.SafeDumper):
     """Write workflow YAML with readable literal blocks for multiline strings."""
 
+    def increase_indent(self, flow=False, indentless=False):
+        """Indent sequence entries consistently with the fleet's YAML linters."""
+        return super().increase_indent(flow, indentless=False)
+
 
 def multiline(dumper, text):
     """Represent multiline commands and documentation as YAML literal blocks."""
@@ -61,7 +65,11 @@ def quality(policy):
             "permissions": {
                 "contents": "read",
                 "actions": "read",
-                "security-events": "write",
+                **(
+                    {"security-events": "write"}
+                    if policy.get("visibility") != "private"
+                    else {}
+                ),
             },
         }
     if policy.get("mode", "release") == "release":
@@ -100,6 +108,17 @@ def quality(policy):
             }
         ],
     }
+    if policy.get("visibility") == "private":
+        # A scheduled event must not consume private runner quota until opted in.
+        condition = (
+            "github.event_name != 'schedule' || vars.NIGHTLY_CHECKS_ENABLED == 'true'"
+        )
+        for name, job in jobs.items():
+            job["if"] = (
+                "${{ "
+                + ("always() && (" + condition + ")" if name == "gate" else condition)
+                + " }}"
+            )
     triggers = {"pull_request": {}, "merge_group": {}, "workflow_call": {}}
     if policy.get("mode") == "validation-only":
         triggers.update(
@@ -341,12 +360,18 @@ PY
     }
 
 
-def render(directory: Path) -> dict[str, str]:
-    """Validate adapters and assemble generated workflows, clients and operator docs."""
-    policy = json.loads((directory / ".release-policy.json").read_text())
+def validate_policy(directory: Path, policy: dict) -> None:
+    """Reject unsupported policy modes, stale publishers and invalid repository names."""
     mode = policy.get("mode", "release")
     if mode not in {"release", "validation-only"}:
         raise ValueError("Policy mode must be release or validation-only")
+    if policy.get("visibility", "public") not in {"public", "private"}:
+        raise ValueError("Policy visibility must be public or private")
+    if mode == "release" and policy.get("visibility") == "private":
+        raise ValueError(
+            "Private application promotion needs an explicit manual approval adapter; "
+            "the current release environment adapter is for public repositories only"
+        )
     if (
         mode == "validation-only"
         and (directory / ".github/workflows/release-pipeline.yml").exists()
@@ -359,49 +384,109 @@ def render(directory: Path) -> dict[str, str]:
         r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", policy.get("repository", "")
     ):
         raise ValueError("Policy needs repository OWNER/REPO")
-    files = {".github/workflows/quality-gate.yml": dump(quality(policy))}
-    files["docs/release-workflow.md"] = operator_guide(policy)
+
+
+def validate_workflow_adapters(directory: Path, policy: dict) -> None:
+    """Require every declared validator to be callable by the generated gate."""
     for name in policy["validation_workflows"]:
         path = directory / ".github/workflows" / name
         workflow = yaml.load(path.read_text(), Loader=yaml.BaseLoader)
         if "workflow_call" not in workflow.get("on", {}):
             raise ValueError(f"{path}: needs workflow_call")
+
+
+def release_files(directory: Path, policy: dict) -> dict[str, str]:
+    """Assemble release tooling only when a real project packaging adapter exists."""
+    if not (directory / ".github/workflows/release-build.yml").is_file():
+        raise ValueError("A real release-build.yml adapter is required")
+    files = {".github/workflows/release-pipeline.yml": dump(release(policy))}
+    files["RELEASING.md"] = release_strategy(directory, policy)
+    files["scripts/release_control.py"] = (
+        ROOT / "scripts/release_control.py"
+    ).read_text()
+    if policy.get("container_assets") or policy.get("pypi_assets"):
+        files["scripts/publish_verified.py"] = (
+            ROOT / "scripts/publish_verified.py"
+        ).read_text()
+    if policy.get("container_assets"):
+        files["scripts/verified_images.py"] = (
+            ROOT / "scripts/verified_images.py"
+        ).read_text()
+    files[".github/release-tests/test_release_control.py"] = (
+        (ROOT / "tests/test_release_control.py")
+        .read_text()
+        .replace("Path(__file__).parents[1]", "Path(__file__).parents[2]")
+    )
+    return files
+
+
+def release_strategy(directory: Path, policy: dict) -> str:
+    """Render the human release policy separately from README and the runbook."""
+    blockers = policy.get("release_blockers", []) + policy.get("stable_blockers", [])
+    qualification = (
+        "**RC/stable are currently blocked:** " + "; ".join(blockers) + "."
+        if blockers
+        else (
+            "**Release readiness:** channels are implemented; activation and every "
+            "required gate must pass before publication."
+        )
+    )
+    limits = policy.get("notes", []) + blockers
+    values = {
+        "REPOSITORY": policy["repository"],
+        "DEFAULT_BRANCH": policy.get("default_branch", "main"),
+        "VERSION_SOURCE": "`"
+        + policy.get(
+            "version_file", "the configured version source in .release-policy.json"
+        )
+        + "`",
+        "QUALIFICATION": qualification,
+        "PROJECT_LIMITS": "\n".join("- " + note for note in limits)
+        or "The complete declared gate and target acceptance remain required.",
+        "PACKAGING_GUIDE": (
+            "See [platform packaging and toolchain setup](docs/release-packaging.md) "
+            "for additional local prerequisites."
+            if (directory / "docs/release-packaging.md").is_file()
+            else ""
+        ),
+    }
+    text = (ROOT / "templates/release-strategy.md").read_text()
+    for key, value in values.items():
+        text = text.replace("@" + key + "@", value)
+    return text
+
+
+def consumer_python(source: str) -> str:
+    """Mark verified toolkit copies without applying a consumer's formatting policy."""
+    lines = source.splitlines(keepends=True)
+    offset = 1 if lines and lines[0].startswith("#!") else 0
+    lines.insert(
+        offset,
+        (
+            "# Vendored release toolkit; change the toolkit source, then "
+            "render again.\n# ruff: noqa\n# mypy: ignore-errors\n# pylint: "
+            "skip-file\n# fmt: off\n"
+        ),
+    )
+    return "".join(lines)
+
+
+def render(directory: Path) -> dict[str, str]:
+    """Validate adapters and assemble generated workflows, clients and operator docs."""
+    policy = json.loads((directory / ".release-policy.json").read_text())
+    validate_policy(directory, policy)
+    files = {".github/workflows/quality-gate.yml": dump(quality(policy))}
+    files["docs/release-workflow.md"] = operator_guide(policy)
+    validate_workflow_adapters(directory, policy)
     files["scripts/release.py"] = (ROOT / "scripts/release.py").read_text()
     if policy.get("mode", "release") == "release":
-        if not (directory / ".github/workflows/release-build.yml").is_file():
-            raise ValueError("A real release-build.yml adapter is required")
-        files[".github/workflows/release-pipeline.yml"] = dump(release(policy))
-        files["scripts/release_control.py"] = (
-            ROOT / "scripts/release_control.py"
-        ).read_text()
-        if policy.get("container_assets") or policy.get("pypi_assets"):
-            files["scripts/publish_verified.py"] = (
-                ROOT / "scripts/publish_verified.py"
-            ).read_text()
-        if policy.get("container_assets"):
-            files["scripts/verified_images.py"] = (
-                ROOT / "scripts/verified_images.py"
-            ).read_text()
-        files[".github/release-tests/test_release_control.py"] = (
-            (ROOT / "tests/test_release_control.py")
-            .read_text()
-            .replace("Path(__file__).parents[1]", "Path(__file__).parents[2]")
-        )
+        files.update(release_files(directory, policy))
     # Consumers use different format/type policies. These copies are verified by
     # the toolkit's tests and the mandatory Release tooling contracts job.
-    for name in list(files):
-        if name.endswith(".py") and directory.resolve() != ROOT.resolve():
-            lines = files[name].splitlines(keepends=True)
-            offset = 1 if lines and lines[0].startswith("#!") else 0
-            lines.insert(
-                offset,
-                (
-                    "# Vendored release toolkit; change the toolkit source, then "
-                    "render again.\n# ruff: noqa\n# mypy: ignore-errors\n# pylint: "
-                    "skip-file\n# fmt: off\n"
-                ),
-            )
-            files[name] = "".join(lines)
+    if directory.resolve() != ROOT.resolve():
+        for name, source in files.items():
+            if name.endswith(".py"):
+                files[name] = consumer_python(source)
     return files
 
 
@@ -432,6 +517,9 @@ Callable validation workflows:
     )
     if policy.get("mode", "release") == "release":
         text += """
+The [release strategy](../RELEASING.md) defines versioning, channels, acceptance,
+ownership, hotfixes and rollback. This document is the operational runbook.
+
 ## Nightly, beta and RC
 
 During rollout, checks and builds run but public candidate publication is disabled
@@ -441,8 +529,9 @@ been migrated. This prevents the first nightly/beta from reaching an old auto-de
 handler. Manual beta/RC/stable requests fail with an explicit configuration error
 until enabled; build-only nightlies remain available in Actions artifacts.
 
-Nightly runs daily at the repository's staggered UTC schedule. Every default-branch
-push produces a beta after the same validation and build gates. GitHub can delay
+Nightly runs daily at the repository's staggered UTC schedule. Default-branch
+pushes request beta builds through the same validation and build gates. Publication
+also requires the opt-in variable and an eligible unreleased base version. GitHub can delay
 scheduled runs; schedule timing is not an SLA. A committed base version (`X.Y.Z`)
 is required. Version changes go through PR review, including any native companion
 version files. Native binaries keep that base version; the release manifest records
@@ -461,7 +550,9 @@ python3 scripts/release.py status
 Replace the example version with the committed project version. Native multi-OS
 packages require the hosted build matrix; local packaging covers only supported
 local targets. These commands never stage unrelated changes, push `main`, or create
-tags directly. They dispatch `release-pipeline.yml` on the default branch.
+tags directly. Publication commands dispatch `release-pipeline.yml` on the default
+branch; `package` builds locally, `status` reads run history, and `--dry-run` only
+displays the request.
 
 If the base version already has a stable release, bump the committed version through
 a PR before beta/RC publication. Nightly builds may still use that existing base.
@@ -519,9 +610,29 @@ python3 scripts/publish_verified.py pypi --tag v1.2.3 --execute
 
 This repository uses validation-only policy: PR/merge queue checks and staggered
 nightly validation. It does not publish synthetic application beta/RC releases.
-Infrastructure deployments remain manual and use the `production` environment
-where a deployment workflow exists. Terraform validation uses backend-disabled
+Infrastructure deployments remain manual and use the checks and explicit source
+approval declared by their deployment workflow. Terraform validation uses backend-disabled
 copies; a green syntax/validate job is not a reviewed plan or a deployment.
+"""
+    if policy.get("visibility") == "private":
+        text += """
+## Private repository: no paid GitHub prerequisites
+
+This policy does not require GitHub Code Security, code scanning/SARIF upload,
+dependency review, paid rulesets or protected-environment reviewers. Security tools
+run as ordinary processes: findings fail the job and appear in its log.
+
+Scheduled GitHub jobs are disabled unless `NIGHTLY_CHECKS_ENABLED=true` is explicitly
+set for this repository. PR and manual checks remain available within the existing
+Actions allowance. Do not raise spending limits or enable paid products to activate
+this migration. If runner quota is unavailable, run the local checks on an existing
+machine using the toolkit's [local nightly runner](https://github.com/victron-venus/venus-os-ci-toolkit/blob/main/docs/LOCAL_NIGHTLY.md).
+No local scheduler or self-hosted runner is installed automatically.
+
+Without server-enforced branch rules, maintainers must inspect the CI gate before
+merging. This is an operating policy, not a claim that GitHub prevents every admin
+or branch writer from bypassing it. Deployment approval is an explicit manual
+operation; a second independent reviewer is not enforced by a paid environment.
 """
     text += "\n## Project limits and rollout requirements\n\n"
     text += "".join(f"- {note}\n" for note in policy.get("notes", []))
@@ -533,18 +644,23 @@ copies; a green syntax/validate job is not a reviewed plan or a deployment.
         f"- **Release blocked:** {note}\n"
         for note in policy.get("release_blockers", [])
     )
+    if policy.get("visibility") != "private":
+        text += """
+For public repositories, merge and verify the workflows before enabling the
+additive Terraform **CI gate** ruleset. Where release/deployment workflows use
+environments, configure reviewers and default-branch-only policies. The governance
+repositories contain `release-standards.tf` and opt-in examples for public
+repositories only. Do not extend these requirements to private repositories by
+buying a plan or to workflows that have not landed.
+"""
     text += """
-Merge and verify the workflows before enabling the additive Terraform **CI gate**
-ruleset for this repository. Configure required reviewers and default-branch-only
-policies for `release`/`production`; the Terraform governance repositories contain
-`release-standards.tf` and opt-in example tfvars. Do not apply fleet-wide requirements
-to repositories whose workflows have not landed. Existing review/security rules
-remain in force. Physical hardware, real credentials/streams and production access
-are not implied by unit tests or packaging checks.
+Existing review/security rules remain in force. Physical hardware, real
+credentials/streams and production access are not implied by unit tests or builds.
 
 The release engine/client are vendored from `victron-venus/venus-os-ci-toolkit`.
-They are excluded from consumer-specific formatting/type policy and exercised by
-the mandatory Release tooling contracts job. Update the toolkit source and rerun
+They are excluded from consumer-specific formatting/type policy. Application
+release workflows run the mandatory Release tooling contracts job; validation-only
+projects receive the local client, whose contracts run in the toolkit. Update the toolkit source and rerun
 `scripts/install_release.py`; `--check` detects drift.
 
 References: [GitHub schedules](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule),

@@ -16,6 +16,7 @@ import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+POLICY_FILE = ".release-policy.json"
 
 
 def run(args, directory, *, capture=False, check=True):
@@ -27,7 +28,7 @@ def run(args, directory, *, capture=False, check=True):
 
 def validate_identity(directory, item):
     """Require both origin URLs and the local policy to match the fleet entry."""
-    policy = json.loads((directory / ".release-policy.json").read_text())
+    policy = json.loads((directory / POLICY_FILE).read_text())
     if policy.get("repository") != item["repository"]:
         raise ValueError("Local release policy does not match the fleet repository")
     for extra in ([], ["--push"]):
@@ -47,7 +48,7 @@ def validate_identity(directory, item):
 
 def validate_generated_tracking(directory):
     """Reject generated files that an ordinary git add would silently omit."""
-    policy = json.loads((directory / ".release-policy.json").read_text())
+    policy = json.loads((directory / POLICY_FILE).read_text())
     required = [
         "scripts/release.py",
         ".github/workflows/quality-gate.yml",
@@ -55,6 +56,7 @@ def validate_generated_tracking(directory):
     ]
     if policy.get("mode", "release") == "release":
         required += [
+            "RELEASING.md",
             "scripts/release_control.py",
             ".github/workflows/release-pipeline.yml",
             ".github/release-tests/test_release_control.py",
@@ -77,11 +79,202 @@ def validate_generated_tracking(directory):
         )
 
 
-def main():
-    """Execute one fleet operation with repository identity and branch safeguards."""
-    # Keep audited submission steps together; no writes occur outside --execute.
-    # pylint: disable=too-many-locals,too-many-branches,too-many-statements
-    # pylint: disable=too-many-nested-blocks
+def check_repository(directory, item):
+    """Validate identity, staged contents and generated workflows before submission."""
+    validate_identity(directory, item)
+    validate_generated_tracking(directory)
+    run(["git", "diff", "--check"], directory)
+    run(["git", "diff", "--cached", "--check"], directory)
+    run(
+        [
+            sys.executable,
+            str(ROOT / "scripts/install_release.py"),
+            str(directory),
+            "--check",
+        ],
+        ROOT,
+    )
+    workflows = sorted(str(p) for p in (directory / ".github/workflows").glob("*.yml"))
+    run(["actionlint", "-shellcheck=", "-pyflakes=", *workflows], directory)
+
+
+def submission_body(policy):
+    """Describe the reviewed migration and its source-specific release blockers."""
+    body = (
+        "CI and release handling need a consistent validation and "
+        "operating policy across the repository fleet. "
+        "The migration adds a mandatory CI gate, nightly validation, "
+        "and local scripts that run the checked-in validation and "
+        "packaging commands.\n\n"
+    )
+    if policy.get("mode", "release") == "release":
+        body += (
+            "Application builds now produce immutable beta/RC artifacts "
+            "after validation. Stable publication requires an approved RC, "
+            "matching source SHA, successful Actions provenance and "
+            "verified asset checksums; it copies the RC bytes without "
+            "rebuilding. Independent tag/main/latest publishers are "
+            "retired. The English release strategy is in RELEASING.md; "
+            "commands and recovery instructions are in docs/release-workflow.md, "
+            "with brief README links.\n\n"
+        )
+    else:
+        body += (
+            "This repository uses validation-only policy. "
+            "Infrastructure/site deployments remain explicit and validate "
+            "the reviewed source revision.\n\n"
+        )
+    if policy.get("visibility") == "private":
+        body += (
+            "Private repositories require no paid GitHub security or governance "
+            "features. OSS security scans fail on findings; scheduled hosted jobs "
+            "require NIGHTLY_CHECKS_ENABLED=true. Local checks need no hosted quota.\n\n"
+        )
+    body += (
+        "Validation: local workflow schema checks and release-tooling "
+        "contract tests. Project-specific test/build evidence and "
+        "limits are recorded in docs/release-workflow.md and the fleet "
+        "rollout report. Hosted checks must pass before merging.\n\n"
+        "Rollout: merge and verify the workflows first. Public repositories can "
+        "opt into the Terraform CI gate and environment policies; private "
+        "repositories use the documented manual process without paid features. "
+        "This PR does not apply Terraform or deploy production.\n"
+    )
+    if policy.get("stable_blockers"):
+        body += "\nRC/stable remain blocked at the candidate source revision:\n\n"
+        body += "".join("- " + reason + "\n" for reason in policy["stable_blockers"])
+    return body
+
+
+def ensure_draft_pr(directory, item, branch):
+    """Reuse an existing open PR or create one draft from the checked-in policy."""
+    prs = json.loads(
+        run(
+            [
+                "gh",
+                "pr",
+                "list",
+                "--repo",
+                item["repository"],
+                "--head",
+                branch,
+                "--state",
+                "open",
+                "--json",
+                "url",
+            ],
+            directory,
+            capture=True,
+        ).stdout
+    )
+    policy = json.loads((directory / POLICY_FILE).read_text())
+    title = (
+        "ci: add gated release channels and release strategy"
+        if policy.get("mode", "release") == "release"
+        else "ci: add nightly validation and local operations"
+    )
+    with tempfile.NamedTemporaryFile("w", suffix=".md") as handle:
+        handle.write(submission_body(policy))
+        handle.flush()
+        if prs:
+            run(
+                [
+                    "gh",
+                    "pr",
+                    "edit",
+                    prs[0]["url"],
+                    "--title",
+                    title,
+                    "--body-file",
+                    handle.name,
+                ],
+                directory,
+            )
+            return prs[0]["url"]
+        result = run(
+            [
+                "gh",
+                "pr",
+                "create",
+                "--repo",
+                item["repository"],
+                "--base",
+                item.get("default_branch", "main"),
+                "--head",
+                branch,
+                "--draft",
+                "--title",
+                title,
+                "--body-file",
+                handle.name,
+            ],
+            directory,
+            capture=True,
+        )
+    return result.stdout.strip()
+
+
+def submit_repository(directory, item, execute, row):
+    """Guard the branch and require explicit execution before any Git or PR writes."""
+    branch = run(
+        ["git", "branch", "--show-current"], directory, capture=True
+    ).stdout.strip()
+    if branch != item.get("branch", "ci/release-standard") or not branch.startswith(
+        "ci/release-standard"
+    ):
+        raise ValueError(f"Refusing to submit unexpected branch {branch!r}")
+    changes = run(["git", "status", "--short"], directory, capture=True).stdout.strip()
+    row["changes"] = changes
+    if not execute:
+        row["action"] = (
+            "Review changes, then rerun submit --execute to create a draft PR"
+        )
+        return row
+    # These are dedicated migration worktrees; inspect status and test results
+    # before using --execute. All checks run before this function is called.
+    if changes:
+        run(["git", "add", "--all"], directory)
+        run(
+            [
+                "git",
+                "commit",
+                "-m",
+                "ci: gate releases through nightly, candidates and verified promotion",
+            ],
+            directory,
+        )
+    run(["git", "push", "--set-upstream", "origin", branch], directory)
+    row["pr"] = ensure_draft_pr(directory, item, branch)
+    return row
+
+
+def process_repository(directory, item, args, row):
+    """Run one selected operation after checking directory and submission boundaries."""
+    if directory.resolve().parent != args.root.resolve():
+        raise ValueError("Repository directory escapes the selected fleet root")
+    if args.command in ["check", "submit"]:
+        check_repository(directory, item)
+    if args.command == "render":
+        run(
+            [sys.executable, str(ROOT / "scripts/install_release.py"), str(directory)],
+            ROOT,
+        )
+    if args.command == "submit":
+        return submit_repository(directory, item, args.execute, row)
+    if args.command == "status":
+        return {
+            "branch": run(
+                ["git", "branch", "--show-current"], directory, capture=True
+            ).stdout.strip(),
+            "changes": run(
+                ["git", "status", "--short"], directory, capture=True
+            ).stdout.strip(),
+        }
+    return {}
+
+
+def parse_args():
+    """Parse the requested fleet operation, subset and explicit submission flag."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("command", choices=["status", "render", "check", "submit"])
     parser.add_argument(
@@ -98,9 +291,14 @@ def main():
         action="store_true",
         help="Commit, push a feature branch and create/update a draft PR",
     )
-    args = parser.parse_args()
+    return parser.parse_args()
+
+
+def main():
+    """Report each selected repository independently, preserving failures in JSONL."""
+    args = parse_args()
     manifest = json.loads((ROOT / "fleet.json").read_text())
-    rows, failed = [], False
+    failed = False
     for item in manifest["repositories"]:
         if item.get("excluded_reason") or (
             args.repo and item["repository"] not in args.repo
@@ -109,171 +307,11 @@ def main():
         directory = args.root / item["directory"]
         row = {"repository": item["repository"], "directory": str(directory)}
         try:
-            if directory.resolve().parent != args.root.resolve():
-                raise ValueError("Repository directory escapes the selected fleet root")
-            if args.command in ["check", "submit"]:
-                validate_identity(directory, item)
-                validate_generated_tracking(directory)
-            if args.command in ["check", "submit"]:
-                run(["git", "diff", "--check"], directory)
-                run(["git", "diff", "--cached", "--check"], directory)
-                run(
-                    [
-                        sys.executable,
-                        str(ROOT / "scripts/install_release.py"),
-                        str(directory),
-                        "--check",
-                    ],
-                    ROOT,
-                )
-                workflows = sorted(
-                    str(p) for p in (directory / ".github/workflows").glob("*.yml")
-                )
-                run(["actionlint", "-shellcheck=", "-pyflakes=", *workflows], directory)
-            if args.command == "render":
-                run(
-                    [
-                        sys.executable,
-                        str(ROOT / "scripts/install_release.py"),
-                        str(directory),
-                    ],
-                    ROOT,
-                )
-            if args.command == "submit":
-                branch = run(
-                    ["git", "branch", "--show-current"], directory, capture=True
-                ).stdout.strip()
-                if branch != item.get(
-                    "branch", "ci/release-standard"
-                ) or not branch.startswith("ci/release-standard"):
-                    raise ValueError(f"Refusing to submit unexpected branch {branch!r}")
-                row["changes"] = run(
-                    ["git", "status", "--short"], directory, capture=True
-                ).stdout.strip()
-                if args.execute:
-                    # These are dedicated migration worktrees; inspect `status`
-                    # and test results before using --execute.
-                    if row["changes"]:
-                        run(["git", "add", "--all"], directory)
-                        run(
-                            [
-                                "git",
-                                "commit",
-                                "-m",
-                                (
-                                    "ci: gate releases through nightly, candidates and verified "
-                                    "promotion"
-                                ),
-                            ],
-                            directory,
-                        )
-                    run(["git", "push", "--set-upstream", "origin", branch], directory)
-                    prs = json.loads(
-                        run(
-                            [
-                                "gh",
-                                "pr",
-                                "list",
-                                "--repo",
-                                item["repository"],
-                                "--head",
-                                branch,
-                                "--state",
-                                "open",
-                                "--json",
-                                "url",
-                            ],
-                            directory,
-                            capture=True,
-                        ).stdout
-                    )
-                    if prs:
-                        row["pr"] = prs[0]["url"]
-                    else:
-                        policy = json.loads(
-                            (directory / ".release-policy.json").read_text()
-                        )
-                        body = (
-                            "CI and release handling need a consistent validation and "
-                            "operating policy across the repository fleet. "
-                            "The migration adds a mandatory CI gate, nightly validation, "
-                            "and local scripts that run the checked-in validation and "
-                            "packaging commands.\n\n"
-                        )
-                        if policy.get("mode", "release") == "release":
-                            body += (
-                                "Application builds now produce immutable beta/RC artifacts "
-                                "after validation. Stable publication requires an approved RC, "
-                                "matching source SHA, successful Actions provenance and "
-                                "verified asset checksums; it copies the RC bytes without "
-                                "rebuilding. Independent tag/main/latest publishers are "
-                                "retired.\n\n"
-                            )
-                        else:
-                            body += (
-                                "This repository uses validation-only policy. "
-                                "Infrastructure/site deployments remain explicit and use "
-                                "protected environments where configured.\n\n"
-                            )
-                        body += (
-                            "Validation: local workflow schema checks and release-tooling "
-                            "contract tests. Project-specific test/build evidence and "
-                            "limits are recorded in docs/release-workflow.md and the fleet "
-                            "rollout report. Hosted checks must pass before merging.\n\n"
-                            "Rollout: merge the workflow first, then enable the additive "
-                            "Terraform CI gate and release/production environment policies "
-                            "for this repository. This PR does not apply Terraform or "
-                            "deploy production.\n"
-                        )
-                        if policy.get("stable_blockers"):
-                            body += (
-                                "\nRC/stable remain blocked at the candidate "
-                                "source revision:\n\n"
-                            )
-                            body += "".join(
-                                "- " + reason + "\n"
-                                for reason in policy["stable_blockers"]
-                            )
-                        with tempfile.NamedTemporaryFile("w", suffix=".md") as handle:
-                            handle.write(body)
-                            handle.flush()
-                            result = run(
-                                [
-                                    "gh",
-                                    "pr",
-                                    "create",
-                                    "--repo",
-                                    item["repository"],
-                                    "--base",
-                                    item.get("default_branch", "main"),
-                                    "--head",
-                                    branch,
-                                    "--draft",
-                                    "--title",
-                                    "ci: add gated nightly and release workflows",
-                                    "--body-file",
-                                    handle.name,
-                                ],
-                                directory,
-                                capture=True,
-                            )
-                        row["pr"] = result.stdout.strip()
-                else:
-                    row["action"] = (
-                        "Review changes, then rerun submit --execute to create a draft PR"
-                    )
-            elif args.command == "status":
-                row["branch"] = run(
-                    ["git", "branch", "--show-current"], directory, capture=True
-                ).stdout.strip()
-                row["changes"] = run(
-                    ["git", "status", "--short"], directory, capture=True
-                ).stdout.strip()
+            row.update(process_repository(directory, item, args, row))
             row["ok"] = True
         except (OSError, ValueError, subprocess.CalledProcessError) as exc:
             row.update(ok=False, error=str(exc))
             failed = True
-        rows.append(row)
         print(json.dumps(row), flush=True)
     return 1 if failed else 0
 

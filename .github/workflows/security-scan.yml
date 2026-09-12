@@ -1,5 +1,5 @@
 name: 'Reusable Security Scan'
-# description: 'Reusable workflow for security scanning (CodeQL, Trivy, Dependency Review)'
+# Trivy is an ordinary pass/fail gate. GitHub Code Security integrations are public-only.
 on:
   workflow_call:
     inputs:
@@ -34,7 +34,7 @@ on:
 jobs:
   codeql:
     name: CodeQL Analysis
-    if: inputs.run-codeql
+    if: inputs.run-codeql && github.event.repository.private == false
     runs-on: ubuntu-latest
     permissions:
       security-events: write
@@ -57,10 +57,9 @@ jobs:
 
   trivy:
     name: Trivy Scan
-    if: inputs.run-trivy
+    if: inputs.run-trivy || github.event.repository.private == true
     runs-on: ubuntu-latest
     permissions:
-      security-events: write
       contents: read
     steps:
       - name: Checkout
@@ -71,25 +70,16 @@ jobs:
         with:
           scan-type: 'fs'
           scan-ref: ${{ inputs.working-directory }}
-          format: 'sarif'
-          output: 'trivy-results.sarif'
+          format: 'table'
           severity: ${{ inputs.trivy-severity }}
           exit-code: '1'
           ignore-unfixed: ${{ !inputs.strict-trivy }}
           scanners: ${{ inputs.strict-trivy && 'vuln,secret,misconfig' || 'vuln,secret' }}
-          limit-severities-for-sarif: ${{ inputs.strict-trivy }}
           vuln-type: 'os,library'
-
-      - name: Upload Trivy results
-        if: always()
-        uses: github/codeql-action/upload-sarif@42947a340483f03ba47bb1a039b2c519aab3df85 # v3
-        with:
-          sarif_file: 'trivy-results.sarif'
-          category: trivy
 
   dependency-review:
     name: Dependency Review
-    if: inputs.run-dependency-review
+    if: inputs.run-dependency-review && github.event.repository.private == false && github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     permissions:
       contents: read

@@ -27,6 +27,43 @@ installer = module("install_release")
 class ClientTest(unittest.TestCase):
     """Check version resolution, asset collection and guarded dispatch behavior."""
 
+    def test_all_declared_local_checks_run_in_order(self):
+        """Do not silently omit security/integration after the default unit suite."""
+        checks = ["bash scripts/ci.sh", "bash scripts/ci.sh security"]
+        with mock.patch.object(client, "run") as run:
+            client.local_checks({"local_checks": checks})
+        self.assertEqual([call.args[-1] for call in run.call_args_list], checks)
+        self.assertTrue(
+            all(
+                call.args[:5] == ("bash", "-e", "-o", "pipefail", "-c")
+                for call in run.call_args_list
+            )
+        )
+
+    def test_failed_local_check_stops_following_commands(self):
+        """A failing validation cannot fall through into the next stage."""
+        with (
+            mock.patch.object(
+                client, "run", side_effect=subprocess.CalledProcessError(1, "check")
+            ) as run,
+            self.assertRaises(subprocess.CalledProcessError),
+        ):
+            client.local_checks({"local_checks": ["first", "second"]})
+        self.assertEqual(run.call_count, 1)
+
+    def test_malformed_local_checks_rejected_before_execution(self):
+        """Validate the complete command list before running its first entry."""
+        for checks in [[], "bash scripts/ci.sh", ["first", None], ["first", " "]]:
+            with mock.patch.object(client, "run") as run, self.assertRaises(ValueError):
+                client.local_checks({"local_checks": checks})
+            run.assert_not_called()
+
+    def test_validation_only_doctor_does_not_request_paid_environment(self):
+        """Infrastructure needs no release reviewers or environment API call."""
+        with mock.patch.object(client, "gh_json") as api:
+            client.doctor({"repository": "owner/repo", "mode": "validation-only"})
+        api.assert_not_called()
+
     def test_source_versions(self):
         """Resolve supported committed plain-text, JSON and TOML version sources."""
         with tempfile.TemporaryDirectory() as temp:
@@ -51,9 +88,12 @@ class ClientTest(unittest.TestCase):
             "1.2.03",
             "1.2.3\nchannel=stable",
             "$(id)",
+            "1١.2.3",
+            "1.2.3١",
         ]:
             with self.assertRaises(ValueError):
                 client.resolve_version({}, value)
+        self.assertIsNone(client.RC.fullmatch("v1.2.3-rc.1١"))
 
     def test_missing_version_is_not_invented(self):
         """Require a version source rather than inventing a release version."""
@@ -176,6 +216,26 @@ class GeneratorTest(unittest.TestCase):
         self.assertIn("merge_group", result["on"])
         self.assertEqual(result["jobs"]["gate"]["name"], "CI gate")
         self.assertEqual(result["jobs"]["gate"]["if"], "${{ always() }}")
+
+    def test_private_validation_uses_free_permissions_and_opt_in_nightly(self):
+        """Private checks require no Code Security write scope or paid environment."""
+        workflow = installer.quality(
+            dict(self.policy, mode="validation-only", visibility="private")
+        )
+        for job in workflow["jobs"].values():
+            self.assertNotIn("environment", job)
+            self.assertNotIn("security-events", job.get("permissions", {}))
+            self.assertIn("github.event_name != 'schedule'", job["if"])
+            self.assertIn("NIGHTLY_CHECKS_ENABLED", job["if"])
+        self.assertIn("always()", workflow["jobs"]["gate"]["if"])
+        self.assertIn("workflow_dispatch", workflow["on"])
+
+    def test_private_release_cannot_inherit_public_paid_environment_adapter(self):
+        """A future private application needs an explicit supported approval adapter."""
+        with self.assertRaisesRegex(ValueError, "manual approval adapter"):
+            installer.validate_policy(
+                Path("."), dict(self.policy, visibility="private")
+            )
 
     def test_recursion_and_empty_checks_rejected(self):
         """Reject missing validators and unsafe recursive workflow references."""

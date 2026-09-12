@@ -5,6 +5,20 @@ Inventory: 2026-09-12, GitHub owners `victron-venus`, `open-ott-play`, `4alvit`.
 worktree and exclusions. There are 52 active owned repositories: 25 application
 release policies and 27 validation-only policies. Five repositories are excluded
 because they are archived, empty runner experiments, or an upstream fork.
+Read-only visibility verification found 43 public and nine private repositories.
+All current application release policies are public. The private repositories use
+validation/deployment policies and require no paid GitHub security/governance features.
+
+## Documentation layout
+
+Each application keeps its English release strategy in `RELEASING.md`: versioning,
+branching, channel criteria, release ownership, acceptance, hotfixes and rollback.
+The generated `docs/release-workflow.md` is the command runbook. Existing platform
+setup instructions are preserved in `docs/release-packaging.md` where applicable.
+README files contain short navigation links. Validation-only repositories document
+their CI/deployment process without inventing application release channels.
+The canonical strategy is `templates/release-strategy.md`; render and check the
+entire fleet after changing the template or an individual policy.
 
 ## Activation order
 
@@ -16,23 +30,36 @@ because they are archived, empty runner experiments, or an upstream fork.
    local syntax checks do not replace them. Callable release-build adapters run on
    the first unpublished nightly/default-branch build after merging; require that
    complete matrix to pass before enabling public release channels.
-3. Merge workflow migrations. Nightly/default-branch builds retain Actions artifacts,
-   but public candidate publication remains disabled by default.
+3. Merge workflow migrations. Public nightly/default-branch builds retain Actions
+   artifacts, but candidate publication remains disabled by default. Private hosted
+   nightlies additionally require `NIGHTLY_CHECKS_ENABLED=true`; leave it unset when
+   quota is unavailable. Use the [local nightly runner](LOCAL_NIGHTLY.md) instead.
 4. Deploy the reviewed webhook changes before enabling prereleases. Both webhook
    implementations default `AUTO_DEPLOY_STABLE_RELEASES=false`; push/tag/CI hooks
    cannot deploy, and only explicitly enabled published stable releases qualify.
    Keep this opt-in off until registry publication and deployment coordination are
    configured, since a GitHub release can be published before its registry import.
+   The shared webhook image also moves to UID/GID 10001. Coordinate that image with
+   its Compose update and prepare the narrow SSH/secret/config permissions described
+   in its README. Do not recursively change monitoring data ownership. Portainer's
+   committed redacted Compose is a template; materialize the ignored live Compose
+   with the existing secrets before applying its deployment. No host changes are
+   performed by this migration.
 5. In each GitHub Terraform governance repository, review the additive
    `release-standards.tf` resources. Add only migrated repositories to
    `release_gate_repositories`, and only configured applications to
    `release_channel_repositories`. Use `examples/release-standard.tfvars.json`
    as inventory input, not an instruction to apply every repository prematurely.
    Run `terraform plan -var-file=... -out=...`, inspect it, then apply that exact plan.
-   Existing environments/rulesets must be imported if they already exist.
-6. Configure required reviewers and default-branch-only policies for `release` and
-   `production`. The default single-maintainer example allows 4alvit to request and
+   Existing environments/rulesets must be imported if they already exist. These
+   examples and governance resources target public repositories only; never upgrade
+   a private plan or enable paid features to satisfy this migration.
+6. For public release/deployment adapters, configure required reviewers and
+   default-branch-only policies for `release` and `production` where used. The
+   default single-maintainer example allows 4alvit to request and
    approve a promotion. For a team, add independent reviewers and prevent self-review.
+   Private deployments use explicit manual source approval and ordinary pass/fail
+   checks. They do not require an environment or an independent reviewer service.
 7. After the deployment-hook and environment prerequisites are complete, enable
    `RELEASE_CHANNELS_ENABLED=true` for the chosen repositories through Terraform's
    `release_publication_enabled_repositories`. Nightly and automatic beta publication
@@ -60,10 +87,41 @@ Use the project's committed version; commands with publication effects dispatch 
 protected default-branch workflow. The CLI pins the requested default-branch SHA and
 refuses dirty/out-of-date checkouts. `--dry-run` displays a request without dispatch.
 Infrastructure and template repositories offer local checks and nightly validation;
-their manual deployment workflows use reviewed commits and protected environments.
+their manual deployment workflows use reviewed commits and source identity guards.
+`check` runs every declared `local_checks` command, including security/integration
+commands. It stops on failure and does not qualify an RC for publication.
+
+## Private repository cost boundary
+
+Private scans use OSS tools with nonzero exit status for findings, without CodeQL,
+Code Scanning/SARIF upload or Dependency Review. Required private governance features
+are not purchased or enabled. Existing Actions allowances may still limit PR/manual
+runs; billing-blocked jobs are not rerun and spending limits are not raised.
+
+Private nightly jobs are opt-in. Local scheduled checks need the project's normal
+toolchains on an existing machine; the runner does not install a scheduler, fetch
+new code, change branches or publish anything. It records the checked SHA and marks
+remote freshness unknown. Without server-enforced branch rules, maintainers remain
+responsible for checking the gate before merging; do not claim bypass prevention.
+
+GitHub documents the availability boundaries for [Code Security](https://docs.github.com/en/code-security/reference/code-scanning/troubleshoot-analysis-errors/private-repository-enablement),
+[environment protection](https://docs.github.com/en/actions/reference/workflows-and-actions/deployments-and-environments),
+[rulesets](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/about-rulesets)
+and [Actions usage](https://docs.github.com/en/actions/concepts/billing-and-usage).
 
 ## Verification and known boundaries
 
+- Local preparation snapshot: 141 toolkit contract tests passed; generated-file,
+  identity, whitespace and Actions schema checks passed for all 52 repositories.
+  All 25 English strategy documents and 52 runbooks passed link/substitution checks.
+  This evidence does not mean the current local changes are merged or that hosted
+  CI passed on their unpublished bytes.
+- The nine private repositories were scanned with ordinary OSS tools. Five passed;
+  four retain blocking infrastructure misconfigurations: `terraform-portainer-synology`,
+  `home-assistant-k3s`, `terraform-oracle-oci`, and `k3s-self-healing`. Their
+  `docs/security-checks.md` records the findings. Root/container capabilities and
+  cluster RBAC need service-specific review; this migration does not suppress those
+  findings or change production runtime permissions to make the gate pass.
 - Toolkit: offline publication/promotion rejection tests, local-client tests,
   renderer contracts, registry byte identity and deployment digest tests. Existing
   PR-automation and Python typecheck contracts are retained. The typecheck install
@@ -105,7 +163,7 @@ security checks to get a release through. A failed gate requires a code/config f
 and a new successful run. A failed upload leaves a draft; inspect existing assets
 and tags before recovery. The publisher never overwrites existing version tags.
 
-Actions build artifacts retain 14 days by default; promotion evidence retains
+Actions build artifacts retain 14 or 30 days according to the build adapter; promotion evidence retains
 90 days. Missing/expired evidence requires a new RC. Published candidate releases
 are immutable and are not automatically deleted by this initial rollout; review
 nightly asset storage periodically and add an explicit retention policy before

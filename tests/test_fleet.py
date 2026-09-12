@@ -1,5 +1,6 @@
 """Exercise fleet identity checks without invoking Git or changing remote state."""
 
+import argparse
 import importlib.util
 import json
 import subprocess
@@ -111,6 +112,90 @@ class GeneratedTrackingTests(unittest.TestCase):
             ["git", "add", "--force", "scripts/release.py"], cwd=self.root, check=True
         )
         fleet.validate_generated_tracking(self.root)
+
+
+class SubmissionTests(unittest.TestCase):
+    """Exercise submission boundaries with mocked commands and no remote writes."""
+
+    def setUp(self):
+        """Use an explicitly selected app migration branch for each scenario."""
+        self.root = Path("/isolated/repo")
+        self.item = {"repository": "owner/repo", "branch": "ci/release-standard-apps"}
+        self.row = {"repository": self.item["repository"]}
+
+    def test_dry_run_only_reads_branch_and_status(self):
+        """A dirty worktree cannot cause writes without the execute flag."""
+        with mock.patch.object(
+            fleet,
+            "run",
+            side_effect=[
+                subprocess.CompletedProcess([], 0, self.item["branch"] + "\n"),
+                subprocess.CompletedProcess([], 0, " M workflow.yml\n"),
+            ],
+        ) as run:
+            fleet.submit_repository(self.root, self.item, False, self.row)
+        self.assertEqual(
+            [call.args[0] for call in run.call_args_list],
+            [["git", "branch", "--show-current"], ["git", "status", "--short"]],
+        )
+        self.assertEqual(self.row["changes"], "M workflow.yml")
+        self.assertIn("--execute", self.row["action"])
+        self.assertNotIn("pr", self.row)
+
+    def test_unexpected_branch_stops_before_staging(self):
+        """Both the exact fleet branch and its migration prefix are mandatory."""
+        for selected, current in [
+            ("ci/release-standard-apps", "main"),
+            ("ci/release-standard-apps", "ci/release-standard-other"),
+            ("main", "main"),
+        ]:
+            with (
+                self.subTest(selected=selected, current=current),
+                mock.patch.object(
+                    fleet,
+                    "run",
+                    return_value=subprocess.CompletedProcess([], 0, current),
+                ) as run,
+                self.assertRaisesRegex(ValueError, "unexpected branch"),
+            ):
+                fleet.submit_repository(
+                    self.root, {**self.item, "branch": selected}, True, self.row
+                )
+            self.assertEqual(run.call_count, 1)
+
+    def test_failed_preflight_never_reaches_submission(self):
+        """A failed check must stop even an explicitly executed submission."""
+        args = argparse.Namespace(root=self.root.parent, command="submit", execute=True)
+        with (
+            mock.patch.object(
+                fleet, "check_repository", side_effect=ValueError("invalid origin")
+            ),
+            mock.patch.object(fleet, "submit_repository") as submit,
+            self.assertRaisesRegex(ValueError, "invalid origin"),
+        ):
+            fleet.process_repository(self.root, self.item, args, self.row)
+        submit.assert_not_called()
+
+    def test_commit_failure_preserves_changes_and_never_pushes(self):
+        """A rejected hook remains visible in the result and cannot be bypassed."""
+        with (
+            mock.patch.object(
+                fleet,
+                "run",
+                side_effect=[
+                    subprocess.CompletedProcess([], 0, self.item["branch"]),
+                    subprocess.CompletedProcess([], 0, "M workflow.yml"),
+                    subprocess.CompletedProcess([], 0),
+                    subprocess.CalledProcessError(1, ["git", "commit"]),
+                ],
+            ) as run,
+            self.assertRaises(subprocess.CalledProcessError),
+        ):
+            fleet.submit_repository(self.root, self.item, True, self.row)
+        self.assertEqual(self.row["changes"], "M workflow.yml")
+        self.assertFalse(
+            any(call.args[0][:2] == ["git", "push"] for call in run.call_args_list)
+        )
 
 
 if __name__ == "__main__":
