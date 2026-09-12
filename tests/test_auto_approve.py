@@ -16,6 +16,7 @@ WORKFLOW = (
 REPOSITORY = "example/project"
 ENDPOINT = f"repos/{REPOSITORY}/pulls/17"
 HEAD = "a" * 40
+BASE = "d" * 40
 
 
 # API fixtures retain separate snapshots and each public test covers a distinct contract.
@@ -40,7 +41,7 @@ class AutoApproveContract(unittest.TestCase):
             "user": {"login": "californiantiramisu"},
             "labels": [{"name": "automerge"}],
             "head": {"sha": HEAD},
-            "base": {"ref": "stable", "repo": {"full_name": REPOSITORY}},
+            "base": {"sha": BASE, "ref": "stable", "repo": {"full_name": REPOSITORY}},
         }
         self.current = copy.deepcopy(self.pr)
         self.reviewer = "independent-reviewer"
@@ -48,6 +49,8 @@ class AutoApproveContract(unittest.TestCase):
         self.pages = [[]]
         self.calls = []
         self.read_count = 0
+        self.base_reads = [BASE, BASE]
+        self.decisions = ["APPROVED", "APPROVED"]
 
     def review(self, state="APPROVED", head=HEAD, user=None):
         """Create API review metadata, independently of the workflow logic."""
@@ -72,6 +75,24 @@ class AutoApproveContract(unittest.TestCase):
             self.assertEqual(command[3:], [])
             self.read_count += 1
             result = self.pr if self.read_count == 1 else self.current
+        elif path == f"repos/{REPOSITORY}/git/ref/heads/stable":
+            self.assertEqual(command[3:], [])
+            result = {"object": {"sha": self.base_reads.pop(0)}}
+        elif path == "graphql":
+            self.assertEqual(command[3:], ["--method", "POST", "--input", "-"])
+            payload = json.loads(kwargs["input"])
+            self.assertIn("reviewDecision", payload["query"])
+            self.assertEqual(
+                payload["variables"],
+                {"owner": "example", "name": "project", "number": 17},
+            )
+            result = {
+                "data": {
+                    "repository": {
+                        "pullRequest": {"reviewDecision": self.decisions.pop(0)}
+                    }
+                }
+            }
         elif path == "user":
             self.assertEqual(command[3:], [])
             result = {
@@ -89,6 +110,11 @@ class AutoApproveContract(unittest.TestCase):
                 {
                     "event": "APPROVE",
                     "commit_id": HEAD,
+                    "body": (
+                        f"Approved the current head against base commit {BASE}.\n\n"
+                        f"<!-- toolkit-approval-base:{BASE}:pr-base:"
+                        f"{self.pr['base']['sha']} -->"
+                    ),
                 },
             )
             result = {"id": 123}
@@ -108,7 +134,9 @@ class AutoApproveContract(unittest.TestCase):
 
     def assert_posts(self, count):
         """Assert the exact number of approval mutations sent to the API."""
-        self.assertEqual(sum("POST" in command for command, _ in self.calls), count)
+        self.assertEqual(
+            sum(command[2] == f"{ENDPOINT}/reviews" for command, _ in self.calls), count
+        )
 
     def test_author_not_actor_controls_approval(self):
         """A trusted author remains eligible when a different actor sends the event."""
@@ -275,6 +303,13 @@ class AutoApproveContract(unittest.TestCase):
         """Recheck eligibility and head immediately before submitting approval."""
         for changes in (
             {"head": {"sha": "c" * 40}},
+            {
+                "base": {
+                    "sha": "e" * 40,
+                    "ref": "stable",
+                    "repo": {"full_name": REPOSITORY},
+                }
+            },
             {"labels": []},
             {"draft": True},
             {"state": "closed"},
@@ -297,3 +332,66 @@ class AutoApproveContract(unittest.TestCase):
             # pylint: disable-next=exec-used
             exec(compile(self.code, str(WORKFLOW), "exec"), {"__name__": "__main__"})  # noqa: S102
         self.assert_posts(0)
+
+    def test_stale_same_head_approval_is_refreshed(self):
+        """GitHub can require reapproval after the merge base changes without a push."""
+        self.pages = [[self.review()]]
+        self.decisions = ["REVIEW_REQUIRED", "REVIEW_REQUIRED"]
+        self.execute()
+        self.assert_posts(1)
+
+    def test_other_required_review_does_not_repeat_our_fresh_approval(self):
+        """Persisted base metadata prevents repeated reviews when more reviewers are needed."""
+        review = self.review()
+        review["body"] = f"<!-- toolkit-approval-base:{BASE}:pr-base:{BASE} -->"
+        self.pages = [[review]]
+        self.decisions = ["REVIEW_REQUIRED"]
+        self.execute()
+        self.assert_posts(0)
+
+    def test_base_change_allows_one_more_required_review(self):
+        """An approval marker for an older base cannot hide GitHub's stale decision."""
+        review = self.review()
+        review["body"] = "<!-- toolkit-approval-base:older-base -->"
+        self.pages = [[review]]
+        self.decisions = ["REVIEW_REQUIRED", "REVIEW_REQUIRED"]
+        self.execute()
+        self.assert_posts(1)
+
+    def test_changes_requested_decision_does_not_repeat_same_approval(self):
+        """Do not overwrite another reviewer's objection with a repeated approval."""
+        self.pages = [[self.review()]]
+        self.decisions = ["CHANGES_REQUESTED"]
+        self.execute()
+        self.assert_posts(0)
+
+    def test_unknown_review_requirement_does_not_repeat_approval(self):
+        """Repositories without a review decision do not need duplicate reviews."""
+        self.pages = [[self.review()]]
+        self.decisions = [None]
+        self.execute()
+        self.assert_posts(0)
+
+    def test_concurrent_base_tip_change_prevents_review(self):
+        """Read the actual branch tip twice because PR base metadata may lag main."""
+        self.base_reads = [BASE, "e" * 40]
+        self.execute()
+        self.assert_posts(0)
+
+    def test_concurrent_requirement_resolution_prevents_duplicate(self):
+        """A review supplied during the recheck removes the need to reapprove."""
+        self.pages = [[self.review()]]
+        self.decisions = ["REVIEW_REQUIRED", "APPROVED"]
+        self.execute()
+        self.assert_posts(0)
+
+    def test_lagging_pr_base_refreshes_even_when_default_tip_is_unchanged(self):
+        """GitHub may update the PR merge base after its default-branch tip was observed."""
+        review = self.review()
+        review["body"] = f"<!-- toolkit-approval-base:{BASE}:pr-base:{BASE} -->"
+        self.pages = [[review]]
+        self.pr["base"]["sha"] = "e" * 40
+        self.current = copy.deepcopy(self.pr)
+        self.decisions = ["REVIEW_REQUIRED", "REVIEW_REQUIRED"]
+        self.execute()
+        self.assert_posts(1)
