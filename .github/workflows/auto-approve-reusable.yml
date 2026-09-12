@@ -1,73 +1,111 @@
-name: 'Auto Approve'
-# description: 'Auto-approve PRs opened by configured authors'
+name: Auto Approve
 
 on:
   workflow_call:
     inputs:
       authors:
-        description: 'JSON array of PR author logins whose PRs are auto-approved'
+        description: JSON array of trusted PR authors eligible for automatic approval
         type: string
-        # Bots plus the org's human owner. 4alvit PRs are approved by the
-        # dedicated bot account whose PAT is the org-level BOT_PAT secret -
-        # a human account CANNOT be approved by its own PAT ("Can not approve
-        # your own pull request"), so keep that invariant: every login listed
-        # here must differ from the account behind BOT_PAT.
-        default: '["dependabot[bot]","renovate[bot]","4alvit"]'
+        default: '["dependabot[bot]","renovate[bot]","4alvit","californiantiramisu"]'
     secrets:
       BOT_PAT:
-        description: >-
-          GitHub token (BOT_PAT) used to create the approving review. Required
-          for the step to run at all: GITHUB_TOKEN can never approve PRs, and
-          the token must belong to an account OTHER than the PR authors above.
-          When unset, the step skips cleanly.
+        description: Bot token with pull request write permission
+        required: false
+      APPROVAL_PAT:
+        description: Optional separate reviewer token when BOT_PAT owns the PR
         required: false
 
 jobs:
   auto-approve:
     name: Auto Approve
+    if: >-
+      github.event.pull_request != null &&
+      contains(fromJSON(inputs.authors), github.event.pull_request.user.login) &&
+      contains(github.event.pull_request.labels.*.name, 'automerge') &&
+      !github.event.pull_request.draft
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     permissions:
       contents: read
       pull-requests: write
-    env:
-      ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: "true"
-      # secrets are not readable in step-level if:, so surface via env
-      BOT_PAT: ${{ secrets.BOT_PAT }}
     steps:
-      - name: Dismiss stale approval
-        # Rulesets with require_last_push_approval invalidate the bot's old
-        # approval on every new push ("Review required" despite the standing
-        # APPROVED review). auto-approve-action only checks whether the user
-        # already approved and skips, so drop our own stale review first to
-        # let a fresh one land on the head commit.
-        if: >-
-          contains(fromJSON(inputs.authors), github.event.pull_request.user.login) &&
-          env.BOT_PAT != ''
+      # This workflow handles metadata only. Never check out or execute PR code.
+      - name: Approve the current head as an independent reviewer
+        shell: python
         env:
-          GH_TOKEN: ${{ secrets.BOT_PAT }}
+          BOT_PAT: ${{ secrets.BOT_PAT }}
+          APPROVAL_PAT: ${{ secrets.APPROVAL_PAT }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          TRUSTED_AUTHORS: ${{ inputs.authors }}
         run: |
-          pr="${{ github.event.pull_request.number }}"
-          me="$(gh api user --jq .login)"
-          ids="$(gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$pr/reviews" \
-            --jq ".[] | select(.user.login == \"$me\" and .state == \"APPROVED\") | .id")"
-          for id in $ids; do
-            # DELETE /reviews/{id} only works on PENDING reviews; dismissing a
-            # submitted review requires the dismissals endpoint.
-            gh api -X PUT "repos/$GITHUB_REPOSITORY/pulls/$pr/reviews/$id/dismissals" \
-              -f message="Auto-approve: re-approving after new push" >/dev/null
-            echo "dismissed stale review $id"
-          done
+          import json
+          import os
+          import subprocess
 
-      - name: Auto Approve
-        # auto-approve-action v4 has no author filtering, so gate here.
-        # NB: split() in an if condition fails reusable-workflow validation,
-        # hence the JSON-array input parsed with fromJSON().
-        # GITHUB_TOKEN can never approve PRs (GitHub policy), so when BOT_PAT
-        # is not configured we skip cleanly instead of failing every match.
-        # Callers MUST forward the secret: secrets: {BOT_PAT: ${{ secrets.BOT_PAT }}}
-        if: >-
-          contains(fromJSON(inputs.authors), github.event.pull_request.user.login) &&
-          env.BOT_PAT != ''
-        uses: hmarr/auto-approve-action@f0939ea97e9205ef24d872e76833fa908a770363
-        with:
-          github-token: ${{ env.BOT_PAT }}
+          def api(path, token, *, payload=None, paginate=False):
+              command = ["gh", "api", path]
+              if paginate:
+                  command.extend(["--paginate", "--slurp"])
+              if payload is not None:
+                  command.extend(["--method", "POST", "--input", "-"])
+              try:
+                  result = subprocess.run(
+                      command,
+                      input=json.dumps(payload) if payload is not None else None,
+                      text=True,
+                      capture_output=True,
+                      check=True,
+                      env={**os.environ, "GH_TOKEN": token},
+                  )
+              except subprocess.CalledProcessError as error:
+                  detail = (error.stderr or "GitHub API request failed").strip().replace(token, "***")
+                  raise RuntimeError(detail) from None
+              return json.loads(result.stdout)
+
+          def eligible(pr, authors, repository, default_branch):
+              return (
+                  pr["state"] == "open"
+                  and not pr["draft"]
+                  and pr["user"]["login"].lower() in authors
+                  and "automerge" in {label["name"] for label in pr["labels"]}
+                  and pr["base"]["repo"]["full_name"] == repository
+                  and pr["base"]["ref"] == default_branch
+              )
+
+          def main():
+              token = os.environ.get("APPROVAL_PAT") or os.environ.get("BOT_PAT")
+              if not token:
+                  raise RuntimeError("Configure BOT_PAT or APPROVAL_PAT with pull request write permission")
+              authors = {author.lower() for author in json.loads(os.environ["TRUSTED_AUTHORS"])}
+              repository = os.environ["GITHUB_REPOSITORY"]
+              number = int(os.environ["PR_NUMBER"])
+              endpoint = f"repos/{repository}/pulls/{number}"
+              default_branch = api(f"repos/{repository}", token)["default_branch"]
+              pr = api(endpoint, token)
+              if not eligible(pr, authors, repository, default_branch):
+                  print("Pull request is not eligible for automatic approval")
+                  return
+              reviewer = api("user", token)["login"]
+              if reviewer.lower() == pr["user"]["login"].lower():
+                  raise RuntimeError("The reviewer cannot approve its own PR; configure an independent APPROVAL_PAT")
+              print(f"Reviewer: {reviewer}")
+              reviews = [
+                  review
+                  for page in api(f"{endpoint}/reviews?per_page=100", token, paginate=True)
+                  for review in page
+                  if review["user"]["login"].lower() == reviewer.lower()
+                  and review["state"] != "PENDING"
+              ]
+              head = pr["head"]["sha"]
+              if reviews and reviews[-1]["state"] == "APPROVED" and reviews[-1]["commit_id"] == head:
+                  print("The current head is already approved by this reviewer")
+                  return
+              current = api(endpoint, token)
+              if current["head"]["sha"] != head or not eligible(current, authors, repository, default_branch):
+                  print("Pull request changed; a new event will evaluate the current head")
+                  return
+              api(f"{endpoint}/reviews", token, payload={"event": "APPROVE", "commit_id": head})
+              print(f"Approved pull request #{number} at {head}")
+
+          if __name__ == "__main__":
+              main()

@@ -77,7 +77,7 @@ All reusable workflows in this toolkit are called via `workflow_call`. A calling
 | `.github/workflows/docker.yml` | `docker-build.yml` | Multi-platform Docker build & push |
 | `.github/workflows/release.yml` | `release.yml` | GitHub release from tag push |
 | `.github/workflows/auto-approve.yml` | `auto-approve.yml` | Auto-approve bot PRs (direct trigger) |
-| `.github/workflows/auto-approve.yml` | `auto-approve-reusable.yml` | Same, via reusable |
+| `.github/workflows/auto-approve.yml` | `auto-approve-reusable.yml` | Trusted approval via reusable |
 | `.github/workflows/auto-merge.yml` | `auto-merge.yml` | Auto-merge when checks pass |
 | `.github/workflows/nightly.yml` | `nightly.yml` | Scheduled trigger of another workflow |
 
@@ -193,25 +193,31 @@ Secrets: `REGISTRY_USERNAME`, `REGISTRY_PASSWORD` (optional; defaults to GHCR vi
 | `body-file` | string | `''` | No |
 | `skip-checkout` | boolean | `false` | No |
 
-#### `auto-approve.yml` / `auto-approve-reusable.yml`
+#### `auto-approve-reusable.yml`
 
-`auto-approve.yml` has no inputs (direct trigger). `auto-approve-reusable.yml` is `workflow_call`:
+Use [the approval caller example](examples/auto-approve.yml) with an immutable toolkit commit. The direct `auto-approve.yml` is this toolkit's own caller, not a reusable workflow. Consumers must use metadata-only `pull_request_target` events; never check out or run PR source in these workflows.
 
 | Input | Type | Default | Required |
 |---|---|---|---|
-| `authors` | string | `'["dependabot[bot]","renovate[bot]","4alvit"]'` | No |
+| `authors` | string | `'["dependabot[bot]","renovate[bot]","4alvit","californiantiramisu"]'` | No |
 
-Secrets: `BOT_PAT` (required for approval action; skips if absent).
+A ready PR must carry `automerge` and target the repository's default branch. The current PR author is evaluated independently of the event actor. Approval is tied to the current head; an old approval does not suppress review of a new commit.
+
+Secrets: explicitly forward `BOT_PAT` and optional `APPROVAL_PAT`. The latter takes precedence when supplied and must identify a reviewer other than the PR author. `BOT_PAT` requires repository write permission for merging and pull request write permission for approval. Missing credentials or self-approval are configuration errors. The ordinary `GITHUB_TOKEN` can approve when repository/organization policy permits, but these workflows deliberately use the configured independent reviewer and preserve PAT-triggered downstream workflows.
 
 #### `auto-merge.yml`
 
+Use [the merge caller example](examples/auto-merge.yml) with an immutable toolkit commit and native auto-merge enabled in the consumer repository.
+
 | Input | Type | Default | Required |
 |---|---|---|---|
-| `pr-author` | string | `'dependabot[bot],renovate[bot]'` | No |
+| `pr-author` | string | `'4alvit,californiantiramisu,dependabot[bot],renovate[bot]'` | No |
 | `merge-method` | string | `'squash'` | No |
-| `required-status-checks` | string | `'CI,codeql,trivy'` | No |
+| `required-status-checks` | string | `''` | No |
 
-Secrets: `BOT_PAT` (required).
+`pr-author` can narrow the trusted author set. `required-status-checks` adds exact comma-separated check names that must be present; every observed check must also succeed (neutral/skipped checks are accepted). Empty means use the actual reported checks and repository protections, not invented generic check names. Pending checks wait for up to two hours; failed checks stop the run. Only this merge job's own waiting check is excluded. Before requesting native auto-merge, the workflow rechecks eligibility, check results, and the current head. It never uses an administrator override.
+
+Secrets: explicitly forward `BOT_PAT`. The `automerge` label, a ready PR, and the default target branch are required. Existing branch protection and CODEOWNERS rules still apply. After repairing a failed check, rerun the merge workflow if no new PR event occurs.
 
 #### `nightly.yml`
 
