@@ -1,5 +1,16 @@
 # Venus OS CI Toolkit
 
+## Runtime scope
+
+This toolkit runs in GitHub Actions; it is not a service installed on Venus OS.
+A green workflow on an x86 Linux runner does not establish compatibility with
+Cerbo GX ARMv7 or Raspberry Pi firmware. Consumers shipping native GX services
+should separately exercise BusyBox/POSIX installers, offline dependency failure,
+repeated installation, `/data/rc.local` boot persistence, bounded logs, and the
+actual firmware Python ABI. Venus OS uses daemontools (`svc`, `svstat`), not
+systemd; container jobs are companion-host build/test environments.
+
+
 Reusable GitHub Actions workflows and composite actions for Victron Venus OS projects.
 
 ## Automatic approval and merge
