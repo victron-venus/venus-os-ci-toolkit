@@ -384,6 +384,51 @@ def validate_policy(directory: Path, policy: dict) -> None:
         r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", policy.get("repository", "")
     ):
         raise ValueError("Policy needs repository OWNER/REPO")
+    execution = policy.get("ci_execution", "github")
+    if execution not in {"github", "local"}:
+        raise ValueError("ci_execution must be github or local")
+    if execution == "local":
+        validate_local_policy(directory, policy)
+
+
+def validate_local_policy(directory: Path, policy: dict) -> None:
+    """Keep local validation independent of unavailable hosted workflow adapters."""
+    if policy.get("mode") != "validation-only" or policy.get("validation_workflows"):
+        raise ValueError(
+            "Local CI requires validation-only mode and no hosted validators"
+        )
+    if (directory / ".github/workflows/quality-gate.yml").exists():
+        raise ValueError(
+            "Archive the unavailable hosted quality-gate.yml before rendering local CI"
+        )
+    commands = policy.get("local_checks")
+    if (
+        not isinstance(commands, list)
+        or not commands
+        or any(
+            not isinstance(command, str) or not command.strip() for command in commands
+        )
+    ):
+        raise ValueError("Local CI needs a nonempty list of reviewed local_checks")
+    if not (directory / "scripts/ci.sh").is_file():
+        raise ValueError("Local CI requires scripts/ci.sh")
+    validate_local_workflows(directory)
+
+
+def validate_local_workflows(directory: Path) -> None:
+    """Allow only explicit manual jobs on an existing self-hosted runner."""
+    for path in (directory / ".github/workflows").glob("*.y*ml"):
+        workflow = yaml.load(path.read_text(), Loader=yaml.BaseLoader)
+        if set(workflow.get("on", {})) != {"workflow_dispatch"}:
+            raise ValueError(f"Archive unavailable automatic workflow: {path}")
+        jobs = workflow.get("jobs", {})
+        if not jobs:
+            raise ValueError(f"Local workflow has no jobs: {path}")
+        for job in jobs.values():
+            runner = job.get("runs-on", [])
+            labels = [runner] if isinstance(runner, str) else runner
+            if "uses" in job or "self-hosted" not in labels:
+                raise ValueError(f"Archive unavailable hosted workflow: {path}")
 
 
 def validate_workflow_adapters(directory: Path, policy: dict) -> None:
@@ -475,10 +520,15 @@ def render(directory: Path) -> dict[str, str]:
     """Validate adapters and assemble generated workflows, clients and operator docs."""
     policy = json.loads((directory / ".release-policy.json").read_text())
     validate_policy(directory, policy)
-    files = {".github/workflows/quality-gate.yml": dump(quality(policy))}
+    local = policy.get("ci_execution") == "local"
+    files = (
+        {} if local else {".github/workflows/quality-gate.yml": dump(quality(policy))}
+    )
     files["docs/release-workflow.md"] = operator_guide(policy)
-    validate_workflow_adapters(directory, policy)
-    files["scripts/release.py"] = (ROOT / "scripts/release.py").read_text()
+    if not local:
+        validate_workflow_adapters(directory, policy)
+    client = "scripts/local_ci.py" if local else "scripts/release.py"
+    files["scripts/release.py"] = (ROOT / client).read_text()
     if policy.get("mode", "release") == "release":
         files.update(release_files(directory, policy))
     # Consumers use different format/type policies. These copies are verified by
@@ -493,6 +543,8 @@ def render(directory: Path) -> dict[str, str]:
 def operator_guide(policy: dict) -> str:
     """Describe the exact release operations and limits configured for a repository."""
     repo = policy["repository"]
+    if policy.get("ci_execution") == "local":
+        return local_guide(policy)
     text = f"""# CI and release operations — {repo}
 
 The source of truth is `.release-policy.json`. `quality-gate.yml` runs the callable
@@ -667,6 +719,22 @@ References: [GitHub schedules](https://docs.github.com/en/actions/reference/work
 [protected environments](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/manage-environments),
 [artifact provenance](https://docs.github.com/en/rest/actions/artifacts).
 """
+    return text
+
+
+def local_guide(policy: dict) -> str:
+    """Describe local checks without claiming unavailable hosted gates or schedules."""
+    text = (ROOT / "templates/local-operations.md").read_text()
+    values = {
+        "REPOSITORY": policy["repository"],
+        "LOCAL_COMMANDS": "\n".join(
+            "- `" + command + "`" for command in policy["local_checks"]
+        ),
+        "PROJECT_LIMITS": "\n".join("- " + note for note in policy.get("notes", []))
+        or "Real hardware, credentials and production behavior require separate acceptance.",
+    }
+    for key, value in values.items():
+        text = text.replace("@" + key + "@", value)
     return text
 
 

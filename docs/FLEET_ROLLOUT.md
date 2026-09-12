@@ -25,15 +25,17 @@ entire fleet after changing the template or an individual policy.
 1. Review the dedicated `ci/release-standard` changes and local validation evidence.
    `scripts/fleet.py check` checks generated drift, whitespace and workflow schema.
    `scripts/fleet.py submit --repo OWNER/REPO --execute` creates a draft PR.
-2. Require successful hosted CI on the exact PR head. Native OS matrices, Docker
+2. For public repositories, require successful hosted CI on the exact PR head. Native OS matrices, Docker
    builds, ESPHome compilation and service integration need their actual runners;
    local syntax checks do not replace them. Callable release-build adapters run on
    the first unpublished nightly/default-branch build after merging; require that
    complete matrix to pass before enabling public release channels.
 3. Merge workflow migrations. Public nightly/default-branch builds retain Actions
-   artifacts, but candidate publication remains disabled by default. Private hosted
-   nightlies additionally require `NIGHTLY_CHECKS_ENABLED=true`; leave it unset when
-   quota is unavailable. Use the [local nightly runner](LOCAL_NIGHTLY.md) instead.
+   artifacts, but candidate publication remains disabled by default. The nine private
+   repositories remove unavailable hosted workflows and use local validation; they
+   have no hosted nightly or CI gate. Use the [local nightly runner](LOCAL_NIGHTLY.md).
+   Default-branch schedules and `pull_request_target` callers disappear after merge;
+   a draft migration PR does not itself disable definitions on the default branch.
 4. Deploy the reviewed webhook changes before enabling prereleases. Both webhook
    implementations default `AUTO_DEPLOY_STABLE_RELEASES=false`; push/tag/CI hooks
    cannot deploy, and only explicitly enabled published stable releases qualify.
@@ -86,23 +88,33 @@ python3 scripts/release.py stable --rc v1.2.3-rc.1
 Use the project's committed version; commands with publication effects dispatch the
 protected default-branch workflow. The CLI pins the requested default-branch SHA and
 refuses dirty/out-of-date checkouts. `--dry-run` displays a request without dispatch.
-Infrastructure and template repositories offer local checks and nightly validation;
-their manual deployment workflows use reviewed commits and source identity guards.
+Public infrastructure and template repositories offer local checks and nightly validation.
+Private repositories expose only `check`, `status` and `doctor` through the local
+client; they have no GitHub dispatch or publication commands. The retained manual
+Portainer deployment checks the reviewed source and live Compose bytes on the
+existing LAN runner before plan/apply.
 `check` runs every declared `local_checks` command, including security/integration
 commands. It stops on failure and does not qualify an RC for publication.
 
 ## Private repository cost boundary
 
-Private scans use OSS tools with nonzero exit status for findings, without CodeQL,
-Code Scanning/SARIF upload or Dependency Review. Required private governance features
-are not purchased or enabled. Existing Actions allowances may still limit PR/manual
-runs; billing-blocked jobs are not rerun and spending limits are not raised.
+The nine private repositories use `ci_execution: local` and no hosted validators.
+Unavailable validation, security, automatic approval and automatic merge workflow
+files are removed from `.github/workflows/`; their reviewed definitions remain as
+reference text in `docs/github-hosted-workflows/`. There are no hosted scheduled,
+PR or manual validation callers to leave failing because of account billing.
 
-Private nightly jobs are opt-in. Local scheduled checks need the project's normal
-toolchains on an existing machine; the runner does not install a scheduler, fetch
-new code, change branches or publish anything. It records the checked SHA and marks
-remote freshness unknown. Without server-enforced branch rules, maintainers remain
-responsible for checking the gate before merging; do not claim bypass prevention.
+The sole retained private workflow is Portainer's manual redeployment on its
+existing LAN runner. Selection, source approval, local validation, security checks,
+and deployment all use that runner. No new runner, paid protection, Code Scanning
+upload, spending-limit change or production apply is introduced.
+
+Local scans use OSS tools and return failure for findings or incomplete scans. The
+local nightly runner uses normal toolchains on an existing machine, records the
+checked SHA and marks remote freshness unknown. It does not install a scheduler,
+fetch code, change branches or publish anything. Maintainers run and record local
+checks on the proposed revision before merging. This is a review practice, not a
+server-enforced GitHub gate; missing checks do not mean successful validation.
 
 GitHub documents the availability boundaries for [Code Security](https://docs.github.com/en/code-security/reference/code-scanning/troubleshoot-analysis-errors/private-repository-enablement),
 [environment protection](https://docs.github.com/en/actions/reference/workflows-and-actions/deployments-and-environments),
@@ -111,17 +123,19 @@ and [Actions usage](https://docs.github.com/en/actions/concepts/billing-and-usag
 
 ## Verification and known boundaries
 
-- Local preparation snapshot: 141 toolkit contract tests passed; generated-file,
+- Local verification: 146 toolkit contract tests passed; generated-file,
   identity, whitespace and Actions schema checks passed for all 52 repositories.
   All 25 English strategy documents and 52 runbooks passed link/substitution checks.
-  This evidence does not mean the current local changes are merged or that hosted
-  CI passed on their unpublished bytes.
+  This evidence does not mean the changes are merged or that every hosted build
+  and external acceptance check has passed on the submitted revision. Five local-only
+  contracts additionally verify ordered checks, failure propagation, configuration-only
+  status, absence of publishing commands and rejection of hosted dependencies.
 - The nine private repositories were scanned with ordinary OSS tools. Five passed;
   four retain blocking infrastructure misconfigurations: `terraform-portainer-synology`,
   `home-assistant-k3s`, `terraform-oracle-oci`, and `k3s-self-healing`. Their
   `docs/security-checks.md` records the findings. Root/container capabilities and
   cluster RBAC need service-specific review; this migration does not suppress those
-  findings or change production runtime permissions to make the gate pass.
+  findings or change production runtime permissions to make local checks pass.
 - Toolkit: offline publication/promotion rejection tests, local-client tests,
   renderer contracts, registry byte identity and deployment digest tests. Existing
   PR-automation and Python typecheck contracts are retained. The typecheck install

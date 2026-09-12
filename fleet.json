@@ -327,7 +327,8 @@
       "mode": "validation-only",
       "base_sha": "a480d3fa48eb5a089965af61efdc6b1a81db6201",
       "branch": "ci/release-standard",
-      "visibility": "private"
+      "visibility": "private",
+      "ci_execution": "local"
     },
     {
       "repository": "4alvit/k3s-self-healing",
@@ -336,7 +337,8 @@
       "mode": "validation-only",
       "base_sha": "c622adf6251feae43f07dcd99c4ce642bf66d15a",
       "branch": "ci/release-standard",
-      "visibility": "private"
+      "visibility": "private",
+      "ci_execution": "local"
     },
     {
       "repository": "4alvit/fastapi-mqtt-gateway",
@@ -354,7 +356,8 @@
       "mode": "validation-only",
       "base_sha": "a6034085427be4fef285f3530989318d8d23e302",
       "branch": "ci/release-standard",
-      "visibility": "private"
+      "visibility": "private",
+      "ci_execution": "local"
     },
     {
       "repository": "4alvit/4alvit",
@@ -372,7 +375,8 @@
       "mode": "validation-only",
       "base_sha": "7a05a9cb40f7052bc75166e56e0f6686f07f75c7",
       "branch": "ci/release-standard",
-      "visibility": "private"
+      "visibility": "private",
+      "ci_execution": "local"
     },
     {
       "repository": "4alvit/terraform-cloudflare-alvit",
@@ -381,7 +385,8 @@
       "mode": "validation-only",
       "base_sha": "08c368bff245e44472fbadf3722fad0e8f7b5afa",
       "branch": "ci/release-standard",
-      "visibility": "private"
+      "visibility": "private",
+      "ci_execution": "local"
     },
     {
       "repository": "4alvit/home-assistant-k3s",
@@ -390,7 +395,8 @@
       "mode": "validation-only",
       "base_sha": "47e879fc7d23f3698bccf0613c557e7f6c6953b8",
       "branch": "ci/release-standard",
-      "visibility": "private"
+      "visibility": "private",
+      "ci_execution": "local"
     },
     {
       "repository": "4alvit/demo",
@@ -399,7 +405,8 @@
       "mode": "validation-only",
       "base_sha": "cd0b6fbaf2aa6962e81398705d87cc81a6b17902",
       "branch": "ci/release-standard",
-      "visibility": "private"
+      "visibility": "private",
+      "ci_execution": "local"
     },
     {
       "repository": "4alvit/iot-project-builder-profile",
@@ -417,7 +424,8 @@
       "mode": "validation-only",
       "base_sha": "e0b37ff5c3c40f71d399073b503da8d67eed052a",
       "branch": "ci/release-standard",
-      "visibility": "private"
+      "visibility": "private",
+      "ci_execution": "local"
     },
     {
       "repository": "4alvit/terraform-github-victron",
@@ -489,7 +497,8 @@
       "mode": "validation-only",
       "base_sha": "3641fb09507886dbd5a159659b42c5c2275ef9f5",
       "branch": "ci/release-standard",
-      "visibility": "private"
+      "visibility": "private",
+      "ci_execution": "local"
     },
     {
       "repository": "4alvit/tmp-runner-test2",

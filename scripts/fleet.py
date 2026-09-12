@@ -51,9 +51,10 @@ def validate_generated_tracking(directory):
     policy = json.loads((directory / POLICY_FILE).read_text())
     required = [
         "scripts/release.py",
-        ".github/workflows/quality-gate.yml",
         "docs/release-workflow.md",
     ]
+    if policy.get("ci_execution") != "local":
+        required.append(".github/workflows/quality-gate.yml")
     if policy.get("mode", "release") == "release":
         required += [
             "RELEASING.md",
@@ -95,11 +96,28 @@ def check_repository(directory, item):
         ROOT,
     )
     workflows = sorted(str(p) for p in (directory / ".github/workflows").glob("*.yml"))
-    run(["actionlint", "-shellcheck=", "-pyflakes=", *workflows], directory)
+    if workflows:
+        run(["actionlint", "-shellcheck=", "-pyflakes=", *workflows], directory)
 
 
 def submission_body(policy):
     """Describe the reviewed migration and its source-specific release blockers."""
+    if policy.get("ci_execution") == "local":
+        return (
+            "Private GitHub-hosted checks cannot run with the existing account "
+            "configuration. This change removes unavailable hosted workflows "
+            "and automatic approval/merge callers "
+            "from active workflow discovery, retaining their definitions as archived text.\n\n"
+            "Validation and security checks remain available through "
+            "python3 scripts/release.py check. The English runbook documents "
+            "local nightlies and maintainer review; there is no required "
+            "GitHub-hosted CI gate or paid security/environment feature. Existing working manual "
+            "self-hosted deployment is preserved where applicable.\n\n"
+            "Validation: local client rejection/ordering contracts, renderer checks and applicable "
+            "project checks. Existing security findings remain failures in local validation and "
+            "are documented in docs/security-checks.md where present. No paid settings, runner "
+            "installation, Terraform apply or production deployment are part of this PR.\n"
+        )
     body = (
         "CI and release handling need a consistent validation and "
         "operating policy across the repository fleet. "
@@ -173,6 +191,8 @@ def ensure_draft_pr(directory, item, branch):
         if policy.get("mode", "release") == "release"
         else "ci: add nightly validation and local operations"
     )
+    if policy.get("ci_execution") == "local":
+        title = "ci: replace unavailable private workflows with local checks"
     with tempfile.NamedTemporaryFile("w", suffix=".md") as handle:
         handle.write(submission_body(policy))
         handle.flush()
