@@ -12,6 +12,8 @@ Forward `BOT_PAT` explicitly. Its account needs repository write access; automat
 
 Merging waits for the latest attempt of each reported check to pass, including optional checks, for up to two hours. It then requests GitHub native auto-merge for the verified head. Existing review requirements, CODEOWNERS, branch protection, and merge rules remain in force. If a check fails or the wait expires, fix or rerun that check and rerun the merge workflow. A new commit, label change, or ready transition starts a fresh evaluation.
 
+Concurrent GitHub runs can start in a different order from their numeric run IDs. Pending attempts always block merging; completed attempts are ordered by when their jobs started, with job IDs as a fallback. An earlier canceled attempt cannot replace a later successful result, and an earlier success cannot hide a later failure.
+
 ## Overview
 
 This toolkit provides standardized, reusable CI/CD workflows that can be referenced by any repository in the `victron-venus` organization. It eliminates duplication and ensures consistent practices across all projects.

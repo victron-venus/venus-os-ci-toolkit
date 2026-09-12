@@ -80,11 +80,13 @@ jobs:
                   workflow = check.get('workflowName', '')
                   url = check.get('detailsUrl', check.get('targetUrl', ''))
                   numbers = re.search(r'/actions/runs/(\d+)(?:/job/(\d+))?', url)
-                  # A queued replacement may have no start time yet; monotonic
-                  # run/job IDs still distinguish it from an older canceled run.
-                  attempt = (int(numbers[1]) if numbers else 0,
+                  # Concurrent runs can execute in a different order from their IDs.
+                  # Every active attempt blocks merge, even before its start is known.
+                  active = (check.get('status') in {'QUEUED', 'IN_PROGRESS', 'WAITING', 'PENDING', 'REQUESTED'}
+                            or check.get('state') == 'PENDING')
+                  attempt = (active, check.get('startedAt', check.get('createdAt', '')) or '',
                              int(numbers[2] or 0) if numbers else 0,
-                             check.get('startedAt', check.get('createdAt', '')) or '')
+                             int(numbers[1]) if numbers else 0)
                   # Workflow identity prevents unrelated same-name jobs masking failures.
                   # Unknown external providers remain separate unless their URL also matches.
                   identity = (workflow, name, '' if workflow else url or str(index))
