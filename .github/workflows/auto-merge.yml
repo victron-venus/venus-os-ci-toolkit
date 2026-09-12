@@ -57,9 +57,17 @@ jobs:
                                    'author,labels,isDraft,baseRefName,headRefOid,state,statusCheckRollup'))
 
 
+          def canonical_author(author):
+              # gh's GraphQL response names known GitHub Apps differently from REST.
+              # Only normalize identities GitHub explicitly identifies as bots.
+              aliases = {'app/dependabot': 'dependabot[bot]', 'app/renovate': 'renovate[bot]'}
+              login = author['login']
+              return aliases.get(login, login) if author.get('is_bot') is True else login
+
+
           def eligible(pr, default_branch, authors):
               return (pr['state'] == 'OPEN' and not pr['isDraft']
-                      and pr['author']['login'] in authors
+                      and canonical_author(pr['author']) in authors
                       and pr['baseRefName'] == default_branch
                       and 'automerge' in {label['name'] for label in pr['labels']})
 
