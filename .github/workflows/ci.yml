@@ -4,18 +4,13 @@ name: CodeQL
 # required) is satisfied on push/PR. The toolkit previously had no workflow
 # that runs CodeQL against its own commits — every security workflow here is
 # reusable-only (workflow_call), consumed by other repos' caller workflows.
+# Run for documentation changes too: the required CodeQL result is per commit.
 
 on:
   push:
     branches: [main]
-    paths-ignore:
-      - '**.md'
-      - 'docs/**'
   pull_request:
     branches: [main]
-    paths-ignore:
-      - '**.md'
-      - 'docs/**'
 
 permissions:
   contents: read
