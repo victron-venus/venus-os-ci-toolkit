@@ -1,41 +1,127 @@
-name: 'Auto Merge'
-# description: 'Auto-merge PRs when checks pass'
+name: Auto Merge
+
 on:
   workflow_call:
     inputs:
       pr-author:
-        description: 'PR author to auto-merge (comma-separated)'
+        description: Comma-separated subset of trusted PR authors
         type: string
-        default: 'dependabot[bot],renovate[bot]'
+        default: '4alvit,californiantiramisu,dependabot[bot],renovate[bot]'
       merge-method:
-        description: 'Merge method (merge, squash, rebase)'
+        description: Merge method (merge, squash, rebase)
         type: string
-        default: 'squash'
+        default: squash
       required-status-checks:
-        description: 'Required status checks to pass (comma-separated)'
+        description: Additional exact check names, comma-separated; all observed checks must also pass
         type: string
-        default: 'CI,codeql,trivy'
+        default: ''
     secrets:
       BOT_PAT:
-        description: >-
-          Token of the bot account that merges PRs. Must belong to an account
-          OTHER than the PR author.
+        description: Token authorized to request native auto-merge; explicitly forward it from the caller
         required: true
+
 jobs:
   auto-merge:
     name: Auto Merge
     runs-on: ubuntu-latest
+    timeout-minutes: 125
     permissions:
       contents: read
       pull-requests: write
     steps:
-      - name: Auto Merge
-        uses: pascalgn/automerge-action@7961b8b5eec56cc088c140b56d864285eabd3f67 # v0.16.4
+      - name: Verify checks and request native auto-merge
         env:
-          GITHUB_TOKEN: ${{ secrets.BOT_PAT }}
+          GH_TOKEN: ${{ secrets.BOT_PAT }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_AUTHORS: ${{ inputs.pr-author }}
           MERGE_METHOD: ${{ inputs.merge-method }}
-          MERGE_LABELS: ''
-          MERGE_RETRIES: '60'
-          MERGE_RETRY_SLEEP: '30000'
-          REQUIRED_APPROVALS: '1'
-          REQUIRED_STATUS_CHECKS: ${{ inputs.required-status-checks }}
+          REQUIRED_CHECKS: ${{ inputs.required-status-checks }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import subprocess
+          import time
+
+
+          TRUSTED_AUTHORS = {'4alvit', 'californiantiramisu', 'dependabot[bot]', 'renovate[bot]'}
+
+
+          def gh(*args):
+              return subprocess.check_output(['gh', *args], text=True).strip()
+
+
+          def snapshot(repo, number):
+              return json.loads(gh('pr', 'view', number, '--repo', repo, '--json',
+                                   'author,labels,isDraft,baseRefName,headRefOid,state,statusCheckRollup'))
+
+
+          def eligible(pr, default_branch, authors):
+              return (pr['state'] == 'OPEN' and not pr['isDraft']
+                      and pr['author']['login'] in authors
+                      and pr['baseRefName'] == default_branch
+                      and 'automerge' in {label['name'] for label in pr['labels']})
+
+
+          def check_state(pr, required, run_id):
+              checks = []
+              for check in pr['statusCheckRollup'] or []:
+                  name = check.get('name', check.get('context', ''))
+                  # Exclude only this workflow run's own waiting job, never another check.
+                  if (run_id and f'/actions/runs/{run_id}/' in check.get('detailsUrl', '')
+                          and (name == 'Auto Merge' or name.endswith(' / Auto Merge'))):
+                      continue
+                  state = check.get('conclusion') if check.get('status') == 'COMPLETED' else check.get('state')
+                  checks.append((name, state or 'PENDING'))
+              if any(state in {'FAILURE', 'ERROR', 'CANCELLED', 'TIMED_OUT', 'ACTION_REQUIRED', 'STALE', 'STARTUP_FAILURE'}
+                     for _, state in checks):
+                  raise RuntimeError('A PR check failed; fix or rerun that check before auto-merge.')
+              names = {name for name, _ in checks}
+              ready = (bool(checks) and required <= names
+                       and all(state in {'SUCCESS', 'NEUTRAL', 'SKIPPED'} for _, state in checks))
+              return ready, tuple(sorted(checks))
+
+
+          def main():
+              if not os.environ.get('GH_TOKEN', '').strip():
+                  raise RuntimeError('BOT_PAT is missing. Configure it and explicitly forward it from the caller.')
+              repo, number = os.environ['GITHUB_REPOSITORY'], os.environ['PR_NUMBER']
+              if not number.isdecimal():
+                  raise RuntimeError('A pull-request metadata event with a numeric PR number is required.')
+              authors = {item.strip() for item in os.environ['PR_AUTHORS'].split(',') if item.strip()}
+              if not authors or not authors <= TRUSTED_AUTHORS:
+                  raise RuntimeError('pr-author must be a nonempty subset of the trusted PR authors.')
+              method = os.environ['MERGE_METHOD']
+              if method not in {'merge', 'squash', 'rebase'}:
+                  raise RuntimeError('merge-method must be merge, squash, or rebase.')
+              required = {item.strip() for item in os.environ['REQUIRED_CHECKS'].split(',') if item.strip()}
+              default_branch = gh('api', f'repos/{repo}', '--jq', '.default_branch')
+              deadline = time.monotonic() + 120 * 60
+              previous_green = None
+              while time.monotonic() < deadline:
+                  pr = snapshot(repo, number)
+                  if not eligible(pr, default_branch, authors):
+                      print('PR is not eligible: author, label, draft, target branch, or open state does not match.')
+                      return
+                  ready, checks = check_state(pr, required, os.environ.get('GITHUB_RUN_ID', ''))
+                  fingerprint = (pr['headRefOid'], checks)
+                  if ready and fingerprint == previous_green:
+                      fresh = snapshot(repo, number)
+                      fresh_ready, fresh_checks = check_state(fresh, required, os.environ.get('GITHUB_RUN_ID', ''))
+                      if (eligible(fresh, default_branch, authors) and fresh_ready
+                              and (fresh['headRefOid'], fresh_checks) == fingerprint):
+                          gh('pr', 'merge', number, '--repo', repo, '--auto', f'--{method}',
+                             '--match-head-commit', fresh['headRefOid'])
+                          print('Requested native auto-merge for the verified PR head; repository protections still apply.')
+                          return
+                      previous_green = None
+                  else:
+                      previous_green = fingerprint if ready else None
+                  print('Waiting for stable successful checks on the current PR head.', flush=True)
+                  time.sleep(30)
+              raise RuntimeError('Checks did not become green within 120 minutes. Inspect pending or missing checks and rerun.')
+
+
+          if __name__ == '__main__':
+              main()
+          PY
