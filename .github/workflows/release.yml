@@ -54,18 +54,12 @@ jobs:
             exit 1
           fi
 
-      - name: Read body file
+      - name: Validate body file
         if: inputs.body-file != ''
-        id: body
         shell: bash
         env:
           BODY_FILE: ${{ inputs.body-file }}
-        run: |
-          {
-            echo "body<<EOF"
-            cat -- "$BODY_FILE"
-            echo "EOF"
-          } >> "$GITHUB_OUTPUT"
+        run: test -f "$BODY_FILE" && test -r "$BODY_FILE"
 
       - name: Create Release
         # ponytail: changelog-generator repo was deleted; generate_notes now
@@ -76,7 +70,7 @@ jobs:
           name: ${{ inputs.release-name }}
           draft: ${{ inputs.draft }}
           prerelease: ${{ inputs.prerelease }}
-          body: ${{ inputs.body-file != '' && steps.body.outputs.body || '' }}
+          body_path: ${{ inputs.body-file }}
           generate_release_notes: ${{ inputs.generate-notes && inputs.body-file == '' }}
           files: |
             dist/*
