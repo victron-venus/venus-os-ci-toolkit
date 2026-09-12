@@ -72,6 +72,16 @@ jobs:
                   and pr["base"]["ref"] == default_branch
               )
 
+          def review_decision(repository, number, token):
+              owner, name = repository.split("/", 1)
+              result = api("graphql", token, payload={
+                  "query": "query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewDecision}}}",
+                  "variables": {"owner": owner, "name": name, "number": number},
+              })
+              if result.get("errors"):
+                  raise RuntimeError("GitHub could not determine the current review decision")
+              return result["data"]["repository"]["pullRequest"]["reviewDecision"]
+
           def main():
               token = os.environ.get("BOT_PAT") or os.environ.get("APPROVAL_PAT")
               if not token:
@@ -101,14 +111,32 @@ jobs:
                   and review["state"] != "PENDING"
               ]
               head = pr["head"]["sha"]
-              if reviews and reviews[-1]["state"] == "APPROVED" and reviews[-1]["commit_id"] == head:
-                  print("The current head is already approved by this reviewer")
-                  return
+              base_endpoint = f"repos/{repository}/git/ref/heads/{default_branch}"
+              base = api(base_endpoint, token)["object"]["sha"]
+              marker = f"<!-- toolkit-approval-base:{base}:pr-base:{pr['base']['sha']} -->"
+              same_head_approval = (
+                  reviews and reviews[-1]["state"] == "APPROVED"
+                  and reviews[-1]["commit_id"] == head
+              )
+              if same_head_approval:
+                  if (review_decision(repository, number, token) != "REVIEW_REQUIRED"
+                          or marker in (reviews[-1].get("body") or "")):
+                      print("The current head is already approved by this reviewer")
+                      return
               current = api(endpoint, token)
-              if current["head"]["sha"] != head or not eligible(current, authors, repository, default_branch):
+              current_base = api(base_endpoint, token)["object"]["sha"]
+              if (current["head"]["sha"] != head or current_base != base
+                      or current["base"]["sha"] != pr["base"]["sha"]
+                      or not eligible(current, authors, repository, default_branch)):
                   print("Pull request changed; a new event will evaluate the current head")
                   return
-              api(f"{endpoint}/reviews", token, payload={"event": "APPROVE", "commit_id": head})
+              if same_head_approval and review_decision(repository, number, token) != "REVIEW_REQUIRED":
+                  print("The review requirement changed; no duplicate approval is needed")
+                  return
+              api(f"{endpoint}/reviews", token, payload={
+                  "event": "APPROVE", "commit_id": head,
+                  "body": f"Approved the current head against base commit {base}.\n\n{marker}",
+              })
               print(f"Approved pull request #{number} at {head}")
 
           if __name__ == "__main__":
