@@ -1,0 +1,79 @@
+name: 'Reusable Release'
+# description: 'Reusable workflow to create GitHub releases from tags'
+on:
+  workflow_call:
+    inputs:
+      tag-pattern:
+        description: 'Tag pattern to trigger release (regex)'
+        type: string
+        default: '^v[0-9]+\.[0-9]+\.[0-9]+$'
+      release-name:
+        description: 'Release name template'
+        type: string
+        default: 'Release ${{ github.ref_name }}'
+      draft:
+        description: 'Create as draft release'
+        type: boolean
+        default: false
+      prerelease:
+        description: 'Mark as prerelease'
+        type: boolean
+        default: false
+      generate-notes:
+        description: 'Auto-generate release notes'
+        type: boolean
+        default: true
+      body-file:
+        description: 'Path to release body file (optional)'
+        type: string
+        default: ''
+      skip-checkout:
+        description: 'Skip the checkout step'
+        type: boolean
+        default: false
+jobs:
+  release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - name: Checkout
+        if: ${{ ! inputs.skip-checkout }}
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+
+      - name: Validate tag format
+        shell: bash
+        run: |
+          TAG="${{ github.ref_name }}"
+          if [[ ! "$TAG" =~ ${{ inputs.tag-pattern }} ]]; then
+            echo "Tag $TAG does not match pattern ${{ inputs.tag-pattern }}"
+            exit 1
+          fi
+
+      - name: Validate body file
+        if: inputs.body-file != ''
+        shell: bash
+        env:
+          BODY_FILE: ${{ inputs.body-file }}
+        run: test -f "$BODY_FILE" && test -r "$BODY_FILE"
+
+      - name: Create Release
+        # ponytail: changelog-generator repo was deleted; generate_notes now
+        # uses GitHub-native release notes (no chore/ci filtering). Restore a
+        # generator action only if filtered notes are actually needed.
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65
+        with:
+          name: ${{ inputs.release-name }}
+          draft: ${{ inputs.draft }}
+          prerelease: ${{ inputs.prerelease }}
+          body_path: ${{ inputs.body-file }}
+          generate_release_notes: ${{ inputs.generate-notes && inputs.body-file == '' }}
+          files: |
+            dist/*
+            build/*
+            *.tar.gz
+            *.zip

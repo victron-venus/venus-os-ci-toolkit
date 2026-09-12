@@ -1,0 +1,17 @@
+{
+  "repository": "victron-venus/venus-os-ci-toolkit",
+  "mode": "validation-only",
+  "default_branch": "main",
+  "validation_workflows": [
+    "ci.yml",
+    "security-required.yml"
+  ],
+  "local_checks": [
+    "bash scripts/ci.sh"
+  ],
+  "notes": [
+    "Tooling contracts cover candidate/promotion rejection cases. Retired legacy publisher/dispatcher entry points now fail with a migration message; consumers pinned to older toolkit SHAs must migrate explicitly.",
+    "ci.yml already runs CodeQL; security-required.yml adds strict full-source Trivy without duplicate language analysis."
+  ],
+  "visibility": "public"
+}

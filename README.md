@@ -31,198 +31,28 @@ GitHub can retain an enabled native auto-merge request when a contributor with w
 
 Concurrent GitHub runs can start in a different order from their numeric run IDs. Pending attempts always block merging; completed attempts are ordered by when their jobs started, with job IDs as a fallback. An earlier canceled attempt cannot replace a later successful result, and an earlier success cannot hide a later failure.
 
-## Overview
+## CI and release documentation
 
-This toolkit provides standardized, reusable CI/CD workflows that can be referenced by any repository in the `victron-venus` organization. It eliminates duplication and ensures consistent practices across all projects.
+See the [fleet rollout guide](docs/FLEET_ROLLOUT.md), [local nightly runner](docs/LOCAL_NIGHTLY.md), and [toolkit operations](docs/release-workflow.md). Application repositories keep their strategy in `RELEASING.md` and commands in `docs/release-workflow.md`; README files only link to them. The canonical English strategy is [templates/release-strategy.md](templates/release-strategy.md).
 
-## Structure
+Private repositories run ordinary OSS checks locally. Unavailable GitHub-hosted workflows are archived outside workflow discovery; only an existing manual deployment on a working self-hosted runner is retained. No paid GitHub security or governance feature is required. The reviewed inventory and visibility are recorded in [fleet.json](fleet.json).
 
-```
-venus-os-ci-toolkit/
-├── .github/workflows/          # Reusable workflows
-│   ├── python-ci.yml           # Python CI (lint, type-check, test, coverage)
-│   ├── go-ci.yml               # Go CI (lint, vulncheck, test, coverage)
-│   ├── docker-build.yml        # Docker build & publish to GHCR
-│   ├── release.yml             # GitHub release automation
-│   ├── security-scan.yml       # Security scanning (CodeQL, Trivy, Dependency Review)
-│   ├── scorecard.yml           # OpenSSF Scorecard
-│   ├── auto-approve.yml        # Trusted PR approval caller
-│   ├── auto-merge.yml          # Auto-merge when checks pass
-│   └── nightly.yml             # Nightly build trigger
-├── actions/                    # Composite actions
-│   ├── setup-python/           # Python setup with caching
-│   ├── setup-go/               # Go setup with caching
-│   └── setup-docker/           # Docker Buildx setup
-└── templates/                  # Starter workflow templates
-    └── starter-workflows.md    # Copy-paste templates for projects
+## Validation
+
+```bash
+python3 -m pip install PyYAML==6.0.3
+bash scripts/ci.sh
 ```
 
-## Quick Start
+The contract suite includes rejected missing/skipped gates, wrong source revisions, checksum changes, forged/expired evidence, release collisions and stable byte identity. Consumer release workflows run the vendored engine contract tests as a required gate.
 
-### For Python Projects
+## Updating consumers
 
-Create `.github/workflows/ci.yml` in your project:
-
-```yaml
-name: CI
-on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
-
-jobs:
-  ci:
-    uses: victron-venus/venus-os-ci-toolkit/.github/workflows/python-ci.yml@main
-    with:
-      python-version: '3.12'
-      working-directory: '.'
-    secrets:
-      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-```
-
-Add security scanning (`.github/workflows/security.yml`):
-
-```yaml
-name: Security
-on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
-  schedule:
-    - cron: '0 6 * * 1'
-
-jobs:
-  security:
-    uses: victron-venus/venus-os-ci-toolkit/.github/workflows/security-scan.yml@main
-    with:
-      languages: 'python'
-    secrets:
-      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-```
-
-### For Go Projects
-
-Create `.github/workflows/ci.yml`:
-
-```yaml
-name: CI
-on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
-
-jobs:
-  ci:
-    uses: victron-venus/venus-os-ci-toolkit/.github/workflows/go-ci.yml@main
-    with:
-      go-version: '1.23'
-      working-directory: '.'
-    secrets:
-      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-```
-
-## Available Workflows
-
-| Workflow | Description | Inputs |
-|----------|-------------|--------|
-| `python-ci.yml` | Python lint, type-check, test, coverage | python-version, working-directory, coverage-threshold |
-| `go-ci.yml` | Go lint, vulncheck, test, coverage | go-version, working-directory, coverage-threshold |
-| `docker-build.yml` | Multi-platform Docker build & push | image-name, dockerfile, platforms, push |
-| `release.yml` | GitHub release from tags | tag-pattern, release-name, draft, prerelease |
-| `security-scan.yml` | CodeQL, Trivy, Dependency Review | languages, trivy-severity |
-| `scorecard.yml` | OpenSSF Scorecard | working-directory |
-| `auto-approve-reusable.yml` | Approve trusted, labeled PRs with an independent reviewer | authors |
-| `auto-merge.yml` | Auto-merge when checks pass | pr-author, merge-method, required-status-checks |
-| `nightly.yml` | Trigger workflow on schedule | cron, workflow-to-trigger |
-
-## Composite Actions
-
-| Action | Description |
-|--------|-------------|
-| `actions/setup-python` | Python + pip cache + ruff/pytest |
-| `actions/setup-go` | Go + module cache + golangci-lint/govulncheck |
-| `actions/setup-docker` | Docker Buildx + GHCR login |
-
-## Full Example: Complete Python Project Setup
-
-```yaml
-# .github/workflows/ci.yml
-name: CI
-on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
-
-jobs:
-  ci:
-    uses: victron-venus/venus-os-ci-toolkit/.github/workflows/python-ci.yml@main
-    with:
-      python-version: '3.12'
-      test-args: '-v --tb=short'
-      coverage-threshold: 85
-
-# .github/workflows/security.yml
-name: Security
-on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
-  schedule:
-    - cron: '0 6 * * 1'
-
-jobs:
-  security:
-    uses: victron-venus/venus-os-ci-toolkit/.github/workflows/security-scan.yml@main
-    with:
-      languages: 'python'
-
-# .github/workflows/docker.yml
-name: Docker
-on:
-  push:
-    branches: [main]
-    tags: ['v*']
-  pull_request:
-    branches: [main]
-
-jobs:
-  docker:
-    uses: victron-venus/venus-os-ci-toolkit/.github/workflows/docker-build.yml@main
-    with:
-      image-name: 'my-python-service'
-      push: ${{ github.event_name != 'pull_request' }}
-
-# .github/workflows/release.yml
-name: Release
-on:
-  push:
-    tags: ['v*']
-
-jobs:
-  release:
-    uses: victron-venus/venus-os-ci-toolkit/.github/workflows/release.yml@main
-    with:
-      generate-notes: true
-```
-
-## Required Repository Settings
-
-1. **Settings → Actions → General → Workflow permissions**: Enable "Allow GitHub Actions to create and approve pull requests"
-2. **Settings → Security → Code scanning**: Enable CodeQL (for CodeQL workflow)
-3. **Branch protection**: Require status checks (CI, CodeQL, Trivy) before merge
-
-## Contributing
-
-1. Changes to reusable workflows should be backwards compatible
-2. Test changes by referencing `@main` in a test repository
-3. Tag releases for stable versions (e.g., `v1.0.0`)
-4. Update `templates/starter-workflows.md` when adding new workflows
+1. Change and test the toolkit source.
+2. Render each consumer from its reviewed policy with `scripts/install_release.py`.
+3. Verify generated drift with `--check`, inspect diffs, and submit PRs.
+4. Merge workflows before enabling their required status checks. Keep existing security and review requirements active.
 
 ## License
 
-MIT License - see [LICENSE](LICENSE)
+MIT License — see [LICENSE](LICENSE).

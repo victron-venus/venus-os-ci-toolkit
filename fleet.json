@@ -1,0 +1,518 @@
+{
+  "schema": 1,
+  "inventory_date": "2026-09-12",
+  "repositories": [
+    {
+      "repository": "victron-venus/inverter-gateway",
+      "directory": "inverter-gateway",
+      "default_branch": "main",
+      "mode": "release",
+      "base_sha": "529270c1d8cc1fa96e1a22fa5c755525ed6ed82f",
+      "branch": "ci/release-standard-apps",
+      "visibility": "public"
+    },
+    {
+      "repository": "victron-venus/inverter-control",
+      "directory": "inverter-control",
+      "default_branch": "main",
+      "mode": "release",
+      "base_sha": "82eedf30f310bb617bb0f5da2b4c2ee81952386f",
+      "branch": "ci/release-standard",
+      "visibility": "public"
+    },
+    {
+      "repository": "victron-venus/.github",
+      "directory": "victron-venus-dotgithub",
+      "default_branch": "main",
+      "mode": "validation-only",
+      "base_sha": "4b2981b58803c9754e3b58f4c0ee7f63ac5b55bd",
+      "branch": "ci/release-standard",
+      "visibility": "public"
+    },
+    {
+      "repository": "victron-venus/venus-os-observability",
+      "directory": "venus-os-observability",
+      "default_branch": "main",
+      "mode": "release",
+      "base_sha": "db85ef7b87ff7b9d6944794f1332a9c18e10736b",
+      "branch": "ci/release-standard",
+      "visibility": "public"
+    },
+    {
+      "repository": "victron-venus/dbus-event-log",
+      "directory": "dbus-event-log",
+      "default_branch": "main",
+      "mode": "release",
+      "base_sha": "13df8e6d8c1a1aea4dab8715ff52bfc34eb57d1f",
+      "branch": "ci/release-standard",
+      "visibility": "public"
+    },
+    {
+      "repository": "victron-venus/dbus-tasmota-pv",
+      "directory": "dbus-tasmota-pv",
+      "default_branch": "main",
+      "mode": "release",
+      "base_sha": "11933b93ab75fd762e580ea411e082ea7cbc93aa",
+      "branch": "ci/release-standard",
+      "visibility": "public"
+    },
+    {
+      "repository": "victron-venus/dbus-mqtt-battery",
+      "directory": "dbus-mqtt-battery",
+      "default_branch": "main",
+      "mode": "release",
+      "base_sha": "4de66619a2a82ad68ee77d6bb34f1fbed2fcdbec",
+      "branch": "ci/release-standard",
+      "visibility": "public"
+    },
+    {
+      "repository": "victron-venus/dbus-esphome-grid-sensor",
+      "directory": "dbus-esphome-grid-sensor",
+      "default_branch": "main",
+      "mode": "release",
+      "base_sha": "5e48e20d3acc2c2571aa3d672611fa4ad278b6d7",
+      "branch": "ci/release-standard",
+      "visibility": "public"
+    },
+    {
+      "repository": "victron-venus/dbus-virtual-battery",
+      "directory": "dbus-virtual-battery",
+      "default_branch": "main",
+      "mode": "release",
+      "base_sha": "ae678b9749591aa9812cc07e75296a338b7d24a9",
+      "branch": "ci/release-standard",
+      "visibility": "public"
+    },
+    {
+      "repository": "victron-venus/dbus-emporia-vue",
+      "directory": "dbus-emporia-vue",
+      "default_branch": "main",
+      "mode": "release",
+      "base_sha": "32162e9fb1611521bbce3f7fbfaacd8756d79456",
+      "branch": "ci/release-standard",
+      "visibility": "public"
+    },
+    {
+      "repository": "victron-venus/venus-os-ci-toolkit",
+      "directory": "venus-os-ci-toolkit",
+      "default_branch": "main",
+      "mode": "validation-only",
+      "base_sha": "c8064dd9c87c919f17eac19fe0a1385aeed89657",
+      "branch": "ci/release-standard",
+      "visibility": "public"
+    },
+    {
+      "repository": "victron-venus/venus-os-integration-patterns",
+      "directory": "venus-os-integration-patterns",
+      "default_branch": "main",
+      "mode": "validation-only",
+      "base_sha": "1b287fda2f992f090980bba7e5c9c6100ad79e51",
+      "branch": "ci/release-standard",
+      "visibility": "public"
+    },
+    {
+      "repository": "victron-venus/dbus-pump",
+      "directory": "dbus-pump",
+      "default_branch": "main",
+      "mode": "release",
+      "base_sha": "29257295bacfaa4ff5fb66a21c7f3eac77cfe474",
+      "branch": "ci/release-standard",
+      "visibility": "public"
+    },
+    {
+      "repository": "victron-venus/dbus-evcharger",
+      "directory": "dbus-evcharger",
+      "default_branch": "main",
+      "mode": "release",
+      "base_sha": "d0d0ca150ca9746d0b254df6f2d2d213383eee38",
+      "branch": "ci/release-standard",
+      "visibility": "public"
+    },
+    {
+      "repository": "victron-venus/dbus-ev",
+      "directory": "dbus-ev",
+      "default_branch": "main",
+      "mode": "release",
+      "base_sha": "1fdb02b54dae4ecfb75a47db853608845d018aa3",
+      "branch": "ci/release-standard",
+      "visibility": "public"
+    },
+    {
+      "repository": "victron-venus/inverter-desktop",
+      "directory": "inverter-desktop",
+      "default_branch": "main",
+      "mode": "release",
+      "base_sha": "baa1b4676c1244fe4c9325b39168df4a495963f8",
+      "branch": "ci/release-standard-apps",
+      "visibility": "public"
+    },
+    {
+      "repository": "victron-venus/inverter-dashboard-vue",
+      "directory": "inverter-dashboard-vue",
+      "default_branch": "main",
+      "mode": "release",
+      "base_sha": "019e308085cf7b41f902c3d38ada14cbdba15d95",
+      "branch": "ci/release-standard-apps",
+      "visibility": "public"
+    },
+    {
+      "repository": "victron-venus/inverter-monitoring",
+      "directory": "inverter-monitoring",
+      "default_branch": "main",
+      "mode": "release",
+      "base_sha": "3d1553323cd11d1beee87caac7ac3e43c4d97e22",
+      "branch": "ci/release-standard",
+      "visibility": "public"
+    },
+    {
+      "repository": "victron-venus/inverter-dashboard-go",
+      "directory": "inverter-dashboard-go",
+      "default_branch": "main",
+      "mode": "release",
+      "base_sha": "46efc8efd255c69cca3ead217d7a51110fadbc70",
+      "branch": "ci/release-standard-apps",
+      "visibility": "public"
+    },
+    {
+      "repository": "victron-venus/terraform-cloudflare-inverter-gateway",
+      "directory": "terraform-cloudflare-inverter-gateway",
+      "default_branch": "main",
+      "mode": "validation-only",
+      "base_sha": "08528b97f2d88262f968bca891deab64a4ad5b0b",
+      "branch": "ci/release-standard",
+      "visibility": "public"
+    },
+    {
+      "repository": "victron-venus/inverter-web-vitrine",
+      "directory": "inverter-web-vitrine",
+      "default_branch": "main",
+      "mode": "validation-only",
+      "base_sha": "55cc7336863c9562d8c3332208a2056086d2c66e",
+      "branch": "ci/release-standard",
+      "visibility": "public"
+    },
+    {
+      "repository": "victron-venus/inverter-dashboard",
+      "directory": "inverter-dashboard",
+      "default_branch": "main",
+      "mode": "release",
+      "base_sha": "087ce23e367c9f127e53a3ab73ed20d370291ec7",
+      "branch": "ci/release-standard-apps",
+      "visibility": "public"
+    },
+    {
+      "repository": "victron-venus/integration-tests",
+      "directory": "integration-tests",
+      "default_branch": "main",
+      "mode": "validation-only",
+      "base_sha": "dc18d221c287d5f39513264d427b84b97a7db6c9",
+      "branch": "ci/release-standard",
+      "visibility": "public"
+    },
+    {
+      "repository": "victron-venus/esphome-jbd-bms-mqtt",
+      "directory": "esphome-jbd-bms-mqtt",
+      "default_branch": "main",
+      "mode": "validation-only",
+      "base_sha": "e393dae9536c53fcf0fe8530883a64f43eebd037",
+      "branch": "ci/release-standard",
+      "visibility": "public"
+    },
+    {
+      "repository": "victron-venus/venus-os-governance",
+      "directory": "venus-os-governance",
+      "default_branch": "main",
+      "excluded_reason": "Archived repository",
+      "visibility": "public"
+    },
+    {
+      "repository": "victron-venus/victron-venus.github.io",
+      "directory": "victron-venus.github.io",
+      "default_branch": "feature/redirect",
+      "mode": "validation-only",
+      "base_sha": "81615679a8c17858b63e8fb491c70a1c0dd33ad4",
+      "branch": "ci/release-standard",
+      "visibility": "public"
+    },
+    {
+      "repository": "victron-venus/SetupHelper",
+      "directory": "SetupHelper",
+      "default_branch": "main",
+      "excluded_reason": "Upstream fork; not an owned release product",
+      "visibility": "public"
+    },
+    {
+      "repository": "open-ott-play/ottplay-foss",
+      "directory": "ottplay-foss",
+      "default_branch": "main",
+      "mode": "release",
+      "base_sha": "f4bbe58e82a52e30cf0a4a3f7cb13f7c71b19181",
+      "branch": "ci/release-standard-apps",
+      "visibility": "public"
+    },
+    {
+      "repository": "open-ott-play/ottplay-swop",
+      "directory": "ottplay-swop",
+      "default_branch": "main",
+      "mode": "release",
+      "base_sha": "e168924bcd771c91571a0f87ed1d049fd15dd45c",
+      "branch": "ci/release-standard-apps",
+      "visibility": "public"
+    },
+    {
+      "repository": "open-ott-play/ottplay-web-vitrine",
+      "directory": "ottplay-web-vitrine",
+      "default_branch": "main",
+      "mode": "validation-only",
+      "base_sha": "63336d8106f2f924e22bd33ea36d8df509e2b6a7",
+      "branch": "ci/release-standard",
+      "visibility": "public"
+    },
+    {
+      "repository": "open-ott-play/.github",
+      "directory": "open-ott-play-dotgithub",
+      "default_branch": "main",
+      "mode": "validation-only",
+      "base_sha": "a92871ae0cc80b169a2112ade17152bc016cd261",
+      "branch": "ci/release-standard",
+      "visibility": "public"
+    },
+    {
+      "repository": "open-ott-play/foss-cloudflare-infrastructure",
+      "directory": "foss-cloudflare-infrastructure",
+      "default_branch": "main",
+      "excluded_reason": "Archived repository",
+      "visibility": "public"
+    },
+    {
+      "repository": "4alvit/amazon-echo-home-voice",
+      "directory": "amazon-echo-home-voice",
+      "default_branch": "main",
+      "mode": "validation-only",
+      "base_sha": "92bd715c6e8dff8b35243990b6d88c6d95459288",
+      "branch": "ci/release-standard",
+      "visibility": "public"
+    },
+    {
+      "repository": "4alvit/google-home-voice-stats",
+      "directory": "google-home-voice-stats",
+      "default_branch": "main",
+      "mode": "validation-only",
+      "base_sha": "659e7aae0165378b989e897a55f2663b70fdc35b",
+      "branch": "ci/release-standard",
+      "visibility": "public"
+    },
+    {
+      "repository": "4alvit/mcp-venus-os",
+      "directory": "mcp-venus-os",
+      "default_branch": "main",
+      "mode": "release",
+      "base_sha": "2f3003bc3d24f379cbce2148a3cb1af3f686b27e",
+      "branch": "ci/release-standard",
+      "visibility": "public"
+    },
+    {
+      "repository": "4alvit/dbus-service-template",
+      "directory": "dbus-service-template",
+      "default_branch": "main",
+      "mode": "validation-only",
+      "base_sha": "39b6eb5b02cccb3bc75c4899c27ea046d448b1e1",
+      "branch": "ci/release-standard",
+      "visibility": "public"
+    },
+    {
+      "repository": "4alvit/terraform-portainer-synology",
+      "directory": "terraform-portainer-synology",
+      "default_branch": "main",
+      "mode": "validation-only",
+      "base_sha": "a480d3fa48eb5a089965af61efdc6b1a81db6201",
+      "branch": "ci/release-standard",
+      "visibility": "private",
+      "ci_execution": "local"
+    },
+    {
+      "repository": "4alvit/k3s-self-healing",
+      "directory": "k3s-self-healing",
+      "default_branch": "main",
+      "mode": "validation-only",
+      "base_sha": "c622adf6251feae43f07dcd99c4ce642bf66d15a",
+      "branch": "ci/release-standard",
+      "visibility": "private",
+      "ci_execution": "local"
+    },
+    {
+      "repository": "4alvit/fastapi-mqtt-gateway",
+      "directory": "fastapi-mqtt-gateway",
+      "default_branch": "main",
+      "mode": "release",
+      "base_sha": "1ddacbce0f14c2df1a9f9d2926ff506d60bdd25f",
+      "branch": "ci/release-standard",
+      "visibility": "public"
+    },
+    {
+      "repository": "4alvit/terraform-synology-alvit",
+      "directory": "terraform-synology-alvit",
+      "default_branch": "main",
+      "mode": "validation-only",
+      "base_sha": "a6034085427be4fef285f3530989318d8d23e302",
+      "branch": "ci/release-standard",
+      "visibility": "private",
+      "ci_execution": "local"
+    },
+    {
+      "repository": "4alvit/4alvit",
+      "directory": "4alvit",
+      "default_branch": "main",
+      "mode": "validation-only",
+      "base_sha": "0cec9c658ce6e0214936424ed00136274b43f0e4",
+      "branch": "ci/release-standard",
+      "visibility": "public"
+    },
+    {
+      "repository": "4alvit/terraform-oracle-oci",
+      "directory": "terraform-oracle-oci",
+      "default_branch": "main",
+      "mode": "validation-only",
+      "base_sha": "7a05a9cb40f7052bc75166e56e0f6686f07f75c7",
+      "branch": "ci/release-standard",
+      "visibility": "private",
+      "ci_execution": "local"
+    },
+    {
+      "repository": "4alvit/terraform-cloudflare-alvit",
+      "directory": "terraform-cloudflare-alvit",
+      "default_branch": "main",
+      "mode": "validation-only",
+      "base_sha": "08c368bff245e44472fbadf3722fad0e8f7b5afa",
+      "branch": "ci/release-standard",
+      "visibility": "private",
+      "ci_execution": "local"
+    },
+    {
+      "repository": "4alvit/home-assistant-k3s",
+      "directory": "home-assistant-k3s",
+      "default_branch": "main",
+      "mode": "validation-only",
+      "base_sha": "47e879fc7d23f3698bccf0613c557e7f6c6953b8",
+      "branch": "ci/release-standard",
+      "visibility": "private",
+      "ci_execution": "local"
+    },
+    {
+      "repository": "4alvit/demo",
+      "directory": "demo",
+      "default_branch": "main",
+      "mode": "validation-only",
+      "base_sha": "cd0b6fbaf2aa6962e81398705d87cc81a6b17902",
+      "branch": "ci/release-standard",
+      "visibility": "private",
+      "ci_execution": "local"
+    },
+    {
+      "repository": "4alvit/iot-project-builder-profile",
+      "directory": "iot-project-builder-profile",
+      "default_branch": "main",
+      "mode": "release",
+      "base_sha": "b4625809a89866a4f35501e152421ca2e2f40f46",
+      "branch": "ci/release-standard",
+      "visibility": "public"
+    },
+    {
+      "repository": "4alvit/github-deploy-webhook",
+      "directory": "github-deploy-webhook",
+      "default_branch": "main",
+      "mode": "validation-only",
+      "base_sha": "e0b37ff5c3c40f71d399073b503da8d67eed052a",
+      "branch": "ci/release-standard",
+      "visibility": "private",
+      "ci_execution": "local"
+    },
+    {
+      "repository": "4alvit/terraform-github-victron",
+      "directory": "terraform-github-victron",
+      "default_branch": "main",
+      "mode": "validation-only",
+      "base_sha": "50afce406bb81413e416f97526880173e6df9ffe",
+      "branch": "ci/release-standard",
+      "visibility": "public"
+    },
+    {
+      "repository": "4alvit/terraform-github-open-ott-play",
+      "directory": "terraform-github-open-ott-play",
+      "default_branch": "main",
+      "mode": "validation-only",
+      "base_sha": "d805966a9cc918faa99dab50e73e20c12b6f8ebe",
+      "branch": "ci/release-standard",
+      "visibility": "public"
+    },
+    {
+      "repository": "4alvit/terraform-github-4alvit",
+      "directory": "terraform-github-4alvit",
+      "default_branch": "main",
+      "mode": "validation-only",
+      "base_sha": "f714bb4b3a483ba0278af9334013127f74705451",
+      "branch": "ci/release-standard",
+      "visibility": "public"
+    },
+    {
+      "repository": "4alvit/solar-forecast-langgraph",
+      "directory": "solar-forecast-langgraph",
+      "default_branch": "main",
+      "mode": "release",
+      "base_sha": "ab21cf4a94451371409066d50e6cf9b9874ecd81",
+      "branch": "ci/release-standard",
+      "visibility": "public"
+    },
+    {
+      "repository": "4alvit/mqtt-observability-opentelemetry",
+      "directory": "mqtt-observability-opentelemetry",
+      "default_branch": "main",
+      "mode": "release",
+      "base_sha": "ad3c11e878334a236bd568a795fe71af74a313f9",
+      "branch": "ci/release-standard",
+      "visibility": "public"
+    },
+    {
+      "repository": "4alvit/esphome-ble-sensor-patterns",
+      "directory": "esphome-ble-sensor-patterns",
+      "default_branch": "main",
+      "mode": "validation-only",
+      "base_sha": "01f5125d08b321ecfc345b4fd68aa70e5979a5d9",
+      "branch": "ci/release-standard",
+      "visibility": "public"
+    },
+    {
+      "repository": "4alvit/energy-data-rag-pipeline",
+      "directory": "energy-data-rag-pipeline",
+      "default_branch": "main",
+      "mode": "release",
+      "base_sha": "24cc7cdafaa14e6530b685fdf7b581432a7e9baf",
+      "branch": "ci/release-standard",
+      "visibility": "public"
+    },
+    {
+      "repository": "4alvit/home-assistant",
+      "directory": "home-assistant",
+      "default_branch": "main",
+      "mode": "validation-only",
+      "base_sha": "3641fb09507886dbd5a159659b42c5c2275ef9f5",
+      "branch": "ci/release-standard",
+      "visibility": "private",
+      "ci_execution": "local"
+    },
+    {
+      "repository": "4alvit/tmp-runner-test2",
+      "directory": "tmp-runner-test2",
+      "default_branch": "",
+      "excluded_reason": "Empty runner test repository",
+      "visibility": "private"
+    },
+    {
+      "repository": "4alvit/tmp-runner-test",
+      "directory": "tmp-runner-test",
+      "default_branch": "",
+      "excluded_reason": "Empty runner test repository",
+      "visibility": "private"
+    }
+  ]
+}
