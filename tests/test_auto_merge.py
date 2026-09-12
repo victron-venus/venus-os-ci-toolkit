@@ -280,6 +280,65 @@ class AutoMergeTests(unittest.TestCase):
             self.run_workflow([RuntimeError("API unavailable")])
 
 
+class CheckAttemptOrderingTests(unittest.TestCase):
+    """Model concurrent GitHub runs whose numeric IDs differ from execution order."""
+
+    setUp = AutoMergeTests.setUp
+    run_workflow = AutoMergeTests.run_workflow
+
+    @staticmethod
+    def approval_attempts(state="SUCCESS"):
+        """Reproduce the actual approval attempts from dbus-evcharger PR 24."""
+        canceled = attempt(
+            "auto-approve / Auto Approve",
+            "Auto Approve PRs",
+            34672797328,
+            "42",
+            "CANCELLED",
+        )
+        canceled.update(
+            detailsUrl="https://github.com/example/repo/actions/runs/34672797328/job/103497240819",
+            startedAt="2026-09-12T04:21:42Z",
+            completedAt="2026-09-12T04:21:43Z",
+        )
+        replacement = attempt(
+            "auto-approve / Auto Approve", "Auto Approve PRs", 34672797312, "45", state
+        )
+        replacement.update(
+            detailsUrl="https://github.com/example/repo/actions/runs/34672797312/job/103497242907",
+            startedAt="2026-09-12T04:21:45Z",
+            completedAt="2026-09-12T04:21:52Z" if state else "",
+        )
+        return canceled, replacement
+
+    def test_later_success_can_have_a_lower_run_id(self):
+        """A canceled higher run ID cannot hide the subsequently executed approval."""
+        response = pr()
+        response["statusCheckRollup"].extend(self.approval_attempts())
+        calls = self.run_workflow([response, response, response])
+        self.assertIn("--auto", calls[-1].args)
+
+    def test_lower_id_pending_replacement_must_finish(self):
+        """The active replacement blocks merge even before its start time is available."""
+        pending = pr()
+        canceled, replacement = self.approval_attempts("")
+        replacement.update(status="QUEUED", startedAt="")
+        pending["statusCheckRollup"].extend([canceled, replacement])
+        passed = pr()
+        passed["statusCheckRollup"].extend(self.approval_attempts())
+        calls = self.run_workflow([pending, passed, passed, passed])
+        self.assertIn("--auto", calls[-1].args)
+
+    def test_later_failure_is_not_hidden_by_older_success(self):
+        """Execution order also preserves a real failing replacement with a lower ID."""
+        response = pr()
+        older, newer = self.approval_attempts("FAILURE")
+        older["conclusion"] = "SUCCESS"
+        response["statusCheckRollup"].extend([older, newer])
+        with self.assertRaisesRegex(RuntimeError, "Auto Approve.*FAILURE"):
+            self.run_workflow([response, response, response])
+
+
 class BotAuthorTests(unittest.TestCase):
     """Exercise GitHub App identity normalization using the workflow harness."""
 
