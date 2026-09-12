@@ -161,7 +161,11 @@ Secrets: `GITHUB_TOKEN` (codecov upload).
 
 No inputs. Requires `GITHUB_TOKEN` (provided automatically by GitHub Actions).
 
-#### `docker-build.yml`
+#### `docker-build.yml` (retired)
+
+This entry point now fails with a migration message. Use a repository build-only
+adapter and the gated release policy in [release operations](release-workflow.md).
+The following input list describes the old interface only.
 
 | Input | Type | Default | Required |
 |---|---|---|---|
@@ -181,7 +185,11 @@ No inputs. Requires `GITHUB_TOKEN` (provided automatically by GitHub Actions).
 
 Secrets: `REGISTRY_USERNAME`, `REGISTRY_PASSWORD` (optional; defaults to GHCR via GITHUB_TOKEN).
 
-#### `release.yml`
+#### `release.yml` (retired)
+
+Tag-triggered publication is retired. Use `scripts/release.py` and approved RC
+promotion; see [release operations](release-workflow.md). The inputs below are
+historical and no longer authorize publication.
 
 | Input | Type | Default | Required |
 |---|---|---|---|
@@ -219,7 +227,10 @@ Use [the merge caller example](examples/auto-merge.yml) with an immutable toolki
 
 Secrets: explicitly forward `BOT_PAT`. The `automerge` label, a ready PR, and the default target branch are required. Existing branch protection and CODEOWNERS rules still apply. After repairing a failed check, rerun the merge workflow if no new PR event occurs.
 
-#### `nightly.yml`
+#### `nightly.yml` (retired)
+
+The generated per-repository workflows now declare their own schedules and wait for
+their validation/build gates. This legacy dispatcher fails with a migration message.
 
 | Input | Type | Default | Required |
 |---|---|---|---|

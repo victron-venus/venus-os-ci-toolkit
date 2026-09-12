@@ -1,134 +1,79 @@
-name: 'Reusable Docker Build & Publish'
-# description: 'Reusable workflow to build and publish Docker images to a registry'
-on:
+# Retired publisher/dispatcher. Historical implementation: docs/legacy-workflows/docker-build.yml.txt
+name: Retired legacy docker-build
+'on':
   workflow_call:
     inputs:
       image-name:
-        description: 'Docker image name (without registry prefix)'
+        description: Docker image name (without registry prefix)
         type: string
         required: true
       registry:
         description: 'Registry hostname (e.g., ghcr.io, docker.io). Default: ghcr.io'
         type: string
-        default: 'ghcr.io'
+        default: ghcr.io
       registry-owner:
         description: 'Registry owner or organization. Default: github.repository_owner'
         type: string
-        default: '${{ github.repository_owner }}'
+        default: ${{ github.repository_owner }}
       image:
-        description: 'Full image reference (registry/owner/image). If provided, overrides registry, registry-owner, and image-name.'
+        description: Full image reference (registry/owner/image). If provided, overrides registry, registry-owner,
+          and image-name.
         type: string
         default: ''
       dockerfile:
-        description: 'Path to Dockerfile'
+        description: Path to Dockerfile
         type: string
-        default: 'Dockerfile'
+        default: Dockerfile
       context:
-        description: 'Build context path'
+        description: Build context path
         type: string
-        default: '.'
+        default: .
       platforms:
-        description: 'Target platforms'
+        description: Target platforms
         type: string
-        default: 'linux/amd64,linux/arm64'
+        default: linux/amd64,linux/arm64
       tags:
-        description: 'Additional tags (comma-separated)'
+        description: Additional tags (comma-separated)
         type: string
         default: ''
       push:
-        description: 'Whether to push the image'
+        description: Whether to push the image
         type: boolean
         default: true
       sbom:
-        description: 'Generate SBOM (Software Bill of Materials)'
+        description: Generate SBOM (Software Bill of Materials)
         type: boolean
         default: false
       provenance:
-        description: 'Generate provenance attestation'
+        description: Generate provenance attestation
         type: boolean
         default: false
       cache-from:
-        description: 'Cache from registry'
+        description: Cache from registry
         type: string
-        default: 'type=gha'
+        default: type=gha
       cache-to:
-        description: 'Cache to registry'
+        description: Cache to registry
         type: string
-        default: 'type=gha,mode=max'
+        default: type=gha,mode=max
     secrets:
       REGISTRY_USERNAME:
-        description: 'Username for registry login (if not using GITHUB_TOKEN)'
+        description: Username for registry login (if not using GITHUB_TOKEN)
         required: false
       REGISTRY_PASSWORD:
-        description: 'Password or token for registry login (if not using GITHUB_TOKEN)'
+        description: Password or token for registry login (if not using GITHUB_TOKEN)
         required: false
+permissions:
+  contents: read
 jobs:
-  build-and-push:
-    name: Build & Push
+  migration-required:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-      # id-token: write  # for provenance if needed
-    env:
-      # secrets are not available in step-level if:, surface via env
-      REGISTRY_USERNAME: ${{ secrets.REGISTRY_USERNAME }}
-      REGISTRY_PASSWORD: ${{ secrets.REGISTRY_PASSWORD }}
+    timeout-minutes: 5
     steps:
-      - name: Checkout
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
-        with:
-          fetch-depth: 0
+    - name: Use the gated release policy
+      run: 'echo "This legacy entry point is retired. Install the reviewed release policy and build-only adapter;
+        see docs/release-workflow.md and docs/FLEET_ROLLOUT.md." >&2
 
-      - name: Setup Docker Buildx
-        uses: victron-venus/venus-os-ci-toolkit/actions/setup-docker@6da015c8cece60541100e55c14829f2c34a01d6e
-        with:
-          platforms: ${{ inputs.platforms }}
+        exit 1
 
-      - name: Login to registry
-        if: |
-          (inputs.registry == 'docker.io' || inputs.registry == 'index.docker.io') &&
-          (env.REGISTRY_USERNAME != '' && env.REGISTRY_PASSWORD != '')
-        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
-        with:
-          registry: ${{ inputs.registry }}
-          username: ${{ secrets.REGISTRY_USERNAME }}
-          password: ${{ secrets.REGISTRY_PASSWORD }}
-
-      - name: Set image reference
-        id: image_ref
-        run: |
-          if [ "${{ inputs.image }}" != '' ]; then
-            echo "image=${{ inputs.image }}" >> "$GITHUB_OUTPUT"
-          else
-            echo "image=${{ inputs.registry }}/${{ inputs.registry-owner }}/${{ inputs.image-name }}" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Extract metadata (tags, labels)
-        id: meta
-        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
-        with:
-          images: ${{ steps.image_ref.outputs.image }}
-          tags: |
-            type=ref,event=branch
-            type=ref,event=pr
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=sha
-            ${{ inputs.tags }}
-
-      - name: Build and push
-        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
-        with:
-          context: ${{ inputs.context }}
-          file: ${{ inputs.dockerfile }}
-          platforms: ${{ inputs.platforms }}
-          push: ${{ inputs.push }}
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: ${{ inputs.cache-from }}
-          cache-to: ${{ inputs.cache-to }}
-          sbom: ${{ inputs.sbom }}
-          provenance: ${{ inputs.provenance }}
-          # GLBProvenance and attestations for SBOM/provenance require id-token write permission
-          # We'll add permissions if needed later.
+        '

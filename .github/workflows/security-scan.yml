@@ -23,6 +23,10 @@ on:
         description: 'Run dependency review'
         type: boolean
         default: true
+      strict-trivy:
+        description: 'Include unfixed findings and misconfiguration in mandatory gates'
+        type: boolean
+        default: false
       trivy-severity:
         description: 'Trivy severity threshold'
         type: string
@@ -71,10 +75,13 @@ jobs:
           output: 'trivy-results.sarif'
           severity: ${{ inputs.trivy-severity }}
           exit-code: '1'
-          ignore-unfixed: true
+          ignore-unfixed: ${{ !inputs.strict-trivy }}
+          scanners: ${{ inputs.strict-trivy && 'vuln,secret,misconfig' || 'vuln,secret' }}
+          limit-severities-for-sarif: ${{ inputs.strict-trivy }}
           vuln-type: 'os,library'
 
       - name: Upload Trivy results
+        if: always()
         uses: github/codeql-action/upload-sarif@42947a340483f03ba47bb1a039b2c519aab3df85 # v3
         with:
           sarif_file: 'trivy-results.sarif'

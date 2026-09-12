@@ -1,41 +1,31 @@
-name: 'Reusable Nightly Build'
-# description: 'Reusable workflow for nightly builds'
-on:
+# Retired publisher/dispatcher. Historical implementation: docs/legacy-workflows/nightly.yml.txt
+name: Retired legacy nightly
+'on':
   workflow_call:
     inputs:
       cron:
-        description: 'Cron schedule for nightly build'
+        description: Cron schedule for nightly build
         type: string
-        default: '0 2 * * *'
+        default: 0 2 * * *
       workflow-to-trigger:
-        description: 'Workflow file to trigger (e.g., ci.yml, docker-build.yml)'
+        description: Workflow file to trigger (e.g., ci.yml, docker-build.yml)
         type: string
         required: true
       workflow-inputs:
-        description: 'JSON string of inputs to pass to triggered workflow'
+        description: JSON string of inputs to pass to triggered workflow
         type: string
         default: '{}'
+permissions:
+  contents: read
 jobs:
-  nightly:
-    name: Nightly Build
+  migration-required:
     runs-on: ubuntu-latest
-    # createWorkflowDispatch requires actions:write
-    permissions:
-      contents: read
-      actions: write
+    timeout-minutes: 5
     steps:
-      - name: Trigger nightly workflow
-        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
-        with:
-          script: |
-            // Only forward the caller-supplied JSON inputs; the wrapper's own
-            // inputs (cron, workflow-to-trigger, workflow-inputs) are not
-            // inputs of the target workflow and would be rejected.
-            const target = JSON.parse(${{ toJSON(inputs) }}['workflow-inputs'] || '{}');
-            await github.rest.actions.createWorkflowDispatch({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              workflow_id: '${{ inputs.workflow-to-trigger }}',
-              ref: 'main',
-              inputs: target,
-            });
+    - name: Use the gated release policy
+      run: 'echo "This legacy entry point is retired. Install the reviewed release policy and build-only adapter;
+        see docs/release-workflow.md and docs/FLEET_ROLLOUT.md." >&2
+
+        exit 1
+
+        '
