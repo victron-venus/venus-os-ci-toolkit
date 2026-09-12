@@ -58,10 +58,14 @@ jobs:
         if: inputs.body-file != ''
         id: body
         shell: bash
+        env:
+          BODY_FILE: ${{ inputs.body-file }}
         run: |
-          echo "body<<EOF" >> $GITHUB_OUTPUT
-          cat ${{ inputs.body-file }} >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
+          {
+            echo "body<<EOF"
+            cat -- "$BODY_FILE"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Create Release
         # ponytail: changelog-generator repo was deleted; generate_notes now

@@ -99,9 +99,9 @@ jobs:
         id: image_ref
         run: |
           if [ "${{ inputs.image }}" != '' ]; then
-            echo "image=${{ inputs.image }}" >> $GITHUB_OUTPUT
+            echo "image=${{ inputs.image }}" >> "$GITHUB_OUTPUT"
           else
-            echo "image=${{ inputs.registry }}/${{ inputs.registry-owner }}/${{ inputs.image-name }}" >> $GITHUB_OUTPUT
+            echo "image=${{ inputs.registry }}/${{ inputs.registry-owner }}/${{ inputs.image-name }}" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Extract metadata (tags, labels)
