@@ -4,13 +4,13 @@ Reusable GitHub Actions workflows and composite actions for Victron Venus OS pro
 
 ## Automatic approval and merge
 
-Copy the [approval caller](docs/examples/auto-approve.yml) and [merge caller](docs/examples/auto-merge.yml) into `.github/workflows/` in each consumer, replacing `TOOLKIT_COMMIT_SHA` with a reviewed immutable commit from this repository. These metadata-only workflows use `pull_request_target` and never check out or execute pull-request code.
+Copy the [approval caller](docs/examples/auto-approve.yml) and [merge caller](docs/examples/auto-merge.yml) into `.github/workflows/` in each consumer, replacing `TOOLKIT_COMMIT_SHA` with a reviewed immutable commit from this repository. The metadata-only callers use `pull_request` for same-repository branches and `pull_request_target` for forks. They invoke pinned reusable code without checking out PR source. This preserves the existing trust in repository branch writers and lets an installation PR receive its first independent bot approval. For repositories that do not trust branch writers with workflow definitions, use only `pull_request_target` and arrange the initial human review.
 
 Add the `automerge` label to a ready PR targeting the default branch. The default trusted authors are `4alvit`, `californiantiramisu`, `dependabot[bot]`, and `renovate[bot]`; the event actor does not decide eligibility. Drafts, other authors, and unlabeled PRs are left for manual review.
 
 Forward `BOT_PAT` explicitly. Its account needs repository write access; automatic merging must be enabled in repository settings. Approval uses an independent reviewer and applies to the current commit. To automate a PR authored by the account behind `BOT_PAT`, forward a separate reviewer's `APPROVAL_PAT`; the workflow never approves its own PR. Missing credentials fail with a configuration error instead of silently skipping an expected approval.
 
-Merging waits for all reported checks to pass, including optional checks, for up to two hours. It then requests GitHub native auto-merge for the verified head. Existing review requirements, CODEOWNERS, branch protection, and merge rules remain in force. If a check fails or the wait expires, fix or rerun that check and rerun the merge workflow. A new commit, label change, or ready transition starts a fresh evaluation.
+Merging waits for the latest attempt of each reported check to pass, including optional checks, for up to two hours. It then requests GitHub native auto-merge for the verified head. Existing review requirements, CODEOWNERS, branch protection, and merge rules remain in force. If a check fails or the wait expires, fix or rerun that check and rerun the merge workflow. A new commit, label change, or ready transition starts a fresh evaluation.
 
 ## Overview
 

@@ -195,7 +195,7 @@ Secrets: `REGISTRY_USERNAME`, `REGISTRY_PASSWORD` (optional; defaults to GHCR vi
 
 #### `auto-approve-reusable.yml`
 
-Use [the approval caller example](examples/auto-approve.yml) with an immutable toolkit commit. The direct `auto-approve.yml` is this toolkit's own caller, not a reusable workflow. Consumers must use metadata-only `pull_request_target` events; never check out or run PR source in these workflows.
+Use [the approval caller example](examples/auto-approve.yml) with an immutable toolkit commit. The direct `auto-approve.yml` is this toolkit's own caller, not a reusable workflow. The examples select `pull_request` for same-repository heads and `pull_request_target` for forks, with separate concurrency groups per event. Never check out or run PR source in these workflows. Same-repository branch writers can change the caller definition, as in the previous workflow model; use target-only callers and a one-time human review when that trust is not appropriate.
 
 | Input | Type | Default | Required |
 |---|---|---|---|
@@ -215,7 +215,7 @@ Use [the merge caller example](examples/auto-merge.yml) with an immutable toolki
 | `merge-method` | string | `'squash'` | No |
 | `required-status-checks` | string | `''` | No |
 
-`pr-author` can narrow the trusted author set. `required-status-checks` adds exact comma-separated check names that must be present; every observed check must also succeed (neutral/skipped checks are accepted). Empty means use the actual reported checks and repository protections, not invented generic check names. Pending checks wait for up to two hours; failed checks stop the run. Only this merge job's own waiting check is excluded. Before requesting native auto-merge, the workflow rechecks eligibility, check results, and the current head. It never uses an administrator override.
+`pr-author` can narrow the trusted author set. `required-status-checks` adds exact comma-separated check names that must be present; the latest attempt of every observed check must also succeed (neutral/skipped checks are accepted). Empty means use the actual reported checks and repository protections, not invented generic check names. Pending checks wait for up to two hours; failed checks stop the run. Only this merge job's own waiting check is excluded. Before requesting native auto-merge, the workflow rechecks eligibility, check results, and the current head. It never uses an administrator override.
 
 Secrets: explicitly forward `BOT_PAT`. The `automerge` label, a ready PR, and the default target branch are required. Existing branch protection and CODEOWNERS rules still apply. After repairing a failed check, rerun the merge workflow if no new PR event occurs.
 

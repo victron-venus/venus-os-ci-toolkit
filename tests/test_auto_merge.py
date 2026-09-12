@@ -15,6 +15,17 @@ SOURCE = textwrap.dedent(
 )
 
 
+def own_check():
+    """Represent the currently registered merger waiting on other checks."""
+    return {
+        "name": "Auto Merge",
+        "workflowName": "Auto Merge PRs",
+        "status": "IN_PROGRESS",
+        "startedAt": "2026-09-12T01:23:55Z",
+        "detailsUrl": "https://github.com/example/repo/actions/runs/123/job/4",
+    }
+
+
 def pr(author="californiantiramisu", head="abc", state="SUCCESS"):
     """Create a PR response containing a genuine independent check."""
     return {
@@ -25,8 +36,21 @@ def pr(author="californiantiramisu", head="abc", state="SUCCESS"):
         "labels": [{"name": "automerge"}],
         "headRefOid": head,
         "statusCheckRollup": [
-            {"name": "CI", "status": "COMPLETED", "conclusion": state}
+            {"name": "CI", "status": "COMPLETED", "conclusion": state},
+            own_check(),
         ],
+    }
+
+
+def attempt(name, workflow, run, started, conclusion):
+    """Model the timestamped GitHub attempts observed on bootstrap PR 23."""
+    return {
+        "name": name,
+        "workflowName": workflow,
+        "detailsUrl": f"https://github.com/example/repo/actions/runs/{run}/job/4",
+        "startedAt": f"2026-09-12T01:23:{started}Z",
+        "status": "COMPLETED" if conclusion else "IN_PROGRESS",
+        "conclusion": conclusion,
     }
 
 
@@ -152,6 +176,7 @@ class AutoMergeTests(unittest.TestCase):
         """Legacy statuses participate while neutral and skipped checks remain valid."""
         response = pr()
         response["statusCheckRollup"] = [
+            own_check(),
             {"context": "external-status", "state": "SUCCESS"},
             {"name": "optional", "status": "COMPLETED", "conclusion": "NEUTRAL"},
             {"name": "filtered", "status": "COMPLETED", "conclusion": "SKIPPED"},
@@ -159,7 +184,7 @@ class AutoMergeTests(unittest.TestCase):
         self.assertTrue(
             self.code["check_state"](response, {"external-status"}, "123")[0]
         )
-        response["statusCheckRollup"][0]["state"] = "PENDING"
+        response["statusCheckRollup"][1]["state"] = "PENDING"
         self.assertFalse(self.code["check_state"](response, set(), "123")[0])
 
     def test_wait_expires_with_actionable_error(self):
@@ -176,6 +201,73 @@ class AutoMergeTests(unittest.TestCase):
             self.assertRaisesRegex(RuntimeError, "120 minutes"),
         ):
             self.code["main"]()
+
+    def test_superseded_opened_attempts_do_not_poison_labeled_run(self):
+        """PR 23's canceled opened jobs yield to the successful labeled attempts."""
+        response = pr()
+        response["statusCheckRollup"] = [
+            attempt("auto-merge / Auto Merge", "Auto Merge PRs", 34664693259, "55", ""),
+            attempt(
+                "auto-approve / Auto Approve",
+                "Auto Approve PRs",
+                34664692972,
+                "52",
+                "CANCELLED",
+            ),
+            attempt(
+                "auto-merge / Auto Merge",
+                "Auto Merge PRs",
+                34664692971,
+                "52",
+                "CANCELLED",
+            ),
+            attempt(
+                "auto-approve / Auto Approve",
+                "Auto Approve PRs",
+                34664693242,
+                "56",
+                "SUCCESS",
+            ),
+            attempt("Workflow contracts", "CodeQL", 34664693056, "54", "SUCCESS"),
+        ]
+        self.assertTrue(self.code["check_state"](response, set(), "34664693259")[0])
+
+    def test_newer_pending_attempt_does_not_inherit_old_result(self):
+        """A newly queued run wins despite a missing start time and still blocks merge."""
+        response = pr()
+        response["statusCheckRollup"] += [
+            attempt("Build", "Runtime CI", 100, "54", "FAILURE"),
+            attempt("Build", "Runtime CI", 101, "54", ""),
+        ]
+        response["statusCheckRollup"][-1]["startedAt"] = ""
+        response["statusCheckRollup"][-1]["status"] = "QUEUED"
+        self.assertFalse(self.code["check_state"](response, set(), "123")[0])
+
+    def test_waits_for_current_merger_context_registration(self):
+        """An absent current context is a safe wait, never a merge or stale failure."""
+        response = pr()
+        response["statusCheckRollup"] = [
+            attempt("auto-merge / Auto Merge", "Auto Merge PRs", 100, "52", "FAILURE"),
+            attempt("CI", "Runtime CI", 101, "54", "SUCCESS"),
+        ]
+        self.assertFalse(self.code["check_state"](response, set(), "123")[0])
+        response["statusCheckRollup"].append(
+            attempt("auto-merge / Auto Merge", "Auto Merge PRs", 123, "55", "")
+        )
+        self.assertTrue(self.code["check_state"](response, set(), "123")[0])
+
+    def test_newer_skipped_duplicate_event_preserves_registered_self(self):
+        """The other event's skipped merger cannot hide this run's registered job."""
+        response = pr()
+        response["statusCheckRollup"].append(
+            attempt("Auto Merge", "Auto Merge PRs", 124, "56", "SKIPPED")
+        )
+        self.assertTrue(self.code["check_state"](response, set(), "123")[0])
+        response["statusCheckRollup"].append(
+            attempt("Auto Merge", "Independent workflow", 125, "57", "FAILURE")
+        )
+        with self.assertRaisesRegex(RuntimeError, "Independent workflow / Auto Merge"):
+            self.code["check_state"](response, set(), "123")
 
     def test_cannot_expand_trusted_author_allowlist(self):
         """Caller inputs cannot authorize an arbitrary additional account."""
