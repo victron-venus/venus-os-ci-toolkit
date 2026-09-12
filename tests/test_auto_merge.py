@@ -280,5 +280,44 @@ class AutoMergeTests(unittest.TestCase):
             self.run_workflow([RuntimeError("API unavailable")])
 
 
+class BotAuthorTests(unittest.TestCase):
+    """Exercise GitHub App identity normalization using the workflow harness."""
+
+    setUp = AutoMergeTests.setUp
+    run_workflow = AutoMergeTests.run_workflow
+
+    def test_known_graphql_bots_use_canonical_allowlist(self):
+        """Verified app identities match their configured REST bot names."""
+        for bot in ("dependabot", "renovate"):
+            with self.subTest(bot=bot):
+                response = pr() | {"author": {"login": f"app/{bot}", "is_bot": True}}
+                calls = self.run_workflow(
+                    [response, response, response],
+                    {"PR_AUTHORS": f"{bot}[bot]"},
+                )
+                self.assertIn("--auto", calls[-1].args)
+
+    def test_app_alias_requires_verified_bot_identity(self):
+        """Missing, false, or truthy non-boolean bot markers never normalize."""
+        for bot in ("dependabot", "renovate"):
+            for marker in (None, False, "true", 1):
+                with self.subTest(bot=bot, marker=marker):
+                    author = {"login": f"app/{bot}"}
+                    if marker is not None:
+                        author["is_bot"] = marker
+                    calls = self.run_workflow(
+                        [pr() | {"author": author}],
+                        {"PR_AUTHORS": f"{bot}[bot]"},
+                    )
+                    self.assertEqual(len(calls), 1)
+
+    def test_bot_alias_does_not_expand_configured_subset(self):
+        """Canonical bots still require the caller's explicit allowed subset."""
+        for login in ("app/dependabot", "app/renovate", "app/other"):
+            with self.subTest(login=login):
+                response = pr() | {"author": {"login": login, "is_bot": True}}
+                self.assertEqual(len(self.run_workflow([response])), 1)
+
+
 if __name__ == "__main__":
     unittest.main()
