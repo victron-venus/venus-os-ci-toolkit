@@ -203,7 +203,7 @@ Use [the approval caller example](examples/auto-approve.yml) with an immutable t
 
 A ready PR must carry `automerge` and target the repository's default branch. The current PR author is evaluated independently of the event actor. Approval is tied to the current head; an old approval does not suppress review of a new commit.
 
-Secrets: explicitly forward `BOT_PAT` and optional `APPROVAL_PAT`. The latter takes precedence when supplied and must identify a reviewer other than the PR author. `BOT_PAT` requires repository write permission for merging and pull request write permission for approval. Missing credentials or self-approval are configuration errors. The ordinary `GITHUB_TOKEN` can approve when repository/organization policy permits, but these workflows deliberately use the configured independent reviewer and preserve PAT-triggered downstream workflows.
+Secrets: explicitly forward `BOT_PAT` and optional `APPROVAL_PAT`. Approval first checks the actual account behind `BOT_PAT`. It uses `APPROVAL_PAT` only when `BOT_PAT` is absent or belongs to the PR author; the selected account must be independent of the author. Invalid credentials fail explicitly rather than silently selecting another account. `BOT_PAT` requires repository write permission for merging and pull request write permission for approval. Missing credentials or self-approval are configuration errors. The ordinary `GITHUB_TOKEN` can approve when repository/organization policy permits, but these workflows deliberately use the configured independent reviewer and preserve PAT-triggered downstream workflows.
 
 #### `auto-merge.yml`
 
