@@ -195,7 +195,7 @@ Secrets: `REGISTRY_USERNAME`, `REGISTRY_PASSWORD` (optional; defaults to GHCR vi
 
 #### `auto-approve-reusable.yml`
 
-Use [the approval caller example](examples/auto-approve.yml) with an immutable toolkit commit. The direct `auto-approve.yml` is this toolkit's own caller, not a reusable workflow. Consumers must use metadata-only `pull_request_target` events; never check out or run PR source in these workflows.
+Use [the approval caller example](examples/auto-approve.yml) with an immutable toolkit commit. The direct `auto-approve.yml` is this toolkit's own caller, not a reusable workflow. The examples select `pull_request` for same-repository heads and `pull_request_target` for forks, with separate concurrency groups per event. Never check out or run PR source in these workflows. Same-repository branch writers can change the caller definition, as in the previous workflow model; use target-only callers and a one-time human review when that trust is not appropriate.
 
 | Input | Type | Default | Required |
 |---|---|---|---|
