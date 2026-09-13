@@ -446,9 +446,49 @@ def release(policy):
     return workflow
 
 
+def validate_asset_restrictions(policy: dict) -> tuple[dict, ...]:
+    """Validate literal retired suffixes and a clear single-line rejection reason."""
+    restrictions = policy.get("asset_restrictions", [])
+    if not isinstance(restrictions, list):
+        raise ValueError("asset_restrictions must be an array")
+    result = []
+    seen = set()
+    for item in restrictions:
+        if not isinstance(item, dict) or set(item) != {"suffixes", "reason"}:
+            raise ValueError("Asset restrictions require exactly suffixes and reason")
+        suffixes = item["suffixes"]
+        if not isinstance(suffixes, list) or not suffixes:
+            raise ValueError("Asset restrictions require a nonempty suffix array")
+        for suffix in suffixes:
+            if (
+                not isinstance(suffix, str)
+                or len(suffix) > 64
+                or not re.fullmatch(r"\.[a-z0-9]+(?:\.[a-z0-9]+)*", suffix, re.ASCII)
+                or suffix in seen
+            ):
+                raise ValueError(
+                    "Asset suffixes must be unique lowercase literal extensions"
+                )
+            seen.add(suffix)
+        reason = item["reason"]
+        if (
+            not isinstance(reason, str)
+            or not reason
+            or reason != reason.strip()
+            or not reason.isprintable()
+            or len(reason) > 500
+        ):
+            raise ValueError(
+                "Asset restriction reason must be a nonempty bounded single line"
+            )
+        result.append({"suffixes": list(suffixes), "reason": reason})
+    return tuple(result)
+
+
 def validate_policy(directory: Path, policy: dict) -> None:
     """Reject unsupported policy modes, stale publishers and invalid repository names."""
     mode = policy.get("mode", "release")
+    validate_asset_restrictions(policy)
     if policy.get("versioning"):
         # Legacy consumers do not vendor the optional version modules.
         # pylint: disable-next=import-outside-toplevel
@@ -602,6 +642,14 @@ def release_files(directory: Path, policy: dict) -> dict[str, str]:
     files["scripts/release_control.py"] = (
         ROOT / "scripts/release_control.py"
     ).read_text()
+    marker = "ASSET_RESTRICTIONS = ()"
+    if files["scripts/release_control.py"].count(marker) != 1:
+        raise ValueError(
+            "Release engine asset restriction marker is missing or ambiguous"
+        )
+    files["scripts/release_control.py"] = files["scripts/release_control.py"].replace(
+        marker, f"ASSET_RESTRICTIONS = {validate_asset_restrictions(policy)!r}"
+    )
     if policy.get("versioning"):
         files["docs/VERSIONING.md"] = (ROOT / "docs/VERSIONING.md").read_text()
         for name in (
@@ -624,6 +672,7 @@ def release_files(directory: Path, policy: dict) -> dict[str, str]:
             "release_state",
             "version_receipt",
             "consumer_versioning",
+            "cli_version_paths",
         ):
             files[f".github/release-tests/test_{name}.py"] = (
                 (ROOT / f"tests/test_{name}.py")

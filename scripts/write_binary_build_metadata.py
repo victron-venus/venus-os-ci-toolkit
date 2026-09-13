@@ -7,15 +7,14 @@ import sys
 from pathlib import Path
 
 import tomllib
+from version_receipt import confined_cli_path
 
 
 def main() -> None:
     """Write metadata for the final output paths selected by the packager."""
     root = Path(__file__).resolve().parents[1]
-    binary = Path(sys.argv[1])
-    output = Path(sys.argv[2])
-    if binary.is_symlink() or not binary.is_file():
-        raise ValueError("Binary must be a regular file")
+    binary = confined_cli_path(root, Path(sys.argv[1]), "file")
+    output = confined_cli_path(root, Path(sys.argv[2]), "new")
     if (root / "VERSION").is_file():
         version = (root / "VERSION").read_text(encoding="utf-8").strip()
     else:
@@ -27,7 +26,8 @@ def main() -> None:
         "binary": binary.name,
         "binary_sha256": hashlib.sha256(binary.read_bytes()).hexdigest(),
     }
-    output.write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
+    with output.open("x", encoding="utf-8") as stream:
+        stream.write(json.dumps(metadata, indent=2) + "\n")
 
 
 if __name__ == "__main__":

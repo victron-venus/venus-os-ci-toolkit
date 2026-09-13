@@ -27,6 +27,7 @@ WORKFLOW = ".github/workflows/release-pipeline.yml"
 MANIFEST = "release-manifest.json"
 POLICY = ".release-policy.json"
 EVIDENCE = Path(".release-evidence") / MANIFEST
+ASSET_RESTRICTIONS = ()
 VERSION_PATTERN = r"(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)"
 VERSION_RE = re.compile(VERSION_PATTERN, re.ASCII)
 TAG_RE = re.compile(
@@ -548,15 +549,25 @@ def candidate_tag(
     )
 
 
+def reject_restricted_assets(names) -> None:
+    """Reject retired package types using the current repository's static policy."""
+    for name in names:
+        for restriction in ASSET_RESTRICTIONS:
+            if name.casefold().endswith(tuple(restriction["suffixes"])):
+                raise ReleaseError(f"{restriction['reason']}: {name}")
+
+
 def stage_assets(source: Path, destination: Path) -> list[dict]:
     """Snapshot flat regular payload files and hash the private staged bytes."""
     require(
         source.is_dir() and not source.is_symlink(),
         "Assets must be a regular directory",
     )
+    entries = sorted(source.iterdir())
+    reject_restricted_assets(entry.name for entry in entries)
     assets = []
     folded_names = set()
-    for entry in sorted(source.iterdir()):
+    for entry in entries:
         require(
             not entry.is_symlink() and entry.is_file(),
             f"Assets must be flat regular files: {entry.name}",
@@ -589,6 +600,7 @@ def publish(
     gh: GitHub, tag: str, sha: str, directory: Path, prerelease: bool, body: str
 ) -> dict:
     """Keep draft creation, exact-byte upload checks and publication in one transaction."""
+    reject_restricted_assets(path.name for path in directory.iterdir())
     ensure_absent(gh, tag)
     gh.api("git/refs", "POST", {"ref": f"refs/tags/{tag}", "sha": sha})
     release = gh.api(

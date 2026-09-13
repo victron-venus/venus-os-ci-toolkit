@@ -1,5 +1,6 @@
 """Exercise local release commands and generated workflow safety contracts offline."""
 
+import ast
 import importlib.util
 import json
 import os
@@ -199,6 +200,74 @@ class GeneratorTest(unittest.TestCase):
             "repository": "owner/repo",
             "validation_workflows": ["ci.yml", "codeql.yml"],
         }
+
+    def test_asset_restrictions_are_rendered_as_current_static_policy(self):
+        """Older RC promotion uses the current retirement policy without rereading files."""
+        restrictions = [
+            {
+                "suffixes": [".apk", ".aab"],
+                "reason": "Android APK/AAB publication moved to the team's native repository",
+            }
+        ]
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            adapter = root / ".github/workflows/release-build.yml"
+            adapter.parent.mkdir(parents=True)
+            adapter.write_text("on: {workflow_call: {}}\njobs: {}\n", encoding="utf-8")
+            for policy, expected in (
+                (self.policy, ()),
+                (
+                    dict(self.policy, asset_restrictions=restrictions),
+                    tuple(restrictions),
+                ),
+            ):
+                source = installer.release_files(root, policy)[
+                    "scripts/release_control.py"
+                ]
+                assignments = [
+                    item
+                    for item in ast.parse(source).body
+                    if isinstance(item, ast.Assign)
+                    and any(
+                        isinstance(target, ast.Name)
+                        and target.id == "ASSET_RESTRICTIONS"
+                        for target in item.targets
+                    )
+                ]
+                self.assertEqual(len(assignments), 1)
+                self.assertEqual(ast.literal_eval(assignments[0].value), expected)
+
+    def test_asset_restrictions_reject_ambiguous_or_unsafe_policy(self):
+        """Require explicit literal suffixes and printable, bounded rejection reasons."""
+        valid = {"suffixes": [".apk"], "reason": "Retired package"}
+        invalid = (
+            None,
+            {},
+            [None],
+            [{}],
+            [{**valid, "extra": True}],
+            [{**valid, "suffixes": ".apk"}],
+            [{**valid, "suffixes": []}],
+            [{**valid, "suffixes": [".APK"]}],
+            [{**valid, "suffixes": ["*.apk"]}],
+            [{**valid, "suffixes": ["../apk"]}],
+            [{**valid, "suffixes": [".apk", ".apk"]}],
+            [valid, valid],
+            [{**valid, "reason": ""}],
+            [{**valid, "reason": " leading space"}],
+            [{**valid, "reason": "first\nsecond"}],
+            [{**valid, "reason": "nul\0byte"}],
+            [{**valid, "reason": "x" * 501}],
+        )
+        with tempfile.TemporaryDirectory() as temp:
+            for restrictions in invalid:
+                with (
+                    self.subTest(restrictions=restrictions),
+                    self.assertRaises(ValueError),
+                ):
+                    installer.validate_policy(
+                        Path(temp), dict(self.policy, asset_restrictions=restrictions)
+                    )
 
     def test_release_publication_depends_on_build_and_checks(self):
         """Require completed validation and packaging before candidate publication."""

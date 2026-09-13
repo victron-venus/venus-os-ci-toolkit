@@ -89,6 +89,9 @@ python3 scripts/version_receipt.py create \
 
 The receipt binds the effective version inputs to every payload's exact size and
 SHA-256. The publisher rejects missing, duplicate, mismatched, or uncovered files.
+CLI receipt and binary-metadata paths must stay inside the checkout containing
+the installed scripts; Git metadata, symlink escapes and existing output files
+are rejected. The receipt also rechecks declared source-file hashes after packaging.
 It records installed compiler/runtime versions and GitHub runner image identifiers
 per platform; final-build compares
 these with the accepted RC and rejects toolchain drift. Floating runner/toolchain
@@ -142,3 +145,9 @@ Use the real package name and fields for each consumer. A policy owns exactly th
 listed fields; unsupported formats and ambiguous selectors fail closed. Render
 the shared scripts/workflows with `install_release.py`, pin the toolkit revision
 in the consumer policy, and run the generated contract tests plus project checks.
+
+Retired package families can be preserved with a top-level `asset_restrictions`
+list, for example `{"suffixes": [".apk", ".aab"], "reason": "Android publication moved"}`.
+The renderer embeds these reviewed restrictions in the release engine. It rejects
+matching suffixes case-insensitively before staging any bytes and before any
+publication API call, including promotion of an older RC.

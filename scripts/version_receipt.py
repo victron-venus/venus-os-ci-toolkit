@@ -235,6 +235,36 @@ def verify_declared_artifacts(directory: Path, policy: dict, plan: dict) -> list
     return result
 
 
+def confined_cli_path(root: Path, value: Path, kind: str) -> Path:
+    """Constrain CLI paths to their installed checkout before any content I/O."""
+    root = root.resolve(strict=True)
+    candidate = value if value.is_absolute() else Path.cwd() / value
+    if any(part == ".." or part.casefold() == ".git" for part in candidate.parts):
+        raise ValueError("CLI paths must not traverse parent or Git directories")
+    resolved = candidate.resolve(strict=kind != "new")
+    if not resolved.is_relative_to(root) or resolved == root:
+        raise ValueError("CLI path must stay inside the script checkout")
+    relative = resolved.relative_to(root)
+    if any(part.casefold() == ".git" for part in relative.parts):
+        raise ValueError("CLI paths must not access Git directories")
+    # Ignore aliases above the checkout (e.g. macOS /var -> /private/var), but
+    # refuse a caller-selected symlink into any file or directory inside it.
+    for component in (candidate, *candidate.parents):
+        if component.is_symlink() and component.resolve().is_relative_to(root):
+            raise ValueError("CLI path must not contain a symlink")
+    if kind == "metadata":
+        # Includes the synchronizer's regular-file, hardlink and metadata limits.
+        # pylint: disable-next=protected-access
+        return version_plan._path(root, relative.as_posix())
+    if kind == "file" and not resolved.is_file():
+        raise ValueError("CLI input must be a regular file")
+    if kind == "directory" and not resolved.is_dir():
+        raise ValueError("CLI assets must be a directory")
+    if kind == "new" and (resolved.exists() or not resolved.parent.is_dir()):
+        raise ValueError("CLI output must be a new file in an existing directory")
+    return resolved
+
+
 def main() -> None:
     """Write one receipt after a platform finishes packaging its artifacts."""
     parser = argparse.ArgumentParser(description=__doc__)
@@ -244,7 +274,12 @@ def main() -> None:
     parser.add_argument("--assets", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
-    create_receipt(args.plan, args.inputs, args.assets, args.output)
+    root = Path(__file__).resolve().parents[1]
+    plan = confined_cli_path(root, args.plan, "metadata")
+    inputs = confined_cli_path(root, args.inputs, "metadata")
+    assets = confined_cli_path(root, args.assets, "directory")
+    output = confined_cli_path(root, args.output, "new")
+    create_receipt(plan, inputs, assets, output)
 
 
 if __name__ == "__main__":
