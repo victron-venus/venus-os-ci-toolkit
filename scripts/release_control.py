@@ -2,7 +2,8 @@
 """Publish candidates and promote checked RCs inside the guarded Actions workflow."""
 
 # Keep the audited engine self-contained when vendored into application repos.
-# pylint: disable=too-many-lines
+# Lazy versioning imports call back into this engine only after it is initialized.
+# pylint: disable=too-many-lines,cyclic-import
 
 from __future__ import annotations
 
@@ -43,10 +44,13 @@ API_PATHS = {
         r"actions/runs/[1-9]\d*(?:/artifacts|/attempts/[1-9]\d*/jobs)?",
         r"actions/artifacts/[1-9]\d*/zip",
         r"contents/\.release-policy\.json\?ref=[0-9a-f]{40}",
+        r"contents/release-version-state\.json\?ref=release-version-state",
+        r"git/ref/heads/release-version-state",
         r"compare/[0-9a-f]{40}\.\.\.(?:[A-Za-z0-9_.~-]|%[0-9A-F]{2})+",
     ),
     "POST": (r"(?:git/refs|releases)",),
     "PATCH": (r"releases/[1-9]\d*",),
+    "PUT": (r"contents/release-version-state\.json",),
 }
 SHA_RE = re.compile(r"[0-9a-f]{40}\Z")
 NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+-]{0,199}\Z")
@@ -144,9 +148,15 @@ class GitHub:
         )
         require(
             (method == "GET" and body is None)
-            or (method in {"POST", "PATCH"} and isinstance(body, dict)),
+            or (method in {"POST", "PATCH", "PUT"} and isinstance(body, dict)),
             "API body does not match its method",
         )
+        if method == "PUT":
+            require(
+                body.get("branch") == "release-version-state"
+                and set(body) <= {"branch", "content", "message", "sha"},
+                "Ledger writes must target the dedicated state branch",
+            )
         modes = {
             "json": [],
             "pages": ["--paginate", "--slurp"],
@@ -162,6 +172,7 @@ class GitHub:
             "GET": ["--method", "GET"],
             "POST": ["--method", "POST"],
             "PATCH": ["--method", "PATCH"],
+            "PUT": ["--method", "PUT"],
         }[method]
         return self.response(
             subprocess.run(
@@ -231,7 +242,9 @@ class GitHub:
         parent = path.parent.resolve(strict=True)
         require(
             parent.parent == Path(tempfile.gettempdir()).resolve()
-            and parent.name.startswith(("release-candidate-", "release-promote-"))
+            and parent.name.startswith(
+                ("release-candidate-", "release-promote-", "release-versioned-")
+            )
             and "#" not in str(path),
             "Upload must come from the private release staging directory",
         )
@@ -671,6 +684,10 @@ def candidate(args) -> dict:
     require_release_policy(
         policy_snapshot["data"], gh.repo, qualified=args.channel == "rc"
     )
+    require(
+        not policy_snapshot["data"].get("versioning"),
+        "Versioned policies require the frozen-plan publisher, not post-build allocation",
+    )
     check_ancestry(gh, args.sha, info["default_branch"])
     if args.channel in ("beta", "rc"):
         # Once a base version is final, further candidates would mislabel new
@@ -718,7 +735,10 @@ def candidate(args) -> dict:
     }
 
 
-def validate_manifest(raw: bytes, repo: str, rc_tag: str) -> dict:
+# pylint: disable-next=too-many-locals
+def validate_manifest(
+    raw: bytes, repo: str, rc_tag: str, allow_final: bool = False
+) -> dict:
     """Reject malformed or ineligible RC manifests before trusting their assets."""
     require(len(raw) <= 2_000_000, "Manifest is unreasonably large")
     manifest = parse_json(raw, MANIFEST)
@@ -737,12 +757,23 @@ def validate_manifest(raw: bytes, repo: str, rc_tag: str) -> dict:
     base_version = manifest.get("version")
     require(isinstance(base_version, str), "Missing manifest version")
     version(base_version)
-    require(manifest.get("channel") == "rc", "Only release candidates can be promoted")
-    require(
-        manifest.get("tag") == rc_tag
-        and re.fullmatch(rf"v{re.escape(base_version)}-rc\.[1-9]\d*", rc_tag, re.ASCII),
-        "Manifest RC tag/version mismatch",
-    )
+    final = allow_final and manifest.get("channel") == "stable"
+    if final:
+        require(
+            manifest.get("tag") == rc_tag == f"v{base_version}",
+            "Final tag/version mismatch",
+        )
+    else:
+        require(
+            manifest.get("channel") == "rc", "Only release candidates can be promoted"
+        )
+        require(
+            manifest.get("tag") == rc_tag
+            and re.fullmatch(
+                rf"v{re.escape(base_version)}-rc\.[1-9]\d*", rc_tag, re.ASCII
+            ),
+            "Manifest RC tag/version mismatch",
+        )
     require(
         isinstance(manifest.get("source_sha"), str)
         and SHA_RE.fullmatch(manifest["source_sha"]),
@@ -754,6 +785,47 @@ def validate_manifest(raw: bytes, repo: str, rc_tag: str) -> dict:
     positive(manifest.get("run_id"), "manifest run ID")
     positive(manifest.get("run_attempt"), "manifest run attempt")
     validate_policy_snapshot(manifest.get("source_policy"), repo)
+    versioning = manifest["source_policy"]["data"].get("versioning")
+    if versioning:
+        # Optional imports preserve the standalone legacy engine contract.
+        # pylint: disable-next=import-outside-toplevel
+        from version_plan import plan_digest, validate_plan
+
+        plan = validate_plan(
+            manifest.get("version_plan"),
+            manifest["source_policy"]["data"],
+            manifest["source_sha"],
+        )
+        require(
+            plan["tag"] == manifest["tag"]
+            and plan["channel"] == manifest["channel"]
+            and plan["base_version"] == base_version
+            and manifest.get("plan_sha256") == plan_digest(plan),
+            "Manifest differs from the frozen version plan",
+        )
+    if final:
+        require(
+            versioning and versioning.get("promotion") == "final-build",
+            "Final package policy is missing",
+        )
+        parent = manifest.get("derived_from_rc")
+        require(
+            isinstance(parent, dict)
+            and set(parent) == {"tag", "manifest_sha256", "source_sha", "run_id"},
+            "Final manifest needs accepted RC provenance",
+        )
+        require(
+            isinstance(parent["tag"], str)
+            and re.fullmatch(rf"v{re.escape(base_version)}-rc\.[1-9]\d*", parent["tag"])
+            and parent["source_sha"] == manifest["source_sha"]
+            and isinstance(parent["manifest_sha256"], str)
+            and re.fullmatch(r"[0-9a-f]{64}", parent["manifest_sha256"]),
+            "Invalid final RC provenance",
+        )
+        require(
+            positive(parent["run_id"], "parent RC run ID") != manifest["run_id"],
+            "Final build must use a new run",
+        )
     assets = manifest.get("assets")
     require(isinstance(assets, list) and assets, "Manifest contains no assets")
     names = set()
@@ -897,7 +969,7 @@ def require_reviewers(gh: GitHub) -> None:
 
 
 # Preserve the ordered security checks and staged bytes within one transaction.
-# pylint: disable-next=too-many-locals
+# pylint: disable-next=too-many-locals,too-many-statements
 def promote(args) -> dict:
     """Verify an approved RC and publish the same bytes under a new stable tag."""
     gh = GitHub(args.repo)
@@ -936,6 +1008,15 @@ def promote(args) -> dict:
     manifest = validate_manifest(raw, gh.repo, args.rc)
     policy_snapshot = source_policy_snapshot(gh, manifest["source_sha"])
     require_release_policy(policy_snapshot["data"], gh.repo, qualified=True)
+    require(
+        policy_snapshot["data"].get("versioning", {}).get("promotion") != "final-build",
+        "This RC requires a separately validated final build; byte promotion is disabled",
+    )
+    if manifest.get("version_plan"):
+        # pylint: disable-next=import-outside-toplevel
+        from release_state import verify_promotion_order
+
+        verify_promotion_order(gh, manifest["version_plan"])
     require(
         policy_snapshot == manifest["source_policy"],
         "Manifest policy snapshot differs from the policy at the candidate source commit",
@@ -1008,6 +1089,12 @@ def promote(args) -> dict:
             completed=True,
         )
         require_reviewers(gh)
+        if manifest.get("version_plan"):
+            verify_promotion_order(gh, manifest["version_plan"])
+            # pylint: disable-next=import-outside-toplevel
+            from release_state import begin_publication
+
+            begin_publication(gh, manifest["version_plan"], current_id, promotion=True)
         release = publish(
             gh,
             tag,
