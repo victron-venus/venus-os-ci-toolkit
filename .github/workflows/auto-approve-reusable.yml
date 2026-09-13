@@ -21,7 +21,6 @@ jobs:
     if: >-
       github.event.pull_request != null &&
       contains(fromJSON(inputs.authors), github.event.pull_request.user.login) &&
-      contains(github.event.pull_request.labels.*.name, 'automerge') &&
       !github.event.pull_request.draft
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -67,7 +66,6 @@ jobs:
                   pr["state"] == "open"
                   and not pr["draft"]
                   and pr["user"]["login"].lower() in authors
-                  and "automerge" in {label["name"] for label in pr["labels"]}
                   and pr["base"]["repo"]["full_name"] == repository
                   and pr["base"]["ref"] == default_branch
               )

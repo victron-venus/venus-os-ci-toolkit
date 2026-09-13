@@ -16,7 +16,6 @@ jobs:
   auto-approve:
     if: >-
       contains(fromJSON('["4alvit","californiantiramisu","dependabot[bot]","renovate[bot]"]'), github.event.pull_request.user.login) &&
-      contains(github.event.pull_request.labels.*.name, 'automerge') &&
       !github.event.pull_request.draft
     uses: ./.github/workflows/auto-approve-reusable.yml
     secrets:
