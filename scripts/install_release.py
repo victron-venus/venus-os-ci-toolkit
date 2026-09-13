@@ -432,12 +432,55 @@ def validate_local_workflows(directory: Path) -> None:
 
 
 def validate_workflow_adapters(directory: Path, policy: dict) -> None:
-    """Require every declared validator to be callable by the generated gate."""
-    for name in policy["validation_workflows"]:
-        path = directory / ".github/workflows" / name
-        workflow = yaml.load(path.read_text(), Loader=yaml.BaseLoader)
-        if "workflow_call" not in workflow.get("on", {}):
+    """Check callable validators and permission caps throughout their local graph."""
+    validate_local_calls(directory, quality(policy))
+
+
+def permission_level(permissions: dict | str, scope: str) -> str:
+    """Resolve one declared scope, including the workflow wildcard forms."""
+    if isinstance(permissions, dict):
+        return permissions.get(scope, "none")
+    if permissions in {"read-all", "write-all"}:
+        return permissions.removesuffix("-all")
+    raise ValueError(f"Unsupported permissions declaration: {permissions!r}")
+
+
+def validate_permission_cap(requested: dict | str, allowed: dict | str, label: str):
+    """Reject static permission elevation even when a job's condition is false."""
+    scopes = {"*"}
+    for declaration in (requested, allowed):
+        if isinstance(declaration, dict):
+            scopes.update(declaration)
+    levels = {"none": 0, "read": 1, "write": 2}
+    for scope in sorted(scopes):
+        need = permission_level(requested, scope)
+        cap = permission_level(allowed, scope)
+        if levels[need] > levels[cap]:
+            raise ValueError(
+                f"{label}: requests {scope}: {need}, but caller allows {cap}"
+            )
+
+
+def validate_local_calls(directory, workflow, allowed=None, chain=()):
+    """Validate local calls without fetching or trusting mutable remote workflows."""
+    defaults = workflow.get("permissions", allowed or {})
+    for name, job in workflow.get("jobs", {}).items():
+        permissions = job.get("permissions", defaults)
+        label = " -> ".join((*chain, name))
+        if allowed is not None:
+            validate_permission_cap(permissions, allowed, label)
+        reference = job.get("uses", "")
+        if not reference.startswith("./"):
+            continue
+        if not re.fullmatch(r"\./\.github/workflows/[A-Za-z0-9_-]+\.ya?ml", reference):
+            raise ValueError(f"Invalid local workflow reference: {reference}")
+        if reference in chain:
+            raise ValueError(f"Recursive local workflow call: {label} -> {reference}")
+        path = directory / reference
+        called = yaml.load(path.read_text(), Loader=yaml.BaseLoader)
+        if "workflow_call" not in called.get("on", {}):
             raise ValueError(f"{path}: needs workflow_call")
+        validate_local_calls(directory, called, permissions, (*chain, reference))
 
 
 def release_files(directory: Path, policy: dict) -> dict[str, str]:

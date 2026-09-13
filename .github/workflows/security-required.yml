@@ -10,6 +10,11 @@ permissions:
 jobs:
   trivy:
     name: Full-source security scan
+    # GitHub validates nested CodeQL permissions even with run-codeql: false.
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
     uses: ./.github/workflows/security-scan.yml
     with:
       run-codeql: false
