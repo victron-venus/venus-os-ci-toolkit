@@ -39,7 +39,7 @@ class AutoApproveContract(unittest.TestCase):
             "state": "open",
             "draft": False,
             "user": {"login": "californiantiramisu"},
-            "labels": [{"name": "automerge"}],
+            "labels": [],
             "head": {"sha": HEAD},
             "base": {"sha": BASE, "ref": "stable", "repo": {"full_name": REPOSITORY}},
         }
@@ -146,14 +146,59 @@ class AutoApproveContract(unittest.TestCase):
         self.assert_posts(1)
         self.assertEqual(self.read_count, 2)
 
+    def test_workflow_guards_do_not_require_labels(self):
+        """Both caller paths and the reusable job admit trusted, ready unlabeled PRs."""
+        root = WORKFLOW.parents[2]
+        for workflow in (
+            WORKFLOW,
+            root / ".github/workflows/auto-approve.yml",
+            root / "docs/examples/auto-approve.yml",
+        ):
+            with self.subTest(workflow=workflow):
+                definition = yaml.load(workflow.read_text(), Loader=yaml.BaseLoader)
+                condition = definition["jobs"]["auto-approve"]["if"]
+                self.assertNotIn("labels", condition)
+                self.assertIn("contains(fromJSON(", condition)
+                self.assertIn("github.event.pull_request.user.login", condition)
+                self.assertIn("!github.event.pull_request.draft", condition)
+
+    def test_labels_do_not_control_approval(self):
+        """Approve the current head with no labels or any unrelated or merge label."""
+        for labels in (
+            [],
+            [{"name": "bug"}],
+            [{"name": "auto-merge"}],
+            [{"name": "automerge"}],
+        ):
+            with self.subTest(labels=labels):
+                self.setUp()
+                self.pr["labels"] = labels
+                self.current = copy.deepcopy(self.pr)
+                self.execute()
+                self.assert_posts(1)
+                self.assertEqual(self.read_count, 2)
+
+    def test_label_changes_during_recheck_do_not_cancel_approval(self):
+        """Adding, removing, or replacing labels leaves current-head approval eligible."""
+        label_sets = ([], [{"name": "automerge"}], [{"name": "bug"}])
+        for initial in label_sets:
+            for current in label_sets:
+                if initial == current:
+                    continue
+                with self.subTest(initial=initial, current=current):
+                    self.setUp()
+                    self.pr["labels"] = initial
+                    self.current["labels"] = current
+                    self.execute()
+                    self.assert_posts(1)
+                    self.assertEqual(self.read_count, 2)
+
     def test_ineligible_metadata_never_requests_a_review(self):
-        """Canonical label, state, target repository and actual default branch are required."""
+        """Trusted author, ready state, target repository and default branch are required."""
         variants = [
             {"user": {"login": "untrusted-author"}},
             {"draft": True},
             {"state": "closed"},
-            {"labels": [{"name": "auto-merge"}]},
-            {"labels": []},
             {"base": {"ref": "main", "repo": {"full_name": REPOSITORY}}},
             {"base": {"ref": "stable", "repo": {"full_name": "other/project"}}},
         ]
@@ -310,7 +355,6 @@ class AutoApproveContract(unittest.TestCase):
                     "repo": {"full_name": REPOSITORY},
                 }
             },
-            {"labels": []},
             {"draft": True},
             {"state": "closed"},
         ):

@@ -85,22 +85,14 @@ jobs:
 ```
 
 ### `.github/workflows/auto-approve.yml`
-```yaml
-name: Auto Approve
-on:
-  pull_request_target:
-    types: [opened, synchronize, reopened]
 
-jobs:
-  auto-approve:
-    uses: victron-venus/venus-os-ci-toolkit/.github/workflows/auto-approve.yml@main
-    with:
-      pr-author: 'dependabot[bot],renovate[bot]'
-      required-reviews: '1'
-      pr-types: 'dependencies'
-    secrets:
-      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-```
+Copy the [approval caller example](../docs/examples/auto-approve.yml), replacing
+`TOOLKIT_COMMIT_SHA` with a reviewed immutable toolkit commit. It invokes
+`auto-approve-reusable.yml` and forwards `BOT_PAT` and optional `APPROVAL_PAT` for
+an independent reviewer. Ready PRs from trusted authors targeting the default
+branch receive approval regardless of labels. The `automerge` label controls
+automatic merging separately. See the [consumer guide](../docs/CONSUMER_GUIDE.md#auto-approve-reusableyml)
+for event handling, author configuration, and token requirements.
 
 ### `.github/workflows/auto-merge.yml`
 ```yaml
