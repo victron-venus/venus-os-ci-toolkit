@@ -33,7 +33,7 @@ Concurrent GitHub runs can start in a different order from their numeric run IDs
 
 ## CI and release documentation
 
-See the [fleet rollout guide](docs/FLEET_ROLLOUT.md), [local nightly runner](docs/LOCAL_NIGHTLY.md), and [toolkit operations](docs/release-workflow.md). Application repositories keep their strategy in `RELEASING.md` and commands in `docs/release-workflow.md`; README files only link to them. The canonical English strategy is [templates/release-strategy.md](templates/release-strategy.md).
+See the [fleet rollout guide](docs/FLEET_ROLLOUT.md), [local nightly runner](docs/LOCAL_NIGHTLY.md), and [toolkit operations](docs/release-workflow.md). Application repositories keep their strategy in `RELEASING.md` and commands in `docs/release-workflow.md`; README files only link to them. The canonical English strategy is [templates/release-strategy.md](templates/release-strategy.md). The [application release runbook](docs/APPLICATION_RELEASES.md) covers request ordering, workflow-change recovery, approval and stable promotion across public applications.
 
 Private repositories run ordinary OSS checks locally. Unavailable GitHub-hosted workflows are archived outside workflow discovery; only an existing manual deployment on a working self-hosted runner is retained. No paid GitHub security or governance feature is required. The reviewed inventory and visibility are recorded in [fleet.json](fleet.json).
 
