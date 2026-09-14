@@ -52,6 +52,19 @@ Native counters must be seeded above existing compatible published values.
 The Apple build projection uses bounded numeric components; changing an older,
 incompatible build-number format needs a reviewed platform migration.
 
+Tauri applications that build Windows MSI packages must project the numeric
+`base` version into `tauri.conf.json`. Keep the `full` candidate in owned package
+manifests and expose the frozen plan identity to the UI/runtime, so beta and RC
+labels remain visible without putting an unsupported prerelease string in MSI
+metadata. Tauri can serialize Cargo manifests with LF while preparing a build;
+because receipts intentionally compare exact input bytes after packaging, keep
+those checkout bytes stable on Windows:
+
+```gitattributes
+src-tauri/Cargo.toml text eol=lf
+src-tauri/Cargo.lock text eol=lf
+```
+
 ## Durable allocation and retries
 
 The repository's dedicated `release-version-state` branch contains only the
