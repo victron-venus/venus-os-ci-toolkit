@@ -635,6 +635,61 @@ version = "2.5.42"
         with self.assertRaisesRegex(ValueError, "HEAD differs"):
             version.verify_checkout(self.root, config, {**plan, "source_sha": SHA})
 
+    def test_git_source_binding_accepts_declared_checkout_eol_conversion(self):
+        self.write(
+            ".gitattributes", "package.json text eol=crlf\nVERSION text eol=crlf\n"
+        )
+        self.write(
+            "package.json", '{"name":"product","version":"2.5.42","other":true}\n'
+        )
+        self.write("VERSION", "2.5.42\n")
+
+        def git(*args):
+            return subprocess.check_output(
+                ["git", "-C", str(self.root), *args],
+                stderr=subprocess.DEVNULL,
+                text=True,
+            ).strip()
+
+        git("init")
+        git("add", ".gitattributes", "package.json", "VERSION")
+        git(
+            "-c",
+            "user.name=Fixture",
+            "-c",
+            "user.email=fixture@example.invalid",
+            "commit",
+            "-m",
+            "fixture",
+        )
+        path = self.root / "package.json"
+        path.unlink()
+        (self.root / "VERSION").unlink()
+        git("checkout", "--", "package.json", "VERSION")
+        self.assertIn(b"\r\n", path.read_bytes())
+        self.assertIn(b"\r\n", (self.root / "VERSION").read_bytes())
+        config = policy(
+            [
+                {
+                    "path": "package.json",
+                    "format": "json",
+                    "field": "version",
+                    "package": "product",
+                    "value": "package",
+                },
+                {"path": "VERSION", "format": "text", "value": "package"},
+            ]
+        )
+        plan = version.create_plan(
+            "2.5.42", "beta", 2, git("rev-parse", "HEAD"), config
+        )
+        version.verify_checkout(self.root, config, plan)
+        version.sync_versions(self.root, config, plan)
+        version.verify_checkout(self.root, config, plan)
+        path.write_bytes(path.read_bytes().replace(b"true", b"false"))
+        with self.assertRaisesRegex(ValueError, "Undeclared changes"):
+            version.verify_checkout(self.root, config, plan)
+
 
 class ArtifactTest(unittest.TestCase):
     def setUp(self):

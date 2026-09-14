@@ -1052,8 +1052,17 @@ def verify_checkout(root, policy, plan):
         "tag": "v" + plan["base_version"],
     }
     for name, declarations in grouped.items():
+        _relative(name)
         original = subprocess.check_output(
-            ["git", "-C", str(root), "show", f"{head}:{name}"]
+            [
+                "git",
+                "-C",
+                str(root),
+                "cat-file",
+                "--filters",
+                f"--path={name}",
+                f"{head}:{name}",
+            ]
         )
         expected = original
         for item in declarations:
