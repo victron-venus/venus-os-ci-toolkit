@@ -5,9 +5,14 @@ The policy and build/validation adapters must exist first. Copying the engine
 keeps rollout independently reviewable; --check detects any vendored drift.
 """
 
+# Keep generated workflow, vendored files and operator docs in one renderer.
+# Client and renderer independently validate their input contract when vendored.
+# pylint: disable=too-many-lines,duplicate-code
+
 from __future__ import annotations
 
 import argparse
+import copy
 import hashlib
 import json
 import re
@@ -88,6 +93,13 @@ def quality(policy):
                 },
             ],
         }
+        if policy.get("versioning"):
+            jobs["release-contracts"]["steps"].append(
+                {
+                    "name": "Check every committed version field",
+                    "run": "python3 scripts/version_plan.py check-base",
+                }
+            )
     jobs["gate"] = {
         "name": "CI gate",
         "needs": list(jobs),
@@ -143,7 +155,7 @@ def schedule(policy):
     return f"{7 + offset % 47} {2 + offset % 4} * * *"
 
 
-def release(policy):
+def _legacy_release(policy):
     """Build the gated candidate/publication workflow from the reviewed policy."""
     branch = policy.get("default_branch", "main")
     candidate = "${{ needs.prepare.outputs.channel != 'stable' }}"
@@ -360,9 +372,131 @@ PY
     }
 
 
+def release(policy):
+    """Opt declared consumers into early plans without changing legacy contracts."""
+    workflow = _legacy_release(policy)
+    if not policy.get("versioning"):
+        return workflow
+    jobs = workflow["jobs"]
+    prepare = jobs["prepare"]
+    prepare["timeout-minutes"] = 30
+    prepare["permissions"] = {"contents": "write", "actions": "read"}
+    prepare["outputs"].update(
+        {
+            "build": "${{ steps.metadata.outputs.build }}",
+            "plan_artifact": "${{ steps.metadata.outputs.plan_artifact }}",
+        }
+    )
+    metadata = prepare["steps"][-1]
+    metadata["run"] = (
+        'python3 scripts/release_versioned.py prepare --repo "$GITHUB_REPOSITORY"'
+    )
+    metadata["env"]["GH_TOKEN"] = "${{ github.token }}"
+    prepare["steps"].append(
+        {
+            "name": "Store exact version plan before building",
+            "if": "${{ steps.metadata.outputs.build == 'true' }}",
+            "uses": UPLOAD,
+            "with": {
+                "name": "${{ steps.metadata.outputs.plan_artifact }}",
+                "path": ".release-plan.json",
+                "include-hidden-files": True,
+                "if-no-files-found": "error",
+                "retention-days": 90,
+            },
+        }
+    )
+    build_condition = "${{ needs.prepare.outputs.build == 'true' }}"
+    jobs["checks"]["if"] = build_condition
+    jobs["build"]["if"] = build_condition
+    jobs["build"]["permissions"]["actions"] = "read"
+    jobs["build"]["with"]["release_plan_artifact"] = (
+        "${{ needs.prepare.outputs.plan_artifact }}"
+    )
+    jobs["gate"]["if"] = "${{ always() && needs.prepare.outputs.build == 'true' }}"
+    candidate = jobs["candidate"]
+    candidate["steps"].insert(
+        1,
+        {
+            "name": "Download the plan used by every build",
+            "uses": DOWNLOAD,
+            "with": {"name": "${{ needs.prepare.outputs.plan_artifact }}", "path": "."},
+        },
+    )
+    for step in candidate["steps"]:
+        if step.get("name") == "Publish checked candidate":
+            step["run"] = (
+                'python3 scripts/release_versioned.py publish --repo "$GITHUB_REPOSITORY" '
+                "--assets .release-assets"
+            )
+    jobs["stable"]["if"] = (
+        "${{ needs.prepare.outputs.channel == 'stable' && needs.prepare.outputs.build == 'false' }}"
+    )
+    final = copy.deepcopy(candidate)
+    final["if"] = (
+        "${{ needs.prepare.outputs.channel == 'stable' && needs.prepare.outputs.build == 'true' }}"
+    )
+    final["environment"] = "release"
+    for step in final["steps"]:
+        if step.get("name") == "Publish checked candidate":
+            step["name"] = (
+                "Publish the separately validated final packages after approval"
+            )
+    jobs["final"] = final
+    return workflow
+
+
+def validate_asset_restrictions(policy: dict) -> tuple[dict, ...]:
+    """Validate literal retired suffixes and a clear single-line rejection reason."""
+    restrictions = policy.get("asset_restrictions", [])
+    if not isinstance(restrictions, list):
+        raise ValueError("asset_restrictions must be an array")
+    result = []
+    seen = set()
+    for item in restrictions:
+        if not isinstance(item, dict) or set(item) != {"suffixes", "reason"}:
+            raise ValueError("Asset restrictions require exactly suffixes and reason")
+        suffixes = item["suffixes"]
+        if not isinstance(suffixes, list) or not suffixes:
+            raise ValueError("Asset restrictions require a nonempty suffix array")
+        for suffix in suffixes:
+            if (
+                not isinstance(suffix, str)
+                or len(suffix) > 64
+                or not re.fullmatch(r"\.[a-z0-9]+(?:\.[a-z0-9]+)*", suffix, re.ASCII)
+                or suffix in seen
+            ):
+                raise ValueError(
+                    "Asset suffixes must be unique lowercase literal extensions"
+                )
+            seen.add(suffix)
+        reason = item["reason"]
+        if (
+            not isinstance(reason, str)
+            or not reason
+            or reason != reason.strip()
+            or not reason.isprintable()
+            or len(reason) > 500
+        ):
+            raise ValueError(
+                "Asset restriction reason must be a nonempty bounded single line"
+            )
+        result.append({"suffixes": list(suffixes), "reason": reason})
+    return tuple(result)
+
+
 def validate_policy(directory: Path, policy: dict) -> None:
     """Reject unsupported policy modes, stale publishers and invalid repository names."""
     mode = policy.get("mode", "release")
+    validate_asset_restrictions(policy)
+    if policy.get("versioning"):
+        # Legacy consumers do not vendor the optional version modules.
+        # pylint: disable-next=import-outside-toplevel
+        from version_plan import validate_policy as validate_version_policy
+
+        validate_version_policy(policy)
+        if mode != "release":
+            raise ValueError("Version publication policy requires mode=release")
     if mode not in {"release", "validation-only"}:
         raise ValueError("Policy mode must be release or validation-only")
     if policy.get("visibility", "public") not in {"public", "private"}:
@@ -434,6 +568,22 @@ def validate_local_workflows(directory: Path) -> None:
 def validate_workflow_adapters(directory: Path, policy: dict) -> None:
     """Check callable validators and permission caps throughout their local graph."""
     validate_local_calls(directory, quality(policy))
+    if policy.get("versioning"):
+        path = directory / ".github/workflows/release-build.yml"
+        declaration = yaml.load(path.read_text(), Loader=yaml.BaseLoader)
+        for key in ("on", "workflow_call", "inputs", "release_plan_artifact"):
+            declaration = (
+                declaration.get(key) if isinstance(declaration, dict) else None
+            )
+        if (
+            not isinstance(declaration, dict)
+            or declaration.get("type") != "string"
+            or declaration.get("required") != "true"
+        ):
+            raise ValueError(
+                "Versioned release-build.yml must declare release_plan_artifact "
+                "as a required string workflow_call input"
+            )
 
 
 def permission_level(permissions: dict | str, scope: str) -> str:
@@ -492,6 +642,47 @@ def release_files(directory: Path, policy: dict) -> dict[str, str]:
     files["scripts/release_control.py"] = (
         ROOT / "scripts/release_control.py"
     ).read_text()
+    marker = "ASSET_RESTRICTIONS = ()"
+    if files["scripts/release_control.py"].count(marker) != 1:
+        raise ValueError(
+            "Release engine asset restriction marker is missing or ambiguous"
+        )
+    files["scripts/release_control.py"] = files["scripts/release_control.py"].replace(
+        marker, f"ASSET_RESTRICTIONS = {validate_asset_restrictions(policy)!r}"
+    )
+    if policy.get("versioning"):
+        files["docs/VERSIONING.md"] = (ROOT / "docs/VERSIONING.md").read_text()
+        for name in (
+            "version_plan",
+            "version_receipt",
+            "release_state",
+            "release_versioned",
+            "prepare_version",
+            "release_version_adapter",
+            "stage_release_assets",
+            "release_container_labels",
+            "write_web_build_metadata",
+            "write_binary_build_metadata",
+        ):
+            files[f"scripts/{name}.py"] = (ROOT / f"scripts/{name}.py").read_text()
+        for name in (
+            "version_plan",
+            "versioned_release",
+            "prepare_version",
+            "release_state",
+            "version_receipt",
+            "consumer_versioning",
+            "cli_version_paths",
+        ):
+            files[f".github/release-tests/test_{name}.py"] = (
+                (ROOT / f"tests/test_{name}.py")
+                .read_text()
+                .replace("Path(__file__).parents[1]", "Path(__file__).parents[2]")
+                .replace(
+                    "Path(__file__).resolve().parents[1]",
+                    "Path(__file__).resolve().parents[2]",
+                )
+            )
     if policy.get("container_assets") or policy.get("pypi_assets"):
         files["scripts/publish_verified.py"] = (
             ROOT / "scripts/publish_verified.py"
@@ -520,6 +711,8 @@ def release_strategy(directory: Path, policy: dict) -> str:
         )
     )
     limits = policy.get("notes", []) + blockers
+    versioning = policy.get("versioning")
+    final_build = versioning and versioning["promotion"] == "final-build"
     values = {
         "REPOSITORY": policy["repository"],
         "DEFAULT_BRANCH": policy.get("default_branch", "main"),
@@ -531,6 +724,33 @@ def release_strategy(directory: Path, policy: dict) -> str:
         "QUALIFICATION": qualification,
         "PROJECT_LIMITS": "\n".join("- " + note for note in limits)
         or "The complete declared gate and target acceptance remain required.",
+        "VERSION_AUTOMATION": (
+            "Use `python3 scripts/release.py prepare-version --pr` to synchronize the "
+            "declared source fields. A saved release plan fixes the full candidate "
+            "version before compilation. See [version plans](docs/VERSIONING.md) "
+            "for adapters, counters, retries and provenance."
+            if versioning
+            else ""
+        ),
+        "STABLE_CHANNEL": (
+            "- **Stable** creates final-version packages from the accepted RC's exact "
+            "source and recipe. It repeats all checks and platform builds, then waits "
+            "for acceptance of these new bytes in the protected release environment. "
+            "It records `derived_from_rc`; it does not claim unchanged RC payloads."
+            if final_build
+            else "- **Stable** is a separate manual promotion of one accepted RC to `vX.Y.Z`.\n"
+            "  Promotion copies the verified RC payloads byte for byte; it never rebuilds them.\n"
+            "  Stable publication must not be inferred from a successful branch build."
+        ),
+        "VERSION_REPRESENTATION": (
+            "Declared adapters map the saved full version to each package format. "
+            "Native OS fields may retain the numeric base while the application "
+            "embeds its full identity. RC packages under promote-bytes already use "
+            "the final base; their original candidate identity remains provenance."
+            if versioning
+            else "Native binaries/packages retain the committed\n"
+            "base version; the release tag and manifest identify their channel and source."
+        ),
         "PACKAGING_GUIDE": (
             "See [platform packaging and toolchain setup](docs/release-packaging.md) "
             "for additional local prerequisites."
@@ -762,6 +982,38 @@ References: [GitHub schedules](https://docs.github.com/en/actions/reference/work
 [protected environments](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/manage-environments),
 [artifact provenance](https://docs.github.com/en/rest/actions/artifacts).
 """
+    if policy.get("versioning"):
+        text = text.replace(
+            "version files. Native binaries keep that base version; the release manifest records\n"
+            "the beta/RC/nightly channel and exact source SHA.",
+            "version files. The frozen release plan supplies full candidate versions to declared\n"
+            "format adapters before compilation; the manifest binds the plan and build receipts.",
+        )
+        text += (
+            "\n## Automatic version preparation\n\n"
+            "Run `python3 scripts/release.py prepare-version --pr` from the clean default-branch "
+            "HEAD. The command refreshes tags and opens a PR with synchronized "
+            "owned version fields. "
+            "An existing unreleased base is retained; use `--bump minor`, `--bump major`, or "
+            "`--version X.Y.Z` for explicit intent. See [version plans](VERSIONING.md) for "
+            "build overlays, the dedicated allocation ledger and recovery.\n"
+            "\nA local candidate package also needs the saved `.release-plan.json` "
+            "at its exact source "
+            "commit. Restore the `version_plan` object from the published `release-manifest.json` "
+            "into a disposable checkout before `release.py package`; do not invent a tag or "
+            "native counter locally. Ordinary development builds can use the project's native "
+            "build command and explicitly local version identity.\n"
+        )
+        if policy["versioning"]["promotion"] == "final-build":
+            text = text.replace(
+                "Stable `vX.Y.Z` copies the tested RC bytes without rebuilding. "
+                "No override or\nforce-tag option exists.",
+                "Stable `vX.Y.Z` is a new build of the accepted RC's exact source, "
+                "locks and recipe. "
+                "The RC must match current HEAD. All checks and builds run again; approve the "
+                "new final artifacts after acceptance. The manifest records new hashes and "
+                "`derived_from_rc`. No override or force-tag option exists.",
+            )
     return text
 
 

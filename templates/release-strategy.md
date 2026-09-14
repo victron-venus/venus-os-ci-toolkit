@@ -21,6 +21,8 @@ The committed base version comes from @VERSION_SOURCE@. A release preparation PR
 updates that version and any required native/package companion versions together.
 Version numbers are explicit; a commit message does not automatically select one.
 
+@VERSION_AUTOMATION@
+
 Use [Semantic Versioning](https://semver.org/): patch for compatible fixes, minor
 for compatible functionality and major for incompatible changes. State changes to
 configuration, APIs, protocols and stored data in the release notes. For `0.x`,
@@ -39,14 +41,11 @@ The `v` prefix belongs to the Git tag, not the numeric base version.
 - **Release candidate (RC)** is an explicit maintainer request for a version ready
   for acceptance testing. Tags are `vX.Y.Z-rc.N`. Each RC reruns the required checks
   and build matrix. A code, dependency or packaging change requires a new RC.
-- **Stable** is a separate manual promotion of one accepted RC to `vX.Y.Z`.
-  Promotion copies the verified RC payloads byte for byte; it never rebuilds them.
-  Stable publication must not be inferred from a successful branch build.
+@STABLE_CHANNEL@
 
 Nightly and beta are previews; neither is directly promotable to stable. An RC
 may be requested without a previous beta. Channel order is a workflow policy,
-not a comparison of tag strings. Native binaries/packages retain the committed
-base version; the release tag and manifest identify their channel and source.
+not a comparison of tag strings. @VERSION_REPRESENTATION@
 
 ## Required validation and evidence
 

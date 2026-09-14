@@ -1,5 +1,6 @@
 """Exercise local release commands and generated workflow safety contracts offline."""
 
+import ast
 import importlib.util
 import json
 import os
@@ -200,6 +201,74 @@ class GeneratorTest(unittest.TestCase):
             "validation_workflows": ["ci.yml", "codeql.yml"],
         }
 
+    def test_asset_restrictions_are_rendered_as_current_static_policy(self):
+        """Older RC promotion uses the current retirement policy without rereading files."""
+        restrictions = [
+            {
+                "suffixes": [".apk", ".aab"],
+                "reason": "Android APK/AAB publication moved to the team's native repository",
+            }
+        ]
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            adapter = root / ".github/workflows/release-build.yml"
+            adapter.parent.mkdir(parents=True)
+            adapter.write_text("on: {workflow_call: {}}\njobs: {}\n", encoding="utf-8")
+            for policy, expected in (
+                (self.policy, ()),
+                (
+                    dict(self.policy, asset_restrictions=restrictions),
+                    tuple(restrictions),
+                ),
+            ):
+                source = installer.release_files(root, policy)[
+                    "scripts/release_control.py"
+                ]
+                assignments = [
+                    item
+                    for item in ast.parse(source).body
+                    if isinstance(item, ast.Assign)
+                    and any(
+                        isinstance(target, ast.Name)
+                        and target.id == "ASSET_RESTRICTIONS"
+                        for target in item.targets
+                    )
+                ]
+                self.assertEqual(len(assignments), 1)
+                self.assertEqual(ast.literal_eval(assignments[0].value), expected)
+
+    def test_asset_restrictions_reject_ambiguous_or_unsafe_policy(self):
+        """Require explicit literal suffixes and printable, bounded rejection reasons."""
+        valid = {"suffixes": [".apk"], "reason": "Retired package"}
+        invalid = (
+            None,
+            {},
+            [None],
+            [{}],
+            [{**valid, "extra": True}],
+            [{**valid, "suffixes": ".apk"}],
+            [{**valid, "suffixes": []}],
+            [{**valid, "suffixes": [".APK"]}],
+            [{**valid, "suffixes": ["*.apk"]}],
+            [{**valid, "suffixes": ["../apk"]}],
+            [{**valid, "suffixes": [".apk", ".apk"]}],
+            [valid, valid],
+            [{**valid, "reason": ""}],
+            [{**valid, "reason": " leading space"}],
+            [{**valid, "reason": "first\nsecond"}],
+            [{**valid, "reason": "nul\0byte"}],
+            [{**valid, "reason": "x" * 501}],
+        )
+        with tempfile.TemporaryDirectory() as temp:
+            for restrictions in invalid:
+                with (
+                    self.subTest(restrictions=restrictions),
+                    self.assertRaises(ValueError),
+                ):
+                    installer.validate_policy(
+                        Path(temp), dict(self.policy, asset_restrictions=restrictions)
+                    )
+
     def test_release_publication_depends_on_build_and_checks(self):
         """Require completed validation and packaging before candidate publication."""
         jobs = installer.release(self.policy)["jobs"]
@@ -216,6 +285,155 @@ class GeneratorTest(unittest.TestCase):
         self.assertIn("merge_group", result["on"])
         self.assertEqual(result["jobs"]["gate"]["name"], "CI gate")
         self.assertEqual(result["jobs"]["gate"]["if"], "${{ always() }}")
+
+    def test_versioned_renderer_fixes_plan_before_build_and_protects_final_acceptance(
+        self,
+    ):
+        """Freeze the release identity before compilation and gate final publication."""
+        policy = dict(
+            self.policy,
+            mode="release",
+            versioning={
+                "schema": 1,
+                "promotion": "final-build",
+                "files": [{"path": "version", "format": "text"}],
+            },
+        )
+        workflow = installer.release(policy)
+        jobs = workflow["jobs"]
+        self.assertEqual(
+            jobs["prepare"]["permissions"], {"contents": "write", "actions": "read"}
+        )
+        self.assertIn(
+            "release_versioned.py prepare", jobs["prepare"]["steps"][-2]["run"]
+        )
+        upload = jobs["prepare"]["steps"][-1]
+        self.assertEqual(upload["with"]["path"], ".release-plan.json")
+        self.assertTrue(upload["with"]["include-hidden-files"])
+        self.assertEqual(
+            jobs["build"]["with"]["release_plan_artifact"],
+            "${{ needs.prepare.outputs.plan_artifact }}",
+        )
+        self.assertIn("gate", jobs["final"]["needs"])
+        self.assertEqual(jobs["final"]["environment"], "release")
+        self.assertIn("build == 'true'", jobs["final"]["if"])
+        self.assertIn("build == 'false'", jobs["stable"]["if"])
+        self.assertNotIn("environment", jobs["candidate"])
+        self.assertTrue(
+            any(
+                "release_versioned.py publish" in step.get("run", "")
+                for step in jobs["final"]["steps"]
+            )
+        )
+
+    def test_legacy_renderer_does_not_gain_version_mutation_or_final_rebuild(self):
+        """Preserve the existing byte-promotion workflow for legacy policies."""
+        workflow = installer.release(self.policy)
+        self.assertNotIn("final", workflow["jobs"])
+        self.assertNotIn("permissions", workflow["jobs"]["prepare"])
+        self.assertNotIn("release_plan_artifact", workflow["jobs"]["build"]["with"])
+        self.assertTrue(
+            any(
+                "release_control.py promote" in step.get("run", "")
+                for step in workflow["jobs"]["stable"]["steps"]
+            )
+        )
+        self.assertFalse(
+            any(
+                "version_plan" in step.get("run", "")
+                for job in workflow["jobs"].values()
+                for step in job.get("steps", [])
+            )
+        )
+
+    def test_versioned_build_adapter_requires_saved_plan_input(self):
+        """Reject an incompatible reusable API before generating an invalid workflow."""
+        policy = dict(
+            self.policy,
+            mode="release",
+            versioning={
+                "schema": 1,
+                "promotion": "final-build",
+                "files": [{"path": "version", "format": "text"}],
+            },
+        )
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            workflows = root / ".github/workflows"
+            workflows.mkdir(parents=True)
+            for name in self.policy["validation_workflows"]:
+                (workflows / name).write_text(
+                    installer.dump({"on": {"workflow_call": {}}, "jobs": {}}),
+                    encoding="utf-8",
+                )
+            for declaration in (
+                None,
+                {},
+                {"type": "string"},
+                {"type": "string", "required": False},
+                {"type": "boolean", "required": True},
+                {"type": "number", "required": True},
+            ):
+                with self.subTest(declaration=declaration):
+                    inputs = {
+                        "version": {"type": "string"},
+                        "channel": {"type": "string"},
+                    }
+                    if declaration is not None:
+                        inputs["release_plan_artifact"] = declaration
+                    (workflows / "release-build.yml").write_text(
+                        installer.dump(
+                            {"on": {"workflow_call": {"inputs": inputs}}, "jobs": {}}
+                        ),
+                        encoding="utf-8",
+                    )
+                    with self.assertRaisesRegex(ValueError, "required string"):
+                        installer.validate_workflow_adapters(root, policy)
+                    installer.validate_workflow_adapters(root, self.policy)
+            (workflows / "release-build.yml").write_text(
+                installer.dump(
+                    {
+                        "on": {
+                            "workflow_call": {
+                                "inputs": {
+                                    "release_plan_artifact": {
+                                        "type": "string",
+                                        "required": True,
+                                    }
+                                }
+                            }
+                        },
+                        "jobs": {},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            installer.validate_workflow_adapters(root, policy)
+
+    def test_committed_source_version_gate_is_only_added_for_opted_in_policies(self):
+        """Only opted-in policies promise consistent declared source versions."""
+        versioned = dict(
+            self.policy,
+            mode="release",
+            versioning={
+                "schema": 1,
+                "promotion": "promote-bytes",
+                "files": [{"path": "version", "format": "text"}],
+            },
+        )
+        steps = installer.quality(versioned)["jobs"]["release-contracts"]["steps"]
+        self.assertTrue(
+            any(
+                step.get("run") == "python3 scripts/version_plan.py check-base"
+                for step in steps
+            )
+        )
+        plain_steps = installer.quality(self.policy)["jobs"]["release-contracts"][
+            "steps"
+        ]
+        self.assertFalse(
+            any("version_plan" in step.get("run", "") for step in plain_steps)
+        )
 
     def test_private_validation_uses_free_permissions_and_opt_in_nightly(self):
         """Private checks require no Code Security write scope or paid environment."""
