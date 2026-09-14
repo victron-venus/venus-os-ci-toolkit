@@ -715,7 +715,13 @@ class ArtifactTest(unittest.TestCase):
                 archive.addfile(entry, io.BytesIO(raw))
         return path
 
-    def oci_entries(self, labels=("2.5.42-beta.2",), nested=False, attestation=False):
+    def oci_entries(  # pylint: disable=too-many-locals
+        self,
+        labels=("2.5.42-beta.2",),
+        nested=False,
+        attestation=False,
+        artifact_attestation=False,
+    ):
         entries = {"oci-layout": b'{"imageLayoutVersion":"1.0.0"}'}
         prefix = "application/vnd.oci.image."
 
@@ -773,6 +779,44 @@ class ArtifactTest(unittest.TestCase):
             }
             descriptor["platform"] = {"architecture": "unknown", "os": "unknown"}
             manifests.append(descriptor)
+        if artifact_attestation:
+            subject = {
+                key: manifests[0][key] for key in ("mediaType", "digest", "size")
+            }
+            empty = blob({}, "application/vnd.oci.empty.v1+json")
+            empty["data"] = "e30="
+            descriptor = blob(
+                {
+                    "schemaVersion": 2,
+                    "mediaType": prefix + "manifest.v1+json",
+                    "artifactType": "application/vnd.docker.attestation.manifest.v1+json",
+                    "config": empty,
+                    "layers": [
+                        blob(
+                            {
+                                "_type": "https://in-toto.io/Statement/v1",
+                                "subject": [
+                                    {
+                                        "name": "_",
+                                        "digest": {"sha256": subject["digest"][7:]},
+                                    }
+                                ],
+                                "predicateType": "https://slsa.dev/provenance/v1",
+                                "predicate": {},
+                            },
+                            "application/vnd.in-toto+json",
+                        )
+                    ],
+                    "subject": subject,
+                },
+                prefix + "manifest.v1+json",
+            )
+            descriptor["annotations"] = {
+                "vnd.docker.reference.type": "attestation-manifest",
+                "vnd.docker.reference.digest": subject["digest"],
+            }
+            descriptor["platform"] = {"architecture": "unknown", "os": "unknown"}
+            manifests.append(descriptor)
         if nested:
             manifests = [
                 blob(
@@ -811,6 +855,36 @@ class ArtifactTest(unittest.TestCase):
             {item["architecture"] for item in result["images"]}, {"amd64", "arm64"}
         )
         self.assertEqual(result["version"], "2.5.42-beta.2")
+
+    def test_oci_buildkit_artifact_attestation_checks_subject_and_empty_config(  # pylint: disable=too-many-locals
+        self,
+    ):
+        result = self.verify_oci(self.oci_entries(artifact_attestation=True))
+        self.assertEqual(result["images"][0]["version"], "2.5.42-beta.2")
+
+        for change, error in (
+            (lambda manifest: manifest["config"].update(data="e31="), "config"),
+            (lambda manifest: manifest.pop("subject"), "subject"),
+            (
+                lambda manifest: manifest.update(
+                    artifactType="application/vnd.example.attestation"
+                ),
+                "artifact type",
+            ),
+        ):
+            entries = self.oci_entries(artifact_attestation=True)
+            index = json.loads(entries["index.json"])
+            descriptor = index["manifests"][-1]
+            manifest = json.loads(entries["blobs/sha256/" + descriptor["digest"][7:]])
+            change(manifest)
+            raw = version.json_bytes(manifest)
+            identity = version.digest(raw)
+            entries["blobs/sha256/" + identity] = raw
+            descriptor["digest"] = "sha256:" + identity
+            descriptor["size"] = len(raw)
+            entries["index.json"] = version.json_bytes(index)
+            with self.subTest(error=error), self.assertRaisesRegex(ValueError, error):
+                self.verify_oci(entries)
 
     def test_oci_missing_or_wrong_label_on_any_platform_fails(self):
         for label in (None, "2.5.42", "2.5.41-beta.2"):
