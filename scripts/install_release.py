@@ -230,7 +230,7 @@ PY
             "if": candidate,
             "uses": "./.github/workflows/release-build.yml",
             "permissions": {"contents": "read"},
-            "secrets": "inherit",
+            **({"secrets": build_secrets(policy)} if build_secrets(policy) else {}),
             "with": {
                 "version": "${{ needs.prepare.outputs.version }}",
                 "channel": "${{ needs.prepare.outputs.channel }}",
@@ -370,6 +370,23 @@ PY
         },
         "jobs": jobs,
     }
+
+
+def build_secrets(policy):
+    """Forward only explicitly reviewed build secrets; the default is empty."""
+    names = policy.get("build_secrets", [])
+    if (
+        not isinstance(names, list)
+        or any(
+            not isinstance(name, str)
+            or not re.fullmatch(r"[A-Z_][A-Z0-9_]*", name)
+            or name.startswith("GITHUB_")
+            for name in names
+        )
+        or len(set(names)) != len(names)
+    ):
+        raise ValueError("build_secrets must be unique explicit secret names")
+    return {name: "${{ secrets." + name + " }}" for name in sorted(names)}
 
 
 def release(policy):
@@ -568,6 +585,8 @@ def validate_local_workflows(directory: Path) -> None:
 def validate_workflow_adapters(directory: Path, policy: dict) -> None:
     """Check callable validators and permission caps throughout their local graph."""
     validate_local_calls(directory, quality(policy))
+    if policy.get("mode", "release") == "release":
+        validate_build_secrets(directory, policy)
     if policy.get("versioning"):
         path = directory / ".github/workflows/release-build.yml"
         declaration = yaml.load(path.read_text(), Loader=yaml.BaseLoader)
@@ -584,6 +603,30 @@ def validate_workflow_adapters(directory: Path, policy: dict) -> None:
                 "Versioned release-build.yml must declare release_plan_artifact "
                 "as a required string workflow_call input"
             )
+
+
+def validate_build_secrets(directory: Path, policy: dict) -> None:
+    """Reject undeclared, unused or implicit secrets before rendering a caller."""
+    path = directory / ".github/workflows/release-build.yml"
+    text = path.read_text()
+    workflow = yaml.load(text, Loader=yaml.BaseLoader)
+    declared = workflow.get("on", {}).get("workflow_call", {}).get("secrets", {})
+    used = set(re.findall(r"secrets\.([A-Za-z_][A-Za-z0-9_]*)", text)) - {
+        "GITHUB_TOKEN"
+    }
+    forwarded = set(build_secrets(policy))
+    if (
+        not isinstance(declared, dict)
+        or set(declared) != forwarded
+        or used != forwarded
+    ):
+        raise ValueError(
+            "build_secrets must exactly match release-build.yml declarations and usage"
+        )
+    if re.search(r"secrets\s*\[", text) or any(
+        job.get("secrets") == "inherit" for job in workflow.get("jobs", {}).values()
+    ):
+        raise ValueError("Build workflows must use explicit named secrets")
 
 
 def permission_level(permissions: dict | str, scope: str) -> str:

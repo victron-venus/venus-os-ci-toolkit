@@ -276,7 +276,51 @@ class GeneratorTest(unittest.TestCase):
         self.assertIn("gate", jobs["candidate"]["needs"])
         self.assertEqual(jobs["stable"]["environment"], "release")
         self.assertEqual(jobs["build"]["permissions"], {"contents": "read"})
+        self.assertNotIn("secrets", jobs["build"])
         self.assertIn("!= 'success'", jobs["gate"]["steps"][0]["run"])
+
+    def test_build_secrets_are_explicit_and_validated(self):
+        """Never inherit unrelated deployment or operator credentials."""
+        policy = dict(self.policy, build_secrets=["SIGNING_KEY"])
+        self.assertEqual(
+            installer.release(policy)["jobs"]["build"]["secrets"],
+            {"SIGNING_KEY": "${{ secrets.SIGNING_KEY }}"},
+        )
+        for names in ("inherit", ["BAD-NAME"], ["A", "A"], [None], ["GITHUB_TOKEN"]):
+            with self.subTest(names=names), self.assertRaises(ValueError):
+                installer.release(dict(self.policy, build_secrets=names))
+
+    def test_build_secrets_must_match_the_callee(self):
+        """Changing signing inputs requires updating both ends of the contract."""
+        workflow = """'on':
+  workflow_call:
+    secrets:
+      SIGNING_KEY:
+        required: false
+jobs:
+  build:
+    steps:
+      - env:
+          SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
+        run: echo build
+"""
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            path = root / ".github/workflows/release-build.yml"
+            path.parent.mkdir(parents=True)
+            path.write_text(workflow)
+            policy = dict(self.policy, build_secrets=["SIGNING_KEY"])
+            installer.validate_build_secrets(root, policy)
+            for names in ([], ["SIGNING_KEY", "UNUSED"]):
+                with self.subTest(names=names), self.assertRaises(ValueError):
+                    installer.validate_build_secrets(
+                        root, dict(policy, build_secrets=names)
+                    )
+            path.write_text(
+                workflow.replace("secrets.SIGNING_KEY", "secrets['SIGNING_KEY']")
+            )
+            with self.assertRaises(ValueError):
+                installer.validate_build_secrets(root, policy)
 
     def test_pr_and_queue_have_aggregate_gate(self):
         """Run an unconditional aggregate gate for PR and merge-queue validation."""
