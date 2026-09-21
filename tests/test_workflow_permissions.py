@@ -103,6 +103,37 @@ class WorkflowPermissionTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Recursive"):
             self.validate()
 
+    def test_codeql_mixed_versions_fail_before_workflow_generation(self):
+        """A dependency bump of only one action must not render a broken release gate."""
+        del self.wrapper["permissions"]
+        self.scanner["jobs"]["codeql"]["steps"] = [
+            {"uses": "github/codeql-action/init@" + "a" * 40},
+            {"uses": "github/codeql-action/autobuild@" + "b" * 40},
+            {"uses": "github/codeql-action/analyze@" + "a" * 40},
+        ]
+        with self.assertRaisesRegex(ValueError, "CodeQL job codeql.*same SHA"):
+            self.validate()
+
+    def test_codeql_manual_build_can_omit_autobuild(self):
+        """An init/analyze pair remains valid when the build is explicit."""
+        del self.wrapper["permissions"]
+        self.scanner["jobs"]["codeql"]["steps"] = [
+            {"uses": "github/codeql-action/init@" + "a" * 40},
+            {"run": "make"},
+            {"uses": "github/codeql-action/analyze@" + "a" * 40},
+        ]
+        self.validate()
+
+    def test_codeql_mutable_versions_are_rejected(self):
+        """Matching mutable tags do not establish a reviewed immutable toolchain."""
+        del self.wrapper["permissions"]
+        self.scanner["jobs"]["codeql"]["steps"] = [
+            {"uses": "github/codeql-action/init@v4"},
+            {"uses": "github/codeql-action/analyze@v4"},
+        ]
+        with self.assertRaisesRegex(ValueError, "CodeQL job codeql.*full commit SHA"):
+            self.validate()
+
     def test_real_toolkit_quality_gate_has_valid_nested_permissions(self):
         """Keep the repository's actual call chain startup-valid after edits."""
         installer.validate_workflow_adapters(

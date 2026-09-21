@@ -654,8 +654,31 @@ def validate_permission_cap(requested: dict | str, allowed: dict | str, label: s
             )
 
 
+def validate_codeql_pins(workflow: dict) -> None:
+    """Keep the shared CodeQL configuration version consistent within each job."""
+    for name, job in workflow.get("jobs", {}).items():
+        pins = set()
+        for step in job.get("steps", []):
+            reference = step.get("uses", "")
+            if not re.match(
+                r"github/codeql-action/(init|autobuild|analyze)@", reference
+            ):
+                continue
+            pin = reference.rsplit("@", 1)[1]
+            if not re.fullmatch(r"[0-9a-f]{40}", pin):
+                raise ValueError(
+                    f"CodeQL job {name}: every action needs a full commit SHA"
+                )
+            pins.add(pin)
+        if len(pins) > 1:
+            raise ValueError(
+                f"CodeQL job {name}: init, autobuild and analyze must use the same SHA"
+            )
+
+
 def validate_local_calls(directory, workflow, allowed=None, chain=()):
     """Validate local calls without fetching or trusting mutable remote workflows."""
+    validate_codeql_pins(workflow)
     defaults = workflow.get("permissions", allowed or {})
     for name, job in workflow.get("jobs", {}).items():
         permissions = job.get("permissions", defaults)
