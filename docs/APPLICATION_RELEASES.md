@@ -79,8 +79,9 @@ retained for 90 days by configuration; deleted or expired evidence requires a ne
 
 Normal stable operation waits for reviewer `4alvit` on the `release` environment.
 The single-maintainer policy permits self-review and restricts deployment to `main`.
-Owner policy keeps `can_admins_bypass=true` and CI ruleset administrator bypass
-`RepositoryRole 5 / always`; immutable version-tag rules have no bypass actors.
+Release approval keeps its independent `can_admins_bypass=true` owner policy.
+The required CI ruleset has no bypass actors: administrators must also wait for
+a successful `CI gate`. Immutable version-tag rules likewise have no bypass actors.
 Administrative access does not add a release CLI option to skip provenance checks,
 overwrite a tag or force publication. Use the normal approval and acceptance flow.
 
