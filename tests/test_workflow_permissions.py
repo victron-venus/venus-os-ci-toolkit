@@ -140,6 +140,15 @@ class WorkflowPermissionTests(unittest.TestCase):
             ROOT, json.loads((ROOT / ".release-policy.json").read_text())
         )
 
+    def test_managed_validators_wait_for_configuration_contracts(self):
+        """Broken CI declarations fail before expensive validators start."""
+        policy = self.policy | {"single_entry_ci": True}
+        jobs = installer.quality(policy)["jobs"]
+        callers = [job for job in jobs.values() if "uses" in job]
+        self.assertTrue(callers)
+        self.assertTrue(all(job["needs"] == "workflow-contracts" for job in callers))
+        self.assertEqual(set(jobs["gate"]["needs"]), set(jobs) - {"gate"})
+
 
 if __name__ == "__main__":
     unittest.main()
