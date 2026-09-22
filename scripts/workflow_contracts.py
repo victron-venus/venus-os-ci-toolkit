@@ -10,13 +10,8 @@ from pathlib import Path
 import yaml
 
 
-def validate(directory: Path) -> None:
-    """Reject duplicate validation triggers, missing gate jobs and mixed CodeQL pins."""
-    policy = json.loads((directory / ".release-policy.json").read_text())
-    workflows = {
-        path.name: yaml.load(path.read_text(), Loader=yaml.BaseLoader)
-        for path in (directory / ".github/workflows").glob("*.y*ml")
-    }
+def validate_codeql(workflows):
+    """Every CodeQL job shares a single immutable action version."""
     for filename, workflow in workflows.items():
         for name, job in workflow.get("jobs", {}).items():
             pins = {
@@ -33,6 +28,10 @@ def validate(directory: Path) -> None:
                 raise ValueError(
                     f"{filename}/{name}: CodeQL actions must share one full commit SHA"
                 )
+
+
+def validate_graph(workflows, validators):
+    """Walk callable validators and enforce one orchestration entry point."""
     visited = set()
 
     def callable_workflow(filename, chain=()):
@@ -54,8 +53,20 @@ def validate(directory: Path) -> None:
             elif "runs-on" in job and "timeout-minutes" not in job:
                 raise ValueError(f"{filename}/{name}: an explicit timeout is required")
 
-    for filename in policy["validation_workflows"]:
+    for filename in validators:
         callable_workflow(filename)
+    return visited
+
+
+def validate(directory: Path) -> None:
+    """Reject duplicate validation triggers, missing gate jobs and mixed CodeQL pins."""
+    policy = json.loads((directory / ".release-policy.json").read_text())
+    workflows = {
+        path.name: yaml.load(path.read_text(), Loader=yaml.BaseLoader)
+        for path in (directory / ".github/workflows").glob("*.y*ml")
+    }
+    validate_codeql(workflows)
+    visited = validate_graph(workflows, policy["validation_workflows"])
     for filename, workflow in workflows.items():
         if (
             "pull_request" in workflow.get("on", {})

@@ -429,6 +429,7 @@ class NativeAutoMergeTests(AutoMergeTests):
         self.assertNotIn("--admin", calls[-1].args)
 
     def test_missing_or_relaxed_protection_fails_closed(self):
+        snapshot = pr()
         for parameters in (
             {},
             {"strict_required_status_checks_policy": True},
@@ -442,13 +443,14 @@ class NativeAutoMergeTests(AutoMergeTests):
                 self.assertRaisesRegex(RuntimeError, "strict protected"),
             ):
                 self.run_native(
-                    [pr()],
+                    [snapshot],
                     [{"type": "required_status_checks", "parameters": parameters}],
                 )
 
     def test_additional_check_must_be_protected(self):
+        snapshots = [pr()]
         with self.assertRaisesRegex(RuntimeError, "every required check"):
-            self.run_native([pr()], environment={"REQUIRED_CHECKS": "Extra review"})
+            self.run_native(snapshots, environment={"REQUIRED_CHECKS": "Extra review"})
 
     def test_head_race_does_not_merge(self):
         calls = self.run_native([pr(), pr(head="new")])

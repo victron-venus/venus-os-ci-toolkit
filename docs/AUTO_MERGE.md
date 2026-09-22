@@ -5,7 +5,9 @@ Set `native-auto-merge: true` only after every required PR validator is included
 `quality-gate.yml` and the repository requires `CI gate` with strict branch freshness.
 This mode verifies the effective GitHub branch rules, re-reads PR eligibility and the
 head commit, requests native auto-merge, and exits without occupying a waiting runner.
-GitHub still enforces reviews, required checks and other branch rules.
+GitHub still enforces reviews, required checks and other branch rules. External
+checks (such as SonarCloud and code scanning results) must also be required branch
+checks and listed in `required-status-checks` before opting in.
 
 Call it from `pull_request_target` with a pinned toolkit commit, explicit `BOT_PAT`,
 and no PR checkout. Listen to `unlabeled`, `edited`, and `converted_to_draft` as well
