@@ -22,12 +22,14 @@ jobs:
       contents: read
       actions: read
       security-events: write
+    needs: workflow-contracts
   check-1:
     uses: ./.github/workflows/security-required.yml
     permissions:
       contents: read
       actions: read
       security-events: write
+    needs: workflow-contracts
   workflow-contracts:
     name: CI configuration contracts
     runs-on: ubuntu-latest

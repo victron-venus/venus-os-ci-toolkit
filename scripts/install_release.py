@@ -78,6 +78,8 @@ def quality(policy):
             },
         }
     if policy.get("single_entry_ci"):
+        for job in jobs.values():
+            job["needs"] = "workflow-contracts"
         jobs["workflow-contracts"] = {
             "name": "CI configuration contracts",
             "runs-on": "ubuntu-latest",
