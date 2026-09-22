@@ -56,6 +56,14 @@ def validate(directory: Path) -> None:
 
     for filename in policy["validation_workflows"]:
         callable_workflow(filename)
+    for filename, workflow in workflows.items():
+        if (
+            "pull_request" in workflow.get("on", {})
+            and filename not in visited
+            and filename
+            not in {"quality-gate.yml", "auto-approve.yml", "auto-merge.yml"}
+        ):
+            raise ValueError(f"{filename}: PR validator is outside the required gate")
     gate = workflows["quality-gate.yml"]["jobs"]
     expected = {
         f"./.github/workflows/{filename}" for filename in policy["validation_workflows"]

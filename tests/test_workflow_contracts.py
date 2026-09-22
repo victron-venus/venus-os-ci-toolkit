@@ -75,3 +75,10 @@ class WorkflowContractsTests(unittest.TestCase):
         self.ci["jobs"]["again"] = {"uses": "./.github/workflows/ci.yml"}
         with self.assertRaisesRegex(ValueError, "Recursive"):
             self.validate()
+
+    def test_independent_pr_validator_is_rejected(self):
+        (self.root / ".github/workflows/forgotten.yml").write_text(
+            yaml.safe_dump({"on": {"pull_request": {}}, "jobs": {}})
+        )
+        with self.assertRaisesRegex(ValueError, "outside the required gate"):
+            self.validate()
