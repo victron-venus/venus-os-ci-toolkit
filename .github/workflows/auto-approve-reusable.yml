@@ -9,7 +9,7 @@ on:
         default: '["dependabot[bot]","renovate[bot]","4alvit","californiantiramisu"]'
     secrets:
       BOT_PAT:
-        description: Bot token with pull request write permission
+        description: Independent reviewer token for PRs not authored by Dependabot
         required: false
       APPROVAL_PAT:
         description: Optional separate reviewer token when BOT_PAT owns the PR
@@ -32,8 +32,10 @@ jobs:
       - name: Approve the current head as an independent reviewer
         shell: python
         env:
-          BOT_PAT: ${{ secrets.BOT_PAT }}
-          APPROVAL_PAT: ${{ secrets.APPROVAL_PAT }}
+          GITHUB_TOKEN: ${{ github.event.pull_request.user.login == 'dependabot[bot]' && github.token || '' }}
+          BOT_PAT: ${{ github.event.pull_request.user.login != 'dependabot[bot]' && secrets.BOT_PAT || '' }}
+          APPROVAL_PAT: ${{ github.event.pull_request.user.login != 'dependabot[bot]' && secrets.APPROVAL_PAT || '' }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           TRUSTED_AUTHORS: ${{ inputs.authors }}
         run: |
@@ -81,8 +83,12 @@ jobs:
               return result["data"]["repository"]["pullRequest"]["reviewDecision"]
 
           def main():
-              token = os.environ.get("BOT_PAT") or os.environ.get("APPROVAL_PAT")
+              dependabot = os.environ.get("PR_AUTHOR") == "dependabot[bot]"
+              token = (os.environ.get("GITHUB_TOKEN") if dependabot else
+                       os.environ.get("BOT_PAT") or os.environ.get("APPROVAL_PAT"))
               if not token:
+                  if dependabot:
+                      raise RuntimeError("GITHUB_TOKEN is missing for Dependabot approval")
                   raise RuntimeError("Configure BOT_PAT or APPROVAL_PAT with pull request write permission")
               authors = {author.lower() for author in json.loads(os.environ["TRUSTED_AUTHORS"])}
               repository = os.environ["GITHUB_REPOSITORY"]
@@ -93,8 +99,11 @@ jobs:
               if not eligible(pr, authors, repository, default_branch):
                   print("Pull request is not eligible for automatic approval")
                   return
-              reviewer = api("user", token)["login"]
-              fallback = os.environ.get("APPROVAL_PAT")
+              if dependabot != (pr["user"]["login"] == "dependabot[bot]"):
+                  raise RuntimeError("Pull request author does not match the selected credential")
+              # Installation tokens cannot call the user-token-only GET /user endpoint.
+              reviewer = "github-actions[bot]" if dependabot else api("user", token)["login"]
+              fallback = None if dependabot else os.environ.get("APPROVAL_PAT")
               if reviewer.lower() == pr["user"]["login"].lower() and fallback and fallback != token:
                   token = fallback
                   reviewer = api("user", token)["login"]

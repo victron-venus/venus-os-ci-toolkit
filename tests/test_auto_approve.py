@@ -218,6 +218,62 @@ class AutoApproveContract(unittest.TestCase):
             self.execute()
         self.assertEqual(self.calls, [])
 
+    def test_dependabot_uses_installation_token_without_user_endpoint(self):
+        """Dependabot reviews use the Actions identity even when PATs are present."""
+        self.environment.update({
+            "PR_AUTHOR": "dependabot[bot]",
+            "GITHUB_TOKEN": "test-actions-token",
+            "TRUSTED_AUTHORS": '["dependabot[bot]"]',
+        })
+        self.pr["user"]["login"] = "dependabot[bot]"
+        self.current = copy.deepcopy(self.pr)
+        self.execute()
+        self.assert_posts(1)
+        self.assertNotIn("user", [command[2] for command, _ in self.calls])
+        self.assertTrue(all(
+            kwargs["env"]["GH_TOKEN"] == "test-actions-token"
+            for _, kwargs in self.calls
+        ))
+
+    def test_dependabot_without_any_pat_can_approve(self):
+        """No Dependabot secret is required for the repository installation token."""
+        self.environment.pop("BOT_PAT")
+        self.test_dependabot_uses_installation_token_without_user_endpoint()
+
+    def test_dependabot_does_not_fall_back_to_pat(self):
+        """A missing installation token must never select a supplied user PAT."""
+        self.environment["PR_AUTHOR"] = "dependabot[bot]"
+        with self.assertRaisesRegex(RuntimeError, "GITHUB_TOKEN is missing"):
+            self.execute()
+        self.assertEqual(self.calls, [])
+
+    def test_human_pr_keeps_pat_even_when_actions_token_exists(self):
+        """The credential change must not alter owner PR approval or fallback."""
+        self.environment["GITHUB_TOKEN"] = "test-actions-token"
+        self.test_independent_bot_token_remains_primary()
+
+    def test_dependabot_refreshes_only_its_own_review(self):
+        """A same-head Actions approval is recognized without inspecting a PAT."""
+        self.environment.update({
+            "PR_AUTHOR": "dependabot[bot]",
+            "GITHUB_TOKEN": "test-actions-token",
+            "TRUSTED_AUTHORS": '["dependabot[bot]"]',
+        })
+        self.pr["user"]["login"] = "dependabot[bot]"
+        self.current = copy.deepcopy(self.pr)
+        self.pages = [[self.review(user="github-actions[bot]")]]
+        self.execute()
+        self.assert_posts(0)
+
+    def test_event_author_cannot_select_actions_token_for_human_pr(self):
+        """Live PR metadata must agree with the event's credential choice."""
+        self.environment.update({
+            "PR_AUTHOR": "dependabot[bot]", "GITHUB_TOKEN": "test-actions-token"
+        })
+        with self.assertRaisesRegex(RuntimeError, "author does not match"):
+            self.execute()
+        self.assert_posts(0)
+
     def test_self_reviewer_fails_case_insensitively(self):
         """Reject the PR author as reviewer even when login casing differs."""
         self.reviewer = "CALIFORNIANTIRAMISU"
