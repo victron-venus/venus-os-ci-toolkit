@@ -380,3 +380,89 @@ class BotAuthorTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class NativeAutoMergeTests(AutoMergeTests):
+    """The optional native mode delegates waiting only to verified branch rules."""
+
+    def run_native(self, snapshots, rules=None, environment=None):
+        if rules is None:
+            rules = [
+                {
+                    "type": "required_status_checks",
+                    "parameters": {
+                        "strict_required_status_checks_policy": True,
+                        "required_status_checks": [{"context": "CI gate"}],
+                    },
+                }
+            ]
+        import json  # pylint: disable=import-outside-toplevel
+
+        transport = unittest.mock.Mock(
+            side_effect=lambda *args: (
+                json.dumps(rules) if "/rules/branches/" in args[1] else "main"
+            )
+        )
+        with (
+            patch.dict(
+                os.environ,
+                self.environment | {"NATIVE_AUTO_MERGE": "true"} | (environment or {}),
+            ),
+            patch.dict(
+                self.code,
+                {
+                    "snapshot": unittest.mock.Mock(side_effect=snapshots),
+                    "gh": transport,
+                },
+            ),
+            patch(
+                "time.sleep", side_effect=AssertionError("Native mode must not wait")
+            ),
+        ):
+            self.code["main"]()
+        return transport.call_args_list
+
+    def test_pending_gate_is_left_to_github(self):
+        calls = self.run_native([pr(state="PENDING"), pr(state="PENDING")])
+        self.assertIn("--auto", calls[-1].args)
+        self.assertEqual(calls[-1].args[-2:], ("--match-head-commit", "abc"))
+        self.assertNotIn("--admin", calls[-1].args)
+
+    def test_missing_or_relaxed_protection_fails_closed(self):
+        snapshot = pr()
+        for parameters in (
+            {},
+            {"strict_required_status_checks_policy": True},
+            {
+                "strict_required_status_checks_policy": False,
+                "required_status_checks": [{"context": "CI gate"}],
+            },
+        ):
+            with (
+                self.subTest(parameters=parameters),
+                self.assertRaisesRegex(RuntimeError, "strict protected"),
+            ):
+                self.run_native(
+                    [snapshot],
+                    [{"type": "required_status_checks", "parameters": parameters}],
+                )
+
+    def test_additional_check_must_be_protected(self):
+        snapshots = [pr()]
+        with self.assertRaisesRegex(RuntimeError, "every required check"):
+            self.run_native(snapshots, environment={"REQUIRED_CHECKS": "Extra review"})
+
+    def test_head_race_does_not_merge(self):
+        calls = self.run_native([pr(), pr(head="new")])
+        self.assertFalse(any("merge" in call.args for call in calls))
+
+    def test_label_removal_disables_pending_request(self):
+        withdrawn = pr() | {"labels": [], "autoMergeRequest": {"enabledAt": "today"}}
+        for snapshots in ([withdrawn], [pr(), withdrawn]):
+            calls = self.run_native(snapshots)
+            self.assertIn("--disable-auto", calls[-1].args)
+            self.assertFalse(any("--auto" in call.args for call in calls))
+
+    def test_untrusted_author_never_enables_native_merge(self):
+        calls = self.run_native([pr("stranger")])
+        self.assertFalse(any("merge" in call.args for call in calls))

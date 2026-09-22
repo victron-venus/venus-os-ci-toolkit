@@ -2,7 +2,7 @@
 
 The source of truth is `.release-policy.json`. `quality-gate.yml` runs the callable
 validation workflows and produces the required **CI gate** status on every PR
-and merge-queue commit. Missing, failed and skipped validation workflows fail
+and merge-queue commit. Superseded PR runs are cancelled. Missing, failed and skipped validation workflows fail
 the gate. Workflow and lockfile changes are included in validation.
 
 ## Local checks

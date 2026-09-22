@@ -11,8 +11,12 @@ on:
         description: Merge method (merge, squash, rebase)
         type: string
         default: squash
+      native-auto-merge:
+        description: Request auto-merge immediately; requires all validation in the protected CI gate
+        type: boolean
+        default: false
       required-status-checks:
-        description: Additional exact check names, comma-separated; all observed checks must also pass
+        description: Additional exact check names; native mode requires branch protection for each, legacy mode waits for all observed checks
         type: string
         default: ''
     secrets:
@@ -24,7 +28,7 @@ jobs:
   auto-merge:
     name: Auto Merge
     runs-on: ubuntu-latest
-    timeout-minutes: 125
+    timeout-minutes: ${{ inputs.native-auto-merge && 5 || 125 }}
     permissions:
       contents: read
       pull-requests: write
@@ -35,6 +39,7 @@ jobs:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_AUTHORS: ${{ inputs.pr-author }}
           MERGE_METHOD: ${{ inputs.merge-method }}
+          NATIVE_AUTO_MERGE: ${{ inputs.native-auto-merge }}
           REQUIRED_CHECKS: ${{ inputs.required-status-checks }}
         run: |
           python3 - <<'PY'
@@ -43,6 +48,7 @@ jobs:
           import re
           import subprocess
           import time
+          from urllib.parse import quote
 
 
           TRUSTED_AUTHORS = {'4alvit', 'californiantiramisu', 'dependabot[bot]', 'renovate[bot]'}
@@ -54,7 +60,7 @@ jobs:
 
           def snapshot(repo, number):
               return json.loads(gh('pr', 'view', number, '--repo', repo, '--json',
-                                   'author,labels,isDraft,baseRefName,headRefOid,state,statusCheckRollup'))
+                                   'author,labels,isDraft,baseRefName,headRefOid,state,statusCheckRollup,autoMergeRequest'))
 
 
           def canonical_author(author):
@@ -121,6 +127,40 @@ jobs:
               return ready, tuple(sorted(checks))
 
 
+          def request_protected_merge(repo, number, default_branch, authors, method, required):
+              pr = snapshot(repo, number)
+              if not eligible(pr, default_branch, authors):
+                  if pr['state'] == 'OPEN' and pr.get('autoMergeRequest'):
+                      gh('pr', 'merge', number, '--repo', repo, '--disable-auto')
+                  print('PR is not eligible for auto-merge.')
+                  return
+              # GitHub evaluates effective active rules, including organization rules.
+              # Fail closed on missing rules, unreadable rules, or an unprotected gate.
+              rules = json.loads(gh('api', f'repos/{repo}/rules/branches/{quote(default_branch, safe="")}'))
+              required = required | {'CI gate'}
+              protected = set()
+              strict = False
+              for rule in rules:
+                  if rule.get('type') == 'required_status_checks':
+                      parameters = rule.get('parameters', {})
+                      strict |= parameters.get('strict_required_status_checks_policy') is True
+                      protected.update(check['context'] for check in parameters.get('required_status_checks', []))
+              if not strict or not required <= protected:
+                  raise RuntimeError('Native mode requires a strict protected branch and every required check, including CI gate.')
+              fresh = snapshot(repo, number)
+              if not eligible(fresh, default_branch, authors):
+                  if fresh['state'] == 'OPEN' and fresh.get('autoMergeRequest'):
+                      gh('pr', 'merge', number, '--repo', repo, '--disable-auto')
+                  print('Eligibility changed; no merge requested.')
+                  return
+              if fresh['headRefOid'] != pr['headRefOid']:
+                  print('PR head changed; the synchronize event will retry.')
+                  return
+              gh('pr', 'merge', number, '--repo', repo, '--auto', f'--{method}',
+                 '--match-head-commit', fresh['headRefOid'])
+              print('Requested native auto-merge; GitHub waits for the protected CI gate and reviews.')
+
+
           def main():
               if not os.environ.get('GH_TOKEN', '').strip():
                   raise RuntimeError('BOT_PAT is missing. Configure it and explicitly forward it from the caller.')
@@ -135,6 +175,9 @@ jobs:
                   raise RuntimeError('merge-method must be merge, squash, or rebase.')
               required = {item.strip() for item in os.environ['REQUIRED_CHECKS'].split(',') if item.strip()}
               default_branch = gh('api', f'repos/{repo}', '--jq', '.default_branch')
+              if os.environ.get('NATIVE_AUTO_MERGE') == 'true':
+                  request_protected_merge(repo, number, default_branch, authors, method, required)
+                  return
               deadline = time.monotonic() + 120 * 60
               previous_green = None
               while time.monotonic() < deadline:
