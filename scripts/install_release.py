@@ -77,6 +77,21 @@ def quality(policy):
                 ),
             },
         }
+    if policy.get("single_entry_ci"):
+        jobs["workflow-contracts"] = {
+            "name": "CI configuration contracts",
+            "runs-on": "ubuntu-latest",
+            "timeout-minutes": 5,
+            "steps": [
+                {"uses": CHECKOUT, "with": {"persist-credentials": False}},
+                {
+                    "uses": "actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97",
+                    "with": {"python-version": "3.12"},
+                },
+                {"run": "python3 -m pip install PyYAML==6.0.3"},
+                {"run": "python3 scripts/workflow_contracts.py"},
+            ],
+        }
     if policy.get("mode", "release") == "release":
         jobs["release-contracts"] = {
             "name": "Release tooling contracts",
@@ -142,6 +157,12 @@ def quality(policy):
         )
     return {
         "name": "Quality gate",
+        # Include event identity: the gate may also be called by Release pipeline.
+        # Cancel stale PRs only; publication and nightly work retain their own policy.
+        "concurrency": {
+            "group": "quality-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}",
+            "cancel-in-progress": "${{ github.event_name == 'pull_request' }}",
+        },
         "on": triggers,
         "permissions": {"contents": "read"},
         "jobs": jobs,
@@ -853,6 +874,10 @@ def render(directory: Path) -> dict[str, str]:
     files = (
         {} if local else {".github/workflows/quality-gate.yml": dump(quality(policy))}
     )
+    if policy.get("single_entry_ci") and not local:
+        files["scripts/workflow_contracts.py"] = (
+            ROOT / "scripts/workflow_contracts.py"
+        ).read_text()
     files["docs/release-workflow.md"] = operator_guide(policy)
     if not local:
         validate_workflow_adapters(directory, policy)
@@ -878,7 +903,7 @@ def operator_guide(policy: dict) -> str:
 
 The source of truth is `.release-policy.json`. `quality-gate.yml` runs the callable
 validation workflows and produces the required **CI gate** status on every PR
-and merge-queue commit. Missing, failed and skipped validation workflows fail
+and merge-queue commit. Superseded PR runs are cancelled. Missing, failed and skipped validation workflows fail
 the gate. Workflow and lockfile changes are included in validation.
 
 ## Local checks

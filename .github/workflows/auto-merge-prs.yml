@@ -16,9 +16,9 @@ permissions:
 jobs:
   auto-merge:
     if: >-
-      contains(fromJSON('["4alvit","californiantiramisu","dependabot[bot]","renovate[bot]"]'), github.event.pull_request.user.login) &&
-      contains(github.event.pull_request.labels.*.name, 'automerge') &&
-      !github.event.pull_request.draft
+      contains(fromJSON('["4alvit","californiantiramisu","dependabot[bot]","renovate[bot]"]'), github.event.pull_request.user.login)
     uses: ./.github/workflows/auto-merge.yml
+    with:
+      native-auto-merge: true
     secrets:
       BOT_PAT: ${{ secrets.BOT_PAT }}
