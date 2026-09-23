@@ -3,6 +3,18 @@ name: 'Reusable Rust CI'
 on:
   workflow_call:
     inputs:
+      force-full:
+        description: Keep full validation; set false only for ordinary change-aware CI
+        type: boolean
+        default: true
+      documentation-paths:
+        description: JSON array of additional exact documentation paths
+        type: string
+        default: '[]'
+      required-paths:
+        description: JSON array of exact paths that always require full validation
+        type: string
+        default: '[]'
       working-directory:
         description: 'Working directory for the project'
         type: string
@@ -49,7 +61,15 @@ on:
         type: string
         default: ''
 jobs:
+  change-scope:
+    uses: ./.github/workflows/change-scope.yml
+    with:
+      force-full: ${{ inputs.force-full }}
+      documentation-paths: ${{ inputs.documentation-paths }}
+      required-paths: ${{ inputs.required-paths }}
   rust-ci:
+    needs: change-scope
+    if: ${{ needs.change-scope.outputs.run != 'false' || needs.change-scope.outputs.reason != 'documentation-only' }}
     name: Rust CI
     runs-on: ubuntu-latest
     defaults:
@@ -91,8 +111,8 @@ jobs:
   # Optional frontend job
   frontend:
     name: Frontend CI
-    needs: rust-ci
-    if: ${{ inputs.enable-frontend }}
+    needs: [change-scope, rust-ci]
+    if: ${{ inputs.enable-frontend && (needs.change-scope.outputs.run != 'false' || needs.change-scope.outputs.reason != 'documentation-only') }}
     runs-on: ubuntu-latest
     steps:
       - name: Harden the runner (Audit all outbound calls)

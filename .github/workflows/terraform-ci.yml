@@ -3,6 +3,18 @@ name: 'Reusable Terraform CI'
 on:
   workflow_call:
     inputs:
+      force-full:
+        description: Keep full validation; set false only for ordinary change-aware CI
+        type: boolean
+        default: true
+      documentation-paths:
+        description: JSON array of additional exact documentation paths
+        type: string
+        default: '[]'
+      required-paths:
+        description: JSON array of exact paths that always require full validation
+        type: string
+        default: '[]'
       working-directory:
         description: 'Working directory for the project'
         type: string
@@ -16,7 +28,15 @@ on:
         type: boolean
         default: true
 jobs:
+  change-scope:
+    uses: ./.github/workflows/change-scope.yml
+    with:
+      force-full: ${{ inputs.force-full }}
+      documentation-paths: ${{ inputs.documentation-paths }}
+      required-paths: ${{ inputs.required-paths }}
   ci:
+    needs: change-scope
+    if: ${{ needs.change-scope.outputs.run != 'false' || needs.change-scope.outputs.reason != 'documentation-only' }}
     name: Terraform CI
     runs-on: ubuntu-latest
     defaults:

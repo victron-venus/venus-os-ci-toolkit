@@ -53,12 +53,120 @@ def dump(data):
     ) + yaml.dump(data, Dumper=Dumper, sort_keys=False, width=110)
 
 
+def scope_policy(policy):
+    """Validate explicit documentation exceptions and mandatory validators."""
+    config = policy.get("change_scope", {})
+    allowed = {"documentation_paths", "required_paths", "always_validate_workflows"}
+    if not isinstance(config, dict) or set(config) - allowed:
+        raise ValueError(
+            "change_scope must contain only reviewed path and workflow lists"
+        )
+    result = {}
+    for key in allowed:
+        values = config.get(key, [])
+        if (
+            not isinstance(values, list)
+            or any(
+                not isinstance(value, str)
+                or not value
+                or not value.isprintable()
+                or value.startswith("/")
+                or any(part in {"", ".", ".."} for part in value.split("/"))
+                or any(char in value for char in "\\*?[]")
+                for value in values
+            )
+            or len(values) != len(set(values))
+        ):
+            raise ValueError(f"change_scope.{key} must be unique exact relative paths")
+        result[key] = values
+    if set(result["always_validate_workflows"]) - set(
+        policy.get("validation_workflows", [])
+    ):
+        raise ValueError("always_validate_workflows must name configured validators")
+    return result
+
+
+def scope_job(policy, *, force_input=False):
+    """Classify the complete Git diff before installing project toolchains."""
+    config = scope_policy(policy)
+    return {
+        "name": "Change scope",
+        "runs-on": "ubuntu-latest",
+        "timeout-minutes": 5,
+        "outputs": {
+            "run": "${{ steps.scope.outputs.run }}",
+            "reason": "${{ steps.scope.outputs.reason }}",
+        },
+        "steps": [
+            {
+                "uses": CHECKOUT,
+                "with": {"persist-credentials": False, "fetch-depth": 0},
+            },
+            {
+                "id": "scope",
+                "name": "Classify documentation and build inputs",
+                "env": {
+                    "DOCUMENTATION_PATHS": json.dumps(config["documentation_paths"]),
+                    "REQUIRED_PATHS": json.dumps(config["required_paths"]),
+                    "FORCE_FULL": "${{ inputs.force-full && 'true' || 'false' }}"
+                    if force_input
+                    else "false",
+                },
+                "run": (
+                    'args=()\nif [[ "$FORCE_FULL" == true ]]; then args+=(--force); fi\n'
+                    'python3 scripts/change_scope.py "${args[@]}" '
+                    '--documentation-paths-json "$DOCUMENTATION_PATHS" '
+                    '--required-paths-json "$REQUIRED_PATHS"\n'
+                ),
+            },
+        ],
+    }
+
+
+def quality_gate_script(expected, always):
+    """Accept only the exact intentional skips authorized by a successful scope job."""
+    return (
+        "python3 - <<'PY'\nimport json, os\n"
+        "results = json.loads(os.environ['RESULTS'])\n"
+        f"expected = {sorted(expected)!r}\nalways = {sorted(always)!r}\n"
+        "if set(results) != set(expected):\n"
+        "    raise SystemExit('Validation job inventory differs')\n"
+        "scope = results['scope']\noutputs = scope.get('outputs', {})\n"
+        "run = outputs.get('run')\n"
+        "if scope['result'] != 'success' or run not in {'true', 'false'}:\n"
+        "    raise SystemExit('Change scope did not succeed')\n"
+        "if run == 'false' and outputs.get('reason') != 'documentation-only':\n"
+        "    raise SystemExit('Unproven documentation-only scope')\n"
+        "failed = {}\nfor name, value in results.items():\n"
+        "    wanted = 'success' if run == 'true' or name in always else 'skipped'\n"
+        "    if value['result'] != wanted:\n"
+        "        failed[name] = {'actual': value['result'], 'expected': wanted}\n"
+        "if failed:\n    raise SystemExit(f'Validation did not pass: {failed}')\n"
+        "print('Documentation-only: required checks passed; build checks skipped.' "
+        "if run == 'false' else 'All validation workflows passed.')\nPY\n"
+    )
+
+
+def scope_validation_jobs(jobs, always, single_entry):
+    """Order checks after classification and preserve configuration prerequisites."""
+    for name, job in jobs.items():
+        if name == "scope":
+            continue
+        job["needs"] = ["scope"]
+        if name.startswith("check-") and single_entry:
+            job["needs"].append("workflow-contracts")
+        if name not in always:
+            job["if"] = "${{ needs.scope.outputs.run == 'true' }}"
+
+
 def quality(policy):
     """Compose callable validators and a gate that rejects every non-success result."""
     validators = policy.get("validation_workflows", [])
     if not validators:
         raise ValueError("At least one real validation workflow is required")
-    jobs = {}
+    config = scope_policy(policy)
+    jobs = {"scope": scope_job(policy, force_input=True)}
+    always = {"scope"}
     for i, filename in enumerate(validators):
         if not re.fullmatch(r"[A-Za-z0-9_-]+\.ya?ml", filename) or filename in {
             "quality-gate.yml",
@@ -77,9 +185,9 @@ def quality(policy):
                 ),
             },
         }
+        if filename in config["always_validate_workflows"]:
+            always.add(f"check-{i}")
     if policy.get("single_entry_ci"):
-        for job in jobs.values():
-            job["needs"] = "workflow-contracts"
         jobs["workflow-contracts"] = {
             "name": "CI configuration contracts",
             "runs-on": "ubuntu-latest",
@@ -94,6 +202,8 @@ def quality(policy):
                 {"run": "python3 scripts/workflow_contracts.py"},
             ],
         }
+        if len(always) > 1:
+            always.add("workflow-contracts")
     if policy.get("mode", "release") == "release":
         jobs["release-contracts"] = {
             "name": "Release tooling contracts",
@@ -117,6 +227,7 @@ def quality(policy):
                     "run": "python3 scripts/version_plan.py check-base",
                 }
             )
+    scope_validation_jobs(jobs, always, policy.get("single_entry_ci"))
     jobs["gate"] = {
         "name": "CI gate",
         "needs": list(jobs),
@@ -127,13 +238,7 @@ def quality(policy):
             {
                 "name": "Require every validation workflow",
                 "env": {"RESULTS": "${{ toJSON(needs) }}"},
-                "run": (
-                    "python3 - <<'PY'\nimport json, os\nresults = "
-                    "json.loads(os.environ['RESULTS'])\nfailed = {name: "
-                    "value['result'] for name, value in results.items() if "
-                    "value['result'] != 'success'}\nif not results or failed:\n    "
-                    "raise SystemExit(f'Validation did not pass: {failed}')\nPY\n"
-                ),
+                "run": quality_gate_script(jobs, always),
             }
         ],
     }
@@ -142,13 +247,24 @@ def quality(policy):
         condition = (
             "github.event_name != 'schedule' || vars.NIGHTLY_CHECKS_ENABLED == 'true'"
         )
-        for name, job in jobs.items():
-            job["if"] = (
-                "${{ "
-                + ("always() && (" + condition + ")" if name == "gate" else condition)
-                + " }}"
-            )
-    triggers = {"pull_request": {}, "merge_group": {}, "workflow_call": {}}
+        for job in jobs.values():
+            existing = job.get("if", "${{ success() }}")[3:-3].strip()
+            job["if"] = "${{ (" + existing + ") && (" + condition + ") }}"
+    triggers = {
+        "pull_request": {},
+        "merge_group": {},
+        "workflow_call": {
+            "inputs": {
+                "force-full": {
+                    "type": "boolean",
+                    "default": False,
+                    "description": (
+                        "Require real validation for a release or explicit qualification"
+                    ),
+                }
+            }
+        },
+    }
     if policy.get("mode") == "validation-only":
         triggers.update(
             {
@@ -162,7 +278,10 @@ def quality(policy):
         # Include event identity: the gate may also be called by Release pipeline.
         # Cancel stale PRs only; publication and nightly work retain their own policy.
         "concurrency": {
-            "group": "quality-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}",
+            "group": (
+                "quality-${{ github.event_name }}-"
+                "${{ github.event.pull_request.number || github.ref }}"
+            ),
             "cancel-in-progress": "${{ github.event_name == 'pull_request' }}",
         },
         "on": triggers,
@@ -174,6 +293,13 @@ def quality(policy):
 def schedule(policy):
     # Stagger fleet jobs away from minute zero and each other; schedule uses UTC.
     """Choose a deterministic daily UTC schedule staggered across repositories."""
+    if "nightly_cron" in policy:
+        cron = policy["nightly_cron"]
+        if not isinstance(cron, str) or not re.fullmatch(
+            r"(?:[0-5]?\d) (?:[01]?\d|2[0-3]) \* \* \*", cron, re.ASCII
+        ):
+            raise ValueError("nightly_cron must be a daily UTC 'M H * * *' expression")
+        return cron
     offset = int(hashlib.sha256(policy["repository"].encode()).hexdigest()[:8], 16)
     return f"{7 + offset % 47} {2 + offset % 4} * * *"
 
@@ -215,7 +341,10 @@ with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
 PY
 """
     jobs = {
+        "scope": scope_job(policy),
         "prepare": {
+            "needs": "scope",
+            "if": "${{ needs.scope.outputs.run == 'true' }}",
             "runs-on": "ubuntu-latest",
             "timeout-minutes": 5,
             "outputs": {
@@ -242,6 +371,7 @@ PY
             "needs": "prepare",
             "if": candidate,
             "uses": "./.github/workflows/quality-gate.yml",
+            "with": {"force-full": True},
             "permissions": {
                 "contents": "read",
                 "actions": "read",
@@ -262,7 +392,10 @@ PY
         "gate": {
             "name": "Release gate",
             "needs": ["prepare", "checks", "build"],
-            "if": "${{ always() && needs.prepare.outputs.channel != 'stable' }}",
+            "if": (
+                "${{ always() && needs.prepare.result != 'skipped' && "
+                "needs.prepare.outputs.channel != 'stable' }}"
+            ),
             "runs-on": "ubuntu-latest",
             "timeout-minutes": 5,
             "steps": [
@@ -529,6 +662,7 @@ def validate_policy(directory: Path, policy: dict) -> None:
     """Reject unsupported policy modes, stale publishers and invalid repository names."""
     mode = policy.get("mode", "release")
     validate_asset_restrictions(policy)
+    scope_policy(policy)
     if policy.get("versioning"):
         # Legacy consumers do not vendor the optional version modules.
         # pylint: disable-next=import-outside-toplevel
@@ -558,6 +692,7 @@ def validate_policy(directory: Path, policy: dict) -> None:
         r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", policy.get("repository", "")
     ):
         raise ValueError("Policy needs repository OWNER/REPO")
+    schedule(policy)
     execution = policy.get("ci_execution", "github")
     if execution not in {"github", "local"}:
         raise ValueError("ci_execution must be github or local")
@@ -876,6 +1011,10 @@ def render(directory: Path) -> dict[str, str]:
     files = (
         {} if local else {".github/workflows/quality-gate.yml": dump(quality(policy))}
     )
+    if not local:
+        files["scripts/change_scope.py"] = (
+            ROOT / "scripts/change_scope.py"
+        ).read_text()
     if policy.get("single_entry_ci") and not local:
         files["scripts/workflow_contracts.py"] = (
             ROOT / "scripts/workflow_contracts.py"
@@ -905,8 +1044,19 @@ def operator_guide(policy: dict) -> str:
 
 The source of truth is `.release-policy.json`. `quality-gate.yml` runs the callable
 validation workflows and produces the required **CI gate** status on every PR
-and merge-queue commit. Superseded PR runs are cancelled. Missing, failed and skipped validation workflows fail
-the gate. Workflow and lockfile changes are included in validation.
+and merge-queue commit. Superseded PR runs are cancelled. A lightweight Change scope
+job checks the complete Git diff first. Documentation-only changes skip build and
+test workflows; the gate accepts only these explicitly justified skips. Missing,
+failed or unexpectedly skipped workflows fail the gate. Unknown files, incomplete
+history, code, workflow and lockfile changes run full validation.
+
+The optional `change_scope` policy provides exact `documentation_paths`, exact
+`required_paths` for documentation used as a build input, and
+`always_validate_workflows` for independently required checks. Documentation paths
+cannot exempt source, tests, fixtures, build configuration or dependencies.
+Manual dispatch, scheduled runs and release qualification remain full. A push
+containing only documentation stops before release preparation, version allocation,
+artifact builds or publication. This does not change the configured nightly policy.
 
 ## Local checks
 

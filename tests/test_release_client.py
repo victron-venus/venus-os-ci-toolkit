@@ -514,6 +514,28 @@ jobs:
         self.assertEqual(upload["name"], "release-evidence")
         self.assertEqual(upload["retention-days"], 90)
 
+    def test_reviewed_daily_schedule_is_preserved_during_rollout(self):
+        """Updating generated CI must not move an explicitly retained nightly slot."""
+        policy = dict(self.policy, nightly_cron="52 5 * * *")
+        self.assertEqual(
+            installer.release(policy)["on"]["schedule"], [{"cron": "52 5 * * *"}]
+        )
+        validation = dict(policy, mode="validation-only")
+        self.assertEqual(
+            installer.quality(validation)["on"]["schedule"], [{"cron": "52 5 * * *"}]
+        )
+        for value in (
+            None,
+            "",
+            "60 5 * * *",
+            "52 24 * * *",
+            "0 0 * * 1",
+            "* * * * *",
+            "0 0 * * *\n",
+        ):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                installer.schedule(dict(self.policy, nightly_cron=value))
+
     def test_validation_only_rejects_stale_release_pipeline(self):
         """Reject a leftover publication workflow when the policy forbids releases."""
         with tempfile.TemporaryDirectory() as temp:
