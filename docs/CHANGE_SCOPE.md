@@ -70,6 +70,16 @@ Do not use workflow-level `paths-ignore` for required checks: a workflow that
 never starts cannot produce the gate result. Keep job names and existing review,
 security and release requirements unchanged.
 
+A skipped reusable workflow call emits only its caller's skipped context; it
+does not emit the nested job contexts that a full run produces. Before enabling
+documentation-only skips, verify the existing required checks against an actual
+run. After validating equivalent coverage, consolidate legacy required build
+and test job contexts into **CI gate**, which verifies their full-run results
+and authorizes only proven documentation skips. Retain independently required
+security contexts such as CodeQL and Sonar, and keep their real validators active.
+The toolkit itself always runs CodeQL and configuration checks; documentation-only
+changes skip its separate contract-test workflow and Trivy scan.
+
 ## Maintaining the classifier
 
 After modifying the canonical script, run `python3 scripts/render_change_scope.py`.

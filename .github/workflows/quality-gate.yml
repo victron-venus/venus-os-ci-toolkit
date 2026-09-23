@@ -52,9 +52,18 @@ jobs:
     needs:
       - scope
       - workflow-contracts
-    if: ${{ needs.scope.outputs.run == 'true' }}
   check-1:
     uses: ./.github/workflows/security-required.yml
+    permissions:
+      contents: read
+      actions: read
+      security-events: write
+    needs:
+      - scope
+      - workflow-contracts
+    if: ${{ needs.scope.outputs.run == 'true' }}
+  check-2:
+    uses: ./.github/workflows/contract-tests.yml
     permissions:
       contents: read
       actions: read
@@ -78,13 +87,13 @@ jobs:
       - run: python3 scripts/workflow_contracts.py
     needs:
       - scope
-    if: ${{ needs.scope.outputs.run == 'true' }}
   gate:
     name: CI gate
     needs:
       - scope
       - check-0
       - check-1
+      - check-2
       - workflow-contracts
     if: ${{ always() }}
     runs-on: ubuntu-latest
@@ -97,8 +106,8 @@ jobs:
           python3 - <<'PY'
           import json, os
           results = json.loads(os.environ['RESULTS'])
-          expected = ['check-0', 'check-1', 'scope', 'workflow-contracts']
-          always = ['scope']
+          expected = ['check-0', 'check-1', 'check-2', 'scope', 'workflow-contracts']
+          always = ['check-0', 'scope', 'workflow-contracts']
           if set(results) != set(expected):
               raise SystemExit('Validation job inventory differs')
           scope = results['scope']
