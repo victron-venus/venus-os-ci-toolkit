@@ -18,6 +18,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -434,18 +435,10 @@ def check_execution(
         )
 
 
-# Keep the independently verified provenance fields explicit at each call site.
-# pylint: disable-next=too-many-arguments
-def validate_run(
-    gh: GitHub,
-    run: dict,
-    info: dict,
-    sha: str,
-    attempt: int,
-    completed: bool,
-    gate: bool = True,
+def validate_run_provenance(
+    gh: GitHub, run: dict, info: dict, sha: str, attempt: int
 ) -> None:
-    """Verify run provenance and require one explicitly successful Release gate."""
+    """Check immutable run identity before considering its changing status."""
     require(
         run.get("repository", {}).get("full_name", "").lower() == gh.repo.lower(),
         "Source run belongs to another repository",
@@ -470,6 +463,21 @@ def validate_run(
         run.get("run_attempt") == attempt,
         "Source run was rerun; evidence is not from its latest attempt",
     )
+
+
+# Keep the independently verified provenance fields explicit at each call site.
+# pylint: disable-next=too-many-arguments
+def validate_run(
+    gh: GitHub,
+    run: dict,
+    info: dict,
+    sha: str,
+    attempt: int,
+    completed: bool,
+    gate: bool = True,
+) -> None:
+    """Verify run provenance and require one explicitly successful Release gate."""
+    validate_run_provenance(gh, run, info, sha, attempt)
     if completed:
         require(
             run.get("status") == "completed" and run.get("conclusion") == "success",
@@ -492,6 +500,49 @@ def validate_run(
             "Exactly one successful, completed Release gate is required; skipped is not a pass",
         )
         require(gates[0].get("head_sha") == sha, "Release gate SHA mismatch")
+
+
+# Execution identity is deliberately checked again on every fresh response.
+# pylint: disable-next=too-many-arguments
+def wait_for_executing_run(
+    gh: GitHub,
+    run_id: int,
+    channel: str,
+    info: dict,
+    sha: str,
+    attempt: int,
+    gate: bool = True,
+) -> dict:
+    """Wait at most 60 seconds for Actions' aggregate status to catch up.
+
+    A running job may still be reported as queued or waiting after environment
+    approval. Those states never authorize publication: only a fresh, fully
+    bound in_progress run can pass. Completed RC validation does not wait.
+    """
+    deadline = time.monotonic() + 60
+    while True:
+        run = gh.api(f"actions/runs/{run_id}")
+        require(run.get("id") == run_id, "Execution run identity mismatch")
+        check_execution(gh, run_id, channel, info, run)
+        validate_run_provenance(gh, run, info, sha, attempt)
+        status = run.get("status")
+        require(
+            run.get("conclusion") is None, "Publication run already has a conclusion"
+        )
+        if status == "in_progress":
+            validate_run(gh, run, info, sha, attempt, completed=False, gate=gate)
+            return run
+        require(
+            status in {"queued", "requested", "pending", "waiting"},
+            f"Publication run is not active: {status!r}",
+        )
+        remaining = deadline - time.monotonic()
+        require(
+            remaining > 0,
+            f"Publication run did not become in_progress within 60 seconds; "
+            f"last status: {status!r}, run: {run_id}, attempt: {attempt}",
+        )
+        time.sleep(min(2, remaining))
 
 
 def ensure_absent(gh: GitHub, tag: str) -> None:
@@ -688,10 +739,7 @@ def candidate(args) -> dict:
         positive(args.run_attempt, "run attempt"),
     )
     info = repository_info(gh)
-    run = gh.api(f"actions/runs/{run_id}")
-    require(run.get("id") == run_id, "Run identity mismatch")
-    check_execution(gh, run_id, args.channel, info, run)
-    validate_run(gh, run, info, args.sha, attempt, completed=False)
+    wait_for_executing_run(gh, run_id, args.channel, info, args.sha, attempt)
     policy_snapshot = source_policy_snapshot(gh, args.sha)
     require_release_policy(
         policy_snapshot["data"], gh.repo, qualified=args.channel == "rc"
@@ -995,16 +1043,13 @@ def promote(args) -> dict:
     )
     current_id = positive(args.run_id, "run ID")
     info = repository_info(gh)
-    current = gh.api(f"actions/runs/{current_id}")
-    require(current.get("id") == current_id, "Current run identity mismatch")
-    check_execution(gh, current_id, "stable", info, current)
-    validate_run(
+    wait_for_executing_run(
         gh,
-        current,
+        current_id,
+        "stable",
         info,
-        current.get("head_sha", ""),
-        positive(current.get("run_attempt"), "current run attempt"),
-        completed=False,
+        checked_out_sha(),
+        positive(os.environ.get("GITHUB_RUN_ATTEMPT"), "current run attempt"),
         gate=False,
     )
     require_reviewers(gh)
