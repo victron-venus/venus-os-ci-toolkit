@@ -296,7 +296,7 @@ def schedule(policy):
     if "nightly_cron" in policy:
         cron = policy["nightly_cron"]
         if not isinstance(cron, str) or not re.fullmatch(
-            r"(?:[0-5]?\d) (?:[01]?\d|2[0-3]) \* \* \*", cron, re.ASCII
+            r"[0-5]?\d (?:[01]?\d|2[0-3]) \* \* \*", cron, re.ASCII
         ):
             raise ValueError("nightly_cron must be a daily UTC 'M H * * *' expression")
         return cron

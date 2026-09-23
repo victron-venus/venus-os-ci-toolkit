@@ -435,6 +435,56 @@ class ChangeScopeTests(unittest.TestCase):
                     scope.classify_diff(raw, frozenset(), frozenset())["run"]
                 )
 
+    def test_git_sink_rejects_unlisted_operations_and_unsafe_arguments(self):
+        """The execution boundary independently rejects options and ref syntax."""
+        requests = [
+            ("checkout", self.base),
+            ("shallow", "--help"),
+            ("commit-type", "--batch"),
+            ("commit-type", self.base + "\n"),
+            ("commit-type", self.base + "^{tree}"),
+            ("commit-type", None),
+            ("diff", "--output=owned"),
+            ("diff", "HEAD..HEAD"),
+            ("diff", self.base + "...." + self.base),
+            ("diff", self.base + ".." + self.base + " --output=owned"),
+        ]
+        for operation, revision in requests:
+            with (
+                self.subTest(operation=operation, revision=revision),
+                patch.object(scope.subprocess, "run") as command,
+            ):
+                with self.assertRaises(ValueError):
+                    scope.git(self.repo, operation, revision)
+                command.assert_not_called()
+
+    def test_git_sink_keeps_repository_out_of_arguments_and_bounds_revisions(self):
+        """An option-like directory is a cwd, never a Git option or revision."""
+        renamed = self.directory / "--upload-pack=other command"
+        self.repo.rename(renamed)
+        self.repo = renamed
+        self.write("README.md")
+        head = self.commit()
+        event = self.event(head=head)
+        with patch.object(scope.subprocess, "run", wraps=subprocess.run) as command:
+            self.assertFalse(scope.classify(self.repo, "push", event)["run"])
+        for invocation in command.call_args_list:
+            arguments = invocation.args[0]
+            self.assertNotIn("-C", arguments)
+            self.assertNotIn(str(renamed), arguments)
+            self.assertEqual(invocation.kwargs["cwd"], renamed.resolve())
+        arguments = command.call_args_list[-1].args[0]
+        self.assertEqual(
+            arguments[-3:], ["--end-of-options", self.base + ".." + head, "--"]
+        )
+
+    def test_missing_or_non_directory_repository_requires_full_pipeline(self):
+        """Repository selection errors never become a documentation-only result."""
+        for repository in (self.directory / "missing", self.repo / "README.md"):
+            with self.subTest(repository=repository):
+                result = scope.classify(repository, "push", self.event())
+                self.assertEqual(result, {"run": True, "reason": "git-error"})
+
     def cli(self, *arguments, event_content=None, env_overrides=None):
         """Run the executable contract with real event and GITHUB_OUTPUT files."""
         event_file = self.directory / "event.json"
@@ -516,17 +566,31 @@ class ChangeScopeTests(unittest.TestCase):
             "--force",
             "--documentation-paths-json",
             "{",
-            "--event-path",
-            "/missing/event.json",
+            env_overrides={"GITHUB_EVENT_PATH": "/missing/event.json"},
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("run=true\nreason=forced\n", output)
 
     def test_cli_cannot_report_success_if_outputs_cannot_be_written(self):
         """A runner output failure blocks the gate instead of leaving false state."""
-        result, _ = self.cli("--github-output", str(self.directory / "missing" / "out"))
+        result, _ = self.cli(
+            env_overrides={"GITHUB_OUTPUT": str(self.directory / "missing" / "out")}
+        )
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("cannot write GitHub outputs", result.stderr)
+
+    def test_cli_cannot_override_runner_file_channels(self):
+        """CLI input cannot redirect event reads or append data to another file."""
+        destination = self.directory / "unrelated-file"
+        destination.write_text("Keep unrelated data intact.\n")
+        for option in ("--event-path", "--github-output"):
+            with self.subTest(option=option):
+                result, output = self.cli(option, str(destination))
+                self.assertEqual(result.returncode, 2)
+                self.assertEqual(output, "existing=value\n")
+                self.assertEqual(
+                    destination.read_text(), "Keep unrelated data intact.\n"
+                )
 
 
 if __name__ == "__main__":

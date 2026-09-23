@@ -141,11 +141,43 @@ def event_revisions(event_name, event):
     return base, head, separator
 
 
-def git(repo, *arguments):
-    """Read raw Git data, without external diff drivers or replacement objects."""
+def git(repo, operation, revision=""):
+    """Execute only the three read operations, validating arguments at the sink."""
+    directory = Path(repo).resolve(strict=True)
+    if not directory.is_dir():
+        raise ValueError("Expected a repository directory")
+    if operation == "shallow" and not revision:
+        arguments = ["git", "rev-parse", "--is-shallow-repository"]
+    elif operation == "commit-type":
+        if not isinstance(revision, str) or not re.fullmatch(r"[0-9a-f]{40}", revision):
+            raise ValueError("Expected one exact object ID")
+        arguments = ["git", "cat-file", "-t", "--", revision]
+    elif operation == "diff":
+        if not isinstance(revision, str) or not re.fullmatch(
+            r"[0-9a-f]{40}\.{2,3}[0-9a-f]{40}", revision
+        ):
+            raise ValueError("Expected an exact two-commit range")
+        arguments = [
+            "git",
+            "diff",
+            "--raw",
+            "--no-abbrev",
+            "-z",
+            "--no-renames",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--no-relative",
+            "--ignore-submodules=none",
+            "--end-of-options",
+            revision,
+            "--",
+        ]
+    else:
+        raise ValueError("Unsupported Git read operation")
     environment = dict(os.environ, GIT_OPTIONAL_LOCKS="0", GIT_NO_REPLACE_OBJECTS="1")
     return subprocess.run(
-        ["git", "-C", str(repo), *arguments],
+        arguments,
+        cwd=directory,
         check=True,
         capture_output=True,
         timeout=30,
@@ -153,8 +185,31 @@ def git(repo, *arguments):
     ).stdout
 
 
-# Each uncertainty returns full CI immediately; keep the positive case last.
-# pylint: disable-next=too-many-return-statements
+def classify_record(header, raw_path, explicit, required):
+    """Validate one complete raw record before classifying its ordinary path."""
+    fields = header.split()
+    if len(fields) != 5 or not fields[0].startswith(b":"):
+        return decision(True, "invalid-diff")
+    before, after, old_hash, new_hash, status = fields
+    if not all(
+        REVISION.fullmatch(value.decode("ascii")) for value in (old_hash, new_hash)
+    ):
+        return decision(True, "invalid-diff")
+    expected_modes = {
+        b"A": (b"000000", b"100644"),
+        b"D": (b"100644", b"000000"),
+        b"M": (b"100644", b"100644"),
+    }
+    if expected_modes.get(status) != (before[1:], after):
+        return decision(True, "non-regular-or-mode-change")
+    path = raw_path.decode("utf-8")
+    if path in required:
+        return decision(True, "required-path-change")
+    if not documentation_path(path, explicit):
+        return decision(True, "non-documentation-change")
+    return None
+
+
 def classify_diff(raw, explicit, required):
     """Read NUL-delimited raw records, checking modes and both sides of renames."""
     if not raw:
@@ -165,27 +220,11 @@ def classify_diff(raw, explicit, required):
     if len(records) % 2:
         return decision(True, "invalid-diff")
     for position in range(0, len(records), 2):
-        fields = records[position].split()
-        if len(fields) != 5 or not fields[0].startswith(b":"):
-            return decision(True, "invalid-diff")
-        before, after, old_hash, new_hash, status = fields
-        if not all(
-            REVISION.fullmatch(value.decode("ascii")) for value in (old_hash, new_hash)
-        ):
-            return decision(True, "invalid-diff")
-        modes = (before[1:], after)
-        expected_modes = {
-            b"A": (b"000000", b"100644"),
-            b"D": (b"100644", b"000000"),
-            b"M": (b"100644", b"100644"),
-        }
-        if status not in expected_modes or modes != expected_modes[status]:
-            return decision(True, "non-regular-or-mode-change")
-        path = records[position + 1].decode("utf-8")
-        if path in required:
-            return decision(True, "required-path-change")
-        if not documentation_path(path, explicit):
-            return decision(True, "non-documentation-change")
+        result = classify_record(
+            records[position], records[position + 1], explicit, required
+        )
+        if result is not None:
+            return result
     return decision(False, "documentation-only")
 
 
@@ -212,25 +251,12 @@ def classify(
     except (KeyError, TypeError, ValueError):
         return decision(True, "invalid-revisions")
     try:
-        if git(repo, "rev-parse", "--is-shallow-repository").strip() != b"false":
+        if git(repo, "shallow").strip() != b"false":
             return decision(True, "incomplete-history")
         for revision in (base, head):
-            if git(repo, "cat-file", "-t", revision).strip() != b"commit":
+            if git(repo, "commit-type", revision).strip() != b"commit":
                 return decision(True, "invalid-revisions")
-        raw = git(
-            repo,
-            "diff",
-            "--raw",
-            "--no-abbrev",
-            "-z",
-            "--no-renames",
-            "--no-ext-diff",
-            "--no-textconv",
-            "--no-relative",
-            "--ignore-submodules=none",
-            f"{base}{separator}{head}",
-            "--",
-        )
+        raw = git(repo, "diff", f"{base}{separator}{head}")
         return classify_diff(
             raw, frozenset(documentation_paths), frozenset(required_paths)
         )
@@ -261,7 +287,10 @@ def from_arguments(args):
     except (TypeError, ValueError):
         return decision(True, "invalid-required-paths")
     try:
-        event = json.loads(Path(args.event_path).read_text(encoding="utf-8"))
+        # The runner selects its event file; CLI values cannot choose a file to read.
+        event = json.loads(
+            Path(os.environ.get("GITHUB_EVENT_PATH", "")).read_text(encoding="utf-8")
+        )
     except (OSError, ValueError):
         return decision(True, "invalid-event-file")
     return classify(
@@ -278,19 +307,19 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo", default=".")
     parser.add_argument("--event-name", default=os.environ.get("GITHUB_EVENT_NAME", ""))
-    parser.add_argument("--event-path", default=os.environ.get("GITHUB_EVENT_PATH", ""))
     parser.add_argument("--documentation-path", action="append", default=[])
     parser.add_argument("--documentation-paths-json", default="[]")
     parser.add_argument("--require-path", action="append", default=[])
     parser.add_argument("--required-paths-json", default="[]")
-    parser.add_argument("--github-output", default=os.environ.get("GITHUB_OUTPUT", ""))
     parser.add_argument("--force", action="store_true")
     args = parser.parse_args(argv)
     result = from_arguments(args)
     print(json.dumps(result, sort_keys=True))
-    if args.github_output:
+    # GITHUB_OUTPUT is a runner-created append channel, never a CLI destination.
+    output_path = os.environ.get("GITHUB_OUTPUT", "")
+    if output_path:
         try:
-            with open(args.github_output, "a", encoding="utf-8") as output:
+            with open(output_path, "a", encoding="utf-8") as output:
                 output.write(
                     f"run={str(result['run']).lower()}\nreason={result['reason']}\n"
                 )
