@@ -2,8 +2,19 @@
 
 The source of truth is `.release-policy.json`. `quality-gate.yml` runs the callable
 validation workflows and produces the required **CI gate** status on every PR
-and merge-queue commit. Superseded PR runs are cancelled. Missing, failed and skipped validation workflows fail
-the gate. Workflow and lockfile changes are included in validation.
+and merge-queue commit. Superseded PR runs are cancelled. A lightweight Change scope
+job checks the complete Git diff first. Documentation-only changes skip build and
+test workflows; the gate accepts only these explicitly justified skips. Missing,
+failed or unexpectedly skipped workflows fail the gate. Unknown files, incomplete
+history, code, workflow and lockfile changes run full validation.
+
+The optional `change_scope` policy provides exact `documentation_paths`, exact
+`required_paths` for documentation used as a build input, and
+`always_validate_workflows` for independently required checks. Documentation paths
+cannot exempt source, tests, fixtures, build configuration or dependencies.
+Manual dispatch, scheduled runs and release qualification remain full. A push
+containing only documentation stops before release preparation, version allocation,
+artifact builds or publication. This does not change the configured nightly policy.
 
 ## Local checks
 

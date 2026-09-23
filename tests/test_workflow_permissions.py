@@ -146,7 +146,10 @@ class WorkflowPermissionTests(unittest.TestCase):
         jobs = installer.quality(policy)["jobs"]
         callers = [job for job in jobs.values() if "uses" in job]
         self.assertTrue(callers)
-        self.assertTrue(all(job["needs"] == "workflow-contracts" for job in callers))
+        self.assertTrue(
+            all(job["needs"] == ["scope", "workflow-contracts"] for job in callers)
+        )
+        self.assertEqual(jobs["workflow-contracts"]["needs"], ["scope"])
         self.assertEqual(set(jobs["gate"]["needs"]), set(jobs) - {"gate"})
 
 
