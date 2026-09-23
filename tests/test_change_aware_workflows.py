@@ -455,5 +455,88 @@ class GeneratedReleaseScopeExecution(unittest.TestCase):
         )
 
 
+class ToolkitValidationPolicy(unittest.TestCase):
+    """The toolkit's real required security contexts survive documentation skips."""
+
+    def setUp(self):
+        self.jobs = yaml.safe_load(
+            (ROOT / ".github/workflows/quality-gate.yml").read_text()
+        )["jobs"]
+        self.codeql = next(
+            name
+            for name, job in self.jobs.items()
+            if job.get("uses") == "./.github/workflows/ci.yml"
+        )
+
+    def results(self, full=False):
+        """Model the expected real toolkit jobs for one scope decision."""
+        always = {"scope", "workflow-contracts", self.codeql}
+        values = {
+            name: {"result": "success" if full or name in always else "skipped"}
+            for name in self.jobs
+            if name != "gate"
+        }
+        values["scope"]["outputs"] = {
+            "run": "true" if full else "false",
+            "reason": "non-documentation-change" if full else "documentation-only",
+        }
+        return values
+
+    def run_gate(self, values):
+        """Execute the committed required gate instead of reproducing its policy."""
+        return subprocess.run(
+            ["bash", "-e", "-c", self.jobs["gate"]["steps"][0]["run"]],
+            env=dict(os.environ, RESULTS=json.dumps(values)),
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=10,
+        )
+
+    def test_documentation_runs_codeql_without_contracts_or_trivy(self):
+        """Keep actual CodeQL analysis required while skipping unrelated heavy jobs."""
+        values = self.results()
+        self.assertTrue(job_runs(self.jobs[self.codeql], values))
+        self.assertTrue(job_runs(self.jobs["workflow-contracts"], values))
+        for filename in ("contract-tests.yml", "security-required.yml"):
+            jobs = [
+                job
+                for job in self.jobs.values()
+                if job.get("uses") == f"./.github/workflows/{filename}"
+            ]
+            self.assertEqual(len(jobs), 1)
+            self.assertFalse(job_runs(jobs[0], values))
+        workflow = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
+        self.assertEqual(set(workflow["jobs"]), {"analyze"})
+        self.assertTrue(
+            any(
+                step.get("uses", "").startswith("github/codeql-action/analyze@")
+                for step in workflow["jobs"]["analyze"]["steps"]
+            )
+        )
+        result = self.run_gate(values)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_documentation_cannot_skip_or_fail_required_codeql(self):
+        """Reject the missing security result that would leave branch rules pending."""
+        for conclusion in ("skipped", "failure", "cancelled"):
+            with self.subTest(conclusion=conclusion):
+                values = self.results()
+                values[self.codeql]["result"] = conclusion
+                self.assertNotEqual(self.run_gate(values).returncode, 0)
+
+    def test_full_validation_requires_every_real_validator(self):
+        """Full runs cannot silently omit the newly separated contract workflow."""
+        values = self.results(full=True)
+        for name, job in self.jobs.items():
+            self.assertTrue(job_runs(job, values), name)
+        self.assertEqual(self.run_gate(values).returncode, 0)
+        for name in values:
+            with self.subTest(job=name):
+                missing = self.results(full=True)
+                missing[name]["result"] = "skipped"
+                self.assertNotEqual(self.run_gate(missing).returncode, 0)
+
+
 if __name__ == "__main__":
     unittest.main()

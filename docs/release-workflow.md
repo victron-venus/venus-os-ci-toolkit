@@ -29,6 +29,7 @@ python3 scripts/release.py status
 Callable validation workflows:
 - `.github/workflows/ci.yml`
 - `.github/workflows/security-required.yml`
+- `.github/workflows/contract-tests.yml`
 
 ## Nightly validation and deployment
 
