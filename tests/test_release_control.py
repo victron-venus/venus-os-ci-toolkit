@@ -348,6 +348,70 @@ class ReleaseControlTests(unittest.TestCase):
         )
         self.assertEqual(self.gh.writes[-1][1], "PATCH")
 
+    def test_promotion_waits_for_fresh_active_run_and_keeps_rc_bytes(self):
+        """A stale post-approval status delays, rather than bypasses, promotion."""
+        original_api = self.gh.api
+        statuses = iter(("waiting", "queued", "in_progress"))
+
+        def delayed(path, method="GET", body=None):
+            value = original_api(path, method, body)
+            if path == "actions/runs/99":
+                value["status"] = next(statuses)
+            return value
+
+        with (
+            patch.object(self.gh, "api", side_effect=delayed),
+            patch.object(rc.time, "sleep") as sleep,
+            patch.object(rc.time, "monotonic", return_value=0),
+        ):
+            result = rc.promote(self.args)
+        self.assertEqual(sleep.call_count, 2)
+        stable = next(
+            item
+            for item in self.gh.releases.values()
+            if item["tag_name"] == result["tag"]
+        )
+        expected = {a["name"]: self.gh.files[a["id"]] for a in self.gh.assets[10]}
+        actual = {
+            a["name"]: self.gh.files[a["id"]] for a in self.gh.assets[stable["id"]]
+        }
+        self.assertEqual(actual, expected)
+
+    def test_candidate_waits_for_fresh_active_run_before_gate(self):
+        """The unversioned publisher uses the same bounded execution check."""
+        self.event.write_text(json.dumps({"inputs": {"channel": "rc"}}))
+        assets = self.directory / "candidate"
+        assets.mkdir()
+        (assets / "candidate.zip").write_bytes(b"candidate-build")
+        args = argparse.Namespace(
+            repo=REPO,
+            channel="rc",
+            version="2.0.0",
+            sha=SHA,
+            run_id="99",
+            run_attempt="1",
+            sequence=None,
+            assets=str(assets),
+        )
+        original_api = self.gh.api
+        statuses = iter(("requested", "in_progress"))
+
+        def delayed(path, method="GET", body=None):
+            value = original_api(path, method, body)
+            if path == "actions/runs/99":
+                value["status"] = next(statuses)
+            return value
+
+        with (
+            patch.object(self.gh, "api", side_effect=delayed),
+            patch.object(rc.time, "sleep") as sleep,
+            patch.object(rc.time, "monotonic", return_value=0),
+            patch.object(rc, "EVIDENCE", self.directory / "evidence" / rc.MANIFEST),
+        ):
+            result = rc.candidate(args)
+        self.assertEqual(sleep.call_count, 1)
+        self.assertTrue(result["tag"].startswith("v2.0.0-rc."))
+
     def test_untrusted_source_runs_never_write(self):
         """Untrusted source runs never write."""
         cases = [
@@ -1069,6 +1133,179 @@ class OfflineValidationTests(unittest.TestCase):
             self.assertRaises(rc.GitHubError),
         ):
             gh.optional("git/ref/tags/v1.2.3")
+
+
+class ExecutingRunStatusTests(unittest.TestCase):
+    """Exercise delayed aggregate status with real provenance/execution guards."""
+
+    def setUp(self):
+        # pylint: disable-next=consider-using-with
+        directory = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        self.event = directory / "event.json"
+        self.event.write_text(json.dumps({"inputs": {"channel": "stable"}}))
+        self.enterContext(
+            patch.dict(
+                os.environ,
+                {
+                    "GITHUB_ACTIONS": "true",
+                    "GITHUB_REPOSITORY": REPO,
+                    "GITHUB_RUN_ID": "99",
+                    "GITHUB_RUN_ATTEMPT": "1",
+                    "GITHUB_REF": "refs/heads/main",
+                    "GITHUB_EVENT_NAME": "workflow_dispatch",
+                    "GITHUB_WORKFLOW_REF": f"{REPO}/{rc.WORKFLOW}@refs/heads/main",
+                    "GITHUB_EVENT_PATH": str(self.event),
+                },
+            )
+        )
+        self.checkout = self.enterContext(
+            patch.object(rc, "checked_out_sha", return_value=SHA)
+        )
+        self.gh = FakeGitHub()
+        self.now = 0
+        self.enterContext(
+            patch.object(rc.time, "monotonic", side_effect=lambda: self.now)
+        )
+        self.sleep = self.enterContext(
+            patch.object(rc.time, "sleep", side_effect=self.advance)
+        )
+
+    def advance(self, seconds):
+        """Move a fake monotonic clock without real sleeps."""
+        self.now += seconds
+
+    def wait(self):
+        """Use the exact current run binding with an independently tested gate."""
+        return rc.wait_for_executing_run(
+            self.gh, 99, "stable", self.gh.info, SHA, 1, gate=False
+        )
+
+    def test_transitional_states_require_a_fresh_in_progress_response(self):
+        """Neither queued nor waiting itself grants permission to publish."""
+        responses = [
+            {**run(99, False), "status": status}
+            for status in ("queued", "requested", "pending", "waiting", "in_progress")
+        ]
+        responses[-1]["updated_at"] = "fresh-response"
+        with patch.object(self.gh, "api", side_effect=responses) as api:
+            result = self.wait()
+        self.assertEqual(result, responses[-1])
+        self.assertEqual(api.call_count, 5)
+        self.assertEqual(self.checkout.call_count, 5)
+        self.assertEqual(self.sleep.call_count, 4)
+        self.assertEqual(self.gh.writes, [])
+
+    def test_every_refreshed_identity_field_is_rechecked(self):
+        """A newly active response cannot swap a run, source, workflow or attempt."""
+        changes = [
+            {"id": 100},
+            {"run_attempt": 2},
+            {"head_sha": "b" * 40},
+            {"path": ".github/workflows/other.yml"},
+            {"head_branch": "feature"},
+            {"event": "push"},
+            {"repository": {"full_name": "fork/project"}},
+            {"head_repository": {"full_name": "fork/project"}},
+        ]
+        for change in changes:
+            with (
+                self.subTest(change=change),
+                patch.object(
+                    self.gh,
+                    "api",
+                    side_effect=[
+                        {**run(99, False), "status": "waiting"},
+                        {**run(99, False), **change},
+                    ],
+                ) as api,
+            ):
+                previous = self.sleep.call_count
+                with self.assertRaises(rc.ReleaseError):
+                    self.wait()
+                self.assertEqual(api.call_count, 2)
+                self.assertEqual(self.sleep.call_count, previous + 1)
+                self.assertEqual(self.gh.writes, [])
+
+    def test_execution_checkout_is_rechecked_after_wait(self):
+        """The checked-out source remains bound after an aggregate-state delay."""
+        with (
+            patch.object(
+                self.gh,
+                "api",
+                side_effect=[{**run(99, False), "status": "queued"}, run(99, False)],
+            ),
+            patch.object(rc, "checked_out_sha", side_effect=[SHA, "b" * 40]),
+            self.assertRaisesRegex(rc.ReleaseError, "Checkout"),
+        ):
+            self.wait()
+        self.assertEqual(self.sleep.call_count, 1)
+
+    def test_terminal_or_unknown_state_fails_without_sleep(self):
+        """Cancelled/completed/unknown executions are never polled into permission."""
+        states = [
+            ("completed", "success"),
+            ("completed", "failure"),
+            ("completed", "cancelled"),
+            ("cancelled", None),
+            ("unknown", None),
+            ("waiting", "failure"),
+            ("in_progress", "failure"),
+        ]
+        for status, conclusion in states:
+            with (
+                self.subTest(status=status, conclusion=conclusion),
+                patch.object(
+                    self.gh,
+                    "api",
+                    return_value={
+                        **run(99, False),
+                        "status": status,
+                        "conclusion": conclusion,
+                    },
+                ),
+                self.assertRaises(rc.ReleaseError),
+            ):
+                self.wait()
+        self.sleep.assert_not_called()
+        self.assertEqual(self.gh.writes, [])
+
+    def test_timeout_is_bounded_and_does_not_publish(self):
+        """A perpetually stale API fails closed after exactly the bounded wait."""
+        with (
+            patch.object(
+                self.gh, "api", return_value={**run(99, False), "status": "waiting"}
+            ) as api,
+            self.assertRaisesRegex(
+                rc.ReleaseError, "within 60 seconds.*waiting.*99.*1"
+            ),
+        ):
+            self.wait()
+        self.assertEqual(self.now, 60)
+        self.assertEqual(api.call_count, 31)
+        self.assertEqual(self.sleep.call_count, 30)
+        self.assertEqual(self.gh.writes, [])
+
+    def test_completed_candidate_validation_does_not_poll(self):
+        """Accepted RCs still require completed success on the exact attempt."""
+        with patch.object(self.gh, "api") as api:
+            rc.validate_run(self.gh, run(), self.gh.info, SHA, 1, completed=True)
+            for change in (
+                {"status": "queued"},
+                {"status": "waiting"},
+                {"conclusion": "failure"},
+                {"run_attempt": 2},
+            ):
+                with self.subTest(change=change), self.assertRaises(rc.ReleaseError):
+                    rc.validate_run(
+                        self.gh,
+                        {**run(), **change},
+                        self.gh.info,
+                        SHA,
+                        1,
+                        completed=True,
+                    )
+            api.assert_not_called()
+        self.sleep.assert_not_called()
 
 
 if __name__ == "__main__":
