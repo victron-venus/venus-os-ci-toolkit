@@ -1,0 +1,109 @@
+name: Bootstrap integration bot
+
+on:
+  push:
+    branches: [chore/bootstrap-robinhood-floorplan-bot]
+    paths: [.github/workflows/bootstrap-integration-bot.yml]
+
+permissions:
+  contents: read
+
+jobs:
+  provision:
+    if: github.repository == 'victron-venus/venus-os-ci-toolkit' && github.actor == '4alvit'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      # One-time metadata operation; never check out or execute repository code.
+      - name: Accept the approved invitations and provision repository secrets
+        shell: python
+        env:
+          GH_TOKEN: ${{ secrets.BOT_PAT }}
+          TARGETS: ${{ secrets.BOT_BOOTSTRAP_TARGETS }}
+        run: |
+          import json
+          import os
+          import re
+          import subprocess
+
+          def gh(*args, secret_input=None):
+              result = subprocess.run(
+                  ["gh", *args], input=secret_input, text=True,
+                  capture_output=True, check=False,
+              )
+              if result.returncode:
+                  raise RuntimeError("GitHub operation failed; no credential output is logged")
+              return result.stdout
+
+          token = os.environ["GH_TOKEN"]
+          if not token or gh("api", "user", "--jq", ".login").strip() != "californiantiramisu":
+              raise RuntimeError("The configured credential is not the expected bot")
+          targets = json.loads(os.environ["TARGETS"])
+          if not isinstance(targets, list) or len(targets) != 2:
+              raise RuntimeError("Exactly two reviewed targets are required")
+          if any(
+              set(target) != {"repository", "id", "invitation", "pull_request", "head"}
+              or not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", target["repository"])
+              or type(target["id"]) is not int
+              or type(target["invitation"]) is not int
+              or type(target["pull_request"]) is not int
+              or not re.fullmatch(r"[0-9a-f]{40}", target["head"])
+              for target in targets
+          ):
+              raise RuntimeError("Invalid target metadata")
+          if len({target["id"] for target in targets}) != 2:
+              raise RuntimeError("Duplicate target repositories")
+
+          invitations = {
+              invitation["id"]: invitation
+              for page in json.loads(gh("api", "user/repository_invitations", "--paginate", "--slurp"))
+              for invitation in page
+          }
+          for index, target in enumerate(targets, 1):
+              invitation = invitations.get(target["invitation"])
+              if invitation:
+                  if (
+                      invitation["repository"]["id"] != target["id"]
+                      or invitation["repository"]["full_name"] != target["repository"]
+                      or invitation["inviter"]["login"] != "4alvit"
+                      or invitation["permissions"] != "write"
+                  ):
+                      raise RuntimeError("Invitation does not match the reviewed target")
+                  gh("api", "--method", "PATCH", f"user/repository_invitations/{invitation['id']}")
+              repository = json.loads(gh("api", f"repos/{target['repository']}"))
+              if (
+                  repository["id"] != target["id"]
+                  or repository["full_name"] != target["repository"]
+                  or not repository["permissions"].get("push")
+              ):
+                  raise RuntimeError("Repository identity or bot access did not match")
+              secrets = json.loads(gh("secret", "list", "--repo", target["repository"], "--json", "name"))
+              if not any(secret["name"] == "BOT_PAT" for secret in secrets):
+                  gh("secret", "set", "BOT_PAT", "--repo", target["repository"], secret_input=token)
+              print(f"Target {index}: bot access and BOT_PAT are configured")
+
+              endpoint = f"repos/{target['repository']}/pulls/{target['pull_request']}"
+              pr = json.loads(gh("api", endpoint))
+              if (
+                  pr["state"] != "open" or pr["draft"]
+                  or pr["user"]["login"] != "4alvit"
+                  or pr["head"]["repo"]["id"] != target["id"]
+                  or pr["head"]["sha"] != target["head"]
+                  or pr["base"]["ref"] != repository["default_branch"]
+              ):
+                  raise RuntimeError("The initial PR no longer matches the reviewed target")
+              reviews = json.loads(gh("api", f"{endpoint}/reviews"))
+              if not any(
+                  review["user"]["login"] == "californiantiramisu"
+                  and review["state"] == "APPROVED"
+                  and review["commit_id"] == target["head"]
+                  for review in reviews
+              ):
+                  gh(
+                      "api", "--method", "POST", f"{endpoint}/reviews", "--input", "-",
+                      secret_input=json.dumps({
+                          "event": "APPROVE", "commit_id": target["head"],
+                          "body": "Approved the current head for the authorized integration and bot setup.",
+                      }),
+                  )
+              print(f"Target {index}: initial integration head approved")
