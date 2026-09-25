@@ -20,6 +20,10 @@ name: Change scope
 on:
   workflow_call:
     inputs:
+      runner:
+        description: Runner label or ARC scale-set name for the classifier
+        type: string
+        default: ubuntu-latest
       force-full:
         description: Require full validation regardless of changed paths
         type: boolean
@@ -44,7 +48,7 @@ permissions:
 jobs:
   scope:
     name: Classify changed paths
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner }}
     timeout-minutes: 5
     outputs:
       run: ${{ steps.classify.outputs.run }}
