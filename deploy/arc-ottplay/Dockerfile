@@ -1,8 +1,11 @@
 # Build for linux/amd64. Upstream indexes resolved read-only on 2026-09-24.
 # Build/push this custom image separately, then pin its resulting digest in values.
-FROM ghcr.io/actions/actions-runner:2.337.0@sha256:e5496277be5d09bc968b3d64911b74e219ac4a3f2edce956a3ecf9271bea1ef4 AS runner
-FROM node:22.23.3-bookworm-slim@sha256:43ac6c60b8f89723f746e8a92ce91abd5017e627ce1ddfe4238355d3a30b772c AS node
-FROM ubuntu:24.04@sha256:008173c23f95b170204355c12626cb5a965d779a7e1283b09e9cffbb1bf33ca3
+# actions-runner:2.337.0
+FROM ghcr.io/actions/actions-runner@sha256:e5496277be5d09bc968b3d64911b74e219ac4a3f2edce956a3ecf9271bea1ef4 AS runner
+# node:22.23.3-bookworm-slim
+FROM node@sha256:43ac6c60b8f89723f746e8a92ce91abd5017e627ce1ddfe4238355d3a30b772c AS node
+# ubuntu:24.04
+FROM ubuntu@sha256:008173c23f95b170204355c12626cb5a965d779a7e1283b09e9cffbb1bf33ca3
 SHELL ["/bin/bash", "-euo", "pipefail", "-c"]
 ENV DEBIAN_FRONTEND=noninteractive
 COPY --from=node /usr/local/bin/node /usr/local/bin/node
@@ -17,11 +20,12 @@ RUN ln -s ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
     libpulse0 libx11-6 libxcb1 libnss3 libx11-xcb1 libxi6 libxtst6 \
     libxrender1 libxkbcommon0 libvulkan1 mesa-vulkan-drivers xvfb \
  && rm -rf /var/lib/apt/lists/*
-# Pin the dependency installer. Browser binaries are installed by the consuming
-# lockfile at job time; jobs must not run install --with-deps under this UID.
-ARG PLAYWRIGHT_VERSION=1.63.0
-RUN npx --yes "playwright@${PLAYWRIGHT_VERSION}" install-deps chromium webkit \
- && rm -rf /var/lib/apt/lists/* /root/.npm \
+# Install only the locked build tool, without npm lifecycle scripts. Browser
+# binaries follow the consuming lockfile; jobs must not run install --with-deps.
+COPY buildtools/package.json buildtools/package-lock.json /opt/ottplay-buildtools/
+RUN npm ci --ignore-scripts --no-audit --no-fund --prefix /opt/ottplay-buildtools \
+ && node /opt/ottplay-buildtools/node_modules/playwright/cli.js install-deps chromium \
+ && rm -rf /opt/ottplay-buildtools /var/lib/apt/lists/* /root/.npm \
  && groupadd --gid 1001 runner \
  && useradd --uid 1001 --gid 1001 --create-home --shell /bin/bash runner \
  && mkdir -p /opt/actions-runner /opt/hostedtoolcache /opt/android-sdk /opt/ottplay \
@@ -29,7 +33,7 @@ RUN npx --yes "playwright@${PLAYWRIGHT_VERSION}" install-deps chromium webkit \
 COPY --from=runner /home/runner/ /opt/actions-runner/
 COPY start-runner.sh smoke.sh /opt/ottplay/
 RUN chmod 0555 /opt/ottplay/*.sh \
- && test "$(dpkg --print-architecture)" = amd64 \
+ && [[ "$(dpkg --print-architecture)" == amd64 ]] \
  && node --version && python3 --version && java -version \
  && /opt/actions-runner/bin/Runner.Listener --version
 ENV HOME=/home/runner \

@@ -3,6 +3,7 @@
 import copy
 import importlib.util
 import io
+import json
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from datetime import datetime, timezone
@@ -15,6 +16,162 @@ SPEC = importlib.util.spec_from_file_location(
 mode = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(mode)
 NOW = datetime(2026, 9, 24, 18, tzinfo=timezone.utc)
+REVIEWED_SHA = "a" * 40
+
+
+class ApiBoundaryTests(unittest.TestCase):
+    def assert_rejected(self, path, method="GET", payload=None):
+        with patch.object(mode.subprocess, "run") as run:
+            with self.assertRaises(mode.PreflightError):
+                mode.api(path, method, payload)
+            run.assert_not_called()
+
+    def test_only_required_reads_reach_gh_with_options_terminated(self):
+        paths = [
+            f"repos/open-ott-play/{repo}{suffix}"
+            for repo in ("ottplay-core", "ottplay-android")
+            for suffix in (
+                "",
+                "/branches/main",
+                "/actions/variables",
+                "/actions/variables?per_page=100&page=100",
+                "/actions/runs/36016324589",
+                "/actions/runs/36016324589/attempts/2/jobs?per_page=100&page=1",
+            )
+        ]
+        paths += [
+            "orgs/open-ott-play/actions/runner-groups?per_page=100&page=1",
+            "orgs/open-ott-play/actions/runner-groups/3/repositories?per_page=100&page=99",
+        ]
+        for path in paths:
+            with self.subTest(path=path), patch.object(mode.subprocess, "run") as run:
+                run.return_value.returncode = 0
+                run.return_value.stdout = '{"verified": true}'
+                self.assertEqual(mode.api(path), {"verified": True})
+                self.assertEqual(
+                    run.call_args.args[0],
+                    [
+                        "gh",
+                        "api",
+                        "--hostname",
+                        "github.com",
+                        "--method",
+                        "GET",
+                        "--",
+                        path,
+                    ],
+                )
+                self.assertIsNone(run.call_args.kwargs["input"])
+
+    def test_only_exact_variable_writes_reach_gh(self):
+        for repo in ("ottplay-core", "ottplay-android"):
+            for method, suffix in (("POST", ""), ("PATCH", "/CI_RUNNER_MODE")):
+                for value in ("github", "k3s"):
+                    path = f"repos/open-ott-play/{repo}/actions/variables{suffix}"
+                    payload = {"name": mode.VARIABLE, "value": value}
+                    with (
+                        self.subTest(path=path, method=method, value=value),
+                        patch.object(mode.subprocess, "run") as run,
+                    ):
+                        run.return_value.returncode = 0
+                        run.return_value.stdout = ""
+                        self.assertIsNone(mode.api(path, method, payload))
+                        self.assertEqual(
+                            run.call_args.args[0],
+                            [
+                                "gh",
+                                "api",
+                                "--hostname",
+                                "github.com",
+                                "--method",
+                                method,
+                                "--input",
+                                "-",
+                                "--",
+                                path,
+                            ],
+                        )
+                        self.assertEqual(
+                            json.loads(run.call_args.kwargs["input"]), payload
+                        )
+
+    def test_flags_foreign_endpoints_and_noncanonical_paths_never_spawn(self):
+        root = "repos/open-ott-play/ottplay-core"
+        for path in (
+            "--hostname=attacker.invalid",
+            "--input=/private/key",
+            "-XDELETE",
+            "https://api.github.com/" + root,
+            "//api.github.com/" + root,
+            "/" + root,
+            "repos/another-org/ottplay-core",
+            "repos/open-ott-play/ottplay-foss",
+            "orgs/another-org/actions/runner-groups",
+            root + "/actions/secrets",
+            root + "/branches/feature",
+            root + "/branches/main\n",
+            root + "/actions/../secrets",
+            root + "/actions%2fvariables",
+            root + "/actions/runs/0",
+            root + "/actions/runs/-1",
+            root + "/actions/runs/１２",
+            root + "/actions/runs/1/cancel",
+            root + "/actions/runs/1/attempts/0/jobs",
+            root + "/actions/variables?per_page=100&page=0",
+            root + "/actions/variables?per_page=100&page=101",
+            root + "/actions/variables?per_page=101&page=1",
+            root + "/actions/variables?per_page=100&page=1&per_page=1",
+            root + "/actions/variables?per_page=100&page=1#fragment",
+            root + "/actions/variables?name=OTHER",
+            None,
+            [],
+        ):
+            with self.subTest(path=path):
+                self.assert_rejected(path)
+
+    def test_methods_payloads_and_write_targets_are_allowlisted(self):
+        base = "repos/open-ott-play/ottplay-core/actions/variables"
+        valid = {"name": mode.VARIABLE, "value": "k3s"}
+        for method in (
+            "DELETE",
+            "PUT",
+            "HEAD",
+            "get",
+            "GET --hostname=other",
+            None,
+            [],
+        ):
+            with self.subTest(method=method):
+                self.assert_rejected(base, method, valid)
+        for payload in ({}, "body", False, 0, valid):
+            with self.subTest(get_payload=payload):
+                self.assert_rejected(base, "GET", payload)
+        for payload in (
+            None,
+            {},
+            [],
+            "body",
+            {"name": mode.VARIABLE},
+            {"value": "k3s"},
+            {"name": "OTHER", "value": "k3s"},
+            {"name": mode.VARIABLE, "value": "other"},
+            {"name": mode.VARIABLE, "value": ["k3s"]},
+            {"name": mode.VARIABLE, "value": True},
+            {**valid, "extra": "not allowed"},
+        ):
+            for method, suffix in (("POST", ""), ("PATCH", "/CI_RUNNER_MODE")):
+                with self.subTest(payload=payload, method=method):
+                    self.assert_rejected(base + suffix, method, payload)
+        for path, method in (
+            (base, "PATCH"),
+            (base + "/CI_RUNNER_MODE", "POST"),
+            (base + "/OTHER", "PATCH"),
+            (base + "?per_page=100&page=1", "POST"),
+            ("orgs/open-ott-play/actions/runner-groups", "POST"),
+            ("repos/open-ott-play/ottplay-core/actions/runs/1", "POST"),
+        ):
+            with self.subTest(path=path, method=method):
+                self.assert_rejected(path, method, valid)
 
 
 class RunnerModeTests(unittest.TestCase):
@@ -27,7 +184,7 @@ class RunnerModeTests(unittest.TestCase):
         }
         self.variable = None
         self.writes = []
-        self.tip = {"protected": True, "commit": {"sha": "a" * 40}}
+        self.tip = {"protected": False, "commit": {"sha": REVIEWED_SHA}}
         self.run = {
             "event": "workflow_dispatch",
             "path": mode.SMOKE_PATH,
@@ -98,9 +255,9 @@ class RunnerModeTests(unittest.TestCase):
 
     def verify(self):
         with patch.object(mode, "api", side_effect=self.api):
-            mode.verify_smoke(self.repo, self.metadata, 77, NOW)
+            mode.verify_smoke(self.repo, self.metadata, 77, NOW, REVIEWED_SHA)
 
-    def execute(self, *arguments):
+    def execute(self, *arguments, expected_sha=REVIEWED_SHA):
         with (
             patch.object(mode, "api", side_effect=self.api),
             patch.object(mode, "datetime") as date,
@@ -108,7 +265,12 @@ class RunnerModeTests(unittest.TestCase):
             date.now.return_value = NOW
             date.fromisoformat.side_effect = datetime.fromisoformat
             with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
-                return mode.main(["--repo", "ottplay-android", *arguments])
+                sha_argument = (
+                    [] if expected_sha is None else ["--expected-sha", expected_sha]
+                )
+                return mode.main(
+                    ["--repo", "ottplay-android", *arguments, *sha_argument]
+                )
 
     def test_scale_zero_needs_no_online_runner_inventory(self):
         self.verify()  # The fake API deliberately implements no /actions/runners endpoint.
@@ -205,10 +367,61 @@ class RunnerModeTests(unittest.TestCase):
                     self.verify()
             self.groups = original
 
-    def test_unprotected_branch_rejected(self):
-        self.tip["protected"] = False
-        with self.assertRaises(mode.PreflightError):
-            self.verify()
+    def test_unprotected_main_requires_explicit_reviewed_full_sha(self):
+        for sha in (None, "", "a" * 7, "g" * 40, "b" * 40, REVIEWED_SHA + "\n"):
+            with self.subTest(expected_sha=sha):
+                self.assertEqual(
+                    self.execute(
+                        "--mode",
+                        "k3s",
+                        "--smoke-run",
+                        "77",
+                        "--apply",
+                        expected_sha=sha,
+                    ),
+                    2,
+                )
+                self.assertEqual(self.writes, [])
+        self.assertEqual(
+            self.execute(
+                "--mode",
+                "k3s",
+                "--smoke-run",
+                "77",
+                "--apply",
+                expected_sha=REVIEWED_SHA,
+            ),
+            0,
+        )
+        self.assertEqual(len(self.writes), 1)
+
+    def test_main_and_smoke_must_both_match_reviewed_revision(self):
+        self.tip["commit"]["sha"] = "b" * 40
+        self.run["head_sha"] = "b" * 40
+        self.assertEqual(
+            self.execute("--mode", "k3s", "--smoke-run", "77", "--apply"), 2
+        )
+        self.assertEqual(self.writes, [])
+
+    def test_current_main_is_rechecked_against_reviewed_sha_before_write(self):
+        original_api = self.api
+        branch_reads = 0
+
+        def changed_main(path, method="GET", payload=None):
+            nonlocal branch_reads
+            if path.endswith("/branches/main"):
+                branch_reads += 1
+                if branch_reads == 2:
+                    self.tip["commit"]["sha"] = "b" * 40
+                    self.run["head_sha"] = "b" * 40
+            return original_api(path, method, payload)
+
+        self.api = changed_main
+        self.assertEqual(
+            self.execute("--mode", "k3s", "--smoke-run", "77", "--apply"), 2
+        )
+        self.assertEqual(branch_reads, 2)
+        self.assertEqual(self.writes, [])
 
     def test_api_failure_prevents_write(self):
         with (

@@ -166,18 +166,23 @@ class ArcOttplayTests(unittest.TestCase):
             self.assertEqual({p["port"] for p in dns["ports"]}, {53})
             self.assertEqual(public["ports"], [{"protocol": "TCP", "port": 443}])
             excluded = set(public["to"][0]["ipBlock"]["except"])
-            self.assertTrue(
-                {"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16"}
-                <= excluded
+            self.assertLessEqual(
+                {"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16"},
+                excluded,
             )
 
     def test_image_inputs_are_pinned_and_shell_contract_is_valid(self):
         dockerfile = (CONFIG / "Dockerfile").read_text()
         bases = re.findall(r"^FROM (\S+)", dockerfile, re.MULTILINE)
-        self.assertEqual(len(bases), 3)
-        for base in bases:
-            self.assertRegex(base, r"@sha256:[a-f0-9]{64}$")
-        self.assertIn("ubuntu:24.04@", dockerfile)
+        self.assertEqual(
+            bases,
+            [
+                "ghcr.io/actions/actions-runner@sha256:e5496277be5d09bc968b3d64911b74e219ac4a3f2edce956a3ecf9271bea1ef4",
+                "node@sha256:43ac6c60b8f89723f746e8a92ce91abd5017e627ce1ddfe4238355d3a30b772c",
+                "ubuntu@sha256:008173c23f95b170204355c12626cb5a965d779a7e1283b09e9cffbb1bf33ca3",
+            ],
+        )
+        self.assertIn("# ubuntu:24.04", dockerfile)
         for tool in (
             "python3-pip",
             "python3-venv",
@@ -198,6 +203,38 @@ class ArcOttplayTests(unittest.TestCase):
             capture_output=True,
         )
         self.assertEqual(rejected.returncode, 2)
+
+    def test_browser_dependency_installer_uses_only_locked_packages(self):
+        package = json.loads((CONFIG / "buildtools/package.json").read_text())
+        lock = json.loads((CONFIG / "buildtools/package-lock.json").read_text())
+        self.assertTrue(package["private"])
+        self.assertNotIn("scripts", package)
+        self.assertEqual(package["dependencies"], {"playwright": "1.63.0"})
+        self.assertEqual(lock["lockfileVersion"], 3)
+        self.assertEqual(lock["packages"][""]["dependencies"], package["dependencies"])
+        self.assertEqual(
+            set(lock["packages"]),
+            {"", "node_modules/playwright", "node_modules/playwright-core"},
+        )
+        for name in ("playwright", "playwright-core"):
+            entry = lock["packages"][f"node_modules/{name}"]
+            self.assertEqual(entry["version"], "1.63.0")
+            self.assertEqual(
+                entry["resolved"],
+                f"https://registry.npmjs.org/{name}/-/{name}-1.63.0.tgz",
+            )
+            self.assertRegex(entry["integrity"], r"^sha512-[A-Za-z0-9+/]{86}==$")
+        dockerfile = (CONFIG / "Dockerfile").read_text()
+        self.assertIn(
+            "npm ci --ignore-scripts --no-audit --no-fund --prefix /opt/ottplay-buildtools",
+            dockerfile,
+        )
+        self.assertIn(
+            "node /opt/ottplay-buildtools/node_modules/playwright/cli.js install-deps chromium",
+            dockerfile,
+        )
+        self.assertNotIn("npx --yes", dockerfile)
+        self.assertNotIn("install-deps chromium webkit", dockerfile)
 
     def test_startup_with_root_owned_fsgroup_mount_preserves_executables(self):
         image = os.environ.get("ARC_TEST_DOCKER_IMAGE")

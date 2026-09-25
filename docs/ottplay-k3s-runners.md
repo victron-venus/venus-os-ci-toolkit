@@ -32,11 +32,13 @@ group must restrict jobs to Android's `release.yml@refs/heads/main` and
 `runner-smoke.yml@refs/heads/main`. Verify the returned GitHub policy rather
 than treating a group name as an access boundary. If the account cannot enforce
 `restricted_to_workflows`, keep release disabled and Android in `github` mode;
-do not silently broaden access. Protect main and require review of those files.
+do not silently broaden access. Enable branch protection when available and
+review changes to those files. Main is currently unprotected in both private
+repositories; activation requires an operator-reviewed commit SHA explicitly.
 
 The operator has now created CI group ID 3 and release group ID 4 in the Free
 organization and verified selected private repositories/public access disabled.
-Release group 4 currently permits only the existing protected-main `release.yml`:
+Release group 4 currently permits only the existing main-branch `release.yml`:
 GitHub rejected the future `runner-smoke.yml` because it does not yet exist on
 main, not because workflow restrictions require a paid plan. Merge the smoke
 workflow, then add its exact main reference and verify the full desired policy
@@ -63,8 +65,10 @@ values files. Configure an image-pull Secret reference if required; a build tag
 is not the delivery pin. Publish and pin the delivery image before installation.
 
 The image includes Python/pip/venv, JDK 17, Node 22, git, gh, curl, jq, ffmpeg,
-compiler tools, and Playwright 1.63.0 Chromium/WebKit OS dependencies. Browser
-binaries follow the consuming lockfile. Use `playwright install` without
+compiler tools, and Playwright 1.63.0 Chromium OS dependencies. The dependency
+installer uses the committed buildtools npm lockfile with lifecycle scripts
+disabled; its installed CLI is invoked directly and removed after the build.
+Browser binaries follow the consuming lockfile. Use `playwright install` without
 `--with-deps`; do not run apt/sudo in jobs. Python installs use a job venv or
 `setup-python` (Ubuntu system Python follows PEP 668). `setup-node` and
 `setup-java` have writable `/opt/hostedtoolcache`. Android workflows install
@@ -145,13 +149,13 @@ ARC_TEST_DOCKER_IMAGE=python@sha256:2f17fc044b579bab302c2e8054d3a686e2cb9a83de48
 uv run --with pyyaml python -m unittest tests/test_arc_ottplay.py -v
 ```
 
-All nine tests passed with the cached image and ARC 0.14.2 charts. This tests
+All ten tests passed with the cached image and ARC 0.14.2 charts. This tests
 the startup permission contract; it does not qualify the built worker image.
 
 `deploy/arc-ottplay/smoke.sh linux|kvm|release` checks tools, non-root execution,
 writable job directories, absence of host sockets/API tokens and public egress;
 KVM also performs the ioctl and emulator acceleration checks. Run it in the
-protected `runner-smoke.yml` workflow at current main with no signing secrets.
+`runner-smoke.yml` workflow at the operator-reviewed current main SHA with no signing secrets.
 The workflow additionally exercises setup actions, Chromium rendering and
 emulator acceleration as appropriate. It does not replace the phone/TV boot
 and instrumentation matrix required to qualify a release. Confirm the actual pool/job identity and fresh
@@ -160,7 +164,9 @@ not survive. Check that job pods cannot reach the cluster API/private services.
 
 A scale-to-zero pool may have no online listener runner in GitHub's runner list.
 Activation therefore requires a successful current-main smoke for each required
-pool, no older than 24 hours, plus the group policy checks. The operator CLI may
+pool, no older than 24 hours, plus the group policy checks. Its head must match
+both current main and the operator's explicit `--expected-sha` (full 40-character
+reviewed commit SHA); the CLI rechecks these before applying. The operator CLI may
 then set `CI_RUNNER_MODE=k3s`. Android requires all three pools; Core requires
 Linux only. KVM absence presently blocks Android activation.
 
@@ -168,8 +174,8 @@ From the toolkit root, inspect the operator's plan first; add `--apply` only for
 the reviewed switch (these commands were not run during template preparation):
 
 ```sh
-python3 scripts/runner_mode.py --repo ottplay-core --mode k3s --smoke-run RUN_ID
-python3 scripts/runner_mode.py --repo ottplay-core --mode k3s --smoke-run RUN_ID --apply
+python3 scripts/runner_mode.py --repo ottplay-core --mode k3s --smoke-run RUN_ID --expected-sha REVIEWED_SHA
+python3 scripts/runner_mode.py --repo ottplay-core --mode k3s --smoke-run RUN_ID --expected-sha REVIEWED_SHA --apply
 python3 scripts/runner_mode.py --repo ottplay-core --mode github --apply
 ```
 

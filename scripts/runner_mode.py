@@ -8,10 +8,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
-from urllib.parse import quote
 
 ORG = "open-ott-play"
 VARIABLE = "CI_RUNNER_MODE"
@@ -26,17 +26,54 @@ POOLS = {
         "smoke-release": ("ottplay-k3s-release-x64", RELEASE_GROUP),
     },
 }
+REPOSITORY_PATH = r"repos/open-ott-play/(?:ottplay-core|ottplay-android)"
+PAGE_QUERY = r"(?:\?per_page=100&page=(?:[1-9]|[1-9][0-9]|100))?"
+READ_PATHS = (
+    REPOSITORY_PATH,
+    REPOSITORY_PATH + r"/branches/main",
+    REPOSITORY_PATH + r"/actions/variables" + PAGE_QUERY,
+    REPOSITORY_PATH + r"/actions/runs/[1-9][0-9]*",
+    REPOSITORY_PATH
+    + r"/actions/runs/[1-9][0-9]*/attempts/[1-9][0-9]*/jobs"
+    + PAGE_QUERY,
+    r"orgs/open-ott-play/actions/runner-groups" + PAGE_QUERY,
+    r"orgs/open-ott-play/actions/runner-groups/[1-9][0-9]*/repositories" + PAGE_QUERY,
+)
+WRITE_PATHS = {
+    "POST": REPOSITORY_PATH + r"/actions/variables",
+    "PATCH": REPOSITORY_PATH + r"/actions/variables/CI_RUNNER_MODE",
+}
 
 
 class PreflightError(ValueError):
     """Readiness could not be established; no variable should be changed."""
 
 
+def validate_api_request(path: str, method: str, payload: dict | None) -> None:
+    """Limit gh to this switch's exact endpoints, methods and variable schema."""
+    if not isinstance(path, str) or not isinstance(method, str):
+        raise PreflightError("Unsupported GitHub API request.")
+    if method == "GET":
+        if payload is not None or not any(
+            re.fullmatch(route, path) for route in READ_PATHS
+        ):
+            raise PreflightError("Unsupported GitHub API read.")
+        return
+    if method not in WRITE_PATHS or not re.fullmatch(WRITE_PATHS[method], path):
+        raise PreflightError("Unsupported GitHub API write.")
+    if type(payload) is not dict or set(payload) != {"name", "value"}:
+        raise PreflightError("Unexpected runner-mode variable payload.")
+    if payload["name"] != VARIABLE or payload["value"] not in ("github", "k3s"):
+        raise PreflightError("Unexpected runner-mode variable payload.")
+
+
 def api(path: str, method: str = "GET", payload: dict | None = None):
     """Keep credentials out of subprocess arguments and error output."""
-    command = ["gh", "api", "--hostname", "github.com", path, "--method", method]
+    validate_api_request(path, method, payload)
+    command = ["gh", "api", "--hostname", "github.com", "--method", method]
     if payload is not None:
         command += ["--input", "-"]
+    command += ["--", path]
     result = subprocess.run(
         command,
         input=json.dumps(payload) if payload is not None else None,
@@ -79,64 +116,90 @@ def repo_state(repo: str) -> tuple[dict, dict | None]:
     return metadata, variable
 
 
+def selected_group(name: str, groups: list[dict]) -> dict:
+    """Resolve one group whose policy explicitly excludes public repositories."""
+    matches = [group for group in groups if group["name"] == name]
+    if len(matches) != 1:
+        raise PreflightError(f"Runner group {name} is missing or ambiguous.")
+    group = matches[0]
+    if group.get("allows_public_repositories") is not False:
+        raise PreflightError(f"Runner group {name} must prohibit public repositories.")
+    if group.get("visibility") != "selected":
+        raise PreflightError(
+            f"Runner group {name} must select repositories explicitly."
+        )
+    return group
+
+
+def verify_group_repositories(repo: str, name: str, group_id: int) -> None:
+    """Read all selected repositories and enforce the per-group private scope."""
+    allowed = collection(
+        f"orgs/{ORG}/actions/runner-groups/{group_id}/repositories", "repositories"
+    )
+    names = {item["full_name"] for item in allowed}
+    maximum = {f"{ORG}/ottplay-android"}
+    if name == CI_GROUP:
+        maximum.add(f"{ORG}/ottplay-core")
+    if repo not in names or not names <= maximum:
+        raise PreflightError(f"Runner group {name} has unexpected repository access.")
+    if any(item.get("private") is not True for item in allowed):
+        raise PreflightError(f"Runner group {name} contains a public repository.")
+
+
+def verify_release_workflows(group: dict) -> None:
+    """Require GitHub's workflow fence rather than trusting a runner label."""
+    workflows = {
+        f"{ORG}/ottplay-android/.github/workflows/{file}@refs/heads/main"
+        for file in ("release.yml", "runner-smoke.yml")
+    }
+    if (
+        group.get("restricted_to_workflows") is not True
+        or set(group.get("selected_workflows", [])) != workflows
+    ):
+        raise PreflightError(
+            "Release group requires enforced workflow restrictions for "
+            "release.yml and runner-smoke.yml on main; labels alone are insufficient."
+        )
+
+
 def verify_groups(repo: str, groups: list[dict]) -> dict[str, int]:
     """Check actual access policy, especially the signing pool's workflow fence."""
     required = {group for _, group in POOLS[repo.split("/")[1]].values()}
     result = {}
     for name in sorted(required):
-        matches = [group for group in groups if group["name"] == name]
-        if len(matches) != 1:
-            raise PreflightError(f"Runner group {name} is missing or ambiguous.")
-        group = matches[0]
-        if group.get("allows_public_repositories") is not False:
-            raise PreflightError(
-                f"Runner group {name} must prohibit public repositories."
-            )
-        if group.get("visibility") != "selected":
-            raise PreflightError(
-                f"Runner group {name} must select repositories explicitly."
-            )
-        allowed = collection(
-            f"orgs/{ORG}/actions/runner-groups/{group['id']}/repositories",
-            "repositories",
-        )
-        names = {item["full_name"] for item in allowed}
-        maximum = {f"{ORG}/ottplay-android"}
-        if name == CI_GROUP:
-            maximum.add(f"{ORG}/ottplay-core")
-        if repo not in names or not names <= maximum:
-            raise PreflightError(
-                f"Runner group {name} has unexpected repository access."
-            )
-        if any(item.get("private") is not True for item in allowed):
-            raise PreflightError(f"Runner group {name} contains a public repository.")
+        group = selected_group(name, groups)
+        verify_group_repositories(repo, name, group["id"])
         if name == RELEASE_GROUP:
-            workflows = {
-                f"{ORG}/ottplay-android/.github/workflows/{file}@refs/heads/main"
-                for file in ("release.yml", "runner-smoke.yml")
-            }
-            if (
-                group.get("restricted_to_workflows") is not True
-                or set(group.get("selected_workflows", [])) != workflows
-            ):
-                raise PreflightError(
-                    "Release group requires enforced workflow restrictions for "
-                    "release.yml and runner-smoke.yml on main; labels alone are insufficient."
-                )
+            verify_release_workflows(group)
         result[name] = group["id"]
     return result
 
 
-def verify_smoke(repo: str, metadata: dict, run_id: int, now: datetime) -> tuple:
+def reviewed_main(repo: str, branch: str, expected_sha: str | None) -> str:
+    """Bind activation to the exact main revision reviewed by the operator."""
+    if branch != "main":
+        raise PreflightError("This rollout is configured for the main branch.")
+    if not isinstance(expected_sha, str) or not re.fullmatch(
+        r"[0-9a-fA-F]{40}", expected_sha
+    ):
+        raise PreflightError(
+            "k3s activation requires --expected-sha with the reviewed full 40-character commit SHA."
+        )
+    expected_sha = expected_sha.lower()
+    tip = api(f"repos/{repo}/branches/main")
+    if tip["commit"]["sha"] != expected_sha:
+        raise PreflightError(
+            "Current main differs from the operator-reviewed --expected-sha."
+        )
+    return expected_sha
+
+
+def verify_smoke(
+    repo: str, metadata: dict, run_id: int, now: datetime, expected_sha: str | None
+) -> tuple:
     """A recent real job is evidence even when ARC has scaled back to zero."""
     branch = metadata["default_branch"]
-    if branch != "main":
-        raise PreflightError(
-            "This rollout is configured for the protected main branch."
-        )
-    tip = api(f"repos/{repo}/branches/{quote(branch, safe='')}")
-    if tip.get("protected") is not True:
-        raise PreflightError("The default branch must be protected before activation.")
+    expected_sha = reviewed_main(repo, branch, expected_sha)
     run = api(f"repos/{repo}/actions/runs/{run_id}")
     expected = {
         "event": "workflow_dispatch",
@@ -144,7 +207,7 @@ def verify_smoke(repo: str, metadata: dict, run_id: int, now: datetime) -> tuple
         "status": "completed",
         "conclusion": "success",
         "head_branch": branch,
-        "head_sha": tip["commit"]["sha"],
+        "head_sha": expected_sha,
     }
     if any(run.get(key) != value for key, value in expected.items()):
         raise PreflightError(
@@ -185,6 +248,85 @@ def verify_smoke(repo: str, metadata: dict, run_id: int, now: datetime) -> tuple
     return (run["head_sha"], attempt, run["created_at"], tuple(sorted(groups.items())))
 
 
+def activation_evidence(
+    repo: str, metadata: dict, run_id: int | None, expected_sha: str | None
+) -> tuple:
+    """Only k3s activation requires current smoke evidence."""
+    if not run_id or run_id < 1:
+        raise PreflightError("Run runner-smoke.yml on main and supply --smoke-run ID.")
+    return verify_smoke(
+        repo, metadata, run_id, datetime.now(timezone.utc), expected_sha
+    )
+
+
+def apply_mode(repo: str, args, metadata: dict, current: dict | None, evidence) -> None:
+    """Recheck evidence and the latest variable before the narrowly scoped write."""
+    if (
+        args.mode == "k3s"
+        and activation_evidence(repo, metadata, args.smoke_run, args.expected_sha)
+        != evidence
+    ):
+        raise PreflightError(
+            "Smoke evidence changed during preflight; inspect and retry."
+        )
+    # Last read before the write; GitHub Variables has no atomic compare-and-swap.
+    latest_metadata, latest = repo_state(repo)
+    if (
+        latest != current
+        or latest_metadata["default_branch"] != metadata["default_branch"]
+    ):
+        raise PreflightError(
+            "Mode or default branch changed during preflight; inspect and retry."
+        )
+    path = f"repos/{repo}/actions/variables"
+    payload = {"name": VARIABLE, "value": args.mode}
+    api(
+        path if current is None else f"{path}/{VARIABLE}",
+        "POST" if current is None else "PATCH",
+        payload,
+    )
+    _, actual = repo_state(repo)
+    if actual is None or actual["value"] != args.mode:
+        raise PreflightError(
+            "Write could not be verified; inspect the repository variable."
+        )
+    print(
+        f"Verified {VARIABLE}={actual['value']}. Existing queued/running jobs are unchanged."
+    )
+    print("Start a NEW workflow run on the intended ref; no runs were dispatched here.")
+
+
+def run_switch(args) -> int:
+    """Show the requested plan, and apply it only after explicit operator intent."""
+    repo = f"{ORG}/{args.repo}"
+    metadata, current = repo_state(repo)
+    state = (
+        current["value"]
+        if current
+        else "repository override unset; organization value not inspected"
+    )
+    print(f"{repo}: {VARIABLE}={state}")
+    if args.mode is None:
+        return 0
+    print(
+        f"Requested: {args.mode}; required k3s pools: "
+        + ", ".join(label for label, _ in POOLS[args.repo].values())
+    )
+    evidence = None
+    if args.mode == "k3s":
+        evidence = activation_evidence(
+            repo, metadata, args.smoke_run, args.expected_sha
+        )
+        print("Recent smoke and runner group policies verified.")
+    if not args.apply:
+        print(
+            "Dry run: no variable changed. Add --apply to use this mode for new runs."
+        )
+        return 0
+    apply_mode(repo, args, metadata, current, evidence)
+    return 0
+
+
 def main(argv=None) -> int:
     """Read-only by default; the only write is the explicitly requested variable."""
     parser = argparse.ArgumentParser(description=__doc__)
@@ -192,78 +334,17 @@ def main(argv=None) -> int:
     parser.add_argument("--mode", choices=("github", "k3s"))
     parser.add_argument("--smoke-run", type=int, help="Successful manual smoke run ID")
     parser.add_argument(
+        "--expected-sha", help="Operator-reviewed full main commit SHA required for k3s"
+    )
+    parser.add_argument(
         "--apply", action="store_true", help="Write the repository variable"
     )
     args = parser.parse_args(argv)
     if args.apply and args.mode is None:
         parser.error("--apply requires --mode")
-    repo = f"{ORG}/{args.repo}"
     try:
-        metadata, current = repo_state(repo)
-        state = (
-            current["value"]
-            if current
-            else "repository override unset; organization value not inspected"
-        )
-        print(f"{repo}: {VARIABLE}={state}")
-        if args.mode is None:
-            return 0
-        print(
-            f"Requested: {args.mode}; required k3s pools: "
-            + ", ".join(label for label, _ in POOLS[args.repo].values())
-        )
-        if args.mode == "k3s":
-            if not args.smoke_run or args.smoke_run < 1:
-                raise PreflightError(
-                    "Run runner-smoke.yml on main and supply --smoke-run ID."
-                )
-            evidence = verify_smoke(
-                repo, metadata, args.smoke_run, datetime.now(timezone.utc)
-            )
-            print("Recent smoke and runner group policies verified.")
-        if not args.apply:
-            print(
-                "Dry run: no variable changed. Add --apply to use this mode for new runs."
-            )
-            return 0
-        if (
-            args.mode == "k3s"
-            and verify_smoke(repo, metadata, args.smoke_run, datetime.now(timezone.utc))
-            != evidence
-        ):
-            raise PreflightError(
-                "Smoke evidence changed during preflight; inspect and retry."
-            )
-        # Last read before the write; GitHub Variables has no atomic compare-and-swap.
-        latest_metadata, latest = repo_state(repo)
-        if (
-            latest != current
-            or latest_metadata["default_branch"] != metadata["default_branch"]
-        ):
-            raise PreflightError(
-                "Mode or default branch changed during preflight; inspect and retry."
-            )
-        path = f"repos/{repo}/actions/variables"
-        payload = {"name": VARIABLE, "value": args.mode}
-        api(
-            path if current is None else f"{path}/{VARIABLE}",
-            "POST" if current is None else "PATCH",
-            payload,
-        )
-        _, actual = repo_state(repo)
-        if actual is None or actual["value"] != args.mode:
-            raise PreflightError(
-                "Write could not be verified; inspect the repository variable."
-            )
-        print(
-            f"Verified {VARIABLE}={actual['value']}. Existing queued/running jobs are unchanged."
-        )
-        print(
-            "Start a NEW workflow run on the intended ref; no runs were dispatched here."
-        )
-        return 0
+        return run_switch(args)
     except (
-        PreflightError,
         OSError,
         subprocess.TimeoutExpired,
         ValueError,
