@@ -3,6 +3,10 @@ name: Auto Merge
 on:
   workflow_call:
     inputs:
+      runner-labels:
+        description: JSON array of labels for a trusted metadata runner with Python 3 and gh
+        type: string
+        default: '["ubuntu-latest"]'
       pr-author:
         description: Comma-separated subset of trusted PR authors
         type: string
@@ -13,6 +17,10 @@ on:
         default: squash
       native-auto-merge:
         description: Request auto-merge immediately; requires all validation in the protected CI gate
+        type: boolean
+        default: false
+      reviewed-merge:
+        description: Wait for successful named checks and an independent trusted current-head approval, then merge that head
         type: boolean
         default: false
       required-status-checks:
@@ -27,7 +35,7 @@ on:
 jobs:
   auto-merge:
     name: Auto Merge
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(inputs.runner-labels) }}
     timeout-minutes: ${{ inputs.native-auto-merge && 5 || 125 }}
     permissions:
       contents: read
@@ -41,6 +49,7 @@ jobs:
           MERGE_METHOD: ${{ inputs.merge-method }}
           NATIVE_AUTO_MERGE: ${{ inputs.native-auto-merge }}
           REQUIRED_CHECKS: ${{ inputs.required-status-checks }}
+          REVIEWED_MERGE: ${{ inputs.reviewed-merge }}
         run: |
           python3 - <<'PY'
           import json
@@ -58,9 +67,14 @@ jobs:
               return subprocess.check_output(['gh', *args], text=True).strip()
 
 
-          def snapshot(repo, number):
-              return json.loads(gh('pr', 'view', number, '--repo', repo, '--json',
-                                   'author,labels,isDraft,baseRefName,headRefOid,state,statusCheckRollup,autoMergeRequest'))
+          def snapshot(repo, number, reviewed=False):
+              pr = json.loads(gh('pr', 'view', number, '--repo', repo, '--json',
+                                   'author,labels,isDraft,isCrossRepository,baseRefName,headRefOid,state,statusCheckRollup,autoMergeRequest'))
+              if reviewed:
+                  pages = json.loads(gh('api', '--paginate', '--slurp',
+                                        f'repos/{repo}/pulls/{number}/reviews?per_page=100'))
+                  pr['reviewHistory'] = [review for page in pages for review in page]
+              return pr
 
 
           def canonical_author(author):
@@ -127,6 +141,38 @@ jobs:
               return ready, tuple(sorted(checks))
 
 
+          def review_state(pr):
+              # Read every review page. COMMENTED does not retract a prior decision;
+              # DISMISSED does. Never accept the author's own or an old-head approval.
+              latest = {}
+              for review in sorted(pr['reviewHistory'], key=lambda item: item['id']):
+                  login = (review.get('user') or {}).get('login') or f"unknown-reviewer-{review['id']}"
+                  state = review['state']
+                  if login and state in {'APPROVED', 'CHANGES_REQUESTED', 'DISMISSED'}:
+                      latest[login] = (state, review.get('commit_id'), review['id'])
+              blocked = any(item[0] == 'CHANGES_REQUESTED' for item in latest.values())
+              approved = any(login in {'4alvit', 'californiantiramisu'}
+                             and login != canonical_author(pr['author'])
+                             and state == 'APPROVED' and commit == pr['headRefOid']
+                             for login, (state, commit, _) in latest.items())
+              return approved and not blocked, tuple(sorted(latest.items()))
+
+
+          def checked_snapshot(pr, required, run_id, reviewed):
+              ready, checks = check_state(pr, required, run_id)
+              if not reviewed:
+                  return ready, checks
+              approved, reviews = review_state(pr)
+              # Required checks must succeed, not merely finish or skip. Existing
+              # check_state still rejects failures and pending optional checks.
+              successful = {identity[1] for identity, state in checks if state == 'SUCCESS'}
+              named_checks_pass = required <= successful and all(
+                  state == 'SUCCESS' for identity, state in checks if identity[1] in required)
+              ready = (ready and named_checks_pass and approved
+                       and pr.get('isCrossRepository') is False)
+              return ready, (checks, reviews)
+
+
           def request_protected_merge(repo, number, default_branch, authors, method, required):
               pr = snapshot(repo, number)
               if not eligible(pr, default_branch, authors):
@@ -175,26 +221,35 @@ jobs:
                   raise RuntimeError('merge-method must be merge, squash, or rebase.')
               required = {item.strip() for item in os.environ['REQUIRED_CHECKS'].split(',') if item.strip()}
               default_branch = gh('api', f'repos/{repo}', '--jq', '.default_branch')
-              if os.environ.get('NATIVE_AUTO_MERGE') == 'true':
+              reviewed = os.environ.get('REVIEWED_MERGE') == 'true'
+              native = os.environ.get('NATIVE_AUTO_MERGE') == 'true'
+              if reviewed and (native or not required):
+                  raise RuntimeError('Reviewed merge requires explicit checks and cannot use native mode.')
+              if native:
                   request_protected_merge(repo, number, default_branch, authors, method, required)
                   return
               deadline = time.monotonic() + 120 * 60
               previous_green = None
               while time.monotonic() < deadline:
-                  pr = snapshot(repo, number)
+                  pr = snapshot(repo, number, reviewed=True) if reviewed else snapshot(repo, number)
+                  if reviewed and pr.get('isCrossRepository') is not False:
+                      print('Reviewed merge excludes forks and unknown repository identity.')
+                      return
                   if not eligible(pr, default_branch, authors):
                       print('PR is not eligible: author, label, draft, target branch, or open state does not match.')
                       return
-                  ready, checks = check_state(pr, required, os.environ.get('GITHUB_RUN_ID', ''))
+                  ready, checks = checked_snapshot(pr, required, os.environ.get('GITHUB_RUN_ID', ''), reviewed)
                   fingerprint = (pr['headRefOid'], checks)
                   if ready and fingerprint == previous_green:
-                      fresh = snapshot(repo, number)
-                      fresh_ready, fresh_checks = check_state(fresh, required, os.environ.get('GITHUB_RUN_ID', ''))
+                      fresh = snapshot(repo, number, reviewed=True) if reviewed else snapshot(repo, number)
+                      fresh_ready, fresh_checks = checked_snapshot(fresh, required, os.environ.get('GITHUB_RUN_ID', ''), reviewed)
                       if (eligible(fresh, default_branch, authors) and fresh_ready
                               and (fresh['headRefOid'], fresh_checks) == fingerprint):
-                          gh('pr', 'merge', number, '--repo', repo, '--auto', f'--{method}',
+                          options = [] if reviewed else ['--auto']
+                          gh('pr', 'merge', number, '--repo', repo, *options, f'--{method}',
                              '--match-head-commit', fresh['headRefOid'])
-                          print('Requested native auto-merge for the verified PR head; repository protections still apply.')
+                          print('Merged reviewed PR head.' if reviewed else
+                                'Requested native auto-merge for the verified PR head; repository protections still apply.')
                           return
                       previous_green = None
                   else:

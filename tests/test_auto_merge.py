@@ -386,6 +386,7 @@ class NativeAutoMergeTests(AutoMergeTests):
     """The optional native mode delegates waiting only to verified branch rules."""
 
     def run_native(self, snapshots, rules=None, environment=None):
+        """Run native mode with effective branch rules provided by the API fixture."""
         if rules is None:
             rules = [
                 {
@@ -423,12 +424,14 @@ class NativeAutoMergeTests(AutoMergeTests):
         return transport.call_args_list
 
     def test_pending_gate_is_left_to_github(self):
+        """Verified branch protections may safely own pending validation."""
         calls = self.run_native([pr(state="PENDING"), pr(state="PENDING")])
         self.assertIn("--auto", calls[-1].args)
         self.assertEqual(calls[-1].args[-2:], ("--match-head-commit", "abc"))
         self.assertNotIn("--admin", calls[-1].args)
 
     def test_missing_or_relaxed_protection_fails_closed(self):
+        """A native request requires strict protected status checks."""
         snapshot = pr()
         for parameters in (
             {},
@@ -448,15 +451,18 @@ class NativeAutoMergeTests(AutoMergeTests):
                 )
 
     def test_additional_check_must_be_protected(self):
+        """Explicit external requirements cannot remain unprotected."""
         snapshots = [pr()]
         with self.assertRaisesRegex(RuntimeError, "every required check"):
             self.run_native(snapshots, environment={"REQUIRED_CHECKS": "Extra review"})
 
     def test_head_race_does_not_merge(self):
+        """A concurrent commit prevents a stale native request."""
         calls = self.run_native([pr(), pr(head="new")])
         self.assertFalse(any("merge" in call.args for call in calls))
 
     def test_label_removal_disables_pending_request(self):
+        """Withdraw authorization when the opt-in label is removed."""
         withdrawn = pr() | {"labels": [], "autoMergeRequest": {"enabledAt": "today"}}
         for snapshots in ([withdrawn], [pr(), withdrawn]):
             calls = self.run_native(snapshots)
@@ -464,5 +470,160 @@ class NativeAutoMergeTests(AutoMergeTests):
             self.assertFalse(any("--auto" in call.args for call in calls))
 
     def test_untrusted_author_never_enables_native_merge(self):
+        """Native mode retains the shared trusted-author boundary."""
         calls = self.run_native([pr("stranger")])
         self.assertFalse(any("merge" in call.args for call in calls))
+
+
+class ReviewedMergeTests(unittest.TestCase):
+    """Opt-in merging requires independent current-head review and exact green checks."""
+
+    def setUp(self):
+        """Load the same workflow while declaring the dynamically populated namespace."""
+        self.code = {}
+        AutoMergeTests.setUp(self)
+
+    run_workflow = AutoMergeTests.run_workflow
+
+    @staticmethod
+    def reviewed(head="abc", state="SUCCESS"):
+        """Include the paginated REST review metadata used by the strict mode."""
+        return pr(author="4alvit", head=head, state=state) | {
+            "isCrossRepository": False,
+            "reviewHistory": [
+                {
+                    "id": 1,
+                    "user": {"login": "californiantiramisu"},
+                    "state": "APPROVED",
+                    "commit_id": head,
+                }
+            ],
+        }
+
+    def run_reviewed(self, snapshots, **environment):
+        """Run the shared workflow in explicitly opted-in reviewed mode."""
+        return self.run_workflow(
+            snapshots,
+            {"REVIEWED_MERGE": "true", "REQUIRED_CHECKS": "CI", **environment},
+        )
+
+    def test_green_reviewed_head_merges_without_queued_request(self):
+        """The immutable head is guarded and no unprotected auto request is left behind."""
+        ready = self.reviewed()
+        calls = self.run_reviewed([ready, ready, ready])
+        self.assertEqual(calls[-1].args[:2], ("pr", "merge"))
+        self.assertEqual(calls[-1].args[-2:], ("--match-head-commit", "abc"))
+        self.assertNotIn("--auto", calls[-1].args)
+        self.assertNotIn("--admin", calls[-1].args)
+
+    def test_required_checks_must_succeed_never_skip_or_neutral(self):
+        """A skipped mandatory job cannot masquerade as completed validation."""
+        check = self.code["checked_snapshot"]
+        for state in ("SKIPPED", "NEUTRAL", "PENDING"):
+            with self.subTest(state=state):
+                self.assertFalse(
+                    check(self.reviewed(state=state), {"CI"}, "123", True)[0]
+                )
+        self.assertFalse(check(self.reviewed(), {"Missing"}, "123", True)[0])
+        duplicated = self.reviewed()
+        duplicated["statusCheckRollup"].append(
+            attempt("CI", "Other validation", 125, "59", "SKIPPED")
+        )
+        self.assertFalse(check(duplicated, {"CI"}, "123", True)[0])
+
+    def test_only_independent_trusted_current_head_approval_qualifies(self):
+        """Self, stranger, dismissed, missing and stale approvals never qualify."""
+        ready = self.reviewed()
+        original = ready["reviewHistory"][0]
+        for patching in (
+            {"user": {"login": "4alvit"}},
+            {"user": {"login": "stranger"}},
+            {"user": None},
+            {"state": "DISMISSED"},
+            {"state": "COMMENTED"},
+            {"commit_id": "old"},
+        ):
+            with self.subTest(patching=patching):
+                response = ready | {"reviewHistory": [original | patching]}
+                self.assertFalse(self.code["review_state"](response)[0])
+        self.assertFalse(self.code["review_state"](ready | {"reviewHistory": []})[0])
+
+    def test_changes_requested_blocks_even_with_another_approval(self):
+        """Comments do not erase an outstanding changes request or approval."""
+        ready = self.reviewed()
+        blocked = ready | {
+            "reviewHistory": ready["reviewHistory"]
+            + [
+                {
+                    "id": 2,
+                    "user": {"login": "reviewer"},
+                    "state": "CHANGES_REQUESTED",
+                    "commit_id": "old",
+                },
+                {
+                    "id": 3,
+                    "user": {"login": "reviewer"},
+                    "state": "COMMENTED",
+                    "commit_id": "abc",
+                },
+            ]
+        }
+        self.assertFalse(self.code["review_state"](blocked)[0])
+        blocked["reviewHistory"].append(
+            {
+                "id": 4,
+                "user": {"login": "reviewer"},
+                "state": "DISMISSED",
+                "commit_id": "abc",
+            }
+        )
+        self.assertTrue(self.code["review_state"](blocked)[0])
+
+    def test_approval_removal_in_final_refresh_cannot_merge(self):
+        """Review state participates in both stability and the final refresh."""
+        ready = self.reviewed()
+        withdrawn = ready | {"reviewHistory": []}
+        closed = withdrawn | {"state": "CLOSED"}
+        calls = self.run_reviewed([ready, ready, withdrawn, closed])
+        self.assertFalse(any(call.args[:2] == ("pr", "merge") for call in calls))
+
+    def test_changed_head_requires_new_approval_and_stability(self):
+        """A new commit with an old approval waits until an independent new review."""
+        old = self.reviewed()
+        stale_review = old | {"headRefOid": "new"}
+        ready = self.reviewed(head="new")
+        calls = self.run_reviewed([old, old, stale_review, ready, ready, ready])
+        self.assertEqual(calls[-1].args[-1], "new")
+
+    def test_forks_and_unknown_repository_identity_never_merge(self):
+        """The shared helper also enforces the caller's no-forks boundary."""
+        for cross in (True, None):
+            calls = self.run_reviewed([self.reviewed() | {"isCrossRepository": cross}])
+            self.assertEqual(len(calls), 1)
+
+    def test_requires_checks_and_disallows_conflicting_native_mode(self):
+        """There is no strict mode with an empty validation contract."""
+        for environment in ({"REQUIRED_CHECKS": ""}, {"NATIVE_AUTO_MERGE": "true"}):
+            with self.assertRaisesRegex(RuntimeError, "explicit checks"):
+                self.run_reviewed([], **environment)
+
+    def test_reviews_are_loaded_from_every_page_without_repository_checkout(self):
+        """An old changes request on another API page is not silently truncated."""
+        import json  # pylint: disable=import-outside-toplevel
+
+        first = self.reviewed()["reviewHistory"][0]
+        old = {
+            "id": 0,
+            "user": {"login": "reviewer"},
+            "state": "CHANGES_REQUESTED",
+            "commit_id": "old",
+        }
+        transport = unittest.mock.Mock(
+            side_effect=[json.dumps(pr()), json.dumps([[old], [first]])]
+        )
+        with patch.dict(self.code, {"gh": transport}):
+            result = self.code["snapshot"]("example/repo", "7", reviewed=True)
+        self.assertEqual(result["reviewHistory"], [old, first])
+        self.assertFalse(self.code["review_state"](result)[0])
+        self.assertIn("--paginate", transport.call_args_list[-1].args)
+        self.assertIn("--slurp", transport.call_args_list[-1].args)
