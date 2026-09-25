@@ -1,0 +1,106 @@
+# Replace the custom worker image digest before install; shell jobs only.
+# Disabled until restricted release group and secret-free smoke.
+githubConfigUrl: https://github.com/open-ott-play
+githubConfigSecret: ottplay-runner-app
+runnerGroup: ottplay-private-release
+runnerScaleSetName: ottplay-k3s-release-x64
+minRunners: 0
+maxRunners: 0
+controllerServiceAccount:
+  namespace: arc-ottplay-system
+  name: ottplay-arc-controller
+listenerTemplate:
+  spec:
+    nodeSelector:
+      kubernetes.io/hostname: mp
+      kubernetes.io/arch: amd64
+    securityContext:
+      runAsNonRoot: true
+      runAsUser: 65532
+      runAsGroup: 65532
+      seccompProfile:
+        type: RuntimeDefault
+    containers:
+    - name: listener
+      securityContext: &id001
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities:
+          drop:
+          - ALL
+      resources:
+        requests:
+          cpu: 50m
+          memory: 64Mi
+        limits:
+          cpu: 250m
+          memory: 256Mi
+template:
+  metadata:
+    labels:
+      ottplay.dev/workload: job
+  spec:
+    restartPolicy: Never
+    terminationGracePeriodSeconds: 60
+    serviceAccountName: ottplay-runner-no-api
+    automountServiceAccountToken: false
+    enableServiceLinks: false
+    nodeSelector:
+      kubernetes.io/hostname: mp
+      kubernetes.io/arch: amd64
+    securityContext:
+      runAsNonRoot: true
+      runAsUser: 1001
+      runAsGroup: 1001
+      fsGroup: 1001
+      seccompProfile:
+        type: RuntimeDefault
+    containers:
+    - name: runner
+      image: ghcr.io/open-ott-play/ci-worker@sha256:REPLACE_WITH_BUILT_DIGEST
+      imagePullPolicy: IfNotPresent
+      command:
+      - /opt/ottplay/start-runner.sh
+      securityContext: *id001
+      resources:
+        requests:
+          cpu: '2'
+          memory: 4Gi
+          ephemeral-storage: 8Gi
+        limits:
+          cpu: '4'
+          memory: 6Gi
+          ephemeral-storage: 48Gi
+      volumeMounts:
+      - name: home
+        mountPath: /home/runner
+      - name: work
+        mountPath: /home/runner/_work
+      - name: toolcache
+        mountPath: /opt/hostedtoolcache
+      - name: tmp
+        mountPath: /tmp
+      - name: sdk
+        mountPath: /opt/android-sdk
+      - name: shm
+        mountPath: /dev/shm
+    volumes:
+    - name: home
+      emptyDir:
+        sizeLimit: 12Gi
+    - name: work
+      emptyDir:
+        sizeLimit: 20Gi
+    - name: toolcache
+      emptyDir:
+        sizeLimit: 4Gi
+    - name: tmp
+      emptyDir:
+        sizeLimit: 12Gi
+    - name: sdk
+      emptyDir:
+        sizeLimit: 12Gi
+    - name: shm
+      emptyDir:
+        medium: Memory
+        sizeLimit: 1Gi

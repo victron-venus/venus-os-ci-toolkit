@@ -1,0 +1,28 @@
+{
+  "organization": "open-ott-play",
+  "groups": [
+    {
+      "name": "ottplay-private-ci",
+      "visibility": "selected",
+      "allows_public_repositories": false,
+      "repositories": [
+        "open-ott-play/ottplay-core",
+        "open-ott-play/ottplay-android"
+      ],
+      "restricted_to_workflows": false
+    },
+    {
+      "name": "ottplay-private-release",
+      "visibility": "selected",
+      "allows_public_repositories": false,
+      "repositories": [
+        "open-ott-play/ottplay-android"
+      ],
+      "restricted_to_workflows": true,
+      "selected_workflows": [
+        "open-ott-play/ottplay-android/.github/workflows/release.yml@refs/heads/main",
+        "open-ott-play/ottplay-android/.github/workflows/runner-smoke.yml@refs/heads/main"
+      ]
+    }
+  ]
+}

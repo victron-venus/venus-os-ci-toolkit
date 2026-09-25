@@ -35,6 +35,10 @@ Concurrent GitHub runs can start in a different order from their numeric run IDs
 
 ## CI and release documentation
 
+The [private OTTPlay k3s runner configuration](docs/ottplay-k3s-runners.md) adds
+an opt-in GitHub/ARC switch, ephemeral worker images and a verified manual
+activation command. It does not alter the fleet's default execution policy.
+
 The [change-scope guide](docs/CHANGE_SCOPE.md) describes documentation-only checks,
 full release qualification and per-repository exceptions. Generated pipelines
 skip heavy builds and automatic releases for verified documentation-only changes.

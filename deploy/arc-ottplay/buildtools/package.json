@@ -1,0 +1,8 @@
+{
+  "name": "ottplay-runner-buildtools",
+  "private": true,
+  "version": "1.0.0",
+  "dependencies": {
+    "playwright": "1.63.0"
+  }
+}

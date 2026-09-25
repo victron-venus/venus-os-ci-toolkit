@@ -1,0 +1,9 @@
+{
+  "arc_chart_version": "0.14.2",
+  "chart_oci_digests": {
+    "gha-runner-scale-set": "sha256:579e3a1bdf4032b3c3de3e9b0880a4a6d3c1989a67c06010f680c1cc49524d11",
+    "gha-runner-scale-set-controller": "sha256:3081ba15c41f0aa791058dedd2a7406fece24c9aeaa94956c268e5099427a452"
+  },
+  "reviewed_upstream_date": "2026-09-24",
+  "live_deploy_verified": false
+}
