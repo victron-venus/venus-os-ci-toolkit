@@ -43,7 +43,7 @@ jobs:
     steps:
       # This workflow handles metadata only. Never check out or execute PR code.
       - name: Approve the current head as an independent reviewer
-        shell: python3 {0}
+        shell: python3 -I {0}
         env:
           GITHUB_TOKEN: ${{ github.event.pull_request.user.login == 'dependabot[bot]' && github.token || '' }}
           BOT_PAT: ${{ github.event.pull_request.user.login != 'dependabot[bot]' && secrets.BOT_PAT || '' }}

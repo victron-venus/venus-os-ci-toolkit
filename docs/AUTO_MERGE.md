@@ -68,6 +68,10 @@ already provide `python3` and `gh`; neither workflow checks out source or instal
 packages. Set labels in the trusted base workflow, never from PR title, body,
 branch name or another contributor-controlled value. Keep the token confined to
 the metadata job, and preserve the repository's own exact workflow policy.
+Both Python entrypoints run in isolated mode (`-I`) so a leftover checkout,
+`PYTHONPATH`, or user site directory cannot replace their standard-library
+imports. The runner host and its preinstalled Python/`gh` executables must still
+be trusted; this does not isolate metadata jobs from a compromised persistent host.
 This option does not provision a runner, change GitHub billing, or grant runner
 access across repositories. A waiting merge job occupies a runner slot, so label
 a PR for merge after its CI has completed when using a single dedicated runner.

@@ -51,7 +51,7 @@ jobs:
           REQUIRED_CHECKS: ${{ inputs.required-status-checks }}
           REVIEWED_MERGE: ${{ inputs.reviewed-merge }}
         run: |
-          python3 - <<'PY'
+          python3 -I - <<'PY'
           import json
           import os
           import re
