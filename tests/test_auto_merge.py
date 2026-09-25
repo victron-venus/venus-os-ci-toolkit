@@ -10,7 +10,7 @@ from unittest.mock import patch
 WORKFLOW = Path(__file__).resolve().parents[1] / ".github/workflows/auto-merge.yml"
 SOURCE = textwrap.dedent(
     WORKFLOW.read_text()
-    .split("python3 - <<'PY'\n", 1)[1]
+    .split("python3 -I - <<'PY'\n", 1)[1]
     .rsplit("\n          PY", 1)[0]
 )
 
