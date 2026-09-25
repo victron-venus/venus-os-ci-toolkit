@@ -1,8 +1,8 @@
 """The scope bootstrap must follow the caller's runner without changing defaults."""
 
 import importlib.util
-from pathlib import Path
 import unittest
+from pathlib import Path
 
 import yaml
 

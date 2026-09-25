@@ -1,0 +1,29 @@
+replicaCount: 1
+serviceAccount:
+  create: true
+  name: ottplay-arc-controller
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+    - ALL
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+nodeSelector:
+  kubernetes.io/hostname: mp
+  kubernetes.io/arch: amd64
+flags:
+  logLevel: info
+  logFormat: json
