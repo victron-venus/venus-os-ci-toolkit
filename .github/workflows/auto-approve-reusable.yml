@@ -3,6 +3,10 @@ name: Auto Approve
 on:
   workflow_call:
     inputs:
+      runner-labels:
+        description: JSON array of labels for a trusted metadata runner with Python 3 and gh
+        type: string
+        default: '["ubuntu-latest"]'
       authors:
         description: JSON array of trusted PR authors eligible for automatic approval
         type: string
@@ -22,7 +26,7 @@ jobs:
       github.event.pull_request != null &&
       contains(fromJSON(inputs.authors), github.event.pull_request.user.login) &&
       !github.event.pull_request.draft
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON(inputs.runner-labels) }}
     timeout-minutes: 5
     permissions:
       contents: read
@@ -30,7 +34,7 @@ jobs:
     steps:
       # This workflow handles metadata only. Never check out or execute PR code.
       - name: Approve the current head as an independent reviewer
-        shell: python
+        shell: python3 {0}
         env:
           GITHUB_TOKEN: ${{ github.event.pull_request.user.login == 'dependabot[bot]' && github.token || '' }}
           BOT_PAT: ${{ github.event.pull_request.user.login != 'dependabot[bot]' && secrets.BOT_PAT || '' }}
