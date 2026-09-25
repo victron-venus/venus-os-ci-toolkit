@@ -58,6 +58,10 @@ The contract suite includes rejected missing/skipped gates, wrong source revisio
 
 ## Updating consumers
 
+For compiled shared libraries, [verified vendor delivery](docs/VENDOR_DELIVERY.md)
+copies a qualified Actions artifact into a signed draft PR in each consumer.
+Consumers continue to build from their committed files without a producer checkout.
+
 1. Change and test the toolkit source.
 2. Render each consumer from its reviewed policy with `scripts/install_release.py`.
 3. Verify generated drift with `--check`, inspect diffs, and submit PRs.
