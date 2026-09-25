@@ -220,20 +220,24 @@ class AutoApproveContract(unittest.TestCase):
 
     def test_dependabot_uses_installation_token_without_user_endpoint(self):
         """Dependabot reviews use the Actions identity even when PATs are present."""
-        self.environment.update({
-            "PR_AUTHOR": "dependabot[bot]",
-            "GITHUB_TOKEN": "test-actions-token",
-            "TRUSTED_AUTHORS": '["dependabot[bot]"]',
-        })
+        self.environment.update(
+            {
+                "PR_AUTHOR": "dependabot[bot]",
+                "GITHUB_TOKEN": "test-actions-token",
+                "TRUSTED_AUTHORS": '["dependabot[bot]"]',
+            }
+        )
         self.pr["user"]["login"] = "dependabot[bot]"
         self.current = copy.deepcopy(self.pr)
         self.execute()
         self.assert_posts(1)
         self.assertNotIn("user", [command[2] for command, _ in self.calls])
-        self.assertTrue(all(
-            kwargs["env"]["GH_TOKEN"] == "test-actions-token"
-            for _, kwargs in self.calls
-        ))
+        self.assertTrue(
+            all(
+                kwargs["env"]["GH_TOKEN"] == "test-actions-token"
+                for _, kwargs in self.calls
+            )
+        )
 
     def test_dependabot_without_any_pat_can_approve(self):
         """No Dependabot secret is required for the repository installation token."""
@@ -254,11 +258,13 @@ class AutoApproveContract(unittest.TestCase):
 
     def test_dependabot_refreshes_only_its_own_review(self):
         """A same-head Actions approval is recognized without inspecting a PAT."""
-        self.environment.update({
-            "PR_AUTHOR": "dependabot[bot]",
-            "GITHUB_TOKEN": "test-actions-token",
-            "TRUSTED_AUTHORS": '["dependabot[bot]"]',
-        })
+        self.environment.update(
+            {
+                "PR_AUTHOR": "dependabot[bot]",
+                "GITHUB_TOKEN": "test-actions-token",
+                "TRUSTED_AUTHORS": '["dependabot[bot]"]',
+            }
+        )
         self.pr["user"]["login"] = "dependabot[bot]"
         self.current = copy.deepcopy(self.pr)
         self.pages = [[self.review(user="github-actions[bot]")]]
@@ -267,9 +273,9 @@ class AutoApproveContract(unittest.TestCase):
 
     def test_event_author_cannot_select_actions_token_for_human_pr(self):
         """Live PR metadata must agree with the event's credential choice."""
-        self.environment.update({
-            "PR_AUTHOR": "dependabot[bot]", "GITHUB_TOKEN": "test-actions-token"
-        })
+        self.environment.update(
+            {"PR_AUTHOR": "dependabot[bot]", "GITHUB_TOKEN": "test-actions-token"}
+        )
         with self.assertRaisesRegex(RuntimeError, "author does not match"):
             self.execute()
         self.assert_posts(0)
@@ -495,3 +501,100 @@ class AutoApproveContract(unittest.TestCase):
         self.decisions = ["REVIEW_REQUIRED", "REVIEW_REQUIRED"]
         self.execute()
         self.assert_posts(1)
+
+
+class ManualApprovalRecoveryTests(unittest.TestCase):
+    """An explicit recovery dispatch cannot target a fork or a moving head."""
+
+    def setUp(self):
+        """Use the same API transport with reviewed dispatch inputs."""
+        self.harness = AutoApproveContract()
+        self.harness.setUp()
+        self.environment = self.harness.environment
+        self.pr = self.harness.pr
+        self.environment.update(
+            {
+                "GITHUB_EVENT_NAME": "workflow_dispatch",
+                "EXPLICIT_PR_NUMBER": "17",
+                "EXPECTED_HEAD": HEAD,
+            }
+        )
+        self.pr["head"]["repo"] = {"full_name": REPOSITORY}
+        self.current = copy.deepcopy(self.pr)
+        self.harness.current = self.current
+
+    def execute(self):
+        """Use the real reusable-workflow API fixture without inheriting event tests."""
+        self.harness.execute()
+
+    def assert_posts(self, count):
+        """Keep the same strict review mutation assertion as event-mode tests."""
+        self.harness.assert_posts(count)
+
+    def test_exact_head_dispatch_approves_independently(self):
+        """The explicit head is both validated and attached to the review."""
+        self.execute()
+        self.assert_posts(1)
+
+    def test_recovery_requires_complete_dispatch_inputs(self):
+        """No partial selector, shell payload or non-dispatch trigger is accepted."""
+        for changes in (
+            {"GITHUB_EVENT_NAME": "pull_request_target"},
+            {"EXPLICIT_PR_NUMBER": ""},
+            {"EXPLICIT_PR_NUMBER": "0"},
+            {"EXPLICIT_PR_NUMBER": "17;true"},
+            {"EXPECTED_HEAD": ""},
+            {"EXPECTED_HEAD": "main"},
+            {"PR_NUMBER": "18"},
+        ):
+            with self.subTest(changes=changes), patch.dict(self.environment, changes):
+                with self.assertRaisesRegex(RuntimeError, "Manual recovery requires"):
+                    self.execute()
+        self.assert_posts(0)
+
+    def test_recovery_rejects_initial_fork_and_unexpected_head(self):
+        """Same-repository identity and the caller's expected commit are mandatory."""
+        for changes in (
+            {"repo": None},
+            {"repo": {"full_name": "fork/project"}},
+            {"sha": "b" * 40},
+        ):
+            with self.subTest(changes=changes), patch.dict(self.pr["head"], changes):
+                with self.assertRaisesRegex(RuntimeError, "expected same-repository"):
+                    self.execute()
+                self.harness.read_count = 0
+        self.assert_posts(0)
+
+    def test_recovery_rechecks_repository_before_review(self):
+        """The final refresh also verifies repository identity."""
+        self.current["head"]["repo"] = {"full_name": "fork/project"}
+        self.execute()
+        self.assert_posts(0)
+
+    def test_recovery_retains_trust_draft_and_base_checks(self):
+        """An exact expected commit does not authorize untrusted or draft PRs."""
+        original = copy.deepcopy(self.pr)
+        for changes in (
+            {"draft": True},
+            {"state": "closed"},
+            {"user": {"login": "stranger"}},
+            {"base": {"sha": BASE, "ref": "other", "repo": {"full_name": REPOSITORY}}},
+        ):
+            with self.subTest(changes=changes):
+                self.harness.pr = original | changes
+                self.harness.read_count = 0
+                self.execute()
+        self.assert_posts(0)
+
+    def test_recovery_rejects_self_review(self):
+        """The configured token must belong to an independent reviewer."""
+        self.harness.reviewer = self.pr["user"]["login"]
+        with self.assertRaisesRegex(RuntimeError, "cannot approve its own"):
+            self.execute()
+        self.assert_posts(0)
+
+    def test_recovery_rejects_head_change_before_review(self):
+        """A commit pushed during metadata reads withdraws approval eligibility."""
+        self.current["head"]["sha"] = "b" * 40
+        self.execute()
+        self.assert_posts(0)

@@ -71,3 +71,28 @@ the metadata job, and preserve the repository's own exact workflow policy.
 This option does not provision a runner, change GitHub billing, or grant runner
 access across repositories. A waiting merge job occupies a runner slot, so label
 a PR for merge after its CI has completed when using a single dedicated runner.
+
+
+## Recover an unavailable approval runner
+
+`auto-approve-reusable.yml` accepts optional `pull-request-number` and
+`expected-head` inputs only for an explicit `workflow_dispatch` caller. The head
+must be the full 40-character lowercase commit SHA. Recovery retains the normal
+trusted-author, default-base, open/non-draft and independent-reviewer checks and
+also requires a same-repository head on both metadata reads. A different or
+changed head is never approved. This interface adds approval only, not merge.
+
+Use a reviewed dispatchable caller with the exact pinned toolkit revision and a
+trusted runner; never execute PR source in the metadata job. A recovery caller
+should validate its dispatched commit through its ordinary CI gate before the
+review job and require `github.sha == inputs.expected-head`. For example, an
+existing private repository CI workflow can expose optional recovery inputs and
+run the metadata-only approval job after its gate succeeds. Existing automatic
+PR-event callers keep their behavior when these inputs are omitted.
+
+This is intended to repair a broken base approval runner without extracting its
+secret, changing billing, or claiming a failed old run succeeded. Verify the
+actual bot review references the requested head, then merge only after the normal
+checks pass. After migration, run the ordinary approval workflow on another ready
+PR to verify the new runner path. A dispatch from an unreviewed branch is not an
+acceptable bootstrap procedure.
