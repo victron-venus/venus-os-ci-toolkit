@@ -28,6 +28,17 @@ vu = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(vu)
 
 
+def fixture_git(directory, *args):
+    """Create local test repositories; production intentionally cannot init/reset."""
+    return subprocess.run(
+        ["git", "-c", "core.hooksPath=/dev/null", *args],
+        cwd=directory,
+        capture_output=True,
+        check=True,
+        env=vu.clean_env(),
+    ).stdout
+
+
 def arguments(**changes):
     """Use a small bundle with the same receipt protocol as the real core."""
     result = argparse.Namespace(
@@ -220,8 +231,9 @@ class ArchiveTests(unittest.TestCase):
                 info.external_attr = (stat.S_IFLNK | 0o777) << 16
                 zipped.writestr(info, body)
         args.artifact_digest = "sha256:" + vu.digest(output.getvalue())
+        unsafe_archive = output.getvalue()
         with self.assertRaisesRegex(vu.ReleaseError, "Unsafe archive"):
-            vu.validate_bundle(output.getvalue(), args)
+            vu.validate_bundle(unsafe_archive, args)
         raw, _, _ = bundle(args)
         with (
             patch.object(vu, "MAX_TOTAL", 1),
@@ -324,8 +336,9 @@ class QualificationTests(unittest.TestCase):
             ("created_at", "2026-09-25T09:59:59Z"),
         ]:
             bad = meta | {key: value}
+            run = run_info(args)
             with self.subTest(key=key), self.assertRaises(vu.ReleaseError):
-                vu.validate_artifact(bad, run_info(args), args)
+                vu.validate_artifact(bad, run, args)
 
 
 class TransportTests(unittest.TestCase):
@@ -399,6 +412,107 @@ class TransportTests(unittest.TestCase):
             with self.subTest(path=path), self.assertRaises(vu.ReleaseError):
                 vu.safe_path(path)
 
+    def test_cli_normalizes_relative_checkout_paths(self):
+        args = arguments(
+            source_dir="producer",
+            target_dir="consumer",
+            artifact_digest="sha256:" + "a" * 64,
+        )
+        argv = []
+        for name in [
+            "source_repo",
+            "source_workflow",
+            "source_sha",
+            "source_dir",
+            "target_repo",
+            "target_dir",
+            "manifest",
+            "manifest_name",
+            "destination_prefix",
+            "artifact_digest",
+            "signing_fingerprint",
+            "run_id",
+            "run_attempt",
+            "artifact_id",
+        ]:
+            argv.extend(["--" + name.replace("_", "-"), str(getattr(args, name))])
+        for name in ["artifact_file", "copy_file"]:
+            for value in getattr(args, name):
+                argv.extend(["--" + name.replace("_", "-"), value])
+        parsed = vu.parse_args(argv)
+        self.assertEqual(parsed.source_dir, Path.cwd() / "producer")
+        self.assertEqual(parsed.target_dir, Path.cwd() / "consumer")
+
+    def test_api_rejects_arbitrary_routes_methods_and_non_draft_mutations(self):
+        github = vu.GitHub("example/core", "source-secret")
+        for path in [
+            "--hostname=evil.test",
+            "../user",
+            "https://evil.test",
+            "git/refs",
+            "actions/artifacts/29/zip?x=1",
+        ]:
+            with (
+                self.subTest(path=path),
+                patch.object(vu.subprocess, "run") as command,
+                self.assertRaises(vu.ReleaseError),
+            ):
+                github.request(path)
+            command.assert_not_called()
+        draft = {
+            "title": "Vendor update",
+            "body": "Details",
+            "head": "codex/vendor-" + "a" * 64,
+            "base": "main",
+            "draft": True,
+        }
+        for path, body in [
+            ("releases", draft),
+            ("pulls", draft | {"draft": False}),
+            ("pulls", draft | {"base": "other"}),
+            ("pulls", draft | {"head": "user-branch"}),
+        ]:
+            with (
+                self.subTest(path=path, body=body),
+                patch.object(vu.subprocess, "run") as command,
+                self.assertRaises(vu.ReleaseError),
+            ):
+                github.request(path, body=body)
+            command.assert_not_called()
+
+    def test_git_rejects_extra_flags_remote_helpers_and_cwd_arguments(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            for args in [
+                ("-c", "alias.x=!malicious", "x"),
+                ("push", "--force", "origin", "HEAD"),
+                ("fetch", "--no-tags", "ext::malicious", "a" * 40),
+                (
+                    "fetch",
+                    "--upload-pack=malicious",
+                    "https://github.com/example/core.git",
+                    "a" * 40,
+                ),
+                ("config", "core.hooksPath", "/untrusted"),
+            ]:
+                with (
+                    self.subTest(args=args),
+                    patch.object(vu.subprocess, "run") as command,
+                    self.assertRaises(vu.ReleaseError),
+                ):
+                    vu.git(temporary, *args)
+                command.assert_not_called()
+            with (
+                patch.object(vu.subprocess, "run") as command,
+                self.assertRaises(vu.ReleaseError),
+            ):
+                vu.git("--exec-path=/untrusted", "rev-parse", "HEAD")
+            command.assert_not_called()
+            result = subprocess.CompletedProcess([], 0, b"a" * 40, b"")
+            with patch.object(vu.subprocess, "run", return_value=result) as command:
+                vu.git(temporary, "rev-parse", "HEAD")
+            self.assertNotIn(temporary, command.call_args.args[0])
+            self.assertEqual(command.call_args.kwargs["cwd"], Path(temporary))
+
 
 class GitDeliveryTests(unittest.TestCase):
     """Real SSH signatures and index isolation; network calls are never executed."""
@@ -452,7 +566,9 @@ class GitDeliveryTests(unittest.TestCase):
         self.args.source_sha = vu.git_text(self.args.source_dir, "rev-parse", "HEAD")
         self.base = vu.git_text(self.args.target_dir, "rev-parse", "HEAD")
         self.source = qualified_source(self.args)
-        subtree = vu.git_text(self.args.source_dir, "rev-parse", "HEAD:shared-core")
+        subtree = vu.git_text(
+            self.args.source_dir, "rev-parse", self.args.source_sha + ":shared-core"
+        )
         self.source.values.update(
             {
                 "git/ref/heads/main": {
@@ -478,26 +594,26 @@ class GitDeliveryTests(unittest.TestCase):
     @staticmethod
     def _repository(directory, repository, files):
         directory.mkdir()
-        vu.git(directory, "init", "-b", "main")
-        vu.git(directory, "config", "user.name", "Delivery Bot")
-        vu.git(directory, "config", "user.email", "bot@example.test")
-        vu.git(directory, "config", "gpg.format", "ssh")
-        vu.git(directory, "config", "user.signingkey", str(GitDeliveryTests.key))
-        vu.git(
+        fixture_git(directory, "init", "-b", "main")
+        fixture_git(directory, "config", "user.name", "Delivery Bot")
+        fixture_git(directory, "config", "user.email", "bot@example.test")
+        fixture_git(directory, "config", "gpg.format", "ssh")
+        fixture_git(directory, "config", "user.signingkey", str(GitDeliveryTests.key))
+        fixture_git(
             directory,
             "config",
             "gpg.ssh.allowedSignersFile",
             str(GitDeliveryTests.allowed),
         )
-        vu.git(
+        fixture_git(
             directory, "remote", "add", "origin", f"https://github.com/{repository}.git"
         )
         for name, body in files.items():
             path = directory / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(body)
-        vu.git(directory, "add", ".")
-        vu.git(directory, "commit", "-m", "initial", "--no-gpg-sign")
+        fixture_git(directory, "add", ".")
+        fixture_git(directory, "commit", "-m", "initial", "--no-gpg-sign")
 
     def remote_git(self, original):
         """Handle fetch/push in memory; all other operations are real local Git."""
@@ -541,7 +657,12 @@ class GitDeliveryTests(unittest.TestCase):
         self.assertEqual(
             vu.git_text(self.args.target_dir, "rev-parse", "HEAD"), self.base
         )
-        self.assertEqual(vu.git_text(self.args.target_dir, "status", "--porcelain"), "")
+        self.assertEqual(
+            vu.git_text(
+                self.args.target_dir, "status", "--porcelain", "--untracked-files=all"
+            ),
+            "",
+        )
         self.assertEqual(
             vu.git(self.args.target_dir, "show", result["commit"] + ":app.txt"),
             b"unchanged",
@@ -559,7 +680,7 @@ class GitDeliveryTests(unittest.TestCase):
         self.assertEqual(first, second)
         self.assertEqual(len(self.target.writes), 1)
         self.assertTrue(self.target.writes[0][1]["draft"])
-        vu.git(self.args.target_dir, "reset", "--hard", first["commit"])
+        fixture_git(self.args.target_dir, "reset", "--hard", first["commit"])
         self.target.values["git/ref/heads/main"]["object"]["sha"] = first["commit"]
         self.assertEqual(
             vu.deliver(self.source, self.target, self.args, self.files, self.manifest)[
@@ -574,10 +695,15 @@ class GitDeliveryTests(unittest.TestCase):
         )
         branch = "codex/vendor-" + self.manifest_hash
         # A second commit would be foreign work and must never be overwritten.
+        original_tree = (
+            fixture_git(self.args.target_dir, "rev-parse", self.base + "^{tree}")
+            .decode()
+            .strip()
+        )
         foreign = vu.git_text(
             self.args.target_dir,
             "commit-tree",
-            self.base + "^{tree}",
+            original_tree,
             "-p",
             revision,
             "-S",

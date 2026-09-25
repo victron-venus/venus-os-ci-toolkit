@@ -39,6 +39,46 @@ MAX_TOTAL = 64 * 1024 * 1024
 HEX = re.compile(r"[0-9a-f]{64}\Z")
 REVISION = re.compile(r"[0-9a-f]{40}\Z")
 REPOSITORY = REPO_RE
+MAIN_REF = "git/ref/heads/main"
+OID = r"[0-9a-f]{40}"
+RELATIVE = r"[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*"
+VENDOR_BRANCH = r"codex/vendor-[0-9a-f]{64}"
+REMOTE = (
+    r"https://github\.com/[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9][A-Za-z0-9_.-]*\.git"
+)
+PAGE = r"per_page=100&page=(?:[1-9][0-9]?|100)"
+API_READS = (
+    r"(?:|user)",
+    r"actions/runs/[1-9][0-9]*",
+    r"actions/runs/[1-9][0-9]*/attempts/[1-9][0-9]*/jobs(?:\?" + PAGE + r")?",
+    r"actions/workflows/\.github%2Fworkflows%2F[A-Za-z0-9_.-]+\.ya?ml",
+    r"actions/artifacts/[1-9][0-9]*(?:/zip)?",
+    r"git/ref/heads/(?:main|" + VENDOR_BRANCH + r")",
+    r"git/(?:commits|trees)/" + OID,
+    r"commits/" + OID,
+    r"pulls\?state=all&head=[A-Za-z0-9][A-Za-z0-9_.-]*%3Acodex%2Fvendor-[0-9a-f]{64}(?:&"
+    + PAGE
+    + r")?",
+)
+# Full argv forms, not just command names: no caller can supply new flags.
+GIT_FORMS = (
+    ("rev-parse", r"(?:--show-toplevel|HEAD|" + OID + ":" + RELATIVE + r")"),
+    ("config", "--get", r"remote\.origin\.url"),
+    ("status", "--porcelain", "--untracked-files=all"),
+    ("show", OID + ":" + RELATIVE),
+    ("ls-tree", OID, "--", RELATIVE),
+    ("log", "-1", r"--format=(?:%G\?%n%GF|%B)", OID),
+    ("rev-list", "--parents", "-n", "1", OID),
+    ("merge-base", "--is-ancestor", OID, "HEAD"),
+    ("diff-tree", "--no-commit-id", "--name-only", "-r", "-z", OID),
+    ("read-tree", OID),
+    ("hash-object", "-w", "--stdin", "--no-filters"),
+    ("update-index", "--add", "--cacheinfo", "100644," + OID + "," + RELATIVE),
+    ("write-tree",),
+    ("commit-tree", OID, "-p", OID, "-S"),
+    ("fetch", "--no-tags", REMOTE, OID),
+    ("push", REMOTE, OID + ":refs/heads/" + VENDOR_BRANCH),
+)
 
 
 def safe_path(value, *, filename=False):
@@ -77,6 +117,26 @@ class GitHub:
 
     def request(self, path, *, body=None, archive=False):
         """Use only helper-generated REST paths; never display credentials/errors."""
+        if body is None:
+            require(
+                any(re.fullmatch(pattern, path, re.ASCII) for pattern in API_READS),
+                "Unsupported API read",
+            )
+        else:
+            require(
+                path == "pulls"
+                and isinstance(body, dict)
+                and set(body) == {"title", "body", "head", "base", "draft"}
+                and body["base"] == "main"
+                and body["draft"] is True
+                and all(isinstance(body[key], str) for key in ("title", "body", "head"))
+                and re.fullmatch(VENDOR_BRANCH, body["head"]),
+                "Unsupported API mutation",
+            )
+        require(
+            archive == (body is None and path.endswith("/zip")),
+            "Invalid API response mode",
+        )
         endpoint = "user" if path == "user" else f"repos/{self.repo}/{path}".rstrip("/")
         env = clean_env() | {"GH_TOKEN": self.token, "GH_HOST": "github.com"}
         command = [
@@ -135,6 +195,22 @@ class GitHub:
 
 def git(directory, *args, data=None, token=None, extra_env=None):
     """Run Git plumbing without hooks, filters, shell expansion or token output."""
+    require(
+        any(
+            len(form) == len(args)
+            and all(
+                isinstance(value, str) and re.fullmatch(pattern, value, re.ASCII)
+                for pattern, value in zip(form, args, strict=True)
+            )
+            for form in GIT_FORMS
+        ),
+        "Unsupported Git command arguments",
+    )
+    directory = Path(directory)
+    require(
+        directory.is_absolute() and directory.is_dir() and not directory.is_symlink(),
+        "Git requires an absolute checkout directory",
+    )
     env = clean_env() | (extra_env or {})
     if token:
         count = int(env.get("GIT_CONFIG_COUNT", "0"))
@@ -160,10 +236,9 @@ def git(directory, *args, data=None, token=None, extra_env=None):
             "core.hooksPath=/dev/null",
             "-c",
             "core.fsmonitor=false",
-            "-C",
-            str(directory),
             *args,
         ],
+        cwd=directory,
         input=data,
         capture_output=True,
         env=env,
@@ -338,7 +413,7 @@ def validate_bundle(archive, args):
             files = {entry.filename: zipped.read(entry) for entry in entries}
     except ReleaseError:
         raise
-    except (zipfile.BadZipFile, NotImplementedError, RuntimeError) as error:
+    except (zipfile.BadZipFile, RuntimeError) as error:
         raise ReleaseError("Invalid artifact ZIP") from error
     require(len(files[args.manifest]) <= 1_000_000, "Oversized manifest")
     manifest = parse_json(files[args.manifest], "vendor manifest")
@@ -416,7 +491,7 @@ def verify_source(source, args, manifest):
     local_tree = git_text(
         args.source_dir, "rev-parse", f"{args.source_sha}:{args.source_tree}"
     )
-    latest = source.request("git/ref/heads/main")["object"]
+    latest = source.request(MAIN_REF)["object"]
     require(
         latest.get("type") == "commit" and REVISION.fullmatch(latest.get("sha", "")),
         "Invalid main ref",
@@ -523,18 +598,8 @@ def prepare_commit(args, base, files, manifest_hash):
     return revision
 
 
-# Keep signing, freshness checks and the single non-forcing push visibly ordered.
-# pylint: disable-next=too-many-locals
-def deliver(source, target, args, files, manifest):
-    """No force pushes, remote code execution, automatic approval or merging."""
-    metadata = target.request("")
-    require(
-        metadata.get("full_name") == args.target_repo
-        and metadata.get("default_branch") == "main",
-        "Unexpected target repository/default branch",
-    )
-    base = target.request("git/ref/heads/main")["object"]["sha"]
-    verify_checkout(args.target_dir, args.target_repo, base)
+def target_matches(args, base, files):
+    """Check destination types before deciding whether exact bytes are already pinned."""
     paths = target_paths(args)
     for path in paths.values():
         for parent in Path(path).parents:
@@ -554,8 +619,23 @@ def deliver(source, target, args, files, manifest):
         matches.append(
             bool(item) and git(args.target_dir, "show", f"{base}:{path}") == files[name]
         )
+    return all(matches)
+
+
+# Keep signing, freshness checks and the single non-forcing push visibly ordered.
+# pylint: disable-next=too-many-locals
+def deliver(source, target, args, files, manifest):
+    """No force pushes, remote code execution, automatic approval or merging."""
+    metadata = target.request("")
+    require(
+        metadata.get("full_name") == args.target_repo
+        and metadata.get("default_branch") == "main",
+        "Unexpected target repository/default branch",
+    )
+    base = target.request(MAIN_REF)["object"]["sha"]
+    verify_checkout(args.target_dir, args.target_repo, base)
     manifest_hash = digest(files[args.manifest])
-    if all(matches):
+    if target_matches(args, base, files):
         return {"status": "noop", "manifest_sha256": manifest_hash, "target_sha": base}
     branch = "codex/vendor-" + manifest_hash
     ref = target.optional("git/ref/heads/" + branch)
@@ -583,7 +663,7 @@ def deliver(source, target, args, files, manifest):
     qualify(source, args)
     verify_source(source, args, manifest)
     require(
-        target.request("git/ref/heads/main")["object"]["sha"] == base,
+        target.request(MAIN_REF)["object"]["sha"] == base,
         "Target main advanced; retry from its new immutable checkout",
     )
     # A normal push cannot discard commits even if a branch appears concurrently.
@@ -713,6 +793,9 @@ def parse_args(argv=None):
         "browser-client",
         "wire-contracts",
     ]
+    # Preserve the documented relative CLI paths without resolving symlink targets.
+    args.source_dir = Path(args.source_dir).absolute()
+    args.target_dir = Path(args.target_dir).absolute()
     return args
 
 
