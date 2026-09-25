@@ -7,6 +7,14 @@ on:
         description: JSON array of labels for a trusted metadata runner with Python 3 and gh
         type: string
         default: '["ubuntu-latest"]'
+      pull-request-number:
+        description: Optional explicit PR number for reviewed workflow_dispatch recovery only
+        type: string
+        default: ''
+      expected-head:
+        description: Required exact 40-character head SHA for explicit recovery
+        type: string
+        default: ''
       authors:
         description: JSON array of trusted PR authors eligible for automatic approval
         type: string
@@ -23,9 +31,10 @@ jobs:
   auto-approve:
     name: Auto Approve
     if: >-
-      github.event.pull_request != null &&
-      contains(fromJSON(inputs.authors), github.event.pull_request.user.login) &&
-      !github.event.pull_request.draft
+      (github.event.pull_request != null &&
+       contains(fromJSON(inputs.authors), github.event.pull_request.user.login) &&
+       !github.event.pull_request.draft) ||
+      (github.event_name == 'workflow_dispatch' && inputs.pull-request-number != '' && inputs.expected-head != '')
     runs-on: ${{ fromJSON(inputs.runner-labels) }}
     timeout-minutes: 5
     permissions:
@@ -40,11 +49,14 @@ jobs:
           BOT_PAT: ${{ github.event.pull_request.user.login != 'dependabot[bot]' && secrets.BOT_PAT || '' }}
           APPROVAL_PAT: ${{ github.event.pull_request.user.login != 'dependabot[bot]' && secrets.APPROVAL_PAT || '' }}
           PR_AUTHOR: ${{ github.event.pull_request.user.login }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_NUMBER: ${{ inputs.pull-request-number || github.event.pull_request.number }}
+          EXPLICIT_PR_NUMBER: ${{ inputs.pull-request-number }}
+          EXPECTED_HEAD: ${{ inputs.expected-head }}
           TRUSTED_AUTHORS: ${{ inputs.authors }}
         run: |
           import json
           import os
+          import re
           import subprocess
 
           def api(path, token, *, payload=None, paginate=False):
@@ -87,7 +99,16 @@ jobs:
               return result["data"]["repository"]["pullRequest"]["reviewDecision"]
 
           def main():
-              dependabot = os.environ.get("PR_AUTHOR") == "dependabot[bot]"
+              explicit = os.environ.get("EXPLICIT_PR_NUMBER", "")
+              expected = os.environ.get("EXPECTED_HEAD", "")
+              recovery = bool(explicit or expected)
+              if recovery and (
+                      os.environ.get("GITHUB_EVENT_NAME") != "workflow_dispatch"
+                      or re.fullmatch(r"[1-9][0-9]*", explicit) is None
+                      or re.fullmatch(r"[0-9a-f]{40}", expected) is None
+                      or os.environ.get("PR_NUMBER") != explicit):
+                  raise RuntimeError("Manual recovery requires workflow_dispatch, a PR number and an exact head SHA")
+              dependabot = not recovery and os.environ.get("PR_AUTHOR") == "dependabot[bot]"
               token = (os.environ.get("GITHUB_TOKEN") if dependabot else
                        os.environ.get("BOT_PAT") or os.environ.get("APPROVAL_PAT"))
               if not token:
@@ -100,6 +121,9 @@ jobs:
               endpoint = f"repos/{repository}/pulls/{number}"
               default_branch = api(f"repos/{repository}", token)["default_branch"]
               pr = api(endpoint, token)
+              if recovery and (pr["head"]["sha"] != expected
+                               or (pr["head"].get("repo") or {}).get("full_name") != repository):
+                  raise RuntimeError("Manual recovery requires the expected same-repository PR head")
               if not eligible(pr, authors, repository, default_branch):
                   print("Pull request is not eligible for automatic approval")
                   return
@@ -138,7 +162,10 @@ jobs:
               current_base = api(base_endpoint, token)["object"]["sha"]
               if (current["head"]["sha"] != head or current_base != base
                       or current["base"]["sha"] != pr["base"]["sha"]
-                      or not eligible(current, authors, repository, default_branch)):
+                      or not eligible(current, authors, repository, default_branch)
+                      or (recovery and (
+                          current["head"]["sha"] != expected
+                          or (current["head"].get("repo") or {}).get("full_name") != repository))):
                   print("Pull request changed; a new event will evaluate the current head")
                   return
               if same_head_approval and review_decision(repository, number, token) != "REVIEW_REQUIRED":
