@@ -1,0 +1,223 @@
+name: Verified vendor update
+
+on:
+  workflow_call:
+    inputs:
+      toolkit-revision:
+        description: Full commit SHA of this reusable workflow and its helper
+        required: true
+        type: string
+      source-workflow:
+        required: true
+        type: string
+      source-tree:
+        description: Source subtree that must still match the default branch
+        required: true
+        type: string
+      artifact-id:
+        required: true
+        type: string
+      artifact-digest:
+        description: Immutable upload-artifact SHA-256 digest, without a prefix
+        required: true
+        type: string
+      artifact-files:
+        description: JSON array containing the exact archive file inventory
+        required: true
+        type: string
+      manifest:
+        required: true
+        type: string
+      manifest-name:
+        required: true
+        type: string
+      qualifying-jobs:
+        description: JSON array of successful jobs from this exact run attempt
+        required: true
+        type: string
+      target-repository:
+        required: true
+        type: string
+      destination-prefix:
+        required: true
+        type: string
+      copy-files:
+        description: JSON array of the permitted destination filenames
+        required: true
+        type: string
+      committer-name:
+        required: true
+        type: string
+      committer-email:
+        required: true
+        type: string
+    secrets:
+      DELIVERY_TOKEN:
+        description: Cross-repository token with contents and pull request write access
+        required: true
+      DELIVERY_SIGNING_KEY:
+        description: Dedicated SSH signing key registered to the committer on GitHub
+        required: true
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  update:
+    # No PR or merge-queue execution may receive delivery credentials.
+    if: >-
+      github.ref == format('refs/heads/{0}', github.event.repository.default_branch) &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    concurrency:
+      group: vendor-update-${{ github.repository }}-${{ inputs.target-repository }}-${{ inputs.destination-prefix }}
+      cancel-in-progress: false
+    steps:
+      - name: Validate immutable toolkit revision and required configuration
+        env:
+          TOOLKIT_REVISION: ${{ inputs.toolkit-revision }}
+          COMMITTER_NAME: ${{ inputs.committer-name }}
+          COMMITTER_EMAIL: ${{ inputs.committer-email }}
+          DELIVERY_TOKEN: ${{ secrets.DELIVERY_TOKEN }}
+          DELIVERY_SIGNING_KEY: ${{ secrets.DELIVERY_SIGNING_KEY }}
+        run: |
+          python3 -I - <<'PY'
+          import os, re
+          if not re.fullmatch(r'[0-9a-f]{40}', os.environ['TOOLKIT_REVISION']):
+              raise SystemExit('toolkit-revision must be a full commit SHA')
+          for name in ('COMMITTER_NAME', 'COMMITTER_EMAIL', 'DELIVERY_TOKEN', 'DELIVERY_SIGNING_KEY'):
+              if not os.environ.get(name, '').strip():
+                  raise SystemExit('Missing delivery configuration: ' + name)
+          if any(character in os.environ[name] for name in ('COMMITTER_NAME', 'COMMITTER_EMAIL') for character in '\r\n'):
+              raise SystemExit('Commit identity must be a single line')
+          PY
+      - name: Load the pinned delivery implementation
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: victron-venus/venus-os-ci-toolkit
+          ref: ${{ inputs.toolkit-revision }}
+          path: delivery-toolkit
+          persist-credentials: false
+      - name: Read the exact producer revision and its current default branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          path: producer
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Resolve the current consumer default revision
+        id: consumer
+        env:
+          GH_TOKEN: ${{ secrets.DELIVERY_TOKEN }}
+          TARGET_REPOSITORY: ${{ inputs.target-repository }}
+        run: |
+          python3 -I - <<'PY'
+          import json, os, re, subprocess, urllib.parse
+          repository = os.environ['TARGET_REPOSITORY']
+          if not re.fullmatch(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+', repository):
+              raise SystemExit('Invalid target repository')
+          def api(path):
+              return json.loads(subprocess.check_output(['gh', 'api', path], text=True))
+          branch = api('repos/' + repository)['default_branch']
+          sha = api('repos/' + repository + '/commits/' + urllib.parse.quote(branch, safe=''))['sha']
+          if not re.fullmatch(r'[0-9a-f]{40}', sha):
+              raise SystemExit('Invalid consumer revision')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write('sha=' + sha + '\n')
+          PY
+      - name: Read the current consumer default branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: ${{ inputs.target-repository }}
+          ref: ${{ steps.consumer.outputs.sha }}
+          token: ${{ secrets.DELIVERY_TOKEN }}
+          path: consumer
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Configure the dedicated commit signature
+        id: signing
+        env:
+          DELIVERY_SIGNING_KEY: ${{ secrets.DELIVERY_SIGNING_KEY }}
+          COMMITTER_NAME: ${{ inputs.committer-name }}
+          COMMITTER_EMAIL: ${{ inputs.committer-email }}
+        run: |
+          python3 -I - <<'PY'
+          import os, pathlib, subprocess
+          directory = pathlib.Path(os.environ['RUNNER_TEMP']) / 'vendor-delivery-signing'
+          directory.mkdir(mode=0o700)
+          key = directory / 'key'
+          key.write_text(os.environ['DELIVERY_SIGNING_KEY'].strip() + '\n')
+          key.chmod(0o600)
+          public = subprocess.check_output(['ssh-keygen', '-y', '-P', '', '-f', str(key)], text=True).strip()
+          allowed = directory / 'allowed-signers'
+          allowed.write_text(os.environ['COMMITTER_EMAIL'] + ' ' + public + '\n')
+          allowed.chmod(0o600)
+          fingerprint = subprocess.check_output(['ssh-keygen', '-lf', str(key), '-E', 'sha256'], text=True).split()[1]
+          for name, value in {
+              'user.name': os.environ['COMMITTER_NAME'],
+              'user.email': os.environ['COMMITTER_EMAIL'],
+              'gpg.format': 'ssh',
+              'user.signingkey': str(key),
+              'gpg.ssh.allowedSignersFile': str(allowed),
+              'commit.gpgsign': 'true',
+              'core.hooksPath': '/dev/null',
+          }.items():
+              subprocess.run(['git', '-C', 'consumer', 'config', '--local', name, value], check=True)
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write('fingerprint=' + fingerprint + '\n')
+          PY
+      - name: Verify the qualified artifact and propose its vendor update
+        env:
+          SOURCE_TOKEN: ${{ github.token }}
+          TARGET_TOKEN: ${{ secrets.DELIVERY_TOKEN }}
+          SOURCE_REPOSITORY: ${{ github.repository }}
+          SOURCE_WORKFLOW: ${{ inputs.source-workflow }}
+          SOURCE_SHA: ${{ github.sha }}
+          SOURCE_TREE: ${{ inputs.source-tree }}
+          SOURCE_RUN_ID: ${{ github.run_id }}
+          SOURCE_RUN_ATTEMPT: ${{ github.run_attempt }}
+          ARTIFACT_ID: ${{ inputs.artifact-id }}
+          ARTIFACT_DIGEST: ${{ inputs.artifact-digest }}
+          ARTIFACT_FILES: ${{ inputs.artifact-files }}
+          MANIFEST: ${{ inputs.manifest }}
+          MANIFEST_NAME: ${{ inputs.manifest-name }}
+          QUALIFYING_JOBS: ${{ inputs.qualifying-jobs }}
+          TARGET_REPOSITORY: ${{ inputs.target-repository }}
+          DESTINATION_PREFIX: ${{ inputs.destination-prefix }}
+          COPY_FILES: ${{ inputs.copy-files }}
+          SIGNING_FINGERPRINT: ${{ steps.signing.outputs.fingerprint }}
+        run: |
+          python3 -I - <<'PY'
+          import json, os, subprocess, sys
+          command = [sys.executable, '-I', 'delivery-toolkit/scripts/vendor_update.py']
+          values = {
+              'source-repo': 'SOURCE_REPOSITORY', 'source-workflow': 'SOURCE_WORKFLOW',
+              'source-sha': 'SOURCE_SHA', 'source-tree': 'SOURCE_TREE',
+              'run-id': 'SOURCE_RUN_ID', 'run-attempt': 'SOURCE_RUN_ATTEMPT',
+              'artifact-id': 'ARTIFACT_ID', 'manifest': 'MANIFEST',
+              'manifest-name': 'MANIFEST_NAME', 'target-repo': 'TARGET_REPOSITORY',
+              'destination-prefix': 'DESTINATION_PREFIX', 'signing-fingerprint': 'SIGNING_FINGERPRINT',
+          }
+          for argument, variable in values.items():
+              command.extend(['--' + argument, os.environ[variable]])
+          command.extend(['--artifact-digest', 'sha256:' + os.environ['ARTIFACT_DIGEST'],
+                          '--source-dir', 'producer', '--target-dir', 'consumer'])
+          for argument, variable in (('artifact-file', 'ARTIFACT_FILES'), ('copy-file', 'COPY_FILES'), ('qualifying-job', 'QUALIFYING_JOBS')):
+              values = json.loads(os.environ[variable])
+              if not isinstance(values, list) or not values or not all(isinstance(value, str) for value in values):
+                  raise SystemExit(variable + ' must be a nonempty string array')
+              for value in values:
+                  command.extend(['--' + argument, value])
+          subprocess.run(command, check=True)
+          PY
+      - name: Remove the temporary signing material
+        if: always()
+        run: |
+          python3 -I - <<'PY'
+          import os, pathlib, shutil
+          directory = pathlib.Path(os.environ['RUNNER_TEMP']) / 'vendor-delivery-signing'
+          if directory.exists():
+              shutil.rmtree(directory)
+          PY
