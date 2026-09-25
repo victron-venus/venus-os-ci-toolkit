@@ -18,6 +18,10 @@ VARIABLE = "CI_RUNNER_MODE"
 SMOKE_PATH = ".github/workflows/runner-smoke.yml"
 CI_GROUP = "ottplay-private-ci"
 RELEASE_GROUP = "ottplay-private-release"
+REPOSITORIES = {
+    "ottplay-core": "open-ott-play/ottplay-core",
+    "ottplay-android": "open-ott-play/ottplay-android",
+}
 POOLS = {
     "ottplay-core": {"smoke-linux": ("ottplay-k3s-linux-x64", CI_GROUP)},
     "ottplay-android": {
@@ -298,7 +302,7 @@ def apply_mode(repo: str, args, metadata: dict, current: dict | None, evidence) 
 
 def run_switch(args) -> int:
     """Show the requested plan, and apply it only after explicit operator intent."""
-    repo = f"{ORG}/{args.repo}"
+    repo = REPOSITORIES[args.repo]
     metadata, current = repo_state(repo)
     state = (
         current["value"]
@@ -330,7 +334,7 @@ def run_switch(args) -> int:
 def main(argv=None) -> int:
     """Read-only by default; the only write is the explicitly requested variable."""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--repo", required=True, choices=sorted(POOLS))
+    parser.add_argument("--repo", required=True, choices=sorted(REPOSITORIES))
     parser.add_argument("--mode", choices=("github", "k3s"))
     parser.add_argument("--smoke-run", type=int, help="Successful manual smoke run ID")
     parser.add_argument(

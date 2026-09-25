@@ -8,6 +8,7 @@ import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 SPEC = importlib.util.spec_from_file_location(
@@ -274,6 +275,38 @@ class RunnerModeTests(unittest.TestCase):
 
     def test_scale_zero_needs_no_online_runner_inventory(self):
         self.verify()  # The fake API deliberately implements no /actions/runners endpoint.
+
+    def test_read_only_status_uses_only_literal_repository_identities(self):
+        for selection, repository in (
+            ("ottplay-core", "open-ott-play/ottplay-core"),
+            ("ottplay-android", "open-ott-play/ottplay-android"),
+        ):
+            metadata = {**self.metadata, "full_name": repository}
+            with (
+                self.subTest(selection=selection),
+                patch.object(
+                    mode, "repo_state", return_value=(metadata, None)
+                ) as state,
+                patch.object(mode, "api") as api,
+                redirect_stdout(io.StringIO()),
+            ):
+                self.assertEqual(mode.main(["--repo", selection]), 0)
+                state.assert_called_once_with(repository)
+                api.assert_not_called()
+
+    def test_unknown_repository_cannot_reach_api_even_without_argparse(self):
+        for selection in (
+            "ottplay-foss",
+            "ottplay-core/../../other",
+            "--hostname=other",
+            "open-ott-play/ottplay-core",
+            "ottplay-core\n",
+            "OTTPLAY-CORE",
+        ):
+            with self.subTest(selection=selection), patch.object(mode, "api") as api:
+                with self.assertRaises(KeyError):
+                    mode.run_switch(SimpleNamespace(repo=selection))
+                api.assert_not_called()
 
     def test_dry_run_does_not_mutate(self):
         self.assertEqual(self.execute("--mode", "k3s", "--smoke-run", "77"), 0)

@@ -115,7 +115,10 @@ configured here. [ARC configuration and restrictions](https://docs.github.com/en
 
 ## KVM admission
 
-KVM stays off on the currently observed mp. First enable and verify nested
+KVM stays off on the currently observed mp. It is a VirtualBox guest exposing
+neither `vmx` nor `svm` on its 16 CPUs; kernel KVM modules are installed.
+Loading a guest module alone cannot supply the missing virtualization capability.
+First enable and verify nested
 virtualization in the VM/host through a separate reviewed infrastructure change.
 Require a real character device, then a device plugin that advertises
 `devic.es/kvm` and injects `/dev/kvm` with device-cgroup permission. A hostPath
