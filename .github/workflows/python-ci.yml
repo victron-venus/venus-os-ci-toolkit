@@ -67,7 +67,7 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
 
       - name: Setup Python
-        uses: victron-venus/venus-os-ci-toolkit/actions/setup-python@6da015c8cece60541100e55c14829f2c34a01d6e
+        uses: victron-venus/venus-os-ci-toolkit/actions/setup-python@733de629b521477102822ccfcc855427de2f2b08
         with:
           python-version: ${{ inputs.python-version }}
 
