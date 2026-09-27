@@ -63,7 +63,7 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
 
       - name: Setup Go
-        uses: victron-venus/venus-os-ci-toolkit/actions/setup-go@6da015c8cece60541100e55c14829f2c34a01d6e
+        uses: victron-venus/venus-os-ci-toolkit/actions/setup-go@63e105d2eed5bde74f8b8060c2a7b5ae16cec7f1
         with:
           go-version: ${{ inputs.go-version }}
 
