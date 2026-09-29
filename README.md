@@ -74,9 +74,11 @@ have changed relative to the default branch. A reviewed consumer can explicitly
 set `"publication_token_secret": "BOT_PAT"` in `.release-policy.json` and render
 again. The selected classic token must have `workflow` and `repo` (or `public_repo`
 for a public repository) OAuth scopes and push access. Publication verifies these
-permissions with a read-only request before any ledger, tag or release write;
-missing or unverifiable permissions fail closed without printing credentials.
-Fine-grained tokens are not accepted by this scope probe.
+permissions with a read-only request before publication-stage ledger, tag or
+release writes; missing or unverifiable permissions fail closed without printing
+credentials.
+Early version reservation in preparation still uses `GITHUB_TOKEN`. Fine-grained
+tokens are not accepted by this scope probe.
 
 The secret is available only to trusted publication steps, including manually
 approved stable publication. Preparation, builds and PR checks keep their existing

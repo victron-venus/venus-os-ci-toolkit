@@ -339,7 +339,11 @@ class GeneratedReleaseScopeExecution(unittest.TestCase):
             GITHUB_OUTPUT=str(output),
             DOCUMENTATION_PATHS=step["env"]["DOCUMENTATION_PATHS"],
             REQUIRED_PATHS=step["env"]["REQUIRED_PATHS"],
-            FORCE_FULL="true" if force else "false",
+            FORCE_FULL=(
+                step["env"]["FORCE_FULL"]
+                if step["env"]["FORCE_FULL"] in {"true", "false"}
+                else ("true" if force else "false")
+            ),
         )
         result = subprocess.run(
             ["bash", "--noprofile", "--norc", "-e", "-c", step["run"]],
@@ -352,6 +356,29 @@ class GeneratedReleaseScopeExecution(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         return dict(line.split("=", 1) for line in output.read_text().splitlines())
+
+    def test_without_explicit_opt_in_docs_keep_full_ci_and_release_preparation(self):
+        """Upgrading a legacy consumer must not silently skip its docs builds/betas."""
+        config = policy()
+        del config["change_scope"]
+        for renderer in (installer.quality, installer.release):
+            jobs = rendered(renderer(config))["jobs"]
+            outputs = self.scope(jobs["scope"])
+            self.assertEqual(outputs, {"run": "true", "reason": "forced"})
+            values = {name: {"result": "success", "outputs": {}} for name in jobs}
+            values["scope"]["outputs"] = outputs
+            for name, job in jobs.items():
+                if name == "prepare" or name.startswith("check-"):
+                    self.assertTrue(job_runs(job, values), name)
+
+    def test_explicit_empty_scope_enables_builtin_docs_classification(self):
+        """An explicit empty object is an opt-in to the documented default paths."""
+        for renderer in (installer.quality, installer.release):
+            jobs = rendered(renderer(policy(change_scope={})))["jobs"]
+            self.assertEqual(
+                self.scope(jobs["scope"]),
+                {"run": "false", "reason": "documentation-only"},
+            )
 
     def test_docs_push_stops_before_legacy_resolution_or_versioned_allocation(self):
         """Prove that a docs push skips every job capable of allocating a version."""
