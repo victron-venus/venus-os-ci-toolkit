@@ -312,6 +312,33 @@ class GeneratorTest(unittest.TestCase):
             )
             self.assertEqual(workflow["jobs"]["stable"]["environment"], "release")
 
+    def test_only_explicit_supersession_skips_required_promotion_evidence(self):
+        """Missing publisher output must still require real evidence, never skip it."""
+        for versioned in (False, True):
+            policy = dict(self.policy)
+            if versioned:
+                policy["versioning"] = {
+                    "schema": 1,
+                    "promotion": "final-build",
+                    "files": [{"path": "version", "format": "text"}],
+                }
+            jobs = installer.release(policy)["jobs"]
+            for name in (["candidate", "final"] if versioned else ["candidate"]):
+                steps = jobs[name]["steps"]
+                publication = next(
+                    step for step in steps if step.get("id") == "publication"
+                )
+                self.assertIn("release_", publication["run"])
+                evidence = steps[-1]
+                self.assertEqual(
+                    evidence["if"],
+                    "${{ steps.publication.outputs.status != 'superseded' }}",
+                )
+                self.assertEqual(evidence["with"]["if-no-files-found"], "error")
+                self.assertEqual(
+                    evidence["with"]["path"], ".release-evidence/release-manifest.json"
+                )
+
     def test_publication_secret_requires_explicit_safe_policy_opt_in(self):
         """Reject expression injection, missing names and GitHub-reserved secrets."""
         default = installer.release(self.policy)
