@@ -97,18 +97,19 @@ def verified_rc(gh, tag, info, current_run):
         {item["name"] for item in assets} == set(expected) | {rc.MANIFEST},
         "RC asset inventory differs from immutable evidence",
     )
-    for item in assets:
-        data = (
-            raw
-            if item["name"] == rc.MANIFEST
-            else gh.binary(f"releases/assets/{rc.positive(item['id'], 'asset ID')}")
-        )
-        rc.require(item["size"] == len(data), "RC asset size mismatch")
-        if item["name"] != rc.MANIFEST:
+    rc.require(manifests[0]["size"] == len(raw), "RC asset size mismatch")
+    with tempfile.TemporaryDirectory(prefix="verified-rc-") as temp:
+        payload = Path(temp) / "payload"
+        for item in assets:
+            if item["name"] == rc.MANIFEST:
+                continue
+            identity = rc.download_asset(gh, item["id"], payload)
+            payload.unlink()
+            rc.require(item["size"] == identity["size"], "RC asset size mismatch")
             declaration = expected[item["name"]]
             rc.require(
-                len(data) == declaration["size"]
-                and rc.digest(data) == declaration["sha256"],
+                identity["size"] == declaration["size"]
+                and identity["sha256"] == declaration["sha256"],
                 f"RC payload checksum mismatch: {item['name']}",
             )
     rc.require(

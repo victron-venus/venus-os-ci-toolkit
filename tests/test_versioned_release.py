@@ -19,6 +19,7 @@ import tempfile
 import unittest
 import zipfile
 from datetime import datetime, timezone
+from functools import partial
 from pathlib import Path
 from unittest.mock import patch
 
@@ -201,6 +202,107 @@ class CandidateDownloadTests(unittest.TestCase):
         self.assertEqual(gh.downloads, [rc.MANIFEST, "package.tar.gz"])
         self.assertEqual([asset["download_count"] for asset in gh.assets[10]], [1, 1])
         self.assertEqual(gh.writes, [])
+
+    def test_payloads_use_streaming_and_only_one_private_staged_file(self):
+        gh = legacy_tests.FakeGitHub()
+        candidate = legacy_tests.manifest()
+        gh.files[22] = b"another verified payload"
+        candidate["assets"].append(
+            {
+                "name": "second.zip",
+                "size": len(gh.files[22]),
+                "sha256": rc.digest(gh.files[22]),
+            }
+        )
+        gh.files[21] = rc.json_bytes(candidate)
+        gh.assets[10][1]["size"] = len(gh.files[21])
+        gh.assets[10].append(
+            {
+                "id": 22,
+                "name": "second.zip",
+                "size": len(gh.files[22]),
+                "state": "uploaded",
+            }
+        )
+        gh.set_evidence(gh.files[21])
+        binary = gh.binary
+        staged = []
+
+        def metadata_only(path):
+            self.assertNotIn(path, {"releases/assets/20", "releases/assets/22"})
+            return binary(path)
+
+        def stream(path, output):
+            destination = Path(output.name)
+            self.assertEqual(list(destination.parent.iterdir()), [destination])
+            output.write(gh.files[int(path.split("/")[-1])])
+            staged.append(destination)
+
+        with (
+            patch.object(gh, "binary", side_effect=metadata_only),
+            patch.object(gh, "download_asset", side_effect=stream) as download,
+        ):
+            manifest, _ = self.verify(gh)
+        self.assertEqual(manifest, candidate)
+        self.assertEqual(download.call_count, 2)
+        self.assertEqual(len(staged), 2)
+        self.assertTrue(all(not path.exists() for path in staged))
+        self.assertTrue(all(not path.parent.exists() for path in staged))
+        self.assertEqual(gh.writes, [])
+
+    def test_streamed_corruption_and_truncation_reject_before_acceptance(self):
+        def corrupt(mutate, source, paths, path, output):
+            paths.append(Path(output.name))
+            output.write(mutate(source.binary(path)))
+
+        for change in (
+            lambda data: b"x" * len(data),
+            lambda data: data[:-1],
+            lambda data: data + b"extra",
+        ):
+            gh = legacy_tests.FakeGitHub()
+            staged = []
+
+            with (
+                patch.object(
+                    gh,
+                    "download_asset",
+                    side_effect=partial(corrupt, change, gh, staged),
+                ),
+                self.assertRaises(rc.ReleaseError),
+            ):
+                self.verify(gh)
+            self.assertEqual(len(staged), 1)
+            self.assertFalse(staged[0].parent.exists())
+            self.assertEqual(gh.snapshot_reads, 1)
+            self.assertEqual(gh.writes, [])
+
+    def test_interrupted_stream_never_accepts_or_leaves_private_payload(self):
+        def fail(download_error, paths, _path, output):
+            paths.append(Path(output.name))
+            output.write(b"incomplete")
+            raise download_error
+
+        for error in (
+            rc.GitHubError("HTTP 500"),
+            rc.GitHubError("asset download exceeded 900 seconds"),
+            KeyboardInterrupt(),
+        ):
+            with self.subTest(error=str(error)):
+                gh = legacy_tests.FakeGitHub()
+                staged = []
+
+                with (
+                    patch.object(
+                        gh, "download_asset", side_effect=partial(fail, error, staged)
+                    ),
+                    self.assertRaises(type(error)),
+                ):
+                    self.verify(gh)
+                self.assertEqual(len(staged), 1)
+                self.assertFalse(staged[0].parent.exists())
+                self.assertEqual(gh.snapshot_reads, 1)
+                self.assertEqual(gh.writes, [])
 
     def test_asset_mutation_during_downloads_still_rejects_candidate(self):
         for field, value in {
