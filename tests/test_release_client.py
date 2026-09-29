@@ -279,6 +279,51 @@ class GeneratorTest(unittest.TestCase):
         self.assertNotIn("secrets", jobs["build"])
         self.assertIn("!= 'success'", jobs["gate"]["steps"][0]["run"])
 
+    def test_publication_secret_is_confined_to_gated_publishing_steps(self):
+        """The extra credential cannot reach preparation, builds or validators."""
+        for versioned in (False, True):
+            policy = dict(self.policy, publication_token_secret="BOT_PAT")
+            if versioned:
+                policy["versioning"] = {
+                    "schema": 1,
+                    "promotion": "final-build",
+                    "files": [{"path": "version", "format": "text"}],
+                }
+            workflow = installer.release(policy)
+            selected = []
+            for name, job in workflow["jobs"].items():
+                for step in job.get("steps", []):
+                    if "secrets.BOT_PAT" in json.dumps(step):
+                        selected.append(name)
+                        self.assertIn(name, {"candidate", "stable", "final"})
+                        self.assertEqual(
+                            step["env"]["RELEASE_REQUIRE_WORKFLOW_SCOPE"], "true"
+                        )
+                        self.assertIn("release_", step["run"])
+                if name not in {"candidate", "stable", "final"}:
+                    self.assertNotIn("secrets.BOT_PAT", json.dumps(job))
+            self.assertEqual(
+                set(selected),
+                (
+                    {"candidate", "stable", "final"}
+                    if versioned
+                    else {"candidate", "stable"}
+                ),
+            )
+            self.assertEqual(workflow["jobs"]["stable"]["environment"], "release")
+
+    def test_publication_secret_requires_explicit_safe_policy_opt_in(self):
+        """Reject expression injection, missing names and GitHub-reserved secrets."""
+        default = installer.release(self.policy)
+        self.assertNotIn("RELEASE_REQUIRE_WORKFLOW_SCOPE", json.dumps(default))
+        for name in (None, "", "GITHUB_TOKEN", "BAD-NAME", "BOT_PAT }}", ["BOT_PAT"]):
+            with self.subTest(name=name), self.assertRaises(ValueError):
+                installer.release(dict(self.policy, publication_token_secret=name))
+        with self.assertRaises(ValueError):
+            installer.publication_token_env(
+                {"mode": "validation-only", "publication_token_secret": "BOT_PAT"}
+            )
+
     def test_build_secrets_are_explicit_and_validated(self):
         """Never inherit unrelated deployment or operator credentials."""
         policy = dict(self.policy, build_secrets=["SIGNING_KEY"])

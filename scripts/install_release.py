@@ -306,6 +306,7 @@ def schedule(policy):
 
 def _legacy_release(policy):
     """Build the gated candidate/publication workflow from the reviewed policy."""
+    publication_env = publication_token_env(policy)
     branch = policy.get("default_branch", "main")
     candidate = "${{ needs.prepare.outputs.channel != 'stable' }}"
     steps_checkout = [{"uses": CHECKOUT, "with": {"persist-credentials": False}}]
@@ -436,7 +437,7 @@ PY
                 {
                     "name": "Publish checked candidate",
                     "env": {
-                        "GH_TOKEN": "${{ github.token }}",
+                        **publication_env,
                         "CHANNEL": "${{ needs.prepare.outputs.channel }}",
                         "VERSION": "${{ needs.prepare.outputs.version }}",
                     },
@@ -472,7 +473,7 @@ PY
                 {
                     "name": "Promote RC bytes after approval",
                     "env": {
-                        "GH_TOKEN": "${{ github.token }}",
+                        **publication_env,
                         "RC_TAG": "${{ inputs.rc_tag }}",
                     },
                     "run": (
@@ -543,6 +544,26 @@ def build_secrets(policy):
     ):
         raise ValueError("build_secrets must be unique explicit secret names")
     return {name: "${{ secrets." + name + " }}" for name in sorted(names)}
+
+
+def publication_token_env(policy):
+    """Opt only trusted publication steps into an explicitly named classic token."""
+    if "publication_token_secret" not in policy:
+        return {"GH_TOKEN": "${{ github.token }}"}
+    name = policy["publication_token_secret"]
+    if (
+        not isinstance(name, str)
+        or not re.fullmatch(r"[A-Z_][A-Z0-9_]*", name)
+        or name.startswith("GITHUB_")
+        or policy.get("mode", "release") != "release"
+    ):
+        raise ValueError(
+            "publication_token_secret requires an explicit release secret name"
+        )
+    return {
+        "GH_TOKEN": "${{ secrets." + name + " }}",
+        "RELEASE_REQUIRE_WORKFLOW_SCOPE": "true",
+    }
 
 
 def release(policy):
@@ -662,6 +683,7 @@ def validate_policy(directory: Path, policy: dict) -> None:
     """Reject unsupported policy modes, stale publishers and invalid repository names."""
     mode = policy.get("mode", "release")
     validate_asset_restrictions(policy)
+    publication_token_env(policy)
     scope_policy(policy)
     if policy.get("versioning"):
         # Legacy consumers do not vendor the optional version modules.

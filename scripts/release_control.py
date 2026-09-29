@@ -128,13 +128,72 @@ class GitHub:
         require(bool(REPO_RE.fullmatch(repository)), "Repository must be OWNER/REPO")
         self.repo = repository
         self.base = f"repos/{repository}"
+        if os.environ.get("RELEASE_REQUIRE_WORKFLOW_SCOPE"):
+            self.verify_publication_permissions()
+
+    def verify_publication_permissions(self) -> None:
+        """Fail before writes unless a classic token can publish historical workflows.
+
+        Only permission headers and repository access are inspected. Never print
+        the token, response body or authentication diagnostics from this probe.
+        Fine-grained tokens do not expose verifiable OAuth scopes and fail closed.
+        """
+        require(
+            os.environ.get("RELEASE_REQUIRE_WORKFLOW_SCOPE") == "true"
+            and bool(os.environ.get("GH_TOKEN")),
+            "Publication token is missing or its permission probe is not enabled",
+        )
+        result = subprocess.run(
+            [
+                "gh",
+                "api",
+                "--hostname",
+                "github.com",
+                "--method",
+                "GET",
+                "--include",
+                "--",
+                self.base,
+            ],
+            capture_output=True,
+            check=False,
+        )
+        require(result.returncode == 0, "Publication token permission probe failed")
+        headers, separator, body = result.stdout.replace(b"\r\n", b"\n").partition(
+            b"\n\n"
+        )
+        require(bool(separator), "Publication token permission headers are missing")
+        scopes = set()
+        for line in headers.decode("utf-8", errors="replace").splitlines():
+            key, colon, value = line.partition(":")
+            if colon and key.lower() == "x-oauth-scopes":
+                scopes.update(item.strip() for item in value.split(","))
+        repository = parse_json(body, "publication repository permission probe")
+        require(
+            isinstance(repository, dict)
+            and isinstance(repository.get("full_name"), str)
+            and repository["full_name"].lower() == self.repo.lower()
+            and isinstance(repository.get("private"), bool)
+            and isinstance(repository.get("permissions"), dict)
+            and repository["permissions"].get("push") is True,
+            "Publication token cannot write the expected repository",
+        )
+        require(
+            "workflow" in scopes
+            and (
+                "repo" in scopes
+                or (repository["private"] is False and "public_repo" in scopes)
+            ),
+            "Publication token requires verified workflow and repo/public_repo OAuth scopes",
+        )
 
     @staticmethod
-    def response(result: subprocess.CompletedProcess) -> bytes:
+    def response(result: subprocess.CompletedProcess, operation: str = "") -> bytes:
         """Translate a completed fixed-form command without retrying failed writes."""
         if result.returncode:
             message = result.stderr.decode(errors="replace").strip()
-            raise GitHubError(message, "HTTP 404" in message)
+            context = f"{operation}: " if operation else ""
+            raise GitHubError(context + message, "HTTP 404" in message)
         return result.stdout
 
     def request(self, path: str, method="GET", body=None, mode="json") -> bytes:
@@ -192,7 +251,8 @@ class GitHub:
                 input=json_bytes(body) if body is not None else None,
                 capture_output=True,
                 check=False,
-            )
+            ),
+            f"{method} {endpoint}",
         )
 
     def api(self, path: str, method: str = "GET", body: dict | None = None):

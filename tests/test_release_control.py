@@ -709,6 +709,139 @@ class ReleaseControlTests(unittest.TestCase):
         self.reject_promotion()
 
 
+class PublicationPermissionTests(unittest.TestCase):
+    """Publication credentials fail closed before any ledger or release mutation."""
+
+    @staticmethod
+    def probe(scopes="repo, workflow", **repository):
+        """Return captured permission headers, never a real credential."""
+        body = {"full_name": REPO, "private": False, "permissions": {"push": True}}
+        body.update(repository)
+        header = "HTTP/2.0 200 OK\r\nX-OAuth-Scopes: " + scopes + "\r\n\r\n"
+        return subprocess.CompletedProcess([], 0, header.encode() + rc.json_bytes(body))
+
+    def test_default_token_does_not_change_or_probe(self):
+        """Consumers that did not opt in preserve their GITHUB_TOKEN behavior."""
+        with (
+            patch.dict(os.environ, {"RELEASE_REQUIRE_WORKFLOW_SCOPE": ""}),
+            patch.object(rc.subprocess, "run") as command,
+        ):
+            rc.GitHub(REPO)
+        command.assert_not_called()
+
+    def test_scoped_classic_token_probe_is_read_only_and_secret_safe(self):
+        """Both public-only and repo scopes work without credentials in arguments."""
+        for scopes in ("repo, workflow", "public_repo, workflow"):
+            with (
+                self.subTest(scopes=scopes),
+                patch.dict(
+                    os.environ,
+                    {
+                        "GH_TOKEN": "test-secret",
+                        "RELEASE_REQUIRE_WORKFLOW_SCOPE": "true",
+                    },
+                ),
+                patch.object(
+                    rc.subprocess, "run", return_value=self.probe(scopes)
+                ) as command,
+            ):
+                rc.GitHub(REPO)
+            self.assertEqual(command.call_count, 1)
+            self.assertEqual(
+                command.call_args.args[0],
+                [
+                    "gh",
+                    "api",
+                    "--hostname",
+                    "github.com",
+                    "--method",
+                    "GET",
+                    "--include",
+                    "--",
+                    "repos/" + REPO,
+                ],
+            )
+            self.assertNotIn("test-secret", str(command.call_args))
+
+    def test_scope_or_repository_mismatch_rejects_before_write(self):
+        """Missing scopes, fine-grained tokens and read-only access cannot publish."""
+        cases = [
+            self.probe("repo"),
+            self.probe("workflow"),
+            self.probe(""),
+            self.probe("public_repo, workflow", private=True),
+            self.probe(full_name="other/project"),
+            self.probe(permissions={"push": False}),
+        ]
+        for response in cases:
+            with (
+                self.subTest(response=response.stdout),
+                patch.dict(
+                    os.environ,
+                    {
+                        "GH_TOKEN": "test-secret",
+                        "RELEASE_REQUIRE_WORKFLOW_SCOPE": "true",
+                    },
+                ),
+                patch.object(rc.subprocess, "run", return_value=response) as command,
+                self.assertRaises(rc.ReleaseError),
+            ):
+                rc.GitHub(REPO)
+            self.assertEqual(command.call_count, 1)
+            self.assertEqual(command.call_args.args[0][5], "GET")
+
+    def test_missing_secret_never_uses_a_fallback_identity(self):
+        """An empty selected Actions secret must fail before gh can fall back."""
+        with (
+            patch.dict(
+                os.environ, {"GH_TOKEN": "", "RELEASE_REQUIRE_WORKFLOW_SCOPE": "true"}
+            ),
+            patch.object(rc.subprocess, "run") as command,
+            self.assertRaises(rc.ReleaseError),
+        ):
+            rc.GitHub(REPO)
+        command.assert_not_called()
+
+    def test_probe_failure_does_not_print_payload_or_auth_diagnostics(self):
+        """The permission probe never returns raw potentially sensitive diagnostics."""
+        response = subprocess.CompletedProcess(
+            [], 1, b"private response", b"test-secret"
+        )
+        with (
+            patch.dict(
+                os.environ,
+                {"GH_TOKEN": "test-secret", "RELEASE_REQUIRE_WORKFLOW_SCOPE": "true"},
+            ),
+            patch.object(rc.subprocess, "run", return_value=response),
+            self.assertRaises(rc.ReleaseError) as error,
+        ):
+            rc.GitHub(REPO)
+        self.assertEqual(
+            str(error.exception), "Publication token permission probe failed"
+        )
+
+    def test_api_error_identifies_method_and_route_without_body(self):
+        """Future publication failures identify the operation without a debug dump."""
+        with patch.dict(os.environ, {"RELEASE_REQUIRE_WORKFLOW_SCOPE": ""}):
+            gh = rc.GitHub(REPO)
+        with (
+            patch.object(
+                rc.subprocess,
+                "run",
+                return_value=subprocess.CompletedProcess(
+                    [],
+                    1,
+                    b"private body",
+                    b"gh: Resource not accessible by integration (HTTP 403)",
+                ),
+            ),
+            self.assertRaises(rc.GitHubError) as error,
+        ):
+            gh.api("git/refs", "POST", {"private": "request body"})
+        self.assertIn("POST repos/example/project/git/refs: ", str(error.exception))
+        self.assertNotIn("private", str(error.exception))
+
+
 class TransportTests(unittest.TestCase):
     """Reject CLI argument and path injection before a subprocess can execute."""
 
