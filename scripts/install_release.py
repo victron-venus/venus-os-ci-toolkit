@@ -947,6 +947,9 @@ def release_files(directory: Path, policy: dict) -> dict[str, str]:
         .read_text()
         .replace("Path(__file__).parents[1]", "Path(__file__).parents[2]")
     )
+    files[".github/release-tests/test_asset_streaming.py"] = (
+        ROOT / "tests/test_asset_streaming.py"
+    ).read_text()
     return files
 
 

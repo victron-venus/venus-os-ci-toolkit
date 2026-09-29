@@ -221,9 +221,12 @@ class GeneratorTest(unittest.TestCase):
                     tuple(restrictions),
                 ),
             ):
-                source = installer.release_files(root, policy)[
-                    "scripts/release_control.py"
-                ]
+                files = installer.release_files(root, policy)
+                self.assertEqual(
+                    files[".github/release-tests/test_asset_streaming.py"],
+                    (SCRIPTS.parent / "tests/test_asset_streaming.py").read_text(),
+                )
+                source = files["scripts/release_control.py"]
                 assignments = [
                     item
                     for item in ast.parse(source).body
@@ -323,7 +326,7 @@ class GeneratorTest(unittest.TestCase):
                     "files": [{"path": "version", "format": "text"}],
                 }
             jobs = installer.release(policy)["jobs"]
-            for name in (["candidate", "final"] if versioned else ["candidate"]):
+            for name in ["candidate", "final"] if versioned else ["candidate"]:
                 steps = jobs[name]["steps"]
                 publication = next(
                     step for step in steps if step.get("id") == "publication"
