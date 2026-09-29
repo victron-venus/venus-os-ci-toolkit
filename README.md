@@ -56,9 +56,9 @@ bash scripts/ci.sh
 
 The contract suite includes rejected missing/skipped gates, wrong source revisions, checksum changes, forged/expired evidence, release collisions and stable byte identity. Consumer release workflows run the vendored engine contract tests as a required gate.
 
-Release payload staging, upload verification, RC promotion and registry admission
-stream installer/archive bytes through disk with 1 MiB hashing chunks. Asset
-downloads have a 15-minute deadline; failed or interrupted downloads are removed.
+Build receipts, release payload staging, upload verification, RC promotion and
+registry admission stream installer/archive bytes through disk with 1 MiB hashing
+chunks. Asset downloads have a 15-minute deadline; failed or interrupted downloads are removed.
 Every payload still requires its exact size and SHA-256 before publication. Small
 JSON manifests and Actions evidence ZIPs use the existing metadata reader.
 
