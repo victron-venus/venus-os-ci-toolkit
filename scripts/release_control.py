@@ -1191,7 +1191,19 @@ def snapshot_identity(snapshot: tuple) -> bytes:
                     "updated_at",
                 )
             },
-            "assets": sorted(assets, key=lambda asset: asset["id"]),
+            # A verifier's own GETs increment this counter. Preserve every other
+            # field, including unknown metadata, when checking for replacement.
+            "assets": sorted(
+                (
+                    {
+                        key: value
+                        for key, value in asset.items()
+                        if key != "download_count"
+                    }
+                    for asset in assets
+                ),
+                key=lambda asset: asset["id"],
+            ),
         }
     )
 
