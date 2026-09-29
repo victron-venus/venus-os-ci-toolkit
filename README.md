@@ -69,6 +69,18 @@ Consumers continue to build from their committed files without a producer checko
 
 ## Publishing a source after workflow changes
 
+Automatic push betas and scheduled nightlies publish the current default HEAD.
+If that branch advances while a build runs, publication records `superseded` only
+after proving the source is an ancestor and finding exactly one newer automatic
+push run of the same release workflow at the new HEAD. This does not claim that
+the replacement succeeded or published. An unproven replacement or API error
+fails with an actionable message. Supersession creates no tag, release or
+promotion evidence and does not advance the publication floor; the reserved build
+number remains consumed. Preparation, build checks and manual releases are unchanged.
+The check runs again immediately before publication writes. A remaining race or
+permission failure still fails, never resets the ledger and never retries writes;
+inspect it and dispatch a fresh release at current HEAD.
+
 GitHub's `GITHUB_TOKEN` cannot publish a historical source when its workflow files
 have changed relative to the default branch. A reviewed consumer can explicitly
 set `"publication_token_secret": "BOT_PAT"` in `.release-policy.json` and render
