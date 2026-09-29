@@ -331,6 +331,112 @@ class AutoApproveContract(unittest.TestCase):
             self.execute()
         self.assert_posts(0)
 
+    def configure_bot_actions_fallback(self):
+        """Model the metadata and credentials of a bot-authored same-repo PR."""
+        self.environment.update(
+            {
+                "PR_AUTHOR": "californiantiramisu",
+                "GITHUB_TOKEN": "test-actions-token",
+            }
+        )
+        self.pr["head"]["repo"] = {"full_name": REPOSITORY}
+        self.current = copy.deepcopy(self.pr)
+        self.reviewer = "CALIFORNIANTIRAMISU"
+
+    def test_bot_self_review_uses_independent_actions_identity(self):
+        """The known bot's same-repo PR can use Actions after verifying PAT ownership."""
+        self.configure_bot_actions_fallback()
+        self.execute()
+        self.assert_posts(1)
+        self.assertEqual(
+            [
+                kwargs["env"]["GH_TOKEN"]
+                for command, kwargs in self.calls
+                if command[2] == "user"
+            ],
+            ["test-bot-token"],
+        )
+        self.assertEqual(
+            [
+                kwargs["env"]["GH_TOKEN"]
+                for command, kwargs in self.calls
+                if command[2] == f"{ENDPOINT}/reviews"
+            ],
+            ["test-actions-token"],
+        )
+
+    def test_independent_approval_pat_precedes_actions_fallback(self):
+        """An explicitly configured independent reviewer remains preferred."""
+        self.configure_bot_actions_fallback()
+        self.test_bot_author_uses_independent_fallback()
+
+    def test_actions_fallback_rejects_fork_or_unknown_repository(self):
+        """Never expand the bot fallback beyond a verified same-repository head."""
+        for repository in (None, {}, {"full_name": "fork/project"}):
+            with self.subTest(repository=repository):
+                self.setUp()
+                self.configure_bot_actions_fallback()
+                self.pr["head"]["repo"] = repository
+                with self.assertRaisesRegex(RuntimeError, "cannot approve its own PR"):
+                    self.execute()
+                self.assert_posts(0)
+
+    def test_actions_fallback_never_substitutes_for_human_self_review(self):
+        """The owner and arbitrary trusted authors retain the PAT-only policy."""
+        for author in ("4alvit", "another-trusted-author"):
+            with self.subTest(author=author):
+                self.setUp()
+                self.configure_bot_actions_fallback()
+                self.environment["TRUSTED_AUTHORS"] = json.dumps([author])
+                self.environment["PR_AUTHOR"] = author
+                self.pr["user"]["login"] = author
+                self.reviewer = author
+                with self.assertRaisesRegex(RuntimeError, "cannot approve its own PR"):
+                    self.execute()
+                self.assert_posts(0)
+
+    def test_actions_fallback_requires_bot_pat_owner_evidence(self):
+        """An Actions token alone or an author-owned secondary PAT is insufficient."""
+        self.configure_bot_actions_fallback()
+        del self.environment["BOT_PAT"]
+        self.environment["APPROVAL_PAT"] = "test-secondary-token"
+        with self.assertRaisesRegex(RuntimeError, "cannot approve its own PR"):
+            self.execute()
+        self.assert_posts(0)
+
+    def test_actions_fallback_does_not_hide_invalid_bot_credentials(self):
+        """The installation token cannot bypass a failed PAT identity lookup."""
+        self.configure_bot_actions_fallback()
+        self.test_invalid_primary_identity_does_not_fall_back()
+
+    def test_actions_fallback_requires_matching_event_author(self):
+        """A live bot PR alone cannot select a token intended for another event."""
+        self.configure_bot_actions_fallback()
+        self.environment["PR_AUTHOR"] = "4alvit"
+        with self.assertRaisesRegex(RuntimeError, "cannot approve its own PR"):
+            self.execute()
+        self.assert_posts(0)
+
+    def test_actions_fallback_rechecks_bot_and_repository_identity(self):
+        """A changed head owner or author cannot receive the fallback approval."""
+        for changes in (
+            {"head": {"sha": HEAD, "repo": {"full_name": "fork/project"}}},
+            {"user": {"login": "4alvit"}},
+        ):
+            with self.subTest(changes=changes):
+                self.setUp()
+                self.configure_bot_actions_fallback()
+                self.current.update(changes)
+                self.execute()
+                self.assert_posts(0)
+
+    def test_actions_fallback_recognizes_previous_actions_review(self):
+        """Reevaluation recognizes the actual fallback reviewer and stays idempotent."""
+        self.configure_bot_actions_fallback()
+        self.pages = [[self.review(user="github-actions[bot]")]]
+        self.execute()
+        self.assert_posts(0)
+
     def test_invalid_primary_identity_does_not_fall_back(self):
         """A failing identity lookup must remain visible even with a valid fallback."""
         self.environment["APPROVAL_PAT"] = "test-independent-token"
@@ -588,6 +694,9 @@ class ManualApprovalRecoveryTests(unittest.TestCase):
 
     def test_recovery_rejects_self_review(self):
         """The configured token must belong to an independent reviewer."""
+        self.environment.update(
+            {"PR_AUTHOR": "californiantiramisu", "GITHUB_TOKEN": "test-actions-token"}
+        )
         self.harness.reviewer = self.pr["user"]["login"]
         with self.assertRaisesRegex(RuntimeError, "cannot approve its own"):
             self.execute()
