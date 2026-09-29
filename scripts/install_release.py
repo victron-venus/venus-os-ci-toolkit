@@ -89,6 +89,11 @@ def scope_policy(policy):
 def scope_job(policy, *, force_input=False):
     """Classify the complete Git diff before installing project toolchains."""
     config = scope_policy(policy)
+    force_full = "true"
+    if "change_scope" in policy:
+        force_full = (
+            "${{ inputs.force-full && 'true' || 'false' }}" if force_input else "false"
+        )
     return {
         "name": "Change scope",
         "runs-on": "ubuntu-latest",
@@ -108,9 +113,7 @@ def scope_job(policy, *, force_input=False):
                 "env": {
                     "DOCUMENTATION_PATHS": json.dumps(config["documentation_paths"]),
                     "REQUIRED_PATHS": json.dumps(config["required_paths"]),
-                    "FORCE_FULL": "${{ inputs.force-full && 'true' || 'false' }}"
-                    if force_input
-                    else "false",
+                    "FORCE_FULL": force_full,
                 },
                 "run": (
                     'args=()\nif [[ "$FORCE_FULL" == true ]]; then args+=(--force); fi\n'
@@ -306,6 +309,7 @@ def schedule(policy):
 
 def _legacy_release(policy):
     """Build the gated candidate/publication workflow from the reviewed policy."""
+    publication_env = publication_token_env(policy)
     branch = policy.get("default_branch", "main")
     candidate = "${{ needs.prepare.outputs.channel != 'stable' }}"
     steps_checkout = [{"uses": CHECKOUT, "with": {"persist-credentials": False}}]
@@ -436,7 +440,7 @@ PY
                 {
                     "name": "Publish checked candidate",
                     "env": {
-                        "GH_TOKEN": "${{ github.token }}",
+                        **publication_env,
                         "CHANNEL": "${{ needs.prepare.outputs.channel }}",
                         "VERSION": "${{ needs.prepare.outputs.version }}",
                     },
@@ -472,7 +476,7 @@ PY
                 {
                     "name": "Promote RC bytes after approval",
                     "env": {
-                        "GH_TOKEN": "${{ github.token }}",
+                        **publication_env,
                         "RC_TAG": "${{ inputs.rc_tag }}",
                     },
                     "run": (
@@ -543,6 +547,26 @@ def build_secrets(policy):
     ):
         raise ValueError("build_secrets must be unique explicit secret names")
     return {name: "${{ secrets." + name + " }}" for name in sorted(names)}
+
+
+def publication_token_env(policy):
+    """Opt only trusted publication steps into an explicitly named classic token."""
+    if "publication_token_secret" not in policy:
+        return {"GH_TOKEN": "${{ github.token }}"}
+    name = policy["publication_token_secret"]
+    if (
+        not isinstance(name, str)
+        or not re.fullmatch(r"[A-Z_][A-Z0-9_]*", name)
+        or name.startswith("GITHUB_")
+        or policy.get("mode", "release") != "release"
+    ):
+        raise ValueError(
+            "publication_token_secret requires an explicit release secret name"
+        )
+    return {
+        "GH_TOKEN": "${{ secrets." + name + " }}",
+        "RELEASE_REQUIRE_WORKFLOW_SCOPE": "true",
+    }
 
 
 def release(policy):
@@ -662,6 +686,7 @@ def validate_policy(directory: Path, policy: dict) -> None:
     """Reject unsupported policy modes, stale publishers and invalid repository names."""
     mode = policy.get("mode", "release")
     validate_asset_restrictions(policy)
+    publication_token_env(policy)
     scope_policy(policy)
     if policy.get("versioning"):
         # Legacy consumers do not vendor the optional version modules.
@@ -1044,19 +1069,22 @@ def operator_guide(policy: dict) -> str:
 
 The source of truth is `.release-policy.json`. `quality-gate.yml` runs the callable
 validation workflows and produces the required **CI gate** status on every PR
-and merge-queue commit. Superseded PR runs are cancelled. A lightweight Change scope
-job checks the complete Git diff first. Documentation-only changes skip build and
-test workflows; the gate accepts only these explicitly justified skips. Missing,
-failed or unexpectedly skipped workflows fail the gate. Unknown files, incomplete
-history, code, workflow and lockfile changes run full validation.
+and merge-queue commit. Superseded PR runs are cancelled. Without an explicit
+`change_scope` policy, every change keeps full CI and normal release preparation.
+Documentation-only skipping requires that explicit opt-in. When enabled, the
+Change scope job checks the complete Git diff first; the gate accepts only proven
+documentation skips. Missing, failed or unexpectedly skipped workflows fail the
+gate. Unknown files, incomplete history, code, workflows and lockfile changes run
+full validation.
 
 The optional `change_scope` policy provides exact `documentation_paths`, exact
 `required_paths` for documentation used as a build input, and
 `always_validate_workflows` for independently required checks. Documentation paths
 cannot exempt source, tests, fixtures, build configuration or dependencies.
-Manual dispatch, scheduled runs and release qualification remain full. A push
-containing only documentation stops before release preparation, version allocation,
-artifact builds or publication. This does not change the configured nightly policy.
+Manual dispatch, scheduled runs and release qualification remain full. Only with
+explicit `change_scope` opt-in does a documentation-only push stop before release
+preparation, version allocation, artifact builds or publication. This does not
+change the configured nightly policy.
 
 ## Local checks
 

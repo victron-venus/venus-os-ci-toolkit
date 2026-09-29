@@ -67,6 +67,27 @@ Consumers continue to build from their committed files without a producer checko
 3. Verify generated drift with `--check`, inspect diffs, and submit PRs.
 4. Merge workflows before enabling their required status checks. Keep existing security and review requirements active.
 
+## Publishing a source after workflow changes
+
+GitHub's `GITHUB_TOKEN` cannot publish a historical source when its workflow files
+have changed relative to the default branch. A reviewed consumer can explicitly
+set `"publication_token_secret": "BOT_PAT"` in `.release-policy.json` and render
+again. The selected classic token must have `workflow` and `repo` (or `public_repo`
+for a public repository) OAuth scopes and push access. Publication verifies these
+permissions with a read-only request before publication-stage ledger, tag or
+release writes; missing or unverifiable permissions fail closed without printing
+credentials.
+Early version reservation in preparation still uses `GITHUB_TOKEN`. Fine-grained
+tokens are not accepted by this scope probe.
+
+The secret is available only to trusted publication steps, including manually
+approved stable publication. Preparation, builds and PR checks keep their existing
+credentials. Consumers without this option retain `GITHUB_TOKEN`. Before opting in,
+review tag/release/ledger-branch event handlers and repository webhooks: unlike
+`GITHUB_TOKEN`, PAT writes can trigger downstream workflows. Do not opt in while
+those events could cause unintended deployment or recursive publication. Source,
+artifact receipts, gates, immutable tags and version reservations are unchanged.
+
 ## License
 
 MIT License — see [LICENSE](LICENSE).
