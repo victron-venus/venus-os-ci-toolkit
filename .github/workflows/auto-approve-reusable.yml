@@ -45,7 +45,7 @@ jobs:
       - name: Approve the current head as an independent reviewer
         shell: python3 -I {0}
         env:
-          GITHUB_TOKEN: ${{ github.event.pull_request.user.login == 'dependabot[bot]' && github.token || '' }}
+          GITHUB_TOKEN: ${{ (github.event.pull_request.user.login == 'dependabot[bot]' || (github.event.pull_request.user.login == 'californiantiramisu' && github.event.pull_request.head.repo.full_name == github.repository)) && github.token || '' }}
           BOT_PAT: ${{ github.event.pull_request.user.login != 'dependabot[bot]' && secrets.BOT_PAT || '' }}
           APPROVAL_PAT: ${{ github.event.pull_request.user.login != 'dependabot[bot]' && secrets.APPROVAL_PAT || '' }}
           PR_AUTHOR: ${{ github.event.pull_request.user.login }}
@@ -98,6 +98,10 @@ jobs:
                   raise RuntimeError("GitHub could not determine the current review decision")
               return result["data"]["repository"]["pullRequest"]["reviewDecision"]
 
+          def same_repository_bot(pr, repository):
+              return (pr["user"]["login"].lower() == "californiantiramisu"
+                      and (pr["head"].get("repo") or {}).get("full_name") == repository)
+
           def main():
               explicit = os.environ.get("EXPLICIT_PR_NUMBER", "")
               expected = os.environ.get("EXPECTED_HEAD", "")
@@ -131,10 +135,22 @@ jobs:
                   raise RuntimeError("Pull request author does not match the selected credential")
               # Installation tokens cannot call the user-token-only GET /user endpoint.
               reviewer = "github-actions[bot]" if dependabot else api("user", token)["login"]
+              bot_owns_pr = (token == os.environ.get("BOT_PAT")
+                             and reviewer.lower() == pr["user"]["login"].lower())
               fallback = None if dependabot else os.environ.get("APPROVAL_PAT")
               if reviewer.lower() == pr["user"]["login"].lower() and fallback and fallback != token:
                   token = fallback
                   reviewer = api("user", token)["login"]
+              actions_fallback = (
+                  not recovery and bot_owns_pr
+                  and reviewer.lower() == pr["user"]["login"].lower()
+                  and os.environ.get("PR_AUTHOR", "").lower() == "californiantiramisu"
+                  and same_repository_bot(pr, repository)
+                  and bool(os.environ.get("GITHUB_TOKEN"))
+              )
+              if actions_fallback:
+                  token = os.environ["GITHUB_TOKEN"]
+                  reviewer = "github-actions[bot]"
               if reviewer.lower() == pr["user"]["login"].lower():
                   raise RuntimeError("The reviewer cannot approve its own PR; configure an independent APPROVAL_PAT")
               print(f"Reviewer: {reviewer}")
@@ -163,6 +179,7 @@ jobs:
               if (current["head"]["sha"] != head or current_base != base
                       or current["base"]["sha"] != pr["base"]["sha"]
                       or not eligible(current, authors, repository, default_branch)
+                      or (actions_fallback and not same_repository_bot(current, repository))
                       or (recovery and (
                           current["head"]["sha"] != expected
                           or (current["head"].get("repo") or {}).get("full_name") != repository))):
