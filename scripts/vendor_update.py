@@ -47,6 +47,22 @@ REMOTE = (
     r"https://github\.com/[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9][A-Za-z0-9_.-]*\.git"
 )
 PAGE = r"per_page=100&page=(?:[1-9][0-9]?|100)"
+# Diagnostic labels only; these do not expand the accepted run-state pairs.
+RUN_STATUS_LABELS = frozenset(
+    {"queued", "in_progress", "completed", "waiting", "requested", "pending"}
+)
+RUN_CONCLUSION_LABELS = frozenset(
+    {
+        "action_required",
+        "cancelled",
+        "failure",
+        "neutral",
+        "skipped",
+        "stale",
+        "success",
+        "timed_out",
+    }
+)
 API_READS = (
     r"(?:|user)",
     r"actions/runs/[1-9][0-9]*",
@@ -287,6 +303,13 @@ def verify_checkout(directory, repository, revision=None):
     return head
 
 
+def run_state_label(value, labels):
+    """Expose only fixed public enum values or null, never arbitrary API data."""
+    if value is None:
+        return "null"
+    return value if type(value) is str and value in labels else "unrecognized"
+
+
 def validate_run(run, repository, args):
     """Require current-attempt trusted default-branch execution, not PR uploads."""
     require(
@@ -315,7 +338,9 @@ def validate_run(run, repository, args):
     require(
         (run.get("status"), run.get("conclusion"))
         in {("in_progress", None), ("completed", "success")},
-        "Run is not qualified",
+        "Run is not qualified "
+        f"(status={run_state_label(run.get('status'), RUN_STATUS_LABELS)}, "
+        f"conclusion={run_state_label(run.get('conclusion'), RUN_CONCLUSION_LABELS)})",
     )
 
 
