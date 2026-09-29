@@ -282,6 +282,83 @@ class QualificationTests(unittest.TestCase):
         )
         self.assertEqual(vu.qualify(source, args)["conclusion"], "success")
 
+    def test_run_state_diagnostics_preserve_the_qualification_truth_table(self):
+        statuses = (
+            "queued",
+            "in_progress",
+            "completed",
+            "waiting",
+            "requested",
+            "pending",
+            None,
+        )
+        conclusions = (
+            "action_required",
+            "cancelled",
+            "failure",
+            "neutral",
+            "skipped",
+            "stale",
+            "success",
+            "timed_out",
+            None,
+        )
+        for status in statuses:
+            for conclusion in conclusions:
+                with self.subTest(status=status, conclusion=conclusion):
+                    args = arguments()
+                    source = qualified_source(args)
+                    source.values["actions/runs/17"].update(
+                        status=status, conclusion=conclusion
+                    )
+                    if (status, conclusion) in {
+                        ("in_progress", None),
+                        ("completed", "success"),
+                    }:
+                        vu.qualify(source, args)
+                    else:
+                        with self.assertRaises(vu.ReleaseError) as raised:
+                            vu.qualify(source, args)
+                        self.assertEqual(
+                            str(raised.exception),
+                            "Run is not qualified "
+                            f"(status={status if status is not None else 'null'}, "
+                            f"conclusion={conclusion if conclusion is not None else 'null'})",
+                        )
+
+    def test_run_state_diagnostic_never_echoes_untrusted_values(self):
+        for value in ("secret-fixture\n::error::injected", "x" * 10000, 0, True):
+            for field in ("status", "conclusion"):
+                with self.subTest(field=field, value_type=type(value).__name__):
+                    args = arguments()
+                    source = qualified_source(args)
+                    source.values["actions/runs/17"][field] = value
+                    with self.assertRaises(vu.ReleaseError) as raised:
+                        vu.qualify(source, args)
+                    expected = {
+                        "status": "in_progress",
+                        "conclusion": "null",
+                        field: "unrecognized",
+                    }
+                    self.assertEqual(
+                        str(raised.exception),
+                        "Run is not qualified "
+                        f"(status={expected['status']}, conclusion={expected['conclusion']})",
+                    )
+
+    def test_run_state_label_does_not_coerce_or_render_unexpected_objects(self):
+        class Unrenderable:
+            """Fail if malformed API data is rendered in a diagnostic."""
+
+            def __str__(self):
+                raise AssertionError("API value must not be rendered")
+
+        for value in ([], {}, Unrenderable()):
+            with self.subTest(value_type=type(value).__name__):
+                self.assertEqual(
+                    vu.run_state_label(value, vu.RUN_STATUS_LABELS), "unrecognized"
+                )
+
     def test_wrong_run_identity_and_untrusted_event(self):
         for key, value in [
             ("id", 18),
