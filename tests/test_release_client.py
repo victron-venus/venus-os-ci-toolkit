@@ -316,9 +316,9 @@ class GeneratorTest(unittest.TestCase):
         """Signing credentials remain unavailable until validators succeed."""
         for policy in self.release_policies():
             with self.subTest(policy=policy):
-                jobs = installer.release(
-                    dict(policy, build_secrets=["SIGNING_KEY"])
-                )["jobs"]
+                jobs = installer.release(dict(policy, build_secrets=["SIGNING_KEY"]))[
+                    "jobs"
+                ]
                 self.assertEqual(jobs["build"]["needs"], ["prepare", "checks"])
                 self.assertEqual(
                     jobs["build"]["secrets"],
