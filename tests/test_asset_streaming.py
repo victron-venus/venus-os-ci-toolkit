@@ -58,19 +58,23 @@ class AssetStreamingTests(unittest.TestCase):
             "releases/assets/21?x=1",
         ):
             with self.subTest(path=path), patch.object(rc.subprocess, "run") as run:
+                gh = rc.GitHub(REPO)
+                output = io.BytesIO()
                 with self.assertRaisesRegex(rc.ReleaseError, "Unsupported binary"):
-                    rc.GitHub(REPO).download_asset(path, io.BytesIO())
+                    gh.download_asset(path, output)
                 run.assert_not_called()
 
     def test_transport_timeout_uses_the_release_error_contract(self):
         """CLI entry points report bounded download failures without a traceback."""
+        gh = rc.GitHub(REPO)
+        output = io.BytesIO()
         with (
             patch.object(
                 rc.subprocess, "run", side_effect=subprocess.TimeoutExpired("gh", 900)
             ),
             self.assertRaisesRegex(rc.GitHubError, "exceeded 900 seconds"),
         ):
-            rc.GitHub(REPO).download_asset("releases/assets/21", io.BytesIO())
+            gh.download_asset("releases/assets/21", output)
 
     def test_successful_download_returns_identity_of_the_actual_staged_bytes(self):
         """Callers validate disk bytes, independently of GitHub metadata digests."""
