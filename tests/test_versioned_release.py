@@ -990,7 +990,7 @@ class LifecycleTests(unittest.TestCase):
             lifecycle.publish_versioned(self.args)
         self.assertEqual(self.gh.writes, previous)
 
-    def test_final_toolchain_drift_requires_new_rc_before_publication(self):
+    def test_final_toolchain_drift_blocks_before_publication(self):
         candidate, _, _ = self.release_run("rc", 100)
         self.start_run("stable", 101, candidate["tag"])
         lifecycle.prepare(self.args)
@@ -1000,11 +1000,13 @@ class LifecycleTests(unittest.TestCase):
         inputs["toolchain"]["rustc"] = "rustc unexpected different compiler"
         input_path.write_bytes(rc.json_bytes(inputs))
         previous = copy.deepcopy(self.gh.writes)
+        allocations = copy.deepcopy(self.gh.ledger_writes)
         with self.assertRaisesRegex(
             rc.ReleaseError, "toolchain differs from accepted RC"
         ):
             lifecycle.publish_versioned(self.args)
         self.assertEqual(self.gh.writes, previous)
+        self.assertEqual(self.gh.ledger_writes, allocations)
 
     def test_changed_rc_bytes_or_evidence_block_final_before_reservation(self):
         candidate, _, _ = self.release_run("rc", 100)
