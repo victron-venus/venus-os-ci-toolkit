@@ -96,3 +96,24 @@ GitHub publication, registry/store import, device delivery and production deploy
 are separate steps. Prerelease, tag and generic CI events must not trigger legacy
 production deployments. Follow each application's adapter runbook for delivery and
 rollback using already accepted immutable artifacts.
+
+## Write verified container deployment inputs
+
+Projects with `container_assets` can resolve an accepted stable release to verified
+registry digests with `scripts/verified_images.py`. The output must remain below
+an existing trusted directory: the current working directory by default, or an
+explicit `--output-root` chosen by the operator. An absolute output outside the
+current directory now requires that explicit root, for example in GitHub Actions:
+
+```bash
+python3 scripts/verified_images.py --tag v1.2.3 \
+  --output-root "$RUNNER_TEMP" --output "$RUNNER_TEMP/verified-images.json"
+```
+
+Relative outputs are interpreted beneath the selected root. Parent traversal and
+symlink destination parents are rejected before downloading release payloads or
+reading registry manifests. The output is replaced atomically without writing
+through existing hard links; final symlinks and non-file destinations are rejected.
+Directory descriptors keep a replaced parent pathname from redirecting the write.
+Platforms without no-follow directory descriptor support fail explicitly. The
+root is trusted operator configuration, not a sandbox against its owner.
