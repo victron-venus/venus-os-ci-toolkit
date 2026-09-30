@@ -903,9 +903,13 @@ def release_files(directory: Path, policy: dict) -> dict[str, str]:
     )
     if policy.get("versioning"):
         files["docs/VERSIONING.md"] = (ROOT / "docs/VERSIONING.md").read_text()
+        files["docs/runner-preflight.md"] = (
+            ROOT / "docs/runner-preflight.md"
+        ).read_text()
         for name in (
             "version_plan",
             "version_receipt",
+            "runner_preflight",
             "release_state",
             "release_versioned",
             "prepare_version",
@@ -922,6 +926,7 @@ def release_files(directory: Path, policy: dict) -> dict[str, str]:
             "prepare_version",
             "release_state",
             "version_receipt",
+            "runner_preflight",
             "consumer_versioning",
             "cli_version_paths",
         ):
