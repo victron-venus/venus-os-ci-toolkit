@@ -1,7 +1,8 @@
 """Offline contracts for stable assets, registry publication and image identity."""
 
-import json
 import io
+import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -367,6 +368,68 @@ class RegistryPublicationTests(unittest.TestCase):
                 self.assertRaises(ReleaseError),
             ):
                 verified_images.resolve(self.policy, "v1.2.3", Path(temp))
+
+
+class VerifiedImageOutputTests(unittest.TestCase):
+    """Explicit destinations remain arbitrary while aliases cannot be clobbered."""
+
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        self.checkout = self.root / "checkout"
+        self.checkout.mkdir()
+        (self.checkout / ".release-policy.json").write_text("{}")
+        self.destination = self.root / "separate-deployment-inputs"
+        self.destination.mkdir()
+        self.output = self.destination / "images.json"
+        self.original = self.root / "original.json"
+        self.original.write_bytes(b"outside sentinel\n")
+        self.result = {
+            "repository": "example/product",
+            "tag": "v1.2.3",
+            "source_sha": SHA,
+            "images": {
+                "ghcr.io/example/image": "ghcr.io/example/image@sha256:" + "a" * 64
+            },
+        }
+
+    def run_main(self):
+        with (
+            mock.patch.object(verified_images, "ROOT", self.checkout),
+            mock.patch.object(verified_images, "resolve", return_value=self.result),
+            mock.patch.object(
+                sys,
+                "argv",
+                ["verified_images.py", "--tag", "v1.2.3", "--output", str(self.output)],
+            ),
+            mock.patch("sys.stdout", new_callable=io.StringIO),
+            mock.patch("sys.stderr", new_callable=io.StringIO),
+        ):
+            return verified_images.main()
+
+    def test_explicit_external_directory_create_and_hardlink_overwrite(self):
+        self.assertEqual(self.run_main(), 0)
+        expected = (json.dumps(self.result, indent=2) + "\n").encode()
+        self.assertEqual(self.output.read_bytes(), expected)
+        self.output.unlink()
+        os.link(self.original, self.output)
+        self.assertEqual(self.run_main(), 0)
+        self.assertEqual(self.output.read_bytes(), expected)
+        self.assertEqual(self.original.read_bytes(), b"outside sentinel\n")
+        self.assertNotEqual(self.output.stat().st_ino, self.original.stat().st_ino)
+        self.assertEqual(list(self.destination.iterdir()), [self.output])
+
+    def test_symlink_and_directory_output_fail_closed(self):
+        self.output.symlink_to(self.original)
+        self.assertEqual(self.run_main(), 1)
+        self.assertTrue(self.output.is_symlink())
+        self.assertEqual(self.original.read_bytes(), b"outside sentinel\n")
+        self.output.unlink()
+        self.output.mkdir()
+        self.assertEqual(self.run_main(), 1)
+        self.assertTrue(self.output.is_dir())
+        self.assertEqual(list(self.destination.iterdir()), [self.output])
 
 
 if __name__ == "__main__":
