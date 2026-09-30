@@ -25,6 +25,7 @@ from pathlib import Path
 from urllib.parse import quote, unquote
 
 WORKFLOW = ".github/workflows/release-pipeline.yml"
+GITHUB_HOSTNAME = "github.com"
 MANIFEST = "release-manifest.json"
 POLICY = ".release-policy.json"
 EVIDENCE = Path(".release-evidence") / MANIFEST
@@ -207,7 +208,7 @@ class GitHub:
                 "gh",
                 "api",
                 "--hostname",
-                "github.com",
+                GITHUB_HOSTNAME,
                 "--method",
                 "GET",
                 "--include",
@@ -300,7 +301,7 @@ class GitHub:
                     "gh",
                     "api",
                     "--hostname",
-                    "github.com",
+                    GITHUB_HOSTNAME,
                     *method_args,
                     *modes[mode],
                     *(["--input", "-"] if body is not None else []),
@@ -364,7 +365,7 @@ class GitHub:
                     "gh",
                     "api",
                     "--hostname",
-                    "github.com",
+                    GITHUB_HOSTNAME,
                     "--method",
                     "GET",
                     "-H",

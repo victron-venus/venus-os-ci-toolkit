@@ -1499,10 +1499,11 @@ class ExecutingRunStatusTests(unittest.TestCase):
                 {"conclusion": "failure"},
                 {"run_attempt": 2},
             ):
+                candidate = {**run(), **change}
                 with self.subTest(change=change), self.assertRaises(rc.ReleaseError):
                     rc.validate_run(
                         self.gh,
-                        {**run(), **change},
+                        candidate,
                         self.gh.info,
                         SHA,
                         1,
