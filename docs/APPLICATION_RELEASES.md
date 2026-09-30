@@ -42,6 +42,13 @@ and still fail publication with `403 Resource not accessible by integration` or
 `404` after a workflow change lands. Ordinary source changes with an unchanged
 workflow tree do not create this restriction. See the [release API permission note](https://docs.github.com/en/rest/releases/releases#create-a-release).
 
+The publisher checks the exact workflow tree before advancing the publication
+floor and again before creating the tag. A known mismatch fails without those
+writes; ordinary source changes with the same workflow tree remain eligible.
+An explicitly configured publication token retains its existing exception only
+after its workflow authorization probe succeeds. GitHub does not make these reads
+and publication atomic: a later branch change can still cause a partial failure.
+
 Inspect existing tags and draft/published releases before recovery. Preserve any
 existing candidate and its evidence. Use the candidate build for the current
 workflow tree, or request a new one after the existing pipeline finishes. Retrying

@@ -47,6 +47,7 @@ API_PATHS = {
         r"actions/runs/[1-9]\d*(?:/artifacts|/attempts/[1-9]\d*/jobs)?",
         r"actions/artifacts/[1-9]\d*/zip",
         r"contents/\.release-policy\.json\?ref=[0-9a-f]{40}",
+        r"contents/\.github\?ref=[0-9a-f]{40}",
         r"contents/release-version-state\.json\?ref=release-version-state",
         r"git/ref/heads/release-version-state",
         r"git/ref/heads/(?:[A-Za-z0-9_.~-]|%[0-9A-F]{2})+",
@@ -188,6 +189,7 @@ class GitHub:
         require(bool(REPO_RE.fullmatch(repository)), "Repository must be OWNER/REPO")
         self.repo = repository
         self.base = f"repos/{repository}"
+        self.workflow_scope_verified = False
         if os.environ.get("RELEASE_REQUIRE_WORKFLOW_SCOPE"):
             self.verify_publication_permissions()
 
@@ -198,6 +200,7 @@ class GitHub:
         the token, response body or authentication diagnostics from this probe.
         Fine-grained tokens do not expose verifiable OAuth scopes and fail closed.
         """
+        self.workflow_scope_verified = False
         require(
             os.environ.get("RELEASE_REQUIRE_WORKFLOW_SCOPE") == "true"
             and bool(os.environ.get("GH_TOKEN")),
@@ -246,6 +249,7 @@ class GitHub:
             ),
             "Publication token requires verified workflow and repo/public_repo OAuth scopes",
         )
+        self.workflow_scope_verified = True
 
     @staticmethod
     def response(result: subprocess.CompletedProcess, operation: str = "") -> bytes:
@@ -535,6 +539,70 @@ def checked_out_sha() -> str:
     )
     require(result.returncode == 0, "Must run from the checked-out release repository")
     return result.stdout.strip()
+
+
+def workflow_tree(gh: GitHub, sha: str) -> str:
+    """Read the immutable workflow tree without a truncated recursive Git diff."""
+    entries = gh.api(f"contents/.github?ref={sha}")
+    require(
+        isinstance(entries, list)
+        and len(entries) < 1000
+        and all(isinstance(entry, dict) for entry in entries),
+        "Cannot verify the complete source .github directory",
+    )
+    matches = [
+        entry
+        for entry in entries
+        if entry.get("name") == "workflows" or entry.get("path") == ".github/workflows"
+    ]
+    require(
+        len(matches) == 1
+        and matches[0].get("name") == "workflows"
+        and matches[0].get("path") == ".github/workflows"
+        and matches[0].get("type") == "dir"
+        and isinstance(matches[0].get("sha"), str)
+        and SHA_RE.fullmatch(matches[0]["sha"]),
+        "Cannot verify a regular source .github/workflows directory",
+    )
+    return matches[0]["sha"]
+
+
+def check_workflow_publication(gh: GitHub, sha: str) -> None:
+    """Reject known workflow-token failures before consuming a version or tag.
+
+    GitHub cannot atomically bind this read-only preflight to release creation.
+    A later default-branch change can still fail closed after partial writes.
+    """
+    require(
+        isinstance(sha, str) and SHA_RE.fullmatch(sha), "Invalid release source SHA"
+    )
+    if getattr(gh, "workflow_scope_verified", False) is True:
+        return
+    info = repository_info(gh)
+    branch = info["default_branch"]
+    path = f"git/ref/heads/{quote(branch, safe='')}"
+    ref = gh.api(path)
+    require(
+        isinstance(ref, dict)
+        and ref.get("ref") == f"refs/heads/{branch}"
+        and isinstance(ref.get("object"), dict)
+        and ref["object"].get("type") == "commit"
+        and isinstance(ref["object"].get("sha"), str)
+        and SHA_RE.fullmatch(ref["object"]["sha"]),
+        "Cannot verify default HEAD before release publication",
+    )
+    head = ref["object"]["sha"]
+    if sha == head:
+        return
+    require(
+        workflow_tree(gh, sha) == workflow_tree(gh, head),
+        "Release source workflows differ from current default HEAD; "
+        "create and accept a new candidate before publication",
+    )
+    require(
+        repository_info(gh)["default_branch"] == branch and gh.api(path) == ref,
+        "Default branch changed during publication preflight; retry at current HEAD",
+    )
 
 
 # Verify each independently supplied identity before recording supersession.
@@ -902,6 +970,7 @@ def publish(
     """Keep draft creation, exact-byte upload checks and publication in one transaction."""
     reject_restricted_assets(path.name for path in directory.iterdir())
     ensure_absent(gh, tag)
+    check_workflow_publication(gh, sha)
     gh.api("git/refs", "POST", {"ref": f"refs/tags/{tag}", "sha": sha})
     release = gh.api(
         "releases",
@@ -1379,6 +1448,7 @@ def promote(args) -> dict:
         {item["name"] for item in release_assets} == set(expected) | {MANIFEST},
         "Candidate assets differ from manifest inventory",
     )
+    check_workflow_publication(gh, manifest["source_sha"])
     with tempfile.TemporaryDirectory(prefix="release-promote-") as temp:
         stage = Path(temp)
         for asset in release_assets:
@@ -1414,6 +1484,7 @@ def promote(args) -> dict:
             completed=True,
         )
         require_reviewers(gh)
+        check_workflow_publication(gh, manifest["source_sha"])
         if manifest.get("version_plan"):
             verify_promotion_order(gh, manifest["version_plan"])
             # pylint: disable-next=import-outside-toplevel

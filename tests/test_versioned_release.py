@@ -860,6 +860,74 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual(len(self.gh.ledger_writes), 2)
         self.assertNotIn(plan["tag"], self.gh.refs)
 
+    def reject_workflow_drift_without_publication(self, publish):
+        """Keep an allocated plan reusable when a known permission failure is found."""
+        self.gh.default_head = "b" * 40
+        self.gh.github_directories[self.gh.default_head][0]["sha"] = "d" * 40
+        ledger = copy.deepcopy(self.gh.ledger)
+        ledger_writes = copy.deepcopy(self.gh.ledger_writes)
+        writes = copy.deepcopy(self.gh.writes)
+        with self.assertRaisesRegex(rc.ReleaseError, "workflows differ"):
+            publish()
+        self.assertEqual(self.gh.ledger, ledger)
+        self.assertEqual(self.gh.ledger_writes, ledger_writes)
+        self.assertEqual(self.gh.writes, writes)
+        self.assertNotIn("v1.2.3", self.gh.refs)
+
+    def test_manual_beta_and_rc_workflow_drift_preserves_publication_floor(self):
+        for channel, run_id in (("beta", 100), ("rc", 101)):
+            with self.subTest(channel=channel):
+                self.gh.default_head = SHA
+                self.start_run(channel, run_id)
+                lifecycle.prepare(self.args)
+                self.build_current()
+                self.reject_workflow_drift_without_publication(
+                    partial(lifecycle.publish_versioned, self.args)
+                )
+                self.assertFalse(rc.EVIDENCE.exists())
+
+    def test_final_build_workflow_drift_preserves_rc_floor_and_evidence(self):
+        candidate, _, _ = self.release_run("rc", 100)
+        accepted = rc.EVIDENCE.read_bytes()
+        self.start_run("stable", 101, candidate["tag"])
+        lifecycle.prepare(self.args)
+        self.build_current()
+        self.reject_workflow_drift_without_publication(
+            partial(lifecycle.publish_versioned, self.args)
+        )
+        self.assertEqual(rc.EVIDENCE.read_bytes(), accepted)
+
+    def test_byte_promotion_workflow_drift_preserves_rc_floor(self):
+        self.policy = policy("promote-bytes")
+        self.gh.source_policies[SHA] = self.policy
+        Path(rc.POLICY).write_bytes(rc.json_bytes(self.policy))
+        candidate, _, _ = self.release_run("rc", 100)
+        self.start_run("stable", 101, candidate["tag"])
+        arguments = argparse.Namespace(repo=REPO, rc=candidate["tag"], run_id="101")
+        with patch.object(rc, "GitHub", return_value=self.gh):
+            self.reject_workflow_drift_without_publication(
+                partial(rc.promote, arguments)
+            )
+
+    def test_workflow_change_after_floor_write_still_cannot_create_tag(self):
+        lifecycle.prepare(self.args)
+        plan = self.build_current()
+        original = lifecycle.begin_publication
+
+        def advance_after_floor(*args):
+            original(*args)
+            self.gh.default_head = "b" * 40
+            self.gh.github_directories[self.gh.default_head][0]["sha"] = "d" * 40
+
+        with patch.object(
+            lifecycle, "begin_publication", side_effect=advance_after_floor
+        ):
+            with self.assertRaisesRegex(rc.ReleaseError, "workflows differ"):
+                lifecycle.publish_versioned(self.args)
+        self.assertEqual(self.gh.ledger["publication_floor"], plan["build_number"])
+        self.assertEqual(self.gh.writes, [])
+        self.assertNotIn(plan["tag"], self.gh.refs)
+
     def test_stale_request_rejects_before_reserving(self):
         Path(os.environ["GITHUB_EVENT_PATH"]).write_text(
             json.dumps({"inputs": {"channel": "beta", "expected_sha": "b" * 40}}),

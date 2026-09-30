@@ -401,6 +401,7 @@ def publish_versioned(args):
         superseded = rc.superseded_candidate(gh, info, run, channel)
         if superseded:
             return superseded
+        rc.check_workflow_publication(gh, plan["source_sha"])
         rc.EVIDENCE.parent.mkdir(parents=True, exist_ok=True)
         rc.EVIDENCE.write_bytes(content)
         begin_publication(gh, plan, run["id"], parent)

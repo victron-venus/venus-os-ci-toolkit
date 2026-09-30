@@ -310,6 +310,7 @@ def schedule(policy):
 def _legacy_release(policy):
     """Build the gated candidate/publication workflow from the reviewed policy."""
     publication_env = publication_token_env(policy)
+    build_credentials = build_secrets(policy)
     branch = policy.get("default_branch", "main")
     candidate = "${{ needs.prepare.outputs.channel != 'stable' }}"
     steps_checkout = [{"uses": CHECKOUT, "with": {"persist-credentials": False}}]
@@ -383,11 +384,12 @@ PY
             },
         },
         "build": {
-            "needs": ["prepare", "checks"],
+            # Secretless packaging can overlap validation; signing must wait.
+            "needs": ["prepare", "checks"] if build_credentials else ["prepare"],
             "if": candidate,
             "uses": "./.github/workflows/release-build.yml",
             "permissions": {"contents": "read"},
-            **({"secrets": build_secrets(policy)} if build_secrets(policy) else {}),
+            **({"secrets": build_credentials} if build_credentials else {}),
             "with": {
                 "version": "${{ needs.prepare.outputs.version }}",
                 "channel": "${{ needs.prepare.outputs.channel }}",
