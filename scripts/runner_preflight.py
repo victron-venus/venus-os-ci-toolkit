@@ -11,6 +11,7 @@ import argparse
 import json
 import os
 import re
+import stat
 import subprocess
 import sys
 import threading
@@ -28,6 +29,7 @@ MAX_API_BYTES = 8_000_000
 MAX_ERROR_BYTES = 8_192
 DOWNLOAD_TIMEOUT = 45
 RUNNER_FIELDS = ("platform", "ImageOS", "ImageVersion", "RUNNER_OS", "RUNNER_ARCH")
+PLAN_NAME = ".release-plan.json"
 
 
 class PreflightGitHub(state.StateGitHub):
@@ -44,6 +46,16 @@ class PreflightGitHub(state.StateGitHub):
     def request(self, path, method="GET", body=None, mode="json"):
         """Preserve canonical read routes and 404 semantics; prohibit all writes."""
         rc.require(method == "GET" and body is None, "Preflight is read-only")
+        command = self.read_command(path, mode)
+        binary = mode == "asset" or path.endswith("/zip")
+        limit = MAX_BINARY if binary else MAX_API_BYTES
+        with subprocess.Popen(
+            command, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+        ) as process:
+            return read_process(process, limit)
+
+    def read_command(self, path, mode):
+        """Construct one fixed-host GET after validating the route and mode."""
         rc.require(
             any(
                 re.fullmatch(pattern, path, re.ASCII) for pattern in rc.API_PATHS["GET"]
@@ -60,54 +72,7 @@ class PreflightGitHub(state.StateGitHub):
             command += ["--paginate", "--slurp"]
             endpoint += ("&" if "?" in endpoint else "?") + "per_page=100"
         command += ["--", endpoint]
-        binary = mode == "asset" or path.endswith("/zip")
-        limit = MAX_BINARY if binary else MAX_API_BYTES
-        with subprocess.Popen(
-            command, stdout=subprocess.PIPE, stderr=subprocess.PIPE
-        ) as process:
-            output, errors = [], []
-            readers = [
-                threading.Thread(
-                    target=lambda: output.append(process.stdout.read(limit + 1)),
-                    daemon=True,
-                ),
-                threading.Thread(
-                    target=lambda: errors.append(
-                        process.stderr.read(MAX_ERROR_BYTES + 1)
-                    ),
-                    daemon=True,
-                ),
-            ]
-            deadline = time.monotonic() + DOWNLOAD_TIMEOUT
-            for reader in readers:
-                reader.start()
-            for reader in readers:
-                reader.join(max(0, deadline - time.monotonic()))
-            stalled = any(reader.is_alive() for reader in readers)
-            oversized = bool(output and len(output[0]) > limit) or bool(
-                errors and len(errors[0]) > MAX_ERROR_BYTES
-            )
-            if stalled or oversized:
-                process.kill()
-                process.wait()
-                for reader in readers:
-                    reader.join()
-                if oversized:
-                    raise rc.ReleaseError("Preflight metadata download exceeds limit")
-                raise rc.ReleaseError("Preflight metadata download timed out")
-            try:
-                status = process.wait(timeout=max(0.01, deadline - time.monotonic()))
-            except subprocess.TimeoutExpired:
-                process.kill()
-                process.wait()
-                raise rc.ReleaseError(
-                    "Preflight metadata download did not finish"
-                ) from None
-            if status:
-                raise rc.GitHubError(
-                    "Preflight metadata download failed", b"HTTP 404" in errors[0]
-                )
-            return output[0]
+        return command
 
     def binary(self, path):
         """Allow only bounded release metadata and immutable evidence downloads."""
@@ -120,16 +85,82 @@ class PreflightGitHub(state.StateGitHub):
         return self.request(path, mode="asset")
 
 
-def read_json(path):
-    """Read bounded local plan/policy metadata without following symbolic links."""
-    path = Path(path)
-    rc.require(
-        path.is_file() and not path.is_symlink(), "Metadata must be a plain file"
+def read_process(process, limit):
+    """Drain bounded stdout/stderr under one deadline, then check exit status."""
+    output, errors = [], []
+    readers = [
+        threading.Thread(
+            target=lambda: output.append(process.stdout.read(limit + 1)), daemon=True
+        ),
+        threading.Thread(
+            target=lambda: errors.append(process.stderr.read(MAX_ERROR_BYTES + 1)),
+            daemon=True,
+        ),
+    ]
+    deadline = time.monotonic() + DOWNLOAD_TIMEOUT
+    for reader in readers:
+        reader.start()
+    for reader in readers:
+        reader.join(max(0, deadline - time.monotonic()))
+    stalled = any(reader.is_alive() for reader in readers)
+    oversized = bool(output and len(output[0]) > limit) or bool(
+        errors and len(errors[0]) > MAX_ERROR_BYTES
     )
+    if stalled or oversized:
+        process.kill()
+        process.wait()
+        for reader in readers:
+            reader.join()
+        reason = "exceeds limit" if oversized else "timed out"
+        raise rc.ReleaseError(f"Preflight metadata download {reason}")
+    status = wait_process(process, deadline)
+    if status:
+        raise rc.GitHubError(
+            "Preflight metadata download failed", b"HTTP 404" in errors[0]
+        )
+    return output[0]
+
+
+def wait_process(process, deadline):
+    """Do not let a closed-pipe process outlive the same download deadline."""
+    try:
+        return process.wait(timeout=max(0.01, deadline - time.monotonic()))
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait()
+        raise rc.ReleaseError("Preflight metadata download did not finish") from None
+
+
+def read_metadata(root, relative):
+    """Read a fixed name below a trusted root; reject links beneath that root."""
+    root = root.resolve(strict=True)
+    rc.require(
+        not relative.is_absolute() and ".." not in relative.parts,
+        "Metadata path must stay below its trusted root",
+    )
+    path = root
+    for part in relative.parts:
+        path /= part
+        rc.require(not path.is_symlink(), "Metadata path contains a link")
+    rc.require(path.resolve(strict=True) == path, "Metadata path contains a link")
+    rc.require(stat.S_ISREG(path.lstat().st_mode), "Metadata must be a plain file")
     with path.open("rb") as stream:
         raw = stream.read(MAX_METADATA + 1)
     rc.require(len(raw) <= MAX_METADATA, "Preflight metadata exceeds limit")
     return rc.parse_json(raw, "preflight metadata")
+
+
+def read_event():
+    """Bind the Actions event to the runner's separate trusted temporary root."""
+    root = Path(os.environ["RUNNER_TEMP"])
+    event = Path(os.environ["GITHUB_EVENT_PATH"])
+    relative = Path("_github_workflow") / "event.json"
+    rc.require(root.is_absolute(), "Runner temporary root must be absolute")
+    rc.require(
+        event in {root / relative, root.resolve(strict=True) / relative},
+        "Workflow event path differs from runner-owned location",
+    )
+    return read_metadata(root, relative)
 
 
 def runner_identity():
@@ -155,6 +186,8 @@ def require_identity(identity):
 
 def verify_context(gh, plan, policy):
     """Read the current run once; a stale/queued response cannot authorize work."""
+    # Validate bounds and links before the canonical execution check rereads it.
+    event = read_event()
     info = rc.repository_info(gh)
     run_id = rc.positive(os.environ.get("GITHUB_RUN_ID"), "run ID")
     attempt = rc.positive(os.environ.get("GITHUB_RUN_ATTEMPT"), "run attempt")
@@ -194,7 +227,6 @@ def verify_context(gh, plan, policy):
         and rc.positive(parent["run_id"], "parent RC run ID") != run_id,
         "Invalid accepted RC reservation parent",
     )
-    event = read_json(os.environ["GITHUB_EVENT_PATH"])
     rc.require(
         event.get("inputs", {}).get("rc_tag") == parent["tag"],
         "Dispatch RC differs from reservation",
@@ -365,7 +397,7 @@ def main(argv=None):
     """Emit one structured result and fail closed on mismatch or invalid evidence."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo", required=True)
-    parser.add_argument("--plan", type=Path, required=True)
+    parser.add_argument("--plan", choices=(PLAN_NAME,), required=True)
     parser.add_argument(
         "--channel", required=True, choices=("nightly", "beta", "rc", "stable")
     )
@@ -374,8 +406,8 @@ def main(argv=None):
     try:
         result = check(
             PreflightGitHub(args.repo),
-            read_json(args.plan),
-            read_json(rc.POLICY),
+            read_metadata(Path.cwd(), Path(PLAN_NAME)),
+            read_metadata(Path.cwd(), Path(rc.POLICY)),
             args.channel,
             args.receipt,
             runner_identity(),

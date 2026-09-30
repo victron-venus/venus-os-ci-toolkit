@@ -8,8 +8,9 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
@@ -65,6 +66,16 @@ class PreflightTests(unittest.TestCase):
         )
         self.manifest_asset = next(
             item for item in self.assets if item["name"] == rc.MANIFEST
+        )
+        runtime = self.fixture.root / "runner-temp"
+        event = runtime / "_github_workflow" / "event.json"
+        event.parent.mkdir(parents=True)
+        Path(os.environ["GITHUB_EVENT_PATH"]).rename(event)
+        self.enterContext(
+            patch.dict(
+                os.environ,
+                {"RUNNER_TEMP": str(runtime), "GITHUB_EVENT_PATH": str(event)},
+            )
         )
         self.gh.writes.clear()
         self.gh.ledger_writes.clear()
@@ -229,6 +240,16 @@ class PreflightTests(unittest.TestCase):
         with self.assertRaisesRegex(rc.ReleaseError, "already has a conclusion"):
             self.check()
 
+    def test_event_bounds_are_checked_before_canonical_execution_read(self):
+        event = Path(os.environ["GITHUB_EVENT_PATH"])
+        event.write_bytes(b" " * (preflight.MAX_METADATA + 1))
+        with (
+            patch.object(rc, "check_execution") as execution,
+            self.assertRaisesRegex(rc.ReleaseError, "metadata exceeds limit"),
+        ):
+            self.check()
+        execution.assert_not_called()
+
     def test_reusable_context_is_caller_workflow_and_dispatch_event(self):
         # GitHub's reusable github context belongs to the caller, not release-build.yml.
         with (
@@ -312,6 +333,152 @@ class PreflightTests(unittest.TestCase):
         self.assertNotIn("secret", output.getvalue())
 
 
+class MetadataPathTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name).resolve()
+        self.workspace = self.root / "workspace"
+        self.workspace.mkdir()
+        old = Path.cwd()
+        os.chdir(self.workspace)
+        self.addCleanup(os.chdir, old)
+        self.runtime = self.root / "runner-temp"
+        self.event = self.runtime / "_github_workflow" / "event.json"
+        self.event.parent.mkdir(parents=True)
+        self.event.write_text('{"inputs":{"channel":"stable"}}')
+        self.enterContext(
+            patch.dict(
+                os.environ,
+                {
+                    "RUNNER_TEMP": str(self.runtime),
+                    "GITHUB_EVENT_PATH": str(self.event),
+                },
+            )
+        )
+
+    def cli(self, path):
+        return preflight.main(
+            [
+                "--repo",
+                "owner/repo",
+                "--plan",
+                path,
+                "--channel",
+                "stable",
+                "--receipt",
+                TARGET,
+            ]
+        )
+
+    def test_cli_rejects_every_noncanonical_plan_before_reading(self):
+        link = self.workspace / "linked"
+        link.symlink_to(self.root, target_is_directory=True)
+        for path in (
+            "../.release-plan.json",
+            str(self.root / ".release-plan.json"),
+            str(self.workspace / ".release-plan.json"),
+            "./.release-plan.json",
+            "other.json",
+            "linked/.release-plan.json",
+        ):
+            with (
+                self.subTest(path=path),
+                patch.object(preflight, "read_metadata") as read,
+                redirect_stderr(io.StringIO()),
+                self.assertRaises(SystemExit) as error,
+            ):
+                self.cli(path)
+            self.assertEqual(error.exception.code, 2)
+            read.assert_not_called()
+
+    def test_fixed_plan_and_policy_are_read_from_checkout(self):
+        (self.workspace / preflight.PLAN_NAME).write_text('{"plan":true}')
+        (self.workspace / rc.POLICY).write_text('{"policy":true}')
+        with (
+            patch.object(
+                preflight, "check", return_value={"status": "not-applicable"}
+            ) as check,
+            redirect_stdout(io.StringIO()),
+        ):
+            self.assertEqual(self.cli(preflight.PLAN_NAME), 0)
+        self.assertEqual(check.call_args.args[1:3], ({"plan": True}, {"policy": True}))
+
+    def test_cli_rejects_symlinked_plan_or_policy(self):
+        outside = self.root / "outside.json"
+        outside.write_text("{}")
+        for name in (preflight.PLAN_NAME, rc.POLICY):
+            with self.subTest(name=name):
+                for filename in (preflight.PLAN_NAME, rc.POLICY):
+                    (self.workspace / filename).write_text("{}")
+                path = self.workspace / name
+                path.unlink()
+                path.symlink_to(outside)
+                output = io.StringIO()
+                with patch.object(preflight, "check") as check, redirect_stdout(output):
+                    self.assertEqual(self.cli(preflight.PLAN_NAME), 1)
+                check.assert_not_called()
+                self.assertEqual(
+                    json.loads(output.getvalue())["status"], "invalid-evidence"
+                )
+                path.unlink()
+
+    def test_reader_rejects_relative_absolute_and_symlinked_parent_escape(self):
+        (self.root / "outside.json").write_text("{}")
+        (self.workspace / "linked").symlink_to(self.root, target_is_directory=True)
+        for relative in (
+            Path("../outside.json"),
+            self.root / "outside.json",
+            Path("linked/outside.json"),
+        ):
+            with self.subTest(relative=relative), self.assertRaises(rc.ReleaseError):
+                preflight.read_metadata(self.workspace, relative)
+
+    def test_absolute_runner_event_outside_checkout_is_valid(self):
+        self.assertFalse(self.event.is_relative_to(self.workspace))
+        self.assertEqual(preflight.read_event(), {"inputs": {"channel": "stable"}})
+
+    def test_metadata_symlink_loop_is_rejected_without_following_it(self):
+        path = self.workspace / preflight.PLAN_NAME
+        path.symlink_to(preflight.PLAN_NAME)
+        with self.assertRaisesRegex(rc.ReleaseError, "contains a link"):
+            preflight.read_metadata(self.workspace, Path(preflight.PLAN_NAME))
+
+    def test_runtime_root_alias_is_normalized_without_trusting_child_links(self):
+        alias = self.root / "runtime-alias"
+        alias.symlink_to(self.runtime, target_is_directory=True)
+        for event in (alias / "_github_workflow/event.json", self.event):
+            with patch.dict(
+                os.environ, {"RUNNER_TEMP": str(alias), "GITHUB_EVENT_PATH": str(event)}
+            ):
+                self.assertEqual(preflight.read_event()["inputs"]["channel"], "stable")
+
+    def test_runner_event_rejects_relative_and_absolute_other_paths(self):
+        for event in (
+            "_github_workflow/event.json",
+            str(self.workspace / "event.json"),
+            str(self.runtime / "../outside.json"),
+        ):
+            with (
+                self.subTest(event=event),
+                patch.dict(os.environ, {"GITHUB_EVENT_PATH": event}),
+                self.assertRaisesRegex(rc.ReleaseError, "runner-owned location"),
+            ):
+                preflight.read_event()
+
+    def test_runner_event_rejects_symlink_leaf_and_parent(self):
+        real_directory = self.root / "real-event"
+        self.event.parent.rename(real_directory)
+        self.event.parent.symlink_to(real_directory, target_is_directory=True)
+        with self.assertRaisesRegex(rc.ReleaseError, "contains a link"):
+            preflight.read_event()
+        self.event.parent.unlink()
+        self.event.parent.mkdir()
+        self.event.symlink_to(real_directory / "event.json")
+        with self.assertRaisesRegex(rc.ReleaseError, "contains a link"):
+            preflight.read_event()
+
+
 class BoundedDownloadTests(unittest.TestCase):
     def fetch(self, program, path="releases/assets/1", mode="binary"):
         self.calls = []
@@ -349,6 +516,10 @@ class BoundedDownloadTests(unittest.TestCase):
     def test_nonzero_transport_fails(self):
         with self.assertRaisesRegex(rc.ReleaseError, "download failed"):
             self.fetch("raise SystemExit(2)")
+
+    def test_closed_pipes_do_not_allow_process_to_outlive_deadline(self):
+        with self.assertRaisesRegex(rc.ReleaseError, "did not finish"):
+            self.fetch("import os,time; os.close(1); os.close(2); time.sleep(10)")
 
     def test_json_and_paginated_metadata_are_bounded(self):
         for mode, path in (

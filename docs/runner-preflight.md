@@ -61,6 +61,18 @@ Oversize, stale status, missing identity, missing immutable evidence, changed
 hashes, and transport failures fail closed. Raw transport text is never logged.
 The consumer step timeout also bounds aggregate metadata time.
 
+`--plan` accepts only the literal `.release-plan.json`. The plan and policy are
+read from fixed names in the current checkout, with a 2 MB read limit. A CLI path
+cannot select another file. The checkout root is resolved once as a trusted
+anchor; symbolic links below it are rejected. The workflow event has a separate
+runner-owned anchor: `GITHUB_EVENT_PATH` must name
+`RUNNER_TEMP/_github_workflow/event.json`, including its absolute path outside the
+checkout. Only the trusted root is normalized (for system aliases such as macOS
+`/var`); event directory/file links below it are rejected. The event is bounded
+before the unchanged canonical execution check rereads it.
+This event layout is the native Actions runner contract. Container jobs that
+remap the event path require a separately reviewed adapter and fail closed here.
+
 The structured drift result names the target and differing fixed runner fields
 with expected/actual values (bounded, restricted-character identities only).
 An invalid provenance or transport response yields `invalid-evidence`, not a
@@ -85,3 +97,4 @@ runner drift claim. These diagnostics are not published release evidence.
   environment behavior.
 
 Reference: [GitHub reusable workflow context](https://docs.github.com/en/actions/reference/workflows-and-actions/reusing-workflow-configurations#github-context).
+The event location follows [the Actions runner's event writer](https://github.com/actions/runner/blob/main/src/Runner.Worker/ExecutionContext.cs).
