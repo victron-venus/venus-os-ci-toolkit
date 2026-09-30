@@ -13,6 +13,7 @@ import subprocess
 import tempfile
 import unittest
 import zipfile
+from contextlib import contextmanager
 from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
@@ -1681,6 +1682,115 @@ class SupersededCandidateTests(unittest.TestCase):
         ):
             with self.assertRaises(rc.ReleaseError):
                 client.api(invalid)
+
+
+class AtomicOutputTests(unittest.TestCase):
+    """Output replacement must preserve aliases and never publish partial bytes."""
+
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        self.output = self.root / "evidence.json"
+        self.before = b"existing output\n"
+        self.after = b'{"verified":"exact bytes"}\n'
+
+    def test_create_and_overwrite_preserve_exact_bytes_and_existing_mode(self):
+        rc.atomic_write_bytes(self.output, self.before)
+        if os.name == "posix":
+            self.assertEqual(self.output.stat().st_mode & 0o777, 0o600)
+        self.output.chmod(0o640)
+        rc.atomic_write_bytes(self.output, self.after)
+        self.assertEqual(self.output.read_bytes(), self.after)
+        self.assertEqual(rc.digest(self.output.read_bytes()), rc.digest(self.after))
+        if os.name == "posix":
+            self.assertEqual(self.output.stat().st_mode & 0o777, 0o640)
+        self.assertEqual(list(self.root.iterdir()), [self.output])
+
+    def test_hardlink_replacement_preserves_other_name_and_bytes(self):
+        original = self.root / "outside.json"
+        original.write_bytes(self.before)
+        os.link(original, self.output)
+        rc.atomic_write_bytes(self.output, self.after)
+        self.assertEqual(original.read_bytes(), self.before)
+        self.assertEqual(self.output.read_bytes(), self.after)
+        self.assertNotEqual(original.stat().st_ino, self.output.stat().st_ino)
+        self.assertEqual(original.stat().st_nlink, 1)
+
+    def test_symlink_dangling_symlink_directory_and_fifo_fail_closed(self):
+        original = self.root / "outside.json"
+        original.write_bytes(self.before)
+        kinds = ["symlink", "dangling", "directory"]
+        if hasattr(os, "mkfifo"):
+            kinds.append("fifo")
+        for kind in kinds:
+            with self.subTest(kind=kind):
+                output = self.root / kind
+                if kind == "directory":
+                    output.mkdir()
+                elif kind == "fifo":
+                    os.mkfifo(output)
+                else:
+                    output.symlink_to(
+                        original if kind == "symlink" else self.root / "missing"
+                    )
+                with self.assertRaisesRegex(ValueError, "plain file"):
+                    rc.atomic_write_bytes(output, self.after)
+                self.assertEqual(original.read_bytes(), self.before)
+                self.assertFalse((self.root / "missing").exists())
+                self.assertEqual(list(self.root.glob(".release-output-*")), [])
+
+    def test_failed_write_flush_or_replace_preserves_old_output_and_cleans_staging(
+        self,
+    ):
+        original_fdopen = os.fdopen
+
+        @contextmanager
+        def partial_write(fd, mode):
+            with original_fdopen(fd, mode) as handle:
+
+                def fail(data):
+                    handle.write(data[:5])
+                    raise OSError("injected partial write")
+
+                writer = Mock(wraps=handle)
+                writer.write.side_effect = fail
+                yield writer
+
+        for operation, replacement in (
+            ("fdopen", partial_write),
+            ("fsync", OSError("injected flush failure")),
+            ("replace", OSError("injected replacement failure")),
+        ):
+            with self.subTest(operation=operation):
+                self.output.write_bytes(self.before)
+                with (
+                    patch.object(rc.os, operation, side_effect=replacement),
+                    self.assertRaises(OSError),
+                ):
+                    rc.atomic_write_bytes(self.output, self.after)
+                self.assertEqual(self.output.read_bytes(), self.before)
+                self.assertEqual(list(self.root.iterdir()), [self.output])
+
+    def test_symlink_inserted_during_staging_is_rejected_without_target_write(self):
+        original = self.root / "outside.json"
+        original.write_bytes(self.before)
+        self.output.write_bytes(b"old output")
+        fsync = os.fsync
+
+        def swap(fd):
+            fsync(fd)
+            self.output.unlink()
+            self.output.symlink_to(original)
+
+        with (
+            patch.object(rc.os, "fsync", side_effect=swap),
+            self.assertRaisesRegex(ValueError, "plain file"),
+        ):
+            rc.atomic_write_bytes(self.output, self.after)
+        self.assertTrue(self.output.is_symlink())
+        self.assertEqual(original.read_bytes(), self.before)
+        self.assertEqual(list(self.root.glob(".release-output-*")), [])
 
 
 if __name__ == "__main__":

@@ -104,6 +104,35 @@ def digest(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def atomic_write_bytes(destination: Path, data: bytes) -> None:
+    """Replace a plain output file without writing through existing hard links."""
+    destination = Path(destination)
+
+    def plain_mode():
+        try:
+            mode = destination.lstat().st_mode
+        except FileNotFoundError:
+            return None
+        if not stat.S_ISREG(mode):
+            raise ValueError(f"Output must be a plain file: {destination}")
+        return stat.S_IMODE(mode)
+
+    mode = plain_mode()
+    fd, name = tempfile.mkstemp(prefix=".release-output-", dir=destination.parent)
+    temporary = Path(name)
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
+            handle.flush()
+            os.fsync(handle.fileno())
+        if mode is not None:
+            os.chmod(temporary, mode)
+        plain_mode()
+        os.replace(temporary, destination)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
 def stream_identity(source, destination=None) -> dict:
     """Hash exact bytes in bounded chunks, optionally copying to private staging."""
     checksum = hashlib.sha256()
