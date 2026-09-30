@@ -66,7 +66,10 @@ def output_directory(output: Path, root: Path):
     directory = os.open(trusted_root, flags)
     try:
         for parent in relative.parts[:-1]:
-            child = os.open(parent, flags, dir_fd=directory)
+            parent_name = os.path.basename(parent)
+            if parent_name != parent or parent_name in {"", ".", ".."}:
+                raise ReleaseError("Verified image output parent must be one directory")
+            child = os.open(parent_name, flags, dir_fd=directory)
             os.close(directory)
             directory = child
         plain_output_mode(directory, relative.name)

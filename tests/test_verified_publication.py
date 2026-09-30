@@ -447,9 +447,11 @@ class VerifiedImageOutputTests(unittest.TestCase):
         self.assertEqual(list(self.destination.iterdir()), [self.output])
 
     def test_relative_and_absolute_outputs_below_default_cwd(self):
-        output = self.checkout / "images.json"
-        for requested in (Path("images.json"), output):
+        nested = Path("nested directory/..ordinary-name/images.json")
+        (self.checkout / nested).parent.mkdir(parents=True)
+        for requested in (Path("images.json"), self.checkout / "images.json", nested):
             with self.subTest(requested=requested):
+                output = self.checkout / requested
                 self.assertEqual(self.run_main(output=requested), 0)
                 self.assertEqual(json.loads(output.read_bytes()), self.result)
                 output.unlink()
