@@ -420,7 +420,8 @@ class GitHub:
                 ],
                 capture_output=True,
                 check=False,
-            )
+            ),
+            f"upload {tag} {path.name}",
         )
 
 
