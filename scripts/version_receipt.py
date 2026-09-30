@@ -18,6 +18,8 @@ from pathlib import Path
 import version_plan
 from release_control import stream_identity
 
+MAX_RECEIPT_BYTES = 2_000_000
+
 
 def sha256(data: bytes) -> str:
     """Hash an immutable build input or payload."""
@@ -149,8 +151,9 @@ def verify_receipts(
     covered = set()
     results = []
     for name in sorted(receipts):
-        raw = (directory / name).read_bytes()
-        if len(raw) > 2_000_000:
+        with (directory / name).open("rb") as stream:
+            raw = stream.read(MAX_RECEIPT_BYTES + 1)
+        if len(raw) > MAX_RECEIPT_BYTES:
             raise ValueError("Oversized build receipt")
         receipt = json.loads(raw)
         if receipt.get("plan_sha256") != version_plan.plan_digest(plan):
