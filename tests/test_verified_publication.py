@@ -371,7 +371,7 @@ class RegistryPublicationTests(unittest.TestCase):
 
 
 class VerifiedImageOutputTests(unittest.TestCase):
-    """Explicit destinations remain arbitrary while aliases cannot be clobbered."""
+    """Selected output roots confine destinations without clobbering aliases."""
 
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
@@ -394,27 +394,40 @@ class VerifiedImageOutputTests(unittest.TestCase):
             },
         }
 
-    def run_main(self):
+    def run_main(self, output=None, output_root=None, resolver=None):
+        argv = [
+            "verified_images.py",
+            "--tag",
+            "v1.2.3",
+            "--output",
+            str(output or self.output),
+        ]
+        if output_root is not None:
+            argv.extend(["--output-root", str(output_root)])
         with (
             mock.patch.object(verified_images, "ROOT", self.checkout),
-            mock.patch.object(verified_images, "resolve", return_value=self.result),
+            mock.patch.object(Path, "cwd", return_value=self.checkout),
             mock.patch.object(
-                sys,
-                "argv",
-                ["verified_images.py", "--tag", "v1.2.3", "--output", str(self.output)],
-            ),
+                verified_images,
+                "resolve",
+                return_value=self.result,
+                side_effect=resolver,
+            ) as resolution,
+            mock.patch.object(sys, "argv", argv),
             mock.patch("sys.stdout", new_callable=io.StringIO),
             mock.patch("sys.stderr", new_callable=io.StringIO),
         ):
-            return verified_images.main()
+            status = verified_images.main()
+        self.resolution = resolution
+        return status
 
     def test_explicit_external_directory_create_and_hardlink_overwrite(self):
-        self.assertEqual(self.run_main(), 0)
+        self.assertEqual(self.run_main(output_root=self.destination), 0)
         expected = (json.dumps(self.result, indent=2) + "\n").encode()
         self.assertEqual(self.output.read_bytes(), expected)
         self.output.unlink()
         os.link(self.original, self.output)
-        self.assertEqual(self.run_main(), 0)
+        self.assertEqual(self.run_main(output_root=self.destination), 0)
         self.assertEqual(self.output.read_bytes(), expected)
         self.assertEqual(self.original.read_bytes(), b"outside sentinel\n")
         self.assertNotEqual(self.output.stat().st_ino, self.original.stat().st_ino)
@@ -422,14 +435,112 @@ class VerifiedImageOutputTests(unittest.TestCase):
 
     def test_symlink_and_directory_output_fail_closed(self):
         self.output.symlink_to(self.original)
-        self.assertEqual(self.run_main(), 1)
+        self.assertEqual(self.run_main(output_root=self.destination), 1)
+        self.resolution.assert_not_called()
         self.assertTrue(self.output.is_symlink())
         self.assertEqual(self.original.read_bytes(), b"outside sentinel\n")
         self.output.unlink()
         self.output.mkdir()
-        self.assertEqual(self.run_main(), 1)
+        self.assertEqual(self.run_main(output_root=self.destination), 1)
+        self.resolution.assert_not_called()
         self.assertTrue(self.output.is_dir())
         self.assertEqual(list(self.destination.iterdir()), [self.output])
+
+    def test_relative_and_absolute_outputs_below_default_cwd(self):
+        output = self.checkout / "images.json"
+        for requested in (Path("images.json"), output):
+            with self.subTest(requested=requested):
+                self.assertEqual(self.run_main(output=requested), 0)
+                self.assertEqual(json.loads(output.read_bytes()), self.result)
+                output.unlink()
+
+    def test_parent_traversal_and_outside_absolute_paths_reject_before_network(self):
+        for output in (
+            Path("../outside.json"),
+            Path("nested/../images.json"),
+            self.output,
+            self.root / "checkout-neighbor" / "images.json",
+        ):
+            with self.subTest(output=output):
+                self.assertEqual(self.run_main(output=output), 1)
+                self.resolution.assert_not_called()
+        self.assertFalse(self.output.exists())
+        self.assertEqual(self.original.read_bytes(), b"outside sentinel\n")
+
+    def test_missing_output_root_or_parent_reject_before_network(self):
+        for output, root in (
+            (Path("images.json"), self.root / "missing"),
+            (Path("missing/images.json"), self.checkout),
+            (self.checkout, self.checkout),
+        ):
+            with self.subTest(output=output, root=root):
+                self.assertEqual(self.run_main(output, root), 1)
+                self.resolution.assert_not_called()
+        self.assertEqual(
+            list(self.checkout.iterdir()), [self.checkout / ".release-policy.json"]
+        )
+
+    def test_symlink_destination_parent_rejects_before_network(self):
+        parent = self.checkout / "linked"
+        parent.symlink_to(self.destination, target_is_directory=True)
+        self.assertEqual(self.run_main(parent / "images.json"), 1)
+        self.resolution.assert_not_called()
+        self.assertFalse(self.output.exists())
+
+    def test_explicit_root_can_use_a_platform_directory_alias(self):
+        alias = self.root / "platform-alias"
+        alias.symlink_to(self.destination, target_is_directory=True)
+        for output in (alias / "images.json", self.output.resolve()):
+            with self.subTest(output=output):
+                self.assertEqual(self.run_main(output, alias), 0)
+                self.assertEqual(json.loads(self.output.read_bytes()), self.result)
+
+    def test_parent_replacement_cannot_redirect_the_anchored_write(self):
+        parent = self.checkout / "output"
+        parent.mkdir()
+        anchored = self.checkout / "original-output"
+
+        def replace_parent(*_):
+            parent.rename(anchored)
+            parent.symlink_to(self.destination, target_is_directory=True)
+            return self.result
+
+        self.assertEqual(
+            self.run_main(parent / "images.json", resolver=replace_parent), 0
+        )
+        self.assertFalse(self.output.exists())
+        self.assertEqual(
+            json.loads((anchored / "images.json").read_bytes()), self.result
+        )
+        self.assertEqual(self.original.read_bytes(), b"outside sentinel\n")
+
+    def test_write_failures_preserve_existing_output_and_close_directory(self):
+        self.output.write_bytes(b"prior verified inputs\n")
+        self.output.chmod(0o640)
+        for operation in ("fsync", "replace"):
+            with (
+                self.subTest(operation=operation),
+                mock.patch.object(
+                    verified_images.os,
+                    operation,
+                    side_effect=OSError("injected failure"),
+                ),
+                mock.patch.object(verified_images.os, "close", wraps=os.close) as close,
+            ):
+                self.assertEqual(self.run_main(output_root=self.destination), 1)
+            self.assertEqual(self.output.read_bytes(), b"prior verified inputs\n")
+            self.assertEqual(self.output.stat().st_mode & 0o777, 0o640)
+            self.assertEqual(list(self.destination.iterdir()), [self.output])
+            self.assertTrue(close.called)
+            for call in close.call_args_list:
+                with self.assertRaises(OSError):
+                    os.fstat(call.args[0])
+
+    def test_unsupported_platform_fails_without_network_or_fallback_write(self):
+        with mock.patch.object(verified_images.os, "supports_dir_fd", set()):
+            self.assertEqual(self.run_main(output_root=self.destination), 1)
+        self.resolution.assert_not_called()
+        self.assertFalse(self.output.exists())
 
 
 if __name__ == "__main__":
