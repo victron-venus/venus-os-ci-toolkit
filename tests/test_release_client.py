@@ -282,6 +282,78 @@ class GeneratorTest(unittest.TestCase):
         self.assertNotIn("secrets", jobs["build"])
         self.assertIn("!= 'success'", jobs["gate"]["steps"][0]["run"])
 
+    def release_policies(self):
+        """Exercise legacy and both versioned publication paths."""
+        yield self.policy
+        for promotion in ("promote-bytes", "final-build"):
+            yield dict(
+                self.policy,
+                versioning={
+                    "schema": 1,
+                    "promotion": promotion,
+                    "files": [{"path": "version", "format": "text"}],
+                },
+            )
+
+    def test_secretless_build_can_overlap_checks_after_preparation(self):
+        """Avoid serial latency while keeping failed preparation a build blocker."""
+        for policy in self.release_policies():
+            for secrets in ({}, {"build_secrets": []}):
+                with self.subTest(policy=policy, secrets=secrets):
+                    jobs = installer.release(dict(policy, **secrets))["jobs"]
+                    self.assertEqual(jobs["build"]["needs"], ["prepare"])
+                    self.assertEqual(jobs["checks"]["needs"], "prepare")
+                    self.assertNotIn("always()", jobs["build"]["if"])
+                    self.assertNotIn("secrets", jobs["build"])
+                    self.assertTrue(
+                        all(
+                            value == "read"
+                            for value in jobs["build"]["permissions"].values()
+                        )
+                    )
+
+    def test_secretful_build_still_waits_for_checks(self):
+        """Signing credentials remain unavailable until validators succeed."""
+        for policy in self.release_policies():
+            with self.subTest(policy=policy):
+                jobs = installer.release(
+                    dict(policy, build_secrets=["SIGNING_KEY"])
+                )["jobs"]
+                self.assertEqual(jobs["build"]["needs"], ["prepare", "checks"])
+                self.assertEqual(
+                    jobs["build"]["secrets"],
+                    {"SIGNING_KEY": "${{ secrets.SIGNING_KEY }}"},
+                )
+
+    def test_release_gate_rejects_unsuccessful_parallel_dependencies(self):
+        """A failed, cancelled or skipped validator/build cannot publish assets."""
+        for policy in self.release_policies():
+            jobs = installer.release(policy)["jobs"]
+            gate = jobs["gate"]
+            self.assertEqual(gate["needs"], ["prepare", "checks", "build"])
+            self.assertIn("always()", gate["if"])
+            for publication in ("candidate", "final"):
+                if publication in jobs:
+                    self.assertIn("gate", jobs[publication]["needs"])
+                    self.assertNotIn("always()", jobs[publication]["if"])
+            for dependency in gate["needs"]:
+                for result in ("success", "failure", "cancelled", "skipped"):
+                    with self.subTest(
+                        policy=policy, dependency=dependency, result=result
+                    ):
+                        results = {
+                            name: {"result": "success"} for name in gate["needs"]
+                        }
+                        results[dependency]["result"] = result
+                        checked = subprocess.run(
+                            ["bash", "-e", "-c", gate["steps"][0]["run"]],
+                            env=dict(os.environ, RESULTS=json.dumps(results)),
+                            check=False,
+                            capture_output=True,
+                            text=True,
+                        )
+                        self.assertEqual(checked.returncode == 0, result == "success")
+
     def test_publication_secret_is_confined_to_gated_publishing_steps(self):
         """The extra credential cannot reach preparation, builds or validators."""
         for versioned in (False, True):
