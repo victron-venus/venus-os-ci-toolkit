@@ -630,6 +630,11 @@ def release(policy):
                 'python3 scripts/release_versioned.py publish --repo "$GITHUB_REPOSITORY" '
                 "--assets .release-assets"
             )
+        elif step.get("name") == "Store immutable promotion evidence":
+            step["if"] = (
+                "${{ steps.publication.outputs.status != 'superseded' && "
+                "steps.publication.outputs.status != 'reused' }}"
+            )
     jobs["stable"]["if"] = (
         "${{ needs.prepare.outputs.channel == 'stable' && needs.prepare.outputs.build == 'false' }}"
     )
@@ -984,7 +989,10 @@ def release_strategy(directory: Path, policy: dict) -> str:
             "Use `python3 scripts/release.py prepare-version --pr` to synchronize the "
             "declared source fields. A saved release plan fixes the full candidate "
             "version before compilation. See [version plans](docs/VERSIONING.md) "
-            "for adapters, counters, retries and provenance."
+            "for adapters, counters, retries and provenance. Automatic nightlies keep "
+            "all checks and builds but skip duplicate publication when retained evidence "
+            "qualifies a beta/RC/stable with the same source, policy and base. Manual "
+            "nightly requests still publish."
             if versioning
             else ""
         ),
@@ -1270,6 +1278,17 @@ References: [GitHub schedules](https://docs.github.com/en/actions/reference/work
 [artifact provenance](https://docs.github.com/en/rest/actions/artifacts).
 """
     if policy.get("versioning"):
+        text = text.replace(
+            "Nightly builds may still use that existing base.",
+            "Nightly builds may still use that existing base. After every fresh check and "
+            "platform build passes, an automatic nightly skips duplicate GitHub publication "
+            "if retained immutable evidence qualifies an existing beta/RC/stable at the "
+            "same source, policy and base. It reports `reused` with that tag, retains its "
+            "Actions build artifacts, and does not advance the publication floor or create "
+            "new promotion evidence. Reserved counters may have gaps. Mutable build inputs "
+            "and current security databases are still exercised. Manual nightly requests, "
+            "new sources and missing/expired/unverifiable evidence retain full publication.",
+        )
         text = text.replace(
             "version files. Native binaries keep that base version; the release manifest records\n"
             "the beta/RC/nightly channel and exact source SHA.",

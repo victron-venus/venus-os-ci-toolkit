@@ -481,6 +481,50 @@ class GeneratedReleaseScopeExecution(unittest.TestCase):
             )
         )
 
+    def test_versioned_nightly_keeps_full_gates_and_explicit_evidence_decisions(self):
+        """A deduplicated publisher cannot turn failed fresh work into success."""
+        jobs = self.release(True)["jobs"]
+        values = {
+            "prepare": {
+                "result": "success",
+                "outputs": {"build": "true", "channel": "nightly"},
+            },
+            "checks": {"result": "success"},
+            "build": {"result": "success"},
+        }
+        self.assertTrue(job_runs(jobs["checks"], values))
+        self.assertIs(jobs["checks"]["with"]["force-full"], True)
+        self.assertTrue(job_runs(jobs["build"], values))
+        for name in ("checks", "build"):
+            for result in ("success", "failure", "cancelled", "skipped"):
+                with self.subTest(job=name, result=result):
+                    changed = json.loads(json.dumps(values))
+                    changed[name]["result"] = result
+                    self.assertTrue(job_runs(jobs["gate"], changed))
+                    gate = subprocess.run(
+                        ["bash", "-e", "-c", jobs["gate"]["steps"][0]["run"]],
+                        env=dict(os.environ, RESULTS=json.dumps(changed)),
+                        capture_output=True,
+                        text=True,
+                        check=False,
+                        timeout=10,
+                    )
+                    self.assertEqual(gate.returncode == 0, result == "success")
+        step = next(
+            item
+            for item in jobs["candidate"]["steps"]
+            if item.get("name") == "Store immutable promotion evidence"
+        )
+        condition = {"if": step["if"].replace("steps.", "needs.")}
+        for status in ("published", "reused", "superseded", "", "unknown"):
+            with self.subTest(status=status):
+                self.assertEqual(
+                    job_runs(
+                        condition, {"publication": {"outputs": {"status": status}}}
+                    ),
+                    status not in {"superseded", "reused"},
+                )
+
 
 class ToolkitValidationPolicy(unittest.TestCase):
     """The toolkit's real required security contexts survive documentation skips."""
