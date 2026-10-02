@@ -949,6 +949,17 @@ def release_files(directory: Path, policy: dict) -> dict[str, str]:
         files["scripts/verified_images.py"] = (
             ROOT / "scripts/verified_images.py"
         ).read_text()
+        if policy.get("versioning"):
+            for name in ("merge_oci_archives", "assemble_native_container"):
+                files[f"scripts/{name}.py"] = (ROOT / f"scripts/{name}.py").read_text()
+                files[f".github/release-tests/test_{name}.py"] = (
+                    (ROOT / f"tests/test_{name}.py")
+                    .read_text()
+                    .replace(
+                        "Path(__file__).resolve().parents[1]",
+                        "Path(__file__).resolve().parents[2]",
+                    )
+                )
     files[".github/release-tests/test_release_control.py"] = (
         (ROOT / "tests/test_release_control.py")
         .read_text()
