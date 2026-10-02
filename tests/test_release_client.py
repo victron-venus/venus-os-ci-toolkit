@@ -201,6 +201,38 @@ class GeneratorTest(unittest.TestCase):
             "validation_workflows": ["ci.yml", "codeql.yml"],
         }
 
+    def test_native_oci_tools_and_tests_follow_versioned_container_policy(self):
+        """Install both runtime helpers and their contracts only with their dependencies."""
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            adapter = root / ".github/workflows/release-build.yml"
+            adapter.parent.mkdir(parents=True)
+            adapter.write_text("on: {workflow_call: {}}\njobs: {}\n")
+            for container, versioned in (
+                (False, False),
+                (False, True),
+                (True, False),
+                (True, True),
+            ):
+                policy = dict(self.policy)
+                if container:
+                    policy["container_assets"] = {"app.oci.tar": "ghcr.io/owner/app"}
+                if versioned:
+                    policy["versioning"] = {
+                        "schema": 1,
+                        "promotion": "promote-bytes",
+                        "files": [{"path": "VERSION", "format": "text"}],
+                    }
+                files = installer.release_files(root, policy)
+                for name in ("merge_oci_archives", "assemble_native_container"):
+                    self.assertEqual(
+                        f"scripts/{name}.py" in files, container and versioned
+                    )
+                    self.assertEqual(
+                        f".github/release-tests/test_{name}.py" in files,
+                        container and versioned,
+                    )
+
     def test_asset_restrictions_are_rendered_as_current_static_policy(self):
         """Older RC promotion uses the current retirement policy without rereading files."""
         restrictions = [
