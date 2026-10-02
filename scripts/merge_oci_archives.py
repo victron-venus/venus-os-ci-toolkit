@@ -15,6 +15,9 @@ import tempfile
 from contextlib import ExitStack
 from pathlib import Path
 
+BLOB_PREFIX = "blobs/sha256/"
+DIGEST_PREFIX = "sha256:"
+REFERENCE_TYPE = "vnd.docker.reference.type"
 INDEX = "application/vnd.oci.image.index.v1+json"
 MANIFEST = "application/vnd.oci.image.manifest.v1+json"
 CONFIG = "application/vnd.oci.image.config.v1+json"
@@ -205,7 +208,7 @@ class Archive:
             ),
             "Unsupported embedded OCI content",
         )
-        name = "blobs/sha256/" + digest[7:]
+        name = BLOB_PREFIX + digest[7:]
         require(
             name in self.blobs and self.blobs[name].size == size,
             "Missing OCI blob or descriptor size mismatch",
@@ -259,7 +262,7 @@ class Archive:
             "Invalid OCI annotations",
         )
         if (
-            annotations.get("vnd.docker.reference.type") == "attestation-manifest"
+            annotations.get(REFERENCE_TYPE) == "attestation-manifest"
             or data.get("artifactType") == ATTESTATION
         ):
             self.attestation(descriptor, data, annotations)
@@ -268,7 +271,7 @@ class Archive:
                 "artifactType" not in descriptor
                 and "artifactType" not in data
                 and "subject" not in data
-                and "vnd.docker.reference.type" not in annotations,
+                and REFERENCE_TYPE not in annotations,
                 "Unexpected OCI image artifact",
             )
             self.image(descriptor, data)
@@ -340,8 +343,7 @@ class Archive:
         require(
             isinstance(platform, dict)
             and platform.get("os") == platform.get("architecture") == "unknown"
-            and annotations.get("vnd.docker.reference.type")
-            in {None, "attestation-manifest"},
+            and annotations.get(REFERENCE_TYPE) in {None, "attestation-manifest"},
             "Invalid OCI attestation platform",
         )
         reference = annotations.get("vnd.docker.reference.digest")
@@ -356,7 +358,8 @@ class Archive:
             require(
                 details == {}
                 and config["size"] == 2
-                and config["digest"] == "sha256:" + hashlib.sha256(b"{}").hexdigest(),
+                and config["digest"]
+                == DIGEST_PREFIX + hashlib.sha256(b"{}").hexdigest(),
                 "Invalid OCI attestation empty config",
             )
             subject = data.get("subject")
@@ -393,7 +396,7 @@ class Archive:
                 isinstance(reference, str) and DIGEST.fullmatch(reference),
                 "Missing attestation reference",
             )
-            name = "blobs/sha256/" + reference[7:]
+            name = BLOB_PREFIX + reference[7:]
             require(name in self.blobs, "Missing attestation subject blob")
             subject = {
                 "mediaType": MANIFEST,
@@ -407,7 +410,7 @@ class Archive:
         )
         for layer in layers:
             self.blob(layer, {IN_TOTO})
-            statement = self.read_json("blobs/sha256/" + layer["digest"][7:])
+            statement = self.read_json(BLOB_PREFIX + layer["digest"][7:])
             subjects = statement.get("subject")
             require(
                 statement.get("_type")
@@ -490,7 +493,7 @@ def merge_archives(inputs, output, version, revision):
                 "manifests": [
                     {
                         "mediaType": INDEX,
-                        "digest": "sha256:" + inner_digest,
+                        "digest": DIGEST_PREFIX + inner_digest,
                         "size": len(inner),
                     }
                 ],
@@ -499,7 +502,7 @@ def merge_archives(inputs, output, version, revision):
         generated = {
             "oci-layout": canonical({"imageLayoutVersion": "1.0.0"}),
             "index.json": root,
-            "blobs/sha256/" + inner_digest: inner,
+            BLOB_PREFIX + inner_digest: inner,
         }
         blobs = {}
         for archive in archives:
@@ -538,7 +541,8 @@ def merge_archives(inputs, output, version, revision):
                 "images": {
                     archive.platform: {
                         "platform": archive.platform,
-                        "config_digest": "sha256:" + archive.images[0]["config_sha256"],
+                        "config_digest": DIGEST_PREFIX
+                        + archive.images[0]["config_sha256"],
                         "manifest_digest": archive.images[0]["descriptor"]["digest"],
                         "attestation_digests": [
                             item["digest"] for item in archive.attestations
@@ -570,6 +574,40 @@ def merge_archives(inputs, output, version, revision):
             os.unlink(temporary)
 
 
+def confined_cli_path(root, value, new=False):
+    """Validate CLI paths inside the installed checkout before content I/O."""
+    root = root.resolve(strict=True)
+    candidate = value if value.is_absolute() else Path.cwd() / value
+    require(
+        not any(part == ".." or part.casefold() == ".git" for part in candidate.parts),
+        "CLI paths must not traverse parent or Git directories",
+    )
+    resolved = candidate.resolve(strict=not new)
+    require(
+        resolved.is_relative_to(root) and resolved != root,
+        "CLI path must stay inside the script checkout",
+    )
+    require(
+        not any(part.casefold() == ".git" for part in resolved.relative_to(root).parts),
+        "CLI paths must not access Git directories",
+    )
+    # Permit system aliases above the checkout (macOS /var -> /private/var),
+    # but reject caller-selected file and directory symlinks within it.
+    for component in (candidate, *candidate.parents):
+        require(
+            not (component.is_symlink() and component.resolve().is_relative_to(root)),
+            "CLI path must not contain a symlink",
+        )
+    if new:
+        require(
+            not os.path.lexists(resolved) and resolved.parent.is_dir(),
+            "CLI output must be a new file in an existing directory",
+        )
+    else:
+        require(resolved.is_file(), "CLI input must be a regular file")
+    return resolved
+
+
 def main():
     """Expose the same offline assembler to CI and local operators."""
     parser = argparse.ArgumentParser(description=__doc__)
@@ -580,6 +618,7 @@ def main():
     parser.add_argument("--version", required=True)
     parser.add_argument("--revision", required=True)
     args = parser.parse_args()
+    root = Path(__file__).resolve().parents[1]
     inputs = {}
     for value in args.input:
         platform, separator, path = value.partition("=")
@@ -587,10 +626,11 @@ def main():
             separator and path and platform not in inputs,
             "Invalid or duplicate --input",
         )
-        inputs[platform] = Path(path)
+        inputs[platform] = confined_cli_path(root, Path(path))
+    output = confined_cli_path(root, args.output, new=True)
     print(
         json.dumps(
-            merge_archives(inputs, args.output, args.version, args.revision),
+            merge_archives(inputs, output, args.version, args.revision),
             sort_keys=True,
             indent=2,
         )

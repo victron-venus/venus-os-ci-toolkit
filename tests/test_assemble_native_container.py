@@ -89,7 +89,7 @@ class NativeReceiptTests(unittest.TestCase):
         path.write_text(json.dumps(value, sort_keys=True) + "\n")
         return path
 
-    def make_native(self, platform):
+    def make_native(self, platform, attestations=True):
         arch = platform.split("/")[1]
         directory = self.root / arch
         directory.mkdir(exist_ok=True)
@@ -126,11 +126,42 @@ class NativeReceiptTests(unittest.TestCase):
             oci.MANIFEST,
         )
         manifest["platform"] = {"os": "linux", "architecture": arch}
+        manifests = [manifest]
+        if attestations:
+            statement = blob(
+                {
+                    "_type": "https://in-toto.io/Statement/v0.1",
+                    "predicateType": "https://slsa.dev/provenance/v0.2",
+                    "subject": [
+                        {
+                            "name": "native",
+                            "digest": {
+                                "sha256": manifest["digest"][7:],
+                            },
+                        }
+                    ],
+                    "predicate": {},
+                },
+                oci.IN_TOTO,
+            )
+            attestation = blob(
+                {
+                    "schemaVersion": 2,
+                    "mediaType": oci.MANIFEST,
+                    "artifactType": oci.ATTESTATION,
+                    "config": blob({}, oci.EMPTY_CONFIG),
+                    "subject": manifest,
+                    "layers": [statement],
+                },
+                oci.MANIFEST,
+            )
+            attestation["platform"] = {"os": "unknown", "architecture": "unknown"}
+            manifests.append(attestation)
         entries["index.json"] = oci.canonical(
             {
                 "schemaVersion": 2,
                 "mediaType": oci.INDEX,
-                "manifests": [manifest],
+                "manifests": manifests,
             }
         )
         with tarfile.open(directory / f"container-{arch}.oci.tar", "w") as archive:
@@ -204,6 +235,13 @@ class NativeReceiptTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Receipt does not match"):
             self.assemble()
         self.assertFalse(self.output.exists())
+
+    def test_native_export_cannot_silently_drop_attestations(self):
+        self.make_native("linux/arm64", attestations=False)
+        with self.assertRaisesRegex(ValueError, "lost its build attestations"):
+            self.assemble()
+        self.assertFalse(self.output.exists())
+        self.assertFalse(self.evidence.exists())
 
     def test_archive_change_between_receipt_and_merge_is_rejected(self):
         original = oci.merge_archives

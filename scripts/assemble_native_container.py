@@ -173,7 +173,7 @@ def assemble(root: Path, directories: dict[str, Path], output: Path, evidence: P
         "run_attempt": os.environ.get("GITHUB_RUN_ATTEMPT", ""),
     }
     require(
-        all(re.fullmatch(r"[1-9][0-9]*", value) for value in run.values()),
+        all(re.fullmatch(r"[1-9]\d*", value, flags=re.ASCII) for value in run.values()),
         "Native assembly requires the current workflow run and attempt",
     )
     archives, builds = {}, {}
@@ -196,6 +196,10 @@ def assemble(root: Path, directories: dict[str, Path], output: Path, evidence: P
                 "OCI input changed after native receipt verification",
             )
         for platform, build in builds.items():
+            require(
+                merged["images"][platform]["attestation_digests"],
+                "Native OCI input lost its build attestations",
+            )
             require(
                 merged["images"][platform]["config_digest"]
                 == build["build"]["image_config_digest"],

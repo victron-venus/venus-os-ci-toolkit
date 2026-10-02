@@ -208,8 +208,9 @@ class MergeTest(unittest.TestCase):
             name for name, raw in entries.items() if raw == b"shared compressed layer"
         )
         entries[layer] = b"X" + entries[layer][1:]
+        inputs = self.inputs(entries)
         with self.assertRaisesRegex(ValueError, "blob digest"):
-            self.merge(self.inputs(entries))
+            self.merge(inputs)
         self.assertFalse(self.output.exists())
 
     def test_missing_blob_and_wrong_descriptor_size_fail(self):
@@ -218,24 +219,29 @@ class MergeTest(unittest.TestCase):
             name for name, raw in entries.items() if raw == b"shared compressed layer"
         )
         del entries[layer]
+        inputs = self.inputs(entries)
         with self.assertRaisesRegex(ValueError, "Missing OCI blob"):
-            self.merge(self.inputs(entries))
+            self.merge(inputs)
         entries = self.fixture("amd64", nested=False)
         self.rewrite_manifest(entries, lambda body: body["layers"][0].update(size=999))
+        inputs = self.inputs(entries)
         with self.assertRaisesRegex(ValueError, "size mismatch"):
-            self.merge(self.inputs(entries))
+            self.merge(inputs)
 
     def test_wrong_missing_and_duplicate_platforms_fail(self):
+        inputs = {"linux/amd64": self.archive("one.tar", self.fixture("amd64"))}
         with self.assertRaisesRegex(ValueError, "exactly linux"):
-            self.merge({"linux/amd64": self.archive("one.tar", self.fixture("amd64"))})
+            self.merge(inputs)
+        inputs = self.inputs(arm64=self.fixture("amd64"))
         with self.assertRaisesRegex(ValueError, "platform differs"):
-            self.merge(self.inputs(arm64=self.fixture("amd64")))
+            self.merge(inputs)
         entries = self.fixture("amd64", nested=False)
         root = json.loads(entries["index.json"])
         root["manifests"].append(root["manifests"][0])
         entries["index.json"] = oci.canonical(root)
+        inputs = self.inputs(entries)
         with self.assertRaisesRegex(ValueError, "Duplicate OCI manifest"):
-            self.merge(self.inputs(entries))
+            self.merge(inputs)
 
     def test_version_and_revision_must_match_every_native_image(self):
         for field in (
@@ -251,11 +257,12 @@ class MergeTest(unittest.TestCase):
                 body["config"] = self.blob(entries, details, oci.CONFIG)
 
             self.rewrite_manifest(entries, change)
+            inputs = self.inputs(entries)
             with (
                 self.subTest(field=field),
                 self.assertRaisesRegex(ValueError, "label mismatch"),
             ):
-                self.merge(self.inputs(entries))
+                self.merge(inputs)
 
     def test_unsafe_members_links_and_duplicates_fail(self):
         for name, kind in (
@@ -272,11 +279,12 @@ class MergeTest(unittest.TestCase):
                 "index.json" if kind in (tarfile.SYMTYPE, tarfile.LNKTYPE) else "",
             )
             entry.size = 0
+            inputs = self.inputs(extras=[(entry, b"")])
             with (
                 self.subTest(name=name),
                 self.assertRaisesRegex(ValueError, "Unsafe|regular|Duplicate"),
             ):
-                self.merge(self.inputs(extras=[(entry, b"")]))
+                self.merge(inputs)
 
     def test_foreign_layer_or_url_is_not_accepted(self):
         for change in (
@@ -289,11 +297,12 @@ class MergeTest(unittest.TestCase):
             self.rewrite_manifest(
                 entries, lambda body, change=change: body["layers"][0].update(change)
             )
+            inputs = self.inputs(entries)
             with (
                 self.subTest(change=change),
                 self.assertRaisesRegex(ValueError, "media type|External"),
             ):
-                self.merge(self.inputs(entries))
+                self.merge(inputs)
 
     def test_attestation_subject_and_reference_must_identify_image(self):
         for kind in ("legacy", "artifact"):
@@ -303,13 +312,14 @@ class MergeTest(unittest.TestCase):
                 "sha256:" + "f" * 64
             )
             entries["index.json"] = oci.canonical(root)
+            inputs = self.inputs(entries)
             with (
                 self.subTest(kind=kind),
                 self.assertRaisesRegex(
                     ValueError, "attestation subject|reference differs"
                 ),
             ):
-                self.merge(self.inputs(entries))
+                self.merge(inputs)
 
     def test_attestation_statement_and_subject_platform_are_bound(self):
         for change in ("statement", "platform"):
@@ -330,25 +340,28 @@ class MergeTest(unittest.TestCase):
                     body["layers"] = [self.blob(entries, statement, oci.IN_TOTO)]
 
             self.rewrite_manifest(entries, mutate, index=1)
+            inputs = self.inputs(entries)
             with (
                 self.subTest(change=change),
                 self.assertRaisesRegex(ValueError, "subject.*differs"),
             ):
-                self.merge(self.inputs(entries))
+                self.merge(inputs)
 
     def test_no_runnable_image_and_unsupported_variant_fail(self):
         entries = self.fixture("amd64", nested=False, attestation="legacy")
         root = json.loads(entries["index.json"])
         root["manifests"] = root["manifests"][1:]
         entries["index.json"] = oci.canonical(root)
+        inputs = self.inputs(entries)
         with self.assertRaisesRegex(ValueError, "exactly one runnable"):
-            self.merge(self.inputs(entries))
+            self.merge(inputs)
         entries = self.fixture("amd64", nested=False)
         root = json.loads(entries["index.json"])
         root["manifests"][0]["platform"]["variant"] = "v3"
         entries["index.json"] = oci.canonical(root)
+        inputs = self.inputs(entries)
         with self.assertRaisesRegex(ValueError, "variant"):
-            self.merge(self.inputs(entries))
+            self.merge(inputs)
 
     def test_input_symlink_and_oversized_json_are_rejected(self):
         inputs = self.inputs()
@@ -359,8 +372,9 @@ class MergeTest(unittest.TestCase):
             self.merge(inputs)
         entries = self.fixture("amd64")
         entries["oci-layout"] = b" " * (oci.MAX_JSON + 1)
+        inputs = self.inputs(entries)
         with self.assertRaisesRegex(ValueError, "oversized"):
-            self.merge(self.inputs(entries))
+            self.merge(inputs)
 
     def test_input_mutation_during_assembly_never_publishes(self):
         inputs = self.inputs()
@@ -392,20 +406,23 @@ class MergeTest(unittest.TestCase):
             entries["index.json"] = oci.canonical(
                 {"schemaVersion": 2, "manifests": [descriptor]}
             )
+        inputs = self.inputs(entries)
         with self.assertRaisesRegex(ValueError, "graph exceeds"):
-            self.merge(self.inputs(entries))
+            self.merge(inputs)
         entries = self.fixture("amd64")
         entries["oci-layout"] = (
             b'{"imageLayoutVersion":"1.0.0","imageLayoutVersion":"1.0.0"}'
         )
+        inputs = self.inputs(entries)
         with self.assertRaisesRegex(ValueError, "Duplicate OCI JSON"):
-            self.merge(self.inputs(entries))
+            self.merge(inputs)
         entries = self.fixture("amd64", nested=False)
         root = json.loads(entries["index.json"])
         root["manifests"][0]["size"] = True
         entries["index.json"] = oci.canonical(root)
+        inputs = self.inputs(entries)
         with self.assertRaisesRegex(ValueError, "descriptor size"):
-            self.merge(self.inputs(entries))
+            self.merge(inputs)
 
     def test_existing_output_symlink_and_publish_race_never_overwrite(self):
         inputs = self.inputs()
@@ -433,19 +450,21 @@ class MergeTest(unittest.TestCase):
         self.assertEqual(list(self.root.glob(".oci-merge-*")), [])
 
     def test_failed_write_leaves_no_output_or_temporary_file(self):
+        inputs = self.inputs()
         with (
             mock.patch.object(oci, "add_file", side_effect=OSError("disk full")),
             self.assertRaisesRegex(OSError, "disk full"),
         ):
-            self.merge()
+            self.merge(inputs)
         self.assertFalse(self.output.exists())
         self.assertEqual(list(self.root.glob(".oci-merge-*")), [])
 
     def test_cli_and_duplicate_input_rejection(self):
         inputs = self.inputs()
+        script = self.installed_cli()
         arguments = [
             sys.executable,
-            str(SCRIPT),
+            str(script),
             "--version",
             VERSION,
             "--revision",
@@ -465,6 +484,107 @@ class MergeTest(unittest.TestCase):
         )
         self.assertNotEqual(duplicate.returncode, 0)
         self.assertIn("duplicate --input", duplicate.stderr)
+
+    def installed_cli(self):
+        """Install the standalone command in a disposable checkout."""
+        scripts = self.root / "scripts"
+        scripts.mkdir()
+        script = scripts / SCRIPT.name
+        script.write_bytes(SCRIPT.read_bytes())
+        return script
+
+    def cli_call(self, script, inputs, output, cwd=None):
+        arguments = [
+            sys.executable,
+            str(script),
+            "--version",
+            VERSION,
+            "--revision",
+            REVISION,
+            "--output",
+            str(output),
+        ]
+        for platform, path in inputs.items():
+            arguments.extend(["--input", f"{platform}={path}"])
+        return subprocess.run(
+            arguments,
+            capture_output=True,
+            text=True,
+            check=False,
+            cwd=cwd,
+        )
+
+    def test_cli_relative_paths_work_inside_checkout(self):
+        inputs = {platform: path.name for platform, path in self.inputs().items()}
+        result = self.cli_call(
+            self.installed_cli(), inputs, self.output.name, self.root
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)["revision"], REVISION)
+        self.assertTrue(self.output.is_file())
+
+    def test_cli_outside_paths_are_rejected_before_content_io(self):
+        script = self.installed_cli()
+        inputs = self.inputs()
+        # Invalid contents make an accidental read observable as a tar error.
+        inputs["linux/amd64"].write_bytes(b"must not parse this archive")
+        with tempfile.TemporaryDirectory() as directory:
+            outside = Path(directory)
+            outside_input = outside / "input.tar"
+            outside_input.write_bytes(b"outside file remains unchanged")
+            outside_output = outside / "output.tar"
+            for invalid_inputs, output in (
+                ({**inputs, "linux/amd64": outside_input}, self.output),
+                (inputs, outside_output),
+            ):
+                with self.subTest(output=output):
+                    result = self.cli_call(script, invalid_inputs, output)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn("inside the script checkout", result.stderr)
+                    self.assertEqual(
+                        outside_input.read_bytes(), b"outside file remains unchanged"
+                    )
+                    self.assertFalse(self.output.exists())
+                    self.assertFalse(outside_output.exists())
+                    self.assertEqual(list(self.root.glob(".oci-merge-*")), [])
+
+    def test_cli_symlinks_and_traversal_are_rejected_without_writes(self):
+        script = self.installed_cli()
+        inputs = self.inputs()
+        link = self.root / "input-link.tar"
+        link.symlink_to(inputs["linux/amd64"])
+        directory = self.root / "assets"
+        directory.mkdir()
+        directory_link = self.root / "assets-link"
+        directory_link.symlink_to(directory, target_is_directory=True)
+        git = self.root / ".git"
+        git.mkdir()
+        git_input = git / "input.tar"
+        git_input.write_bytes(b"Git contents remain unchanged")
+        cases = [
+            ({**inputs, "linux/amd64": link}, self.output, "symlink"),
+            (inputs, directory_link / "output.tar", "symlink"),
+            (
+                {**inputs, "linux/amd64": directory / ".." / "amd64.tar"},
+                self.output,
+                "traverse",
+            ),
+            (inputs, directory / ".." / self.output.name, "traverse"),
+            ({**inputs, "linux/amd64": git_input}, self.output, "Git directories"),
+            (inputs, git / "output.tar", "Git directories"),
+        ]
+        for invalid_inputs, output, expected in cases:
+            with self.subTest(output=output, expected=expected):
+                result = self.cli_call(script, invalid_inputs, output)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(expected, result.stderr)
+                self.assertFalse(self.output.exists())
+                self.assertFalse((directory / "output.tar").exists())
+                self.assertFalse((git / "output.tar").exists())
+                self.assertEqual(
+                    git_input.read_bytes(), b"Git contents remain unchanged"
+                )
+                self.assertEqual(list(self.root.glob(".oci-merge-*")), [])
 
 
 if __name__ == "__main__":
