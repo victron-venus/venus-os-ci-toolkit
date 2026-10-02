@@ -33,6 +33,26 @@ from the clean current checkout. Both use the checked-in version. Follow the exa
 requested run in Actions and check its final result; dispatch acceptance is not
 publication success. All declared checks, platforms and Release gate must pass.
 
+## Automatic nightly publication reuse
+
+Versioned repositories still allocate a fresh plan and run all required checks,
+current security scans and the complete nightly build matrix. This preserves
+coverage of mutable base images, downloaded packages and hosted toolchains even
+when the source commit is unchanged. After the Release gate and new build receipts
+pass, a scheduled nightly can report `reused` instead of publishing duplicate
+GitHub release assets. It requires a published beta, RC or stable with the exact
+same source, policy and base version, successful originating CI/Release gates,
+retained immutable Actions evidence, and matching asset sizes and digests.
+
+Only publication is skipped: the new build artifacts remain in Actions under
+normal adapter retention. No new release/tag or promotion evidence is created,
+and the publication floor stays unchanged so this nightly does not invalidate the
+accepted RC. The allocated build number remains reserved; gaps are intentional.
+Manual nightly requests, new sources, and missing, expired or unverifiable prior
+evidence follow normal publication. Failed current checks/builds still fail the
+run. This does not reset an existing floor or restore an already obsolete RC;
+those still require a new RC. Legacy repositories retain their existing behavior.
+
 ## Handle a workflow change during a build
 
 GitHub's release API requires workflow-write authorization when the target commit's

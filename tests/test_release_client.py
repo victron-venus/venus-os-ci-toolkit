@@ -387,7 +387,7 @@ class GeneratorTest(unittest.TestCase):
             )
             self.assertEqual(workflow["jobs"]["stable"]["environment"], "release")
 
-    def test_only_explicit_supersession_skips_required_promotion_evidence(self):
+    def test_only_explicit_no_publication_skips_required_promotion_evidence(self):
         """Missing publisher output must still require real evidence, never skip it."""
         for versioned in (False, True):
             policy = dict(self.policy)
@@ -407,7 +407,12 @@ class GeneratorTest(unittest.TestCase):
                 evidence = steps[-1]
                 self.assertEqual(
                     evidence["if"],
-                    "${{ steps.publication.outputs.status != 'superseded' }}",
+                    (
+                        "${{ steps.publication.outputs.status != 'superseded' && "
+                        "steps.publication.outputs.status != 'reused' }}"
+                        if versioned
+                        else "${{ steps.publication.outputs.status != 'superseded' }}"
+                    ),
                 )
                 self.assertEqual(evidence["with"]["if-no-files-found"], "error")
                 self.assertEqual(
