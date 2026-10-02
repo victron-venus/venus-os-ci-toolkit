@@ -1,0 +1,130 @@
+name: Request CodeRabbit Review
+
+on:
+  workflow_call:
+    inputs:
+      pull-request-number:
+        description: Explicit PR number for workflow_dispatch recovery only
+        type: string
+        default: ''
+    secrets:
+      BOT_PAT:
+        description: californiantiramisu token with permission to comment on pull requests
+        required: true
+
+permissions: {}
+
+jobs:
+  request-review:
+    name: Request CodeRabbit Review
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    concurrency:
+      group: toolkit-coderabbit-review-${{ github.repository }}-${{ inputs.pull-request-number || github.event.pull_request.number }}
+      cancel-in-progress: false
+    steps:
+      # Metadata only: never check out PR code, download artifacts, or run PR content.
+      - name: Request one review as californiantiramisu
+        shell: python3 -I {0}
+        env:
+          BOT_PAT: ${{ secrets.BOT_PAT }}
+          PR_NUMBER: ${{ inputs.pull-request-number || github.event.pull_request.number }}
+          EXPLICIT_PR_NUMBER: ${{ inputs.pull-request-number }}
+          EVENT_PR_NUMBER: ${{ github.event.pull_request.number }}
+          EVENT_ACTION: ${{ github.event.action }}
+        run: |
+          import json
+          import os
+          import re
+          import subprocess
+
+          BOT_LOGIN = "californiantiramisu"
+          BODY = "@coderabbitai review\n\n<!-- toolkit-coderabbit-review:v1 -->"
+
+          def api(path, token, *, payload=None, paginate=False):
+              command = ["gh", "api", path]
+              if paginate:
+                  command.extend(["--paginate", "--slurp"])
+              if payload is not None:
+                  command.extend(["--method", "POST", "--input", "-"])
+              try:
+                  result = subprocess.run(
+                      command,
+                      input=json.dumps(payload) if payload is not None else None,
+                      text=True,
+                      capture_output=True,
+                      check=True,
+                      env={**os.environ, "GH_TOKEN": token, "GH_HOST": "github.com"},
+                  )
+              except subprocess.CalledProcessError as error:
+                  detail = (error.stderr or "GitHub API request failed").strip().replace(token, "***")
+                  raise RuntimeError(detail) from None
+              return json.loads(result.stdout)
+
+          def eligible_repository(metadata, repository):
+              stars = metadata.get("stargazers_count")
+              return (
+                  metadata.get("full_name") == repository
+                  and metadata.get("private") is False
+                  and metadata.get("visibility") == "public"
+                  and metadata.get("archived") is False
+                  and type(stars) is int
+                  and 0 <= stars < 10
+              )
+
+          def eligible_pr(pr, repository, number):
+              return (
+                  pr.get("number") == number
+                  and pr.get("state") == "open"
+                  and (pr.get("base", {}).get("repo") or {}).get("full_name") == repository
+              )
+
+          def main():
+              number_text = os.environ.get("PR_NUMBER", "")
+              explicit = os.environ.get("EXPLICIT_PR_NUMBER", "")
+              event = os.environ.get("GITHUB_EVENT_NAME")
+              opened = (
+                  event == "pull_request_target"
+                  and os.environ.get("EVENT_ACTION") == "opened"
+                  and not explicit
+                  and os.environ.get("EVENT_PR_NUMBER") == number_text
+              )
+              manual = event == "workflow_dispatch" and explicit == number_text
+              if not (opened or manual) or re.fullmatch(r"[1-9][0-9]*", number_text) is None:
+                  raise RuntimeError("Use a newly opened pull_request_target event or workflow_dispatch with a PR number")
+              token = os.environ.get("BOT_PAT")
+              if not token:
+                  raise RuntimeError("Configure BOT_PAT for californiantiramisu with pull request comment permission")
+              repository = os.environ["GITHUB_REPOSITORY"]
+              number = int(number_text)
+              repository_endpoint = f"repos/{repository}"
+              pr_endpoint = f"{repository_endpoint}/pulls/{number}"
+              if not eligible_repository(api(repository_endpoint, token), repository):
+                  print("Repository is not an active public repository with fewer than 10 stars")
+                  return
+              if not eligible_pr(api(pr_endpoint, token), repository, number):
+                  print("Pull request is no longer open in this repository")
+                  return
+              identity = api("user", token)
+              if (identity.get("login") != BOT_LOGIN
+                      or type(identity.get("id")) is not int or identity["id"] <= 0):
+                  raise RuntimeError("BOT_PAT must belong to californiantiramisu")
+              comments_endpoint = f"{repository_endpoint}/issues/{number}/comments"
+              for page in api(f"{comments_endpoint}?per_page=100", token, paginate=True):
+                  for comment in page:
+                      author = comment.get("user") or {}
+                      if (author.get("id") == identity["id"]
+                              and author.get("login") == BOT_LOGIN
+                              and comment.get("body") == BODY):
+                          print("This bot already requested a CodeRabbit review")
+                          return
+              # Recheck live eligibility after pagination, immediately before the only write.
+              if (not eligible_repository(api(repository_endpoint, token), repository)
+                      or not eligible_pr(api(pr_endpoint, token), repository, number)):
+                  print("Repository or pull request eligibility changed; no comment posted")
+                  return
+              api(comments_endpoint, token, payload={"body": BODY})
+              print(f"Requested a CodeRabbit review on pull request #{number} as {BOT_LOGIN}")
+
+          if __name__ == "__main__":
+              main()

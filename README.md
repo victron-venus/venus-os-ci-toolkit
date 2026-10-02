@@ -33,6 +33,14 @@ GitHub can retain an enabled native auto-merge request when a contributor with w
 
 Concurrent GitHub runs can start in a different order from their numeric run IDs. Pending attempts always block merging; completed attempts are ordered by when their jobs started, with job IDs as a fallback. An earlier canceled attempt cannot replace a later successful result, and an earlier success cannot hide a later failure.
 
+## CodeRabbit reviews
+
+The [CodeRabbit integration](docs/CODERABBIT.md) requests one advisory review as
+`californiantiramisu` when a PR opens in a public repository with fewer than 10
+stars, including drafts and forks. Copy the [pinned caller template](docs/examples/coderabbit-review.yml)
+after installing the CodeRabbit app. It verifies repository visibility and bot
+identity and avoids duplicate requests without checking out PR code.
+
 ## CI and release documentation
 
 The [private OTTPlay k3s runner configuration](docs/ottplay-k3s-runners.md) adds
