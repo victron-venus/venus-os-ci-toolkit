@@ -16,9 +16,9 @@ It does not request another review on each push or ready transition.
 1. Install the CodeRabbit GitHub App for the intended repository and enable reviews
    in its service settings.
 2. Copy [the caller](examples/coderabbit-review.yml) to
-   `.github/workflows/coderabbit-review.yml`. Replace `TOOLKIT_COMMIT_SHA` with the
-   full 40-character SHA of a reviewed, merged toolkit commit. The placeholder is
-   deliberately not a working reference; do not use a mutable branch or tag.
+   `.github/workflows/coderabbit-review.yml`. The example is pinned to the reviewed,
+   merged toolkit commit `b81ed0aec645591f0c82a778eb8e3115db86f9ed`. Keep a full
+   40-character SHA when upgrading after review; do not use a mutable branch or tag.
 3. Copy the toolkit's `.coderabbit.yaml`, or merge its `reviews` settings into the
    repository's existing configuration without discarding other settings.
 4. Provide the Actions secret `BOT_PAT`, owned by `californiantiramisu`, and forward
