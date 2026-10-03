@@ -1,0 +1,46 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": "Atomic updates for GitHub Actions, reusable workflows and their generator pins.",
+  "enabledManagers": ["github-actions", "custom.regex"],
+  "dependencyDashboard": false,
+  "automerge": false,
+  "prConcurrentLimit": 1,
+  "prHourlyLimit": 1,
+  "rebaseWhen": "behind-base-branch",
+  "ignorePaths": ["**/vendor/**", "**/node_modules/**", "**/fixtures/**"],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "managerFilePatterns": ["/^\\.github/action-pins\\.json$/"],
+      "matchStrings": ["\"packageName\":\\s*\"(?<depName>[^\"]+)\",\\s*\"version\":\\s*\"(?<currentValue>[^\"]+)\",\\s*\"digest\":\\s*\"(?<currentDigest>[a-f0-9]{40})\""],
+      "datasourceTemplate": "github-tags",
+      "versioningTemplate": "github-actions"
+    },
+    {
+      "customType": "regex",
+      "managerFilePatterns": ["/^\\.github/renovate-runtime\\.json$/"],
+      "matchStrings": ["\"version\":\\s*\"(?<currentValue>[^\"]+)\""],
+      "depNameTemplate": "renovate",
+      "datasourceTemplate": "npm"
+    }
+  ],
+  "packageRules": [
+    {
+      "description": "Every CI component changes in the same branch, including majors and digest pins.",
+      "matchManagers": ["github-actions", "custom.regex"],
+      "groupName": "GitHub Actions and reusable workflows",
+      "groupSlug": "ci-workflows",
+      "groupSingleUpdates": true,
+      "separateMajorMinor": false,
+      "separateMinorPatch": false,
+      "separateMultipleMajor": false,
+      "pinDigests": true
+    },
+    {
+      "description": "Runtime and runner migrations remain explicit project changes.",
+      "matchManagers": ["github-actions"],
+      "matchDepTypes": ["github-runner", "uses-with"],
+      "enabled": false
+    }
+  ]
+}
