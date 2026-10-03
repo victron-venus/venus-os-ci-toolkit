@@ -4,8 +4,9 @@ on:
   pull_request_target:
     types: [opened, synchronize, reopened, ready_for_review, labeled, unlabeled, edited, converted_to_draft]
 
+# Metadata-only edits must not cancel a meaningful pending approval/merge run.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}-${{ (github.event.action != 'edited' || github.event.changes.base) && 'state' || github.run_id }}
   cancel-in-progress: true
 
 permissions:
@@ -16,6 +17,7 @@ permissions:
 jobs:
   auto-merge:
     if: >-
+      (github.event.action != 'edited' || github.event.changes.base) &&
       contains(fromJSON('["4alvit","californiantiramisu","dependabot[bot]","renovate[bot]"]'), github.event.pull_request.user.login)
     uses: ./.github/workflows/auto-merge.yml
     with:
