@@ -215,6 +215,16 @@ Dependabot approval uses the caller's automatic `GITHUB_TOKEN` and the `github-a
 
 For other authors, explicitly forward `BOT_PAT` and optional `APPROVAL_PAT`. Approval first checks the actual account behind `BOT_PAT`. It uses `APPROVAL_PAT` only when `BOT_PAT` is absent or belongs to the PR author; the selected account must be independent of the author. Invalid credentials fail explicitly rather than silently selecting another account. `BOT_PAT` requires repository write permission for merging and pull request write permission for approval. When `BOT_PAT` is confirmed to belong to the PR author `californiantiramisu`, a same-repository PR can use `GITHUB_TOKEN` as the independent Actions reviewer if no independent `APPROVAL_PAT` was selected. This fallback requires Actions approval to be enabled, verifies the repository again before approval, and does not apply to forks, other authors or manual recovery. Missing credentials or remaining self-approval are configuration errors. The merge workflow continues using `BOT_PAT` for every author so downstream workflows retain their existing event behavior.
 
+Title/body-only PR edits skip the approval and merge jobs before a runner is
+allocated. The `edited` event remains subscribed because changing the base branch
+must re-evaluate eligibility; the [GitHub webhook schema](https://github.com/github/rest-api-description/blob/main/descriptions/api.github.com/api.github.com.json) reports that as `changes.base`. Copy the
+caller concurrency groups as well as their conditions: ignored metadata events
+use their own run IDs so they cannot cancel or replace a queued state-changing
+run. Keep the filter and concurrency update together in the caller. Reusable
+workflows retain their existing event behavior so a consumer updating only its
+toolkit pin cannot lose an approval after an older caller cancels pending work.
+Other subscribed events and explicit approval recovery retain their behavior.
+
 #### `auto-merge.yml`
 
 Use [the merge caller example](examples/auto-merge.yml) with an immutable toolkit commit and native auto-merge enabled in the consumer repository.

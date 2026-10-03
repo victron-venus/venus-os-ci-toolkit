@@ -372,7 +372,7 @@ def _legacy_release(policy):
     publication_env = publication_token_env(policy)
     build_credentials = build_secrets(policy)
     branch = policy.get("default_branch", "main")
-    candidate = "${{ needs.prepare.outputs.channel != 'stable' }}"
+    candidate = "${{ needs.prepare.outputs.build == 'true' }}"
     steps_checkout = [{"uses": CHECKOUT, "with": {"persist-credentials": False}}]
     prepare_script = """python3 - <<'PY'
 import json, os, subprocess
@@ -401,8 +401,15 @@ elif kind != 'workflow_dispatch':
     raise SystemExit('Stable requires manual workflow_dispatch')
 if channel in {'rc', 'stable'} and config.get('stable_blockers'):
     raise SystemExit('Stable blocked: ' + '; '.join(config['stable_blockers']))
+import sys
+sys.path.insert(0, 'scripts')
+import release_control as rc
+closed = rc.closed_push_cycle(rc.GitHub(os.environ['GITHUB_REPOSITORY']), version, kind) if kind == 'push' else None
+if closed:
+    rc.emit_result(closed)
+    raise SystemExit(0)
 with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
-    output.write(f'channel={channel}\\nversion={version}\\n')
+    output.write(f'channel={channel}\\nversion={version}\\nbuild={str(channel != "stable").lower()}\\n')
 PY
 """
     jobs = {
@@ -415,6 +422,8 @@ PY
             "outputs": {
                 "channel": "${{ steps.metadata.outputs.channel }}",
                 "version": "${{ steps.metadata.outputs.version }}",
+                "build": "${{ steps.metadata.outputs.build }}",
+                "status": "${{ steps.metadata.outputs.status }}",
             },
             "steps": [
                 {
@@ -427,14 +436,15 @@ PY
                     "id": "metadata",
                     "run": prepare_script,
                     "env": {
-                        "PUBLICATION_ENABLED": "${{ vars.RELEASE_CHANNELS_ENABLED }}"
+                        "PUBLICATION_ENABLED": "${{ vars.RELEASE_CHANNELS_ENABLED }}",
+                        "GH_TOKEN": "${{ github.token }}",
                     },
                 }
             ],
         },
         "checks": {
             "needs": "prepare",
-            "if": candidate,
+            "if": "${{ needs.prepare.outputs.channel != 'stable' }}",
             "uses": "./.github/workflows/quality-gate.yml",
             "with": {"force-full": True},
             "permissions": {
@@ -469,9 +479,14 @@ PY
                     "env": {"RESULTS": "${{ toJSON(needs) }}"},
                     "run": (
                         "python3 - <<'PY'\nimport json, os\nresults = "
-                        "json.loads(os.environ['RESULTS'])\nfailed = {name: "
-                        "value['result'] for name, value in results.items() if "
-                        "value['result'] != 'success'}\nif not results or failed:\n    "
+                        "json.loads(os.environ['RESULTS'])\n"
+                        "expected = dict.fromkeys(('prepare', 'checks', 'build'), 'success')\n"
+                        "if results.get('prepare', {}).get('outputs', {}).get('status') == 'version-required':\n"
+                        "    expected['build'] = 'skipped'\n"
+                        "failed = {name: results.get(name, {}).get('result') "
+                        "for name, result in expected.items() "
+                        "if results.get(name, {}).get('result') != result}\n"
+                        "if failed:\n    "
                         "raise SystemExit(f'Release blocked: {failed}')\nPY\n"
                     ),
                 }
@@ -480,7 +495,8 @@ PY
         "candidate": {
             "needs": ["prepare", "gate"],
             "if": (
-                "${{ needs.prepare.outputs.channel != 'stable' && "
+                "${{ needs.prepare.outputs.build == 'true' && "
+                "needs.prepare.outputs.channel != 'stable' && "
                 "vars.RELEASE_CHANNELS_ENABLED == 'true' }}"
             ),
             "runs-on": "ubuntu-latest",
@@ -668,13 +684,19 @@ def release(policy):
         }
     )
     build_condition = "${{ needs.prepare.outputs.build == 'true' }}"
-    jobs["checks"]["if"] = build_condition
+    jobs["checks"]["if"] = (
+        "${{ needs.prepare.outputs.build == 'true' || "
+        "needs.prepare.outputs.status == 'version-required' }}"
+    )
     jobs["build"]["if"] = build_condition
     jobs["build"]["permissions"]["actions"] = "read"
     jobs["build"]["with"]["release_plan_artifact"] = (
         "${{ needs.prepare.outputs.plan_artifact }}"
     )
-    jobs["gate"]["if"] = "${{ always() && needs.prepare.outputs.build == 'true' }}"
+    jobs["gate"]["if"] = (
+        "${{ always() && (needs.prepare.outputs.build == 'true' || "
+        "needs.prepare.outputs.status == 'version-required') }}"
+    )
     candidate = jobs["candidate"]
     candidate["steps"].insert(
         1,
@@ -1238,6 +1260,9 @@ displays the request.
 
 If the base version already has a stable release, bump the committed version through
 a PR before beta/RC publication. Nightly builds may still use that existing base.
+Automatic push betas skip packaging/publication with `version-required` when their
+committed base already has a stable tag. Quality and security checks still run.
+Prepare the next version through a PR; manual beta/RC requests still fail strictly.
 
 Candidate tags are unique and immutable: `vX.Y.Z-beta.N`, `vX.Y.Z-rc.N`, or
 `vX.Y.Z-nightly.<UTC timestamp>.<run>.<attempt>`. Candidates are prereleases and
