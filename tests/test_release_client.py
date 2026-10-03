@@ -5,8 +5,10 @@ import importlib.util
 import json
 import os
 import subprocess
+import sys
 import tempfile
 import unittest
+from contextlib import chdir
 from pathlib import Path
 from unittest import mock
 
@@ -332,6 +334,49 @@ class GeneratorTest(unittest.TestCase):
                         Path(temp), dict(self.policy, asset_restrictions=restrictions)
                     )
 
+    def test_legacy_prepare_emits_closed_cycle_and_rejects_api_failures(self):
+        """Execute the generated preflight before any packaging job can start."""
+        controller = module("release_control")
+        script = installer.release(self.policy)["jobs"]["prepare"]["steps"][-1]["run"]
+        source = script.split("\n", 1)[1].rsplit("\nPY", 1)[0]
+        with tempfile.TemporaryDirectory() as temp, chdir(temp):
+            root = Path(temp)
+            (root / ".release-policy.json").write_text(json.dumps(self.policy))
+            event = root / "event.json"
+            event.write_text(json.dumps({"repository": {"default_branch": "main"}}))
+            output = root / "outputs"
+            gh = mock.Mock()
+            gh.optional.return_value = {
+                "ref": "refs/tags/v1.2.3",
+                "object": {"type": "commit", "sha": "a" * 40},
+            }
+            with (
+                mock.patch.dict(
+                    os.environ,
+                    {
+                        "GITHUB_EVENT_PATH": str(event),
+                        "GITHUB_REF": "refs/heads/main",
+                        "GITHUB_EVENT_NAME": "push",
+                        "GITHUB_REPOSITORY": "example/project",
+                        "GITHUB_OUTPUT": str(output),
+                    },
+                ),
+                mock.patch.dict(sys.modules, {"release_control": controller}),
+                mock.patch.object(sys, "path", sys.path.copy()),
+                mock.patch.object(controller, "GitHub", return_value=gh),
+                mock.patch.object(subprocess, "check_output", return_value="1.2.3\n"),
+            ):
+                with self.assertRaises(SystemExit) as stopped:
+                    exec(compile(source, "generated-prepare", "exec"), {})  # noqa: S102 - trusted generator under test
+                self.assertEqual(stopped.exception.code, 0)
+                self.assertIn("status=version-required", output.read_text())
+                self.assertIn("build=false", output.read_text())
+                output.unlink()
+                gh.optional.side_effect = controller.GitHubError("HTTP 403")
+                with self.assertRaisesRegex(controller.GitHubError, "HTTP 403"):
+                    exec(compile(source, "generated-prepare", "exec"), {})  # noqa: S102 - trusted generator under test
+                self.assertFalse(output.exists())
+
     def test_release_publication_depends_on_build_and_checks(self):
         """Require completed validation and packaging before candidate publication."""
         jobs = installer.release(self.policy)["jobs"]
@@ -340,7 +385,10 @@ class GeneratorTest(unittest.TestCase):
         self.assertEqual(jobs["stable"]["environment"], "release")
         self.assertEqual(jobs["build"]["permissions"], {"contents": "read"})
         self.assertNotIn("secrets", jobs["build"])
-        self.assertIn("!= 'success'", jobs["gate"]["steps"][0]["run"])
+        self.assertIn(
+            "dict.fromkeys(('prepare', 'checks', 'build'), 'success')",
+            jobs["gate"]["steps"][0]["run"],
+        )
 
     def release_policies(self):
         """Exercise legacy and both versioned publication paths."""

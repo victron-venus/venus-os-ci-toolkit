@@ -481,6 +481,46 @@ class GeneratedReleaseScopeExecution(unittest.TestCase):
             )
         )
 
+    def test_closed_push_cycle_preserves_checks_without_packaging_or_publication(self):
+        """The sole main CI entry must still test code after a stable release."""
+        for versioned in (False, True):
+            jobs = self.release(versioned)["jobs"]
+            values = {
+                "prepare": {
+                    "result": "success",
+                    "outputs": {
+                        "build": "false",
+                        "channel": "beta",
+                        "status": "version-required",
+                    },
+                },
+                "checks": {"result": "success"},
+                "build": {"result": "skipped"},
+                "gate": {"result": "success"},
+            }
+            for name in ("checks", "gate"):
+                self.assertTrue(job_runs(jobs[name], values))
+            self.assertIs(jobs["checks"]["with"]["force-full"], True)
+            for name in ("build", "candidate", "stable", "final"):
+                if name in jobs:
+                    with self.subTest(versioned=versioned, job=name):
+                        self.assertFalse(job_runs(jobs[name], values))
+            self.assertEqual(
+                jobs["prepare"]["outputs"]["status"],
+                "${{ steps.metadata.outputs.status }}",
+            )
+            for check_result in ("success", "failure", "cancelled", "skipped"):
+                values["checks"]["result"] = check_result
+                gate = subprocess.run(
+                    ["bash", "-e", "-c", jobs["gate"]["steps"][0]["run"]],
+                    env=dict(os.environ, RESULTS=json.dumps(values)),
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    timeout=10,
+                )
+                self.assertEqual(gate.returncode == 0, check_result == "success")
+
     def test_versioned_nightly_keeps_full_gates_and_explicit_evidence_decisions(self):
         """A deduplicated publisher cannot turn failed fresh work into success."""
         jobs = self.release(True)["jobs"]
