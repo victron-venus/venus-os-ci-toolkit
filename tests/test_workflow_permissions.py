@@ -82,6 +82,42 @@ class WorkflowPermissionTests(unittest.TestCase):
         del self.wrapper["permissions"]
         self.validate()
 
+    def test_plain_validator_does_not_receive_sarif_write_scope(self):
+        """Build and test validators cannot upload or change security results."""
+        del self.wrapper["permissions"]
+        del self.scanner["jobs"]["codeql"]["permissions"]
+        self.validate()
+        caller = installer.quality(self.policy, self.root)["jobs"]["check-0"]
+        self.assertNotIn("security-events", caller["permissions"])
+
+    def test_nested_scanner_retains_sarif_write_scope(self):
+        """A scanner behind a local wrapper retains its required caller cap."""
+        del self.wrapper["permissions"]
+        self.validate()
+        caller = installer.quality(self.policy, self.root)["jobs"]["check-0"]
+        self.assertEqual(caller["permissions"]["security-events"], "write")
+
+    def test_opaque_external_validator_preserves_inherited_cap(self):
+        """A remote workflow without a local declaration cannot be narrowed safely."""
+        del self.wrapper["permissions"]
+        self.wrapper["jobs"]["scan"]["uses"] = (
+            "owner/repo/.github/workflows/scan.yml@" + "a" * 40
+        )
+        self.validate()
+        caller = installer.quality(self.policy, self.root)["jobs"]["check-0"]
+        self.assertEqual(caller["permissions"]["security-events"], "write")
+
+    def test_sarif_uploader_retains_inherited_write_scope(self):
+        """An uploader may intentionally inherit its permission from the caller."""
+        del self.wrapper["permissions"]
+        del self.scanner["jobs"]["codeql"]["permissions"]
+        self.scanner["jobs"]["codeql"]["steps"] = [
+            {"uses": "github/codeql-action/upload-sarif@" + "a" * 40}
+        ]
+        self.validate()
+        caller = installer.quality(self.policy, self.root)["jobs"]["check-0"]
+        self.assertEqual(caller["permissions"]["security-events"], "write")
+
     def test_private_gate_rejects_public_only_write_scope(self):
         """A private policy cannot inherit Code Security write permissions."""
         self.policy["visibility"] = "private"

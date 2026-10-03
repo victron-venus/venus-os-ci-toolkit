@@ -174,7 +174,48 @@ def scope_validation_jobs(jobs, always, single_entry):
             job["if"] = "${{ needs.scope.outputs.run == 'true' }}"
 
 
-def quality(policy):
+def requires_security_events(directory, filename, chain=()):
+    """Keep SARIF writes only for validators that request or inherit that scope."""
+    if filename in chain:
+        raise ValueError(f"Recursive local workflow call: {chain} -> {filename}")
+    # BaseLoader constructs strings/containers and cannot instantiate Python objects.
+    workflow = yaml.load(  # nosec B506
+        (directory / ".github/workflows" / filename).read_text(),
+        Loader=yaml.BaseLoader,
+    )
+    defaults = workflow.get("permissions", {})
+    if permission_level(defaults, "security-events") == "write":
+        return True
+    for job in workflow.get("jobs", {}).values():
+        if (
+            permission_level(job.get("permissions", defaults), "security-events")
+            == "write"
+        ):
+            return True
+        reference = job.get("uses", "")
+        if reference.startswith("./"):
+            if not re.fullmatch(
+                r"\./\.github/workflows/[A-Za-z0-9_-]+\.ya?ml", reference
+            ):
+                raise ValueError(f"Invalid local workflow reference: {reference}")
+            if requires_security_events(
+                directory, reference.rsplit("/", 1)[1], (*chain, filename)
+            ):
+                return True
+        elif reference and "permissions" not in job and "permissions" not in workflow:
+            # Do not guess the permissions of an opaque external reusable workflow.
+            return True
+        if any(
+            re.match(
+                r"github/codeql-action/(analyze|upload-sarif)@", step.get("uses", "")
+            )
+            for step in job.get("steps", [])
+        ):
+            return True
+    return False
+
+
+def quality(policy, directory=None):
     """Compose callable validators and a gate that rejects every non-success result."""
     validators = policy.get("validation_workflows", [])
     if not validators:
@@ -196,6 +237,10 @@ def quality(policy):
                 **(
                     {"security-events": "write"}
                     if policy.get("visibility") != "private"
+                    and (
+                        directory is None
+                        or requires_security_events(directory, filename)
+                    )
                     else {}
                 ),
             },
@@ -213,7 +258,10 @@ def quality(policy):
                     "uses": ACTION_REFS["actions/setup-python"],
                     "with": {"python-version": "3.12"},
                 },
-                {"run": "python3 -m pip install --only-binary=:all: PyYAML==6.0.3"},
+                {
+                    "run": "python3 -m pip install --require-hashes --only-binary=:all: "
+                    "-r .github/requirements-workflow-contracts.txt"
+                },
                 {"run": "python3 scripts/workflow_contracts.py"},
             ],
         }
@@ -788,7 +836,7 @@ def validate_local_workflows(directory: Path) -> None:
 
 def validate_workflow_adapters(directory: Path, policy: dict) -> None:
     """Check callable validators and permission caps throughout their local graph."""
-    validate_local_calls(directory, quality(policy))
+    validate_local_calls(directory, quality(policy, directory))
     if policy.get("mode", "release") == "release":
         validate_build_secrets(directory, policy)
     if policy.get("versioning"):
@@ -1077,13 +1125,18 @@ def render(directory: Path) -> dict[str, str]:
     validate_policy(directory, policy)
     local = policy.get("ci_execution") == "local"
     files = (
-        {} if local else {".github/workflows/quality-gate.yml": dump(quality(policy))}
+        {}
+        if local
+        else {".github/workflows/quality-gate.yml": dump(quality(policy, directory))}
     )
     if not local:
         files["scripts/change_scope.py"] = (
             ROOT / "scripts/change_scope.py"
         ).read_text()
     if policy.get("single_entry_ci") and not local:
+        files[".github/requirements-workflow-contracts.txt"] = (
+            ROOT / ".github/requirements-workflow-contracts.txt"
+        ).read_text()
         files["scripts/workflow_contracts.py"] = (
             ROOT / "scripts/workflow_contracts.py"
         ).read_text()
