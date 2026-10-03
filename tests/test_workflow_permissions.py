@@ -85,10 +85,47 @@ class WorkflowPermissionTests(unittest.TestCase):
     def test_plain_validator_does_not_receive_sarif_write_scope(self):
         """Build and test validators cannot upload or change security results."""
         del self.wrapper["permissions"]
-        del self.scanner["jobs"]["codeql"]["permissions"]
+        self.scanner["jobs"]["codeql"]["permissions"] = {"contents": "read"}
         self.validate()
         caller = installer.quality(self.policy, self.root)["jobs"]["check-0"]
         self.assertNotIn("security-events", caller["permissions"])
+
+    def test_custom_uploader_must_declare_its_scopes_before_narrowing(self):
+        """An opaque script must not silently lose the caller's SARIF write cap."""
+        del self.wrapper["permissions"]
+        del self.scanner["jobs"]["codeql"]["permissions"]
+        self.scanner["jobs"]["codeql"]["steps"] = [
+            {"run": "python scripts/upload_security_report.py"}
+        ]
+        with self.assertRaisesRegex(
+            ValueError, "security-scan.yml: job codeql.*inherited permissions"
+        ):
+            self.validate()
+        self.scanner["jobs"]["codeql"]["permissions"] = {
+            "contents": "read", "security-events": "write"
+        }
+        self.validate()
+        caller = installer.quality(self.policy, self.root)["jobs"]["check-0"]
+        self.assertEqual(caller["permissions"]["security-events"], "write")
+
+    def test_workflow_permission_declaration_covers_custom_uploader(self):
+        """A workflow-level declaration is as explicit as a job declaration."""
+        del self.wrapper["permissions"]
+        del self.scanner["jobs"]["codeql"]["permissions"]
+        self.scanner["permissions"] = {"security-events": "write", "contents": "read"}
+        self.scanner["jobs"]["codeql"]["steps"] = [{"run": "./upload-sarif.sh"}]
+        self.validate()
+        caller = installer.quality(self.policy, self.root)["jobs"]["check-0"]
+        self.assertEqual(caller["permissions"]["security-events"], "write")
+
+    def test_prior_scanner_cannot_hide_an_undeclared_shell_job(self):
+        """An early write-scope match cannot bypass the permission contract."""
+        del self.wrapper["permissions"]
+        self.scanner["jobs"]["custom"] = {
+            "runs-on": "ubuntu-latest", "steps": [{"run": "./upload-sarif.sh"}]
+        }
+        with self.assertRaisesRegex(ValueError, "job custom.*inherited permissions"):
+            self.validate()
 
     def test_nested_scanner_retains_sarif_write_scope(self):
         """A scanner behind a local wrapper retains its required caller cap."""

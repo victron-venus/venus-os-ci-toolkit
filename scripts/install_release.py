@@ -183,6 +183,19 @@ def requires_security_events(directory, filename, chain=()):
         (directory / ".github/workflows" / filename).read_text(),
         Loader=yaml.BaseLoader,
     )
+    # Shell commands may upload SARIF directly or through an arbitrary script.
+    # Require their author to declare scopes before narrowing an inherited cap.
+    for name, job in workflow.get("jobs", {}).items():
+        if (
+            "permissions" not in workflow
+            and "permissions" not in job
+            and any("run" in step for step in job.get("steps", []))
+        ):
+            raise ValueError(
+                f"{filename}: job {name} has shell steps with inherited permissions; "
+                "declare job or workflow permissions explicitly, including "
+                "security-events: write when uploading SARIF"
+            )
     defaults = workflow.get("permissions", {})
     if permission_level(defaults, "security-events") == "write":
         return True
