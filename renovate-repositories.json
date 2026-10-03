@@ -12,6 +12,7 @@
   "victron-venus/dbus-virtual-battery",
   "victron-venus/esphome-jbd-bms-mqtt",
   "victron-venus/integration-tests",
+  "victron-venus/inverter-climate",
   "victron-venus/inverter-control",
   "victron-venus/inverter-dashboard",
   "victron-venus/inverter-dashboard-go",
