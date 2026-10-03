@@ -223,6 +223,34 @@ class CoupledWorkflowTests(unittest.TestCase):
                     directory, {"quality-gate.yml": yaml.safe_load(workflow)}
                 )
 
+    def test_matching_mutable_generator_and_workflow_refs_are_rejected(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            (directory / ".github/workflows").mkdir(parents=True)
+            for digest in ("main", "v7", "a" * 7, "g" * 40):
+                with self.subTest(digest=digest):
+                    (directory / ".github/action-pins.json").write_text(
+                        json.dumps(
+                            [{"packageName": "actions/checkout", "digest": digest}]
+                        )
+                    )
+                    workflow = installer.dump(
+                        {
+                            "jobs": {
+                                "test": {
+                                    "steps": [{"uses": "actions/checkout@" + digest}]
+                                }
+                            }
+                        }
+                    )
+                    (directory / ".github/workflows/quality-gate.yml").write_text(
+                        workflow
+                    )
+                    with self.assertRaisesRegex(ValueError, "full commit SHAs"):
+                        contracts.validate_generator_pins(
+                            directory, {"quality-gate.yml": yaml.safe_load(workflow)}
+                        )
+
 
 if __name__ == "__main__":
     unittest.main()
