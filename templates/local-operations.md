@@ -57,4 +57,7 @@ explicit apply. Preserve existing production secrets and permissions.
 @PROJECT_LIMITS@
 
 The local client and this runbook are generated from `victron-venus/venus-os-ci-toolkit`.
-Update the toolkit source and reviewed policy, then render and check the output.
+Update the toolkit source and reviewed policy, then run
+`python3 scripts/install_release.py /path/to/consumer` from the toolkit checkout.
+Add `--check` to detect drift without writing files. The installer is not vendored
+into consumer repositories.
