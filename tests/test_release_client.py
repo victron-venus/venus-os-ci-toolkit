@@ -346,7 +346,7 @@ class GeneratorTest(unittest.TestCase):
             event.write_text(json.dumps({"repository": {"default_branch": "main"}}))
             output = root / "outputs"
             gh = mock.Mock()
-            gh.optional.return_value = {
+            gh.api.return_value = {
                 "ref": "refs/tags/v1.2.3",
                 "object": {"type": "commit", "sha": "a" * 40},
             }
@@ -372,7 +372,7 @@ class GeneratorTest(unittest.TestCase):
                 self.assertIn("status=version-required", output.read_text())
                 self.assertIn("build=false", output.read_text())
                 output.unlink()
-                gh.optional.side_effect = controller.GitHubError("HTTP 403")
+                gh.api.side_effect = controller.GitHubError("HTTP 403")
                 with self.assertRaisesRegex(controller.GitHubError, "HTTP 403"):
                     exec(compile(source, "generated-prepare", "exec"), {})  # noqa: S102 - trusted generator under test
                 self.assertFalse(output.exists())
