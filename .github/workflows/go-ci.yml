@@ -60,10 +60,10 @@ jobs:
         working-directory: ${{ inputs.working-directory }}
     steps:
       - name: Checkout
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup Go
-        uses: victron-venus/venus-os-ci-toolkit/actions/setup-go@63e105d2eed5bde74f8b8060c2a7b5ae16cec7f1 # main
+        uses: victron-venus/venus-os-ci-toolkit/actions/setup-go@64c15c96f351edc808ce21e2423077417c73a9de # main
         with:
           go-version: ${{ inputs.go-version }}
 

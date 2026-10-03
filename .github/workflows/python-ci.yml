@@ -64,10 +64,10 @@ jobs:
         working-directory: ${{ inputs.working-directory }}
     steps:
       - name: Checkout
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup Python
-        uses: victron-venus/venus-os-ci-toolkit/actions/setup-python@733de629b521477102822ccfcc855427de2f2b08 # main
+        uses: victron-venus/venus-os-ci-toolkit/actions/setup-python@64c15c96f351edc808ce21e2423077417c73a9de # main
         with:
           python-version: ${{ inputs.python-version }}
 
