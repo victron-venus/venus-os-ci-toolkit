@@ -276,6 +276,10 @@ def quality(policy, directory=None):
                     "-r .github/requirements-workflow-contracts.txt"
                 },
                 {"run": "python3 scripts/workflow_contracts.py"},
+                {
+                    "run": "python3 -m unittest discover -s .github/workflow-tests "
+                    "-p 'test_*.py'"
+                },
             ],
         }
         if len(always) > 1:
@@ -1175,6 +1179,12 @@ def render(directory: Path) -> dict[str, str]:
         files["scripts/workflow_contracts.py"] = (
             ROOT / "scripts/workflow_contracts.py"
         ).read_text()
+        files[".github/workflow-tests/test_workflow_yaml_contracts.py"] = (
+            ROOT / "tests/test_workflow_yaml_contracts.py"
+        ).read_text().replace(
+            "ROOT = Path(__file__).resolve().parents[1]",
+            "ROOT = Path(__file__).resolve().parents[2]",
+        )
     files["docs/release-workflow.md"] = operator_guide(policy)
     if not local:
         validate_workflow_adapters(directory, policy)
