@@ -19,6 +19,7 @@ SHA = "a" * 40
 
 
 def complete():
+    """Build a complete result, including upstream disabled checks."""
     return {
         "repo": {"name": f"github.com/{REPO}", "commit": SHA},
         "scorecard": guard.VERSION.copy(),
@@ -30,6 +31,8 @@ def complete():
 
 
 class ScorecardJSONTests(unittest.TestCase):
+    """Preserve findings while rejecting incomplete or unrelated scans."""
+
     def test_complete_clean_and_failing_checks_pass(self):
         for score in (0, 4, 10):
             result = complete()
