@@ -229,6 +229,38 @@ class GeneratorTest(unittest.TestCase):
                 installer.release_files(root, self.policy),
             )
 
+    def test_native_oci_tools_and_tests_follow_versioned_container_policy(self):
+        """Install both runtime helpers and their contracts only with their dependencies."""
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            adapter = root / ".github/workflows/release-build.yml"
+            adapter.parent.mkdir(parents=True)
+            adapter.write_text("on: {workflow_call: {}}\njobs: {}\n")
+            for container, versioned in (
+                (False, False),
+                (False, True),
+                (True, False),
+                (True, True),
+            ):
+                policy = dict(self.policy)
+                if container:
+                    policy["container_assets"] = {"app.oci.tar": "ghcr.io/owner/app"}
+                if versioned:
+                    policy["versioning"] = {
+                        "schema": 1,
+                        "promotion": "promote-bytes",
+                        "files": [{"path": "VERSION", "format": "text"}],
+                    }
+                files = installer.release_files(root, policy)
+                for name in ("merge_oci_archives", "assemble_native_container"):
+                    self.assertEqual(
+                        f"scripts/{name}.py" in files, container and versioned
+                    )
+                    self.assertEqual(
+                        f".github/release-tests/test_{name}.py" in files,
+                        container and versioned,
+                    )
+
     def test_asset_restrictions_are_rendered_as_current_static_policy(self):
         """Older RC promotion uses the current retirement policy without rereading files."""
         restrictions = [
@@ -310,6 +342,78 @@ class GeneratorTest(unittest.TestCase):
         self.assertNotIn("secrets", jobs["build"])
         self.assertIn("!= 'success'", jobs["gate"]["steps"][0]["run"])
 
+    def release_policies(self):
+        """Exercise legacy and both versioned publication paths."""
+        yield self.policy
+        for promotion in ("promote-bytes", "final-build"):
+            yield dict(
+                self.policy,
+                versioning={
+                    "schema": 1,
+                    "promotion": promotion,
+                    "files": [{"path": "version", "format": "text"}],
+                },
+            )
+
+    def test_secretless_build_can_overlap_checks_after_preparation(self):
+        """Avoid serial latency while keeping failed preparation a build blocker."""
+        for policy in self.release_policies():
+            for secrets in ({}, {"build_secrets": []}):
+                with self.subTest(policy=policy, secrets=secrets):
+                    jobs = installer.release(dict(policy, **secrets))["jobs"]
+                    self.assertEqual(jobs["build"]["needs"], ["prepare"])
+                    self.assertEqual(jobs["checks"]["needs"], "prepare")
+                    self.assertNotIn("always()", jobs["build"]["if"])
+                    self.assertNotIn("secrets", jobs["build"])
+                    self.assertTrue(
+                        all(
+                            value == "read"
+                            for value in jobs["build"]["permissions"].values()
+                        )
+                    )
+
+    def test_secretful_build_still_waits_for_checks(self):
+        """Signing credentials remain unavailable until validators succeed."""
+        for policy in self.release_policies():
+            with self.subTest(policy=policy):
+                jobs = installer.release(dict(policy, build_secrets=["SIGNING_KEY"]))[
+                    "jobs"
+                ]
+                self.assertEqual(jobs["build"]["needs"], ["prepare", "checks"])
+                self.assertEqual(
+                    jobs["build"]["secrets"],
+                    {"SIGNING_KEY": "${{ secrets.SIGNING_KEY }}"},
+                )
+
+    def test_release_gate_rejects_unsuccessful_parallel_dependencies(self):
+        """A failed, cancelled or skipped validator/build cannot publish assets."""
+        for policy in self.release_policies():
+            jobs = installer.release(policy)["jobs"]
+            gate = jobs["gate"]
+            self.assertEqual(gate["needs"], ["prepare", "checks", "build"])
+            self.assertIn("always()", gate["if"])
+            for publication in ("candidate", "final"):
+                if publication in jobs:
+                    self.assertIn("gate", jobs[publication]["needs"])
+                    self.assertNotIn("always()", jobs[publication]["if"])
+            for dependency in gate["needs"]:
+                for result in ("success", "failure", "cancelled", "skipped"):
+                    with self.subTest(
+                        policy=policy, dependency=dependency, result=result
+                    ):
+                        results = {
+                            name: {"result": "success"} for name in gate["needs"]
+                        }
+                        results[dependency]["result"] = result
+                        checked = subprocess.run(
+                            ["bash", "-e", "-c", gate["steps"][0]["run"]],
+                            env=dict(os.environ, RESULTS=json.dumps(results)),
+                            check=False,
+                            capture_output=True,
+                            text=True,
+                        )
+                        self.assertEqual(checked.returncode == 0, result == "success")
+
     def test_publication_secret_is_confined_to_gated_publishing_steps(self):
         """The extra credential cannot reach preparation, builds or validators."""
         for versioned in (False, True):
@@ -343,7 +447,7 @@ class GeneratorTest(unittest.TestCase):
             )
             self.assertEqual(workflow["jobs"]["stable"]["environment"], "release")
 
-    def test_only_explicit_supersession_skips_required_promotion_evidence(self):
+    def test_only_explicit_no_publication_skips_required_promotion_evidence(self):
         """Missing publisher output must still require real evidence, never skip it."""
         for versioned in (False, True):
             policy = dict(self.policy)
@@ -363,7 +467,12 @@ class GeneratorTest(unittest.TestCase):
                 evidence = steps[-1]
                 self.assertEqual(
                     evidence["if"],
-                    "${{ steps.publication.outputs.status != 'superseded' }}",
+                    (
+                        "${{ steps.publication.outputs.status != 'superseded' && "
+                        "steps.publication.outputs.status != 'reused' }}"
+                        if versioned
+                        else "${{ steps.publication.outputs.status != 'superseded' }}"
+                    ),
                 )
                 self.assertEqual(evidence["with"]["if-no-files-found"], "error")
                 self.assertEqual(

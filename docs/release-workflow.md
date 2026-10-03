@@ -2,19 +2,22 @@
 
 The source of truth is `.release-policy.json`. `quality-gate.yml` runs the callable
 validation workflows and produces the required **CI gate** status on every PR
-and merge-queue commit. Superseded PR runs are cancelled. A lightweight Change scope
-job checks the complete Git diff first. Documentation-only changes skip build and
-test workflows; the gate accepts only these explicitly justified skips. Missing,
-failed or unexpectedly skipped workflows fail the gate. Unknown files, incomplete
-history, code, workflow and lockfile changes run full validation.
+and merge-queue commit. Superseded PR runs are cancelled. Without an explicit
+`change_scope` policy, every change keeps full CI and normal release preparation.
+Documentation-only skipping requires that explicit opt-in. When enabled, the
+Change scope job checks the complete Git diff first; the gate accepts only proven
+documentation skips. Missing, failed or unexpectedly skipped workflows fail the
+gate. Unknown files, incomplete history, code, workflows and lockfile changes run
+full validation.
 
 The optional `change_scope` policy provides exact `documentation_paths`, exact
 `required_paths` for documentation used as a build input, and
 `always_validate_workflows` for independently required checks. Documentation paths
 cannot exempt source, tests, fixtures, build configuration or dependencies.
-Manual dispatch, scheduled runs and release qualification remain full. A push
-containing only documentation stops before release preparation, version allocation,
-artifact builds or publication. This does not change the configured nightly policy.
+Manual dispatch, scheduled runs and release qualification remain full. Only with
+explicit `change_scope` opt-in does a documentation-only push stop before release
+preparation, version allocation, artifact builds or publication. This does not
+change the configured nightly policy.
 
 ## Local checks
 
@@ -57,8 +60,10 @@ credentials/streams and production access are not implied by unit tests or build
 The release engine/client are vendored from `victron-venus/venus-os-ci-toolkit`.
 They are excluded from consumer-specific formatting/type policy. Application
 release workflows run the mandatory Release tooling contracts job; validation-only
-projects receive the local client, whose contracts run in the toolkit. Update the toolkit source and rerun
-`scripts/install_release.py`; `--check` detects drift.
+projects receive the local client, whose contracts run in the toolkit. Update the toolkit source, then run
+`python3 scripts/install_release.py /path/to/consumer` from the toolkit checkout;
+add `--check` to detect drift without writing files. The installer is not vendored
+into consumer repositories.
 
 References: [GitHub schedules](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule),
 [protected environments](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/manage-environments),

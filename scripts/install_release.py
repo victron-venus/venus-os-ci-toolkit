@@ -310,6 +310,7 @@ def schedule(policy):
 def _legacy_release(policy):
     """Build the gated candidate/publication workflow from the reviewed policy."""
     publication_env = publication_token_env(policy)
+    build_credentials = build_secrets(policy)
     branch = policy.get("default_branch", "main")
     candidate = "${{ needs.prepare.outputs.channel != 'stable' }}"
     steps_checkout = [{"uses": CHECKOUT, "with": {"persist-credentials": False}}]
@@ -383,11 +384,12 @@ PY
             },
         },
         "build": {
-            "needs": ["prepare", "checks"],
+            # Secretless packaging can overlap validation; signing must wait.
+            "needs": ["prepare", "checks"] if build_credentials else ["prepare"],
             "if": candidate,
             "uses": "./.github/workflows/release-build.yml",
             "permissions": {"contents": "read"},
-            **({"secrets": build_secrets(policy)} if build_secrets(policy) else {}),
+            **({"secrets": build_credentials} if build_credentials else {}),
             "with": {
                 "version": "${{ needs.prepare.outputs.version }}",
                 "channel": "${{ needs.prepare.outputs.channel }}",
@@ -627,6 +629,11 @@ def release(policy):
             step["run"] = (
                 'python3 scripts/release_versioned.py publish --repo "$GITHUB_REPOSITORY" '
                 "--assets .release-assets"
+            )
+        elif step.get("name") == "Store immutable promotion evidence":
+            step["if"] = (
+                "${{ steps.publication.outputs.status != 'superseded' && "
+                "steps.publication.outputs.status != 'reused' }}"
             )
     jobs["stable"]["if"] = (
         "${{ needs.prepare.outputs.channel == 'stable' && needs.prepare.outputs.build == 'false' }}"
@@ -947,6 +954,17 @@ def release_files(directory: Path, policy: dict) -> dict[str, str]:
         files["scripts/verified_images.py"] = (
             ROOT / "scripts/verified_images.py"
         ).read_text()
+        if policy.get("versioning"):
+            for name in ("merge_oci_archives", "assemble_native_container"):
+                files[f"scripts/{name}.py"] = (ROOT / f"scripts/{name}.py").read_text()
+                files[f".github/release-tests/test_{name}.py"] = (
+                    (ROOT / f"tests/test_{name}.py")
+                    .read_text()
+                    .replace(
+                        "Path(__file__).resolve().parents[1]",
+                        "Path(__file__).resolve().parents[2]",
+                    )
+                )
     files[".github/release-tests/test_release_control.py"] = (
         (ROOT / "tests/test_release_control.py")
         .read_text()
@@ -987,7 +1005,10 @@ def release_strategy(directory: Path, policy: dict) -> str:
             "Use `python3 scripts/release.py prepare-version --pr` to synchronize the "
             "declared source fields. A saved release plan fixes the full candidate "
             "version before compilation. See [version plans](docs/VERSIONING.md) "
-            "for adapters, counters, retries and provenance."
+            "for adapters, counters, retries and provenance. Automatic nightlies keep "
+            "all checks and builds but skip duplicate publication when retained evidence "
+            "qualifies a beta/RC/stable with the same source, policy and base. Manual "
+            "nightly requests still publish."
             if versioning
             else ""
         ),
@@ -1265,14 +1286,27 @@ credentials/streams and production access are not implied by unit tests or build
 The release engine/client are vendored from `victron-venus/venus-os-ci-toolkit`.
 They are excluded from consumer-specific formatting/type policy. Application
 release workflows run the mandatory Release tooling contracts job; validation-only
-projects receive the local client, whose contracts run in the toolkit. Update the toolkit source and rerun
-`scripts/install_release.py`; `--check` detects drift.
+projects receive the local client, whose contracts run in the toolkit. Update the toolkit source, then run
+`python3 scripts/install_release.py /path/to/consumer` from the toolkit checkout;
+add `--check` to detect drift without writing files. The installer is not vendored
+into consumer repositories.
 
 References: [GitHub schedules](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule),
 [protected environments](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/manage-environments),
 [artifact provenance](https://docs.github.com/en/rest/actions/artifacts).
 """
     if policy.get("versioning"):
+        text = text.replace(
+            "Nightly builds may still use that existing base.",
+            "Nightly builds may still use that existing base. After every fresh check and "
+            "platform build passes, an automatic nightly skips duplicate GitHub publication "
+            "if retained immutable evidence qualifies an existing beta/RC/stable at the "
+            "same source, policy and base. It reports `reused` with that tag, retains its "
+            "Actions build artifacts, and does not advance the publication floor or create "
+            "new promotion evidence. Reserved counters may have gaps. Mutable build inputs "
+            "and current security databases are still exercised. Manual nightly requests, "
+            "new sources and missing/expired/unverifiable evidence retain full publication.",
+        )
         text = text.replace(
             "version files. Native binaries keep that base version; the release manifest records\n"
             "the beta/RC/nightly channel and exact source SHA.",

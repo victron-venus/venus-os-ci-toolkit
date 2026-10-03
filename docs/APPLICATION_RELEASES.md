@@ -33,6 +33,26 @@ from the clean current checkout. Both use the checked-in version. Follow the exa
 requested run in Actions and check its final result; dispatch acceptance is not
 publication success. All declared checks, platforms and Release gate must pass.
 
+## Automatic nightly publication reuse
+
+Versioned repositories still allocate a fresh plan and run all required checks,
+current security scans and the complete nightly build matrix. This preserves
+coverage of mutable base images, downloaded packages and hosted toolchains even
+when the source commit is unchanged. After the Release gate and new build receipts
+pass, a scheduled nightly can report `reused` instead of publishing duplicate
+GitHub release assets. It requires a published beta, RC or stable with the exact
+same source, policy and base version, successful originating CI/Release gates,
+retained immutable Actions evidence, and matching asset sizes and digests.
+
+Only publication is skipped: the new build artifacts remain in Actions under
+normal adapter retention. No new release/tag or promotion evidence is created,
+and the publication floor stays unchanged so this nightly does not invalidate the
+accepted RC. The allocated build number remains reserved; gaps are intentional.
+Manual nightly requests, new sources, and missing, expired or unverifiable prior
+evidence follow normal publication. Failed current checks/builds still fail the
+run. This does not reset an existing floor or restore an already obsolete RC;
+those still require a new RC. Legacy repositories retain their existing behavior.
+
 ## Handle a workflow change during a build
 
 GitHub's release API requires workflow-write authorization when the target commit's
@@ -41,6 +61,13 @@ cannot receive that authorization. A long build can therefore pass every check
 and still fail publication with `403 Resource not accessible by integration` or
 `404` after a workflow change lands. Ordinary source changes with an unchanged
 workflow tree do not create this restriction. See the [release API permission note](https://docs.github.com/en/rest/releases/releases#create-a-release).
+
+The publisher checks the exact workflow tree before advancing the publication
+floor and again before creating the tag. A known mismatch fails without those
+writes; ordinary source changes with the same workflow tree remain eligible.
+An explicitly configured publication token retains its existing exception only
+after its workflow authorization probe succeeds. GitHub does not make these reads
+and publication atomic: a later branch change can still cause a partial failure.
 
 Inspect existing tags and draft/published releases before recovery. Preserve any
 existing candidate and its evidence. Use the candidate build for the current
@@ -89,3 +116,24 @@ GitHub publication, registry/store import, device delivery and production deploy
 are separate steps. Prerelease, tag and generic CI events must not trigger legacy
 production deployments. Follow each application's adapter runbook for delivery and
 rollback using already accepted immutable artifacts.
+
+## Write verified container deployment inputs
+
+Projects with `container_assets` can resolve an accepted stable release to verified
+registry digests with `scripts/verified_images.py`. The output must remain below
+an existing trusted directory: the current working directory by default, or an
+explicit `--output-root` chosen by the operator. An absolute output outside the
+current directory now requires that explicit root, for example in GitHub Actions:
+
+```bash
+python3 scripts/verified_images.py --tag v1.2.3 \
+  --output-root "$RUNNER_TEMP" --output "$RUNNER_TEMP/verified-images.json"
+```
+
+Relative outputs are interpreted beneath the selected root. Parent traversal and
+symlink destination parents are rejected before downloading release payloads or
+reading registry manifests. The output is replaced atomically without writing
+through existing hard links; final symlinks and non-file destinations are rejected.
+Directory descriptors keep a replaced parent pathname from redirecting the write.
+Platforms without no-follow directory descriptor support fail explicitly. The
+root is trusted operator configuration, not a sandbox against its owner.
