@@ -4,6 +4,7 @@ import ast
 import importlib.util
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -592,10 +593,12 @@ jobs:
 
     def test_exported_workflow_tests_run_without_the_generator(self):
         """A consumer's mandatory regression suite is self-contained after rendering."""
-        files = installer.render(installer.ROOT)
         exported = ".github/workflow-tests/test_workflow_yaml_contracts.py"
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
+            shutil.copytree(installer.ROOT / ".github/workflows", root / ".github/workflows")
+            shutil.copyfile(installer.ROOT / ".release-policy.json", root / ".release-policy.json")
+            files = installer.render(root)
             for name in ("scripts/workflow_contracts.py", exported):
                 path = root / name
                 path.parent.mkdir(parents=True, exist_ok=True)
