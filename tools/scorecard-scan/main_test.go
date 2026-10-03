@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -11,10 +12,13 @@ import (
 	"time"
 
 	"github.com/ossf/scorecard/v5/checker"
+	"github.com/ossf/scorecard/v5/checks/evaluation"
 	"github.com/ossf/scorecard/v5/clients"
+	checkdocs "github.com/ossf/scorecard/v5/docs/checks"
 	"github.com/ossf/scorecard/v5/finding"
 	"github.com/ossf/scorecard/v5/pkg/scorecard"
 	"github.com/ossf/scorecard/v5/policy"
+	"github.com/ossf/scorecard/v5/probes/packagedWithAutomatedWorkflow"
 )
 
 func completeResult() scorecard.Result {
@@ -108,6 +112,11 @@ func TestIncompleteScanNeverPublishesOrKeepsStaleOutput(t *testing.T) {
 func TestOfficialSARIFPreservesFindingsAndHistoricalIdentity(t *testing.T) {
 	for _, failing := range []bool{false, true} {
 		result := completeResult()
+		for i := range result.Checks {
+			if result.Checks[i].Name == "Packaging" {
+				result.Checks[i] = upstreamPackagingAbsent(t)
+			}
+		}
 		if failing {
 			for i := range result.Checks {
 				if result.Checks[i].Name == "Pinned-Dependencies" {
@@ -213,4 +222,81 @@ func TestScannerIgnoringContextCannotPublishAfterDeadline(t *testing.T) {
 	if _, err := os.Stat(output); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("timed-out scan left SARIF: %v", err)
 	}
+}
+
+func upstreamPackagingAbsent(t *testing.T) checker.CheckResult {
+	t.Helper()
+	findings, _, err := packagedWithAutomatedWorkflow.Run(&checker.RawResults{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	logger := checker.NewLogger()
+	result := evaluation.Packaging("Packaging", findings, logger)
+	result.Findings, result.Details = findings, logger.Flush()
+	return result
+}
+
+func TestPackagingAbsenceExceptionRejectsErrorsAndUnknownResults(t *testing.T) {
+	cases := []struct {
+		name   string
+		mutate func(*checker.CheckResult)
+	}{
+		{"runtime error", func(c *checker.CheckResult) { c.Error = errors.New("API unavailable") }},
+		{"different reason", func(c *checker.CheckResult) { c.Reason += " because API failed" }},
+		{"different check", func(c *checker.CheckResult) { c.Name = "Binary-Artifacts" }},
+		{"different version", func(c *checker.CheckResult) { c.Version = 3 }},
+		{"invalid score", func(c *checker.CheckResult) { c.Score = -2 }},
+		{"missing probe", func(c *checker.CheckResult) { c.Findings = nil }},
+		{"duplicate probe", func(c *checker.CheckResult) { c.Findings = append(c.Findings, c.Findings[0]) }},
+		{"different probe", func(c *checker.CheckResult) { c.Findings[0].Probe = "unknown" }},
+		{"contradictory outcome", func(c *checker.CheckResult) { c.Findings[0].Outcome = finding.OutcomeTrue }},
+	}
+	if !packagingNotApplicable(upstreamPackagingAbsent(t)) {
+		t.Fatal("real upstream absence result rejected")
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			c := upstreamPackagingAbsent(t)
+			tt.mutate(&c)
+			if packagingNotApplicable(c) {
+				t.Fatal("invalid absence result accepted")
+			}
+		})
+	}
+}
+
+func TestOfficialJSONPreservesPackagingAbsenceReason(t *testing.T) {
+	result := completeResult()
+	for i := range result.Checks {
+		if result.Checks[i].Name == "Packaging" {
+			result.Checks[i] = upstreamPackagingAbsent(t)
+		}
+	}
+	docs, err := checkdocs.Read()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var data bytes.Buffer
+	if err := result.AsJSON2(&data, docs, nil); err != nil {
+		t.Fatal(err)
+	}
+	var output struct {
+		Checks []struct {
+			Name   string
+			Score  int
+			Reason string
+		}
+	}
+	if err := json.Unmarshal(data.Bytes(), &output); err != nil {
+		t.Fatal(err)
+	}
+	for _, check := range output.Checks {
+		if check.Name == "Packaging" {
+			if check.Score != -1 || check.Reason != "packaging workflow not detected" {
+				t.Fatalf("changed upstream JSON contract: %+v", check)
+			}
+			return
+		}
+	}
+	t.Fatal("Packaging absent from JSON")
 }

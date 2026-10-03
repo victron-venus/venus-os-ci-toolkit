@@ -15,7 +15,15 @@ to OpenSSF, upload an artifact, or change repository settings.
 
 One official Scorecard v5.5.0 `Run` result is validated and passed to the official
 `Result.AsSARIF` formatter. Every expected check must appear exactly once. All
-16 enforced checks must have a score from 0 through 10 and no runtime error.
+16 enforced checks must have a score from 0 through 10 and no runtime error,
+with one precise exception: in v5.5.0 `Packaging` returns -1 for the ordinary
+absence of a recognized publishing workflow. The adapter accepts only version 2
+of that check with no error, reason exactly `packaging workflow not detected`, and
+one `packagedWithAutomatedWorkflow` probe with a false outcome. Unknown reasons,
+failed or missing probes, and runtime errors remain fatal. Upstream Packaging
+returns only 10, that absence result, or a runtime error; neither normal result
+creates a Packaging SARIF alert. The official formatter remains unchanged.
+See [the pinned evaluator](https://github.com/ossf/scorecard/blob/c395761df6afe1a69e476bc60a013a94bcbc153f/checks/evaluation/packaging.go).
 The two checks disabled by the upstream reporting policy, Contributors and
 Signed-Releases, are still scanned and must be present; an inconclusive score
 for either remains unreported, as in the original action.

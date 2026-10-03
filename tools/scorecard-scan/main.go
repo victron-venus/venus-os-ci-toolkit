@@ -15,6 +15,7 @@ import (
 	"github.com/ossf/scorecard/v5/checker"
 	"github.com/ossf/scorecard/v5/clients/githubrepo"
 	"github.com/ossf/scorecard/v5/docs/checks"
+	"github.com/ossf/scorecard/v5/finding"
 	"github.com/ossf/scorecard/v5/log"
 	"github.com/ossf/scorecard/v5/options"
 	"github.com/ossf/scorecard/v5/pkg/scorecard"
@@ -48,6 +49,17 @@ func reportingPolicy() (*policy.ScorecardPolicy, []string) {
 	return p, names
 }
 
+// v5.5.0 Packaging has only success (10), this exact absence result (-1),
+// or a runtime error. It cannot emit a scored SARIF violation. Preserve normal
+// absence without accepting failed probes, unknown outcomes or API errors.
+func packagingNotApplicable(check checker.CheckResult) bool {
+	return check.Name == "Packaging" && check.Version == 2 &&
+		check.Score == checker.InconclusiveResultScore && check.Error == nil &&
+		check.Reason == "packaging workflow not detected" && len(check.Findings) == 1 &&
+		check.Findings[0].Probe == "packagedWithAutomatedWorkflow" &&
+		check.Findings[0].Outcome == finding.OutcomeFalse
+}
+
 func validate(result *scorecard.Result) error {
 	seen := make(map[string]bool)
 	var problems []error
@@ -58,7 +70,7 @@ func validate(result *scorecard.Result) error {
 			continue
 		}
 		seen[check.Name] = true
-		if threshold >= 0 && (check.Error != nil || check.Score < checker.MinResultScore || check.Score > checker.MaxResultScore) {
+		if threshold >= 0 && !packagingNotApplicable(check) && (check.Error != nil || check.Score < checker.MinResultScore || check.Score > checker.MaxResultScore) {
 			problems = append(problems, fmt.Errorf("incomplete Scorecard check %q: score=%d, runtime error=%v", check.Name, check.Score, check.Error))
 		}
 	}
