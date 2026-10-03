@@ -42,6 +42,10 @@ scripts or repository-defined post-upgrade commands.
 `workflow`: Renovate otherwise logs a rejected workflow push while exiting
 successfully. A fine-grained token must grant Contents and Workflows read/write,
 as well as the other permissions required by Renovate's GitHub platform.
+Tokens without an `X-OAuth-Scopes` response header produce an explicit warning:
+authentication succeeded, but workflow write permissions remain unverified.
+The preflight does not check fine-grained permissions for each target repository;
+confirm those permissions separately before enabling write sweeps.
 
 Commits use the dedicated SSH signing key in the repository Actions secret
 `RENOVATE_SIGNING_KEY`, registered as a signing-only public key on `4alvit`.

@@ -1,10 +1,13 @@
 """Regression coverage for atomic CI updates and the Dependabot migration."""
 
 import importlib.util
+import io
 import json
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
+from unittest.mock import patch
 
 import yaml
 
@@ -30,8 +33,41 @@ class RenovateCredentialTests(unittest.TestCase):
             credentials.validate_scopes("repo, read:org")
 
     def test_workflow_scope_and_fine_grained_tokens_are_supported(self):
-        credentials.validate_scopes("repo, workflow, read:org")
-        credentials.validate_scopes(None)
+        self.assertTrue(credentials.validate_scopes("repo, workflow, read:org"))
+        self.assertFalse(credentials.validate_scopes(None))
+
+    def preflight_output(self, scope_header):
+        output = io.StringIO()
+        with (
+            patch.dict(
+                credentials.os.environ,
+                {
+                    "RENOVATE_TOKEN": "fixture-only",
+                    "RENOVATE_GIT_PRIVATE_KEY": "fixture-only",
+                },
+                clear=True,
+            ),
+            patch.object(credentials.urllib.request, "urlopen") as urlopen,
+            redirect_stdout(output),
+        ):
+            response = urlopen.return_value.__enter__.return_value
+            response.headers = (
+                {} if scope_header is None else {"X-OAuth-Scopes": scope_header}
+            )
+            credentials.main()
+            urlopen.assert_called_once()
+        return output.getvalue()
+
+    def test_missing_scope_header_warns_that_workflow_permissions_are_unverified(self):
+        output = self.preflight_output(None)
+        self.assertIn("::warning::", output)
+        self.assertIn("workflow write permissions remain unverified", output)
+        self.assertNotIn("classic workflow scope is present", output)
+
+    def test_classic_success_reports_only_the_checked_workflow_scope(self):
+        output = self.preflight_output("repo, workflow")
+        self.assertIn("classic workflow scope is present", output)
+        self.assertNotIn("::warning::", output)
 
 
 class DependencyMigrationTests(unittest.TestCase):
