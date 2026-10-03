@@ -35,7 +35,6 @@ on:
 jobs:
   auto-merge:
     name: Auto Merge
-    if: github.event.action != 'edited' || github.event.changes.base
     runs-on: ${{ fromJSON(inputs.runner-labels) }}
     timeout-minutes: ${{ inputs.native-auto-merge && 5 || 125 }}
     permissions:

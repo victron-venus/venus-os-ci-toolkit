@@ -220,9 +220,10 @@ allocated. The `edited` event remains subscribed because changing the base branc
 must re-evaluate eligibility; the [GitHub webhook schema](https://github.com/github/rest-api-description/blob/main/descriptions/api.github.com/api.github.com.json) reports that as `changes.base`. Copy the
 caller concurrency groups as well as their conditions: ignored metadata events
 use their own run IDs so they cannot cancel or replace a queued state-changing
-run. Reusable jobs also skip these edits, but cannot repair an older caller's
-workflow-level concurrency group. Other subscribed events and explicit approval
-recovery retain their existing behavior.
+run. Keep the filter and concurrency update together in the caller. Reusable
+workflows retain their existing event behavior so a consumer updating only its
+toolkit pin cannot lose an approval after an older caller cancels pending work.
+Other subscribed events and explicit approval recovery retain their behavior.
 
 #### `auto-merge.yml`
 

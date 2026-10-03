@@ -114,7 +114,7 @@ class MetadataEventsTests(unittest.TestCase):
     """Skip metadata churn without losing retargeting or cancellation guarantees."""
 
     def test_body_title_edits_never_allocate_metadata_jobs(self):
-        for name in (*CALLERS, *REUSABLES):
+        for name in CALLERS:
             job = next(iter(definition(name)["jobs"].values()))
             for changes in (
                 {},
@@ -127,7 +127,7 @@ class MetadataEventsTests(unittest.TestCase):
 
     def test_retarget_and_other_state_events_remain_eligible(self):
         base = {"base": {"ref": {"from": "old"}, "sha": {"from": "a" * 40}}}
-        for name in (*CALLERS, *REUSABLES):
+        for name in CALLERS:
             job = next(iter(definition(name)["jobs"].values()))
             for action, changes in (
                 ("edited", base),
@@ -178,6 +178,16 @@ class MetadataEventsTests(unittest.TestCase):
             data["github"]["event"]["pull_request"]["draft"] = draft
             with self.subTest(author=author, draft=draft, event=event):
                 self.assertEqual(bool(evaluate(condition, data)), expected)
+
+    def test_pin_only_consumers_keep_the_replacement_job_after_metadata_edits(self):
+        """An older caller can cancel the first run; its replacement must still run."""
+        for name in REUSABLES:
+            job = next(iter(definition(name)["jobs"].values()))
+            for changes in ({"body": {"from": "old"}}, {"title": {"from": "old"}}):
+                with self.subTest(workflow=name, changes=changes):
+                    self.assertTrue(
+                        evaluate(job.get("if", "True"), context("edited", changes))
+                    )
 
     def test_explicit_approval_recovery_is_unaffected(self):
         job = definition(REUSABLES[0])["jobs"]["auto-approve"]

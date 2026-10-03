@@ -32,7 +32,6 @@ jobs:
     name: Auto Approve
     if: >-
       (github.event.pull_request != null &&
-       (github.event.action != 'edited' || github.event.changes.base) &&
        contains(fromJSON(inputs.authors), github.event.pull_request.user.login) &&
        !github.event.pull_request.draft) ||
       (github.event_name == 'workflow_dispatch' && inputs.pull-request-number != '' && inputs.expected-head != '')
