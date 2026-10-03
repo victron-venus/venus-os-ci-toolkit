@@ -94,14 +94,14 @@ jobs:
               raise SystemExit('Commit identity must be a single line')
           PY
       - name: Load the pinned delivery implementation
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: victron-venus/venus-os-ci-toolkit
           ref: ${{ inputs.toolkit-revision }}
           path: delivery-toolkit
           persist-credentials: false
       - name: Read the exact producer revision and its current default branch
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.sha }}
           path: producer
@@ -128,7 +128,7 @@ jobs:
               output.write('sha=' + sha + '\n')
           PY
       - name: Read the current consumer default branch
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ${{ inputs.target-repository }}
           ref: ${{ steps.consumer.outputs.sha }}

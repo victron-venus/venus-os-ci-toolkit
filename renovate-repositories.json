@@ -1,0 +1,22 @@
+[
+  "4alvit/energy-data-rag-pipeline",
+  "4alvit/mqtt-observability-opentelemetry",
+  "4alvit/solar-forecast-langgraph",
+  "open-ott-play/ottplay-control-server",
+  "open-ott-play/ottplay-foss",
+  "victron-venus/dbus-ev",
+  "victron-venus/dbus-event-log",
+  "victron-venus/dbus-mqtt-battery",
+  "victron-venus/dbus-pump",
+  "victron-venus/dbus-tasmota-pv",
+  "victron-venus/dbus-virtual-battery",
+  "victron-venus/esphome-jbd-bms-mqtt",
+  "victron-venus/integration-tests",
+  "victron-venus/inverter-control",
+  "victron-venus/inverter-dashboard",
+  "victron-venus/inverter-dashboard-go",
+  "victron-venus/inverter-dashboard-vue",
+  "victron-venus/inverter-desktop",
+  "victron-venus/inverter-monitoring",
+  "victron-venus/venus-os-ci-toolkit"
+]
