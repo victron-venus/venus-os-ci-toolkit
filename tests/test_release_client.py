@@ -609,7 +609,7 @@ jobs:
                 cwd=root, capture_output=True, text=True, check=False,
             )
             self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
-            self.assertIn("Ran 8 tests", run.stderr)
+            self.assertIn("Ran 10 tests", run.stderr)
         steps = installer.quality(dict(self.policy, single_entry_ci=True))[
             "jobs"
         ]["workflow-contracts"]["steps"]
