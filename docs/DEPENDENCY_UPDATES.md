@@ -37,6 +37,19 @@ Failures are visible in the workflow run; a missing token fails the job instead
 of silently disabling updates. The runner does not execute dependency lifecycle
 scripts or repository-defined post-upgrade commands.
 
+`BOT_PAT` must permit repository contents and workflow writes (`repo` and
+`workflow` for a classic PAT). The preflight rejects a classic token missing
+`workflow`: Renovate otherwise logs a rejected workflow push while exiting
+successfully. A fine-grained token must grant Contents and Workflows read/write,
+as well as the other permissions required by Renovate's GitHub platform.
+
+Commits use the dedicated SSH signing key in the repository Actions secret
+`RENOVATE_SIGNING_KEY`, registered as a signing-only public key on `4alvit`.
+`gitAuthor` matches that account's verified email. This key was generated for
+this runner; it is not a personal authentication key. To rotate it, register the
+replacement public signing key, update the secret, verify a signed Renovate PR,
+then remove the old public key. Keep required-signature branch rules enabled.
+
 To migrate another repository:
 
 1. Add its full name to `renovate-repositories.json`.

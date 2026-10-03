@@ -21,6 +21,17 @@ def load(name):
 migration = load("migrate_ci_updates")
 contracts = load("workflow_contracts")
 installer = load("install_release")
+credentials = load("check_renovate_credentials")
+
+
+class RenovateCredentialTests(unittest.TestCase):
+    def test_classic_token_without_workflow_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "missing the workflow scope"):
+            credentials.validate_scopes("repo, read:org")
+
+    def test_workflow_scope_and_fine_grained_tokens_are_supported(self):
+        credentials.validate_scopes("repo, workflow, read:org")
+        credentials.validate_scopes(None)
 
 
 class DependencyMigrationTests(unittest.TestCase):

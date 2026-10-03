@@ -27,10 +27,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Require the existing organization bot credential
+      - name: Check bot workflow permissions and signing configuration
         env:
           RENOVATE_TOKEN: ${{ secrets.BOT_PAT }}
-        run: test -n "$RENOVATE_TOKEN"
+          RENOVATE_GIT_PRIVATE_KEY: ${{ secrets.RENOVATE_SIGNING_KEY }}
+        run: python3 scripts/check_renovate_credentials.py
       - name: Read the tested Renovate version
         id: runtime
         env:
@@ -53,3 +54,4 @@ jobs:
           renovate-version: ${{ steps.runtime.outputs.version }}
         env:
           LOG_LEVEL: info
+          RENOVATE_GIT_PRIVATE_KEY: ${{ secrets.RENOVATE_SIGNING_KEY }}
