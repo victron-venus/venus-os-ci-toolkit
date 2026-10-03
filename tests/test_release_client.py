@@ -201,6 +201,34 @@ class GeneratorTest(unittest.TestCase):
             "validation_workflows": ["ci.yml", "codeql.yml"],
         }
 
+    def test_runner_preflight_is_vendored_without_rewriting_build_adapter(self):
+        """Consumers get the helper/tests; owned packaging integration stays explicit."""
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            adapter = root / ".github/workflows/release-build.yml"
+            adapter.parent.mkdir(parents=True)
+            adapter.write_text("on: {workflow_call: {}}\njobs: {}\n", encoding="utf-8")
+            policy = dict(
+                self.policy,
+                versioning={
+                    "schema": 1,
+                    "promotion": "final-build",
+                    "files": [{"path": "version", "format": "text"}],
+                },
+            )
+            files = installer.release_files(root, policy)
+            self.assertEqual(
+                files["scripts/runner_preflight.py"],
+                (SCRIPTS / "runner_preflight.py").read_text(),
+            )
+            self.assertIn(".github/release-tests/test_runner_preflight.py", files)
+            self.assertIn("docs/runner-preflight.md", files)
+            self.assertNotIn(".github/workflows/release-build.yml", files)
+            self.assertNotIn(
+                "scripts/runner_preflight.py",
+                installer.release_files(root, self.policy),
+            )
+
     def test_native_oci_tools_and_tests_follow_versioned_container_policy(self):
         """Install both runtime helpers and their contracts only with their dependencies."""
         with tempfile.TemporaryDirectory() as temp:
