@@ -14,7 +14,21 @@ The evidence document records source SHA, plan digest, run ID/attempt, actual
 runner architecture, image config digest, successful smoke, toolchain and timings.
 The assembler verifies both receipts and every OCI blob, requires exactly the two
 requested platforms and source/version labels, and matches the smoked config
-digests to the archived images. It retains both receipts inside ordinary build
+digests to the archived images. Every layer is streamed through its decoder and
+hashed against the config's `rootfs.diff_ids`; compressed blob hashes alone do
+not prove this relationship. Expanded data is limited to 8 GiB per layer and
+32 GiB per archive, without extracting files. Raw and gzip layers work with
+Python 3.11+. Zstandard layers require Python 3.14+ with the standard-library
+`compression.zstd` module and use a 128 MiB decoder window limit. Older Python
+versions reject Zstandard instead of accepting unverified filesystem bytes.
+
+Each platform must retain an in-toto SLSA provenance statement (`v0.2` or `v1`).
+Other attestations, including SBOMs, are preserved but do not satisfy this check.
+Evidence records predicate types and the provenance manifest digests separately.
+The evidence JSON is written and flushed to a temporary file before atomic
+publication without overwriting an existing destination. A failed write leaves
+no partial evidence and removes the newly assembled OCI output so a retry can
+succeed. The assembler retains both receipts inside ordinary build
 evidence covered by the final package receipt. Intermediate receipts must not be
 published separately: their inventories describe the intermediate archives.
 
@@ -41,3 +55,5 @@ Reference consumer: `victron-venus/dbus-event-log`. Its PR gate invokes the same
 adapter using a disposable local plan, while release builds use the allocated
 plan. Cold native runs must be measured before claiming an improvement; runner
 startup, transfers and assembly can outweigh emulation savings for small images.
+
+Layer identity follows the [OCI configuration specification](https://github.com/opencontainers/image-spec/blob/v1.1.1/config.md#layer-diffid).
