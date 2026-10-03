@@ -4,6 +4,7 @@ import ast
 import importlib.util
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -589,6 +590,31 @@ jobs:
         self.assertIn("merge_group", result["on"])
         self.assertEqual(result["jobs"]["gate"]["name"], "CI gate")
         self.assertEqual(result["jobs"]["gate"]["if"], "${{ always() }}")
+
+    def test_exported_workflow_tests_run_without_the_generator(self):
+        """A consumer's mandatory regression suite is self-contained after rendering."""
+        exported = ".github/workflow-tests/test_workflow_yaml_contracts.py"
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            shutil.copytree(installer.ROOT / ".github/workflows", root / ".github/workflows")
+            shutil.copyfile(installer.ROOT / ".release-policy.json", root / ".release-policy.json")
+            files = installer.render(root)
+            for name in ("scripts/workflow_contracts.py", exported):
+                path = root / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(files[name])
+            run = subprocess.run(
+                [sys.executable, "-m", "unittest", "discover", "-s",
+                 ".github/workflow-tests", "-p", "test_*.py"],
+                cwd=root, capture_output=True, text=True, check=False,
+            )
+            self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+            self.assertIn("Ran 8 tests", run.stderr)
+        steps = installer.quality(dict(self.policy, single_entry_ci=True))[
+            "jobs"
+        ]["workflow-contracts"]["steps"]
+        self.assertTrue(any(".github/workflow-tests" in step.get("run", "")
+                            for step in steps))
 
     def test_versioned_renderer_fixes_plan_before_build_and_protects_final_acceptance(
         self,

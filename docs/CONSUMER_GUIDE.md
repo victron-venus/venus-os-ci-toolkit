@@ -64,6 +64,13 @@ git log --oneline -1 origin/main  # shows SHA
 
 All reusable workflows in this toolkit are called via `workflow_call`. A calling workflow uses `uses: ...@<sha>` with `secrets: inherit` or explicit secret forwarding.
 
+Local validation jobs containing shell steps must declare `permissions` at the
+job or workflow level before the generator can narrow their caller token.
+Declare `security-events: write` when a script uploads SARIF; ordinary build and
+test jobs can declare `contents: read`. The generator rejects inherited shell
+permissions because an arbitrary script's API calls cannot be inferred safely.
+Nested wrappers must forward every scope their validators require.
+
 ### Supported Consumer Workflow Files
 
 | Consumer workflow file | Toolkit workflow called | Notes |
