@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 from pathlib import Path
 from textwrap import indent
 
@@ -56,7 +57,7 @@ jobs:
     steps:
       - name: Checkout consumer history
         if: ${{ !inputs.force-full }}
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        uses: @CHECKOUT@
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -85,9 +86,14 @@ def render(source: str) -> str:
         'if [ "$FORCE_FULL" = true ]; then args+=(--force); fi\n'
         f"python3 - \"${{args[@]}}\" <<'{DELIMITER}'\n" + source + DELIMITER + "\n"
     )
-    return TEMPLATE.replace(
-        "@DIGEST@", hashlib.sha256(source.encode()).hexdigest()
-    ).replace("@RUN@", indent(command, "          ").rstrip("\n"))
+    pins = json.loads((ROOT / ".github/action-pins.json").read_text())
+    checkout = next(pin for pin in pins if pin["packageName"] == "actions/checkout")
+    reference = f"actions/checkout@{checkout['digest']} # {checkout['version']}"
+    return (
+        TEMPLATE.replace("@CHECKOUT@", reference)
+        .replace("@DIGEST@", hashlib.sha256(source.encode()).hexdigest())
+        .replace("@RUN@", indent(command, "          ").rstrip("\n"))
+    )
 
 
 def main():
