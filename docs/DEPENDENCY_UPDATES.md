@@ -21,7 +21,12 @@ reference; the comment identifies the upstream release or branch to track.
 
 Runner images and action tool-version inputs are excluded from this migration.
 Existing Dependabot policies for application packages and containers, including
-version exclusions, remain in place. Dependabot no longer owns GitHub Actions.
+version exclusions, remain in place. Dependabot's Actions entry has a zero version
+PR limit and an explicit ignore rule, which also suppresses separate security
+update PRs. Merely deleting the entry would not suppress security PRs. GitHub
+vulnerability alerts remain enabled. Renovate's separate vulnerability PR path
+is disabled for this CI-only preset: patched action releases arrive through the
+same daily grouped update and required checks.
 
 ## Operations
 

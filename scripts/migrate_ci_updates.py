@@ -15,6 +15,17 @@ from pathlib import Path
 import yaml
 
 PRESET = "local>victron-venus/venus-os-ci-toolkit:renovate-ci"
+DISABLED_ACTIONS = (
+    "  # Renovate owns CI updates. The ignore rule also prevents separate\n"
+    "  # Dependabot security-update PRs; vulnerability alerts remain enabled.\n"
+    "  - package-ecosystem: github-actions\n"
+    "    directory: /\n"
+    "    schedule:\n"
+    "      interval: weekly\n"
+    "    open-pull-requests-limit: 0\n"
+    "    ignore:\n"
+    "      - dependency-name: '*'\n"
+)
 
 
 def migrate(directory: Path) -> None:
@@ -27,6 +38,7 @@ def migrate(directory: Path) -> None:
     if renovate.exists() and json.loads(renovate.read_text()) != expected:
         raise ValueError("Existing Renovate configuration requires an explicit review")
     dependabot = directory / ".github/dependabot.yml"
+    rendered = "version: 2\nupdates:\n"
     if dependabot.exists():
         original = dependabot.read_text()
         data = yaml.safe_load(original)
@@ -46,9 +58,11 @@ def migrate(directory: Path) -> None:
             rendered = "".join(retained).rstrip() + "\n"
             if yaml.safe_load(rendered) != {**data, "updates": remaining}:
                 raise ValueError("Migration would change a non-Actions update policy")
-            dependabot.write_text(rendered)
-        else:
-            dependabot.unlink()
+    # open-pull-requests-limit alone does not disable security update PRs.
+    # Keep an explicit ignore rule instead of deleting the Actions policy.
+    # Strip our trailing comment from a prior idempotent migration.
+    rendered = rendered.split("  # Renovate owns CI updates.", 1)[0].rstrip() + "\n"
+    dependabot.write_text(rendered + DISABLED_ACTIONS)
     renovate.write_text(json.dumps(expected, indent=2) + "\n")
 
 

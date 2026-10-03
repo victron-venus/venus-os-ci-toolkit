@@ -49,22 +49,30 @@ class DependencyMigrationTests(unittest.TestCase):
         )
         migration.migrate(self.root)
         self.assertEqual(
-            self.dependabot.read_text(), "version: 2\nupdates:\n" + application
+            self.dependabot.read_text(),
+            "version: 2\nupdates:\n" + application + migration.DISABLED_ACTIONS,
         )
         migration.migrate(self.root)
         self.assertEqual(
-            self.dependabot.read_text(), "version: 2\nupdates:\n" + application
+            self.dependabot.read_text(),
+            "version: 2\nupdates:\n" + application + migration.DISABLED_ACTIONS,
         )
 
-    def test_removes_empty_dependabot_config_and_is_idempotent(self):
+    def test_blocks_both_dependabot_version_and_security_prs_and_is_idempotent(self):
         self.dependabot.write_text(
             "version: 2\nupdates:\n"
             "  - package-ecosystem: github-actions\n"
             "    directory: /\n    schedule: {interval: weekly}\n"
         )
         migration.migrate(self.root)
-        self.assertFalse(self.dependabot.exists())
+        disabled = yaml.safe_load(self.dependabot.read_text())["updates"]
+        self.assertEqual(len(disabled), 1)
+        self.assertEqual(disabled[0]["open-pull-requests-limit"], 0)
+        self.assertEqual(disabled[0]["ignore"], [{"dependency-name": "*"}])
         migration.migrate(self.root)
+        self.assertEqual(
+            yaml.safe_load(self.dependabot.read_text())["updates"], disabled
+        )
         config = json.loads((self.root / "renovate.json").read_text())
         self.assertEqual(config["extends"], [migration.PRESET])
 
