@@ -385,11 +385,12 @@ class MergeTest(unittest.TestCase):
                 layer_media=media,
                 diff_id="sha256:" + "f" * 64,
             )
+            inputs = self.inputs(entries)
             with (
                 self.subTest(media=media),
                 self.assertRaisesRegex(ValueError, "diff_id"),
             ):
-                self.merge(self.inputs(entries))
+                self.merge(inputs)
             self.assertFalse(self.output.exists())
 
     def test_gzip_layers_are_verified_without_changing_their_bytes(self):
@@ -411,11 +412,12 @@ class MergeTest(unittest.TestCase):
                 layer_content=content,
                 layer_media="application/vnd.oci.image.layer.v1.tar+gzip",
             )
+            inputs = self.inputs(entries)
             with (
                 self.subTest(content=content[-8:]),
                 self.assertRaisesRegex(ValueError, "compressed OCI"),
             ):
-                self.merge(self.inputs(entries))
+                self.merge(inputs)
             self.assertFalse(self.output.exists())
 
     def test_expanded_layer_and_rootfs_limits_fail_before_output(self):
@@ -425,12 +427,13 @@ class MergeTest(unittest.TestCase):
             layer_media="application/vnd.oci.image.layer.v1.tar+gzip",
         )
         for name in ("MAX_LAYER_BYTES", "MAX_ROOTFS_BYTES"):
+            inputs = self.inputs(entries)
             with (
                 self.subTest(limit=name),
                 mock.patch.object(oci, name, 100),
                 self.assertRaisesRegex(ValueError, "expanded size"),
             ):
-                self.merge(self.inputs(entries))
+                self.merge(inputs)
             self.assertFalse(self.output.exists())
 
     def test_repeated_layers_count_toward_expanded_rootfs_limit(self):
@@ -444,11 +447,12 @@ class MergeTest(unittest.TestCase):
             body["config"] = self.blob(entries, details, oci.CONFIG)
 
         self.rewrite_manifest(entries, repeat)
+        inputs = self.inputs(entries)
         with (
             mock.patch.object(oci, "MAX_ROOTFS_BYTES", len(self.layer_bytes()) + 1),
             self.assertRaisesRegex(ValueError, "root filesystem exceeds"),
         ):
-            self.merge(self.inputs(entries))
+            self.merge(inputs)
         self.assertFalse(self.output.exists())
 
     def test_zstd_without_decoder_fails_closed(self):
@@ -457,11 +461,12 @@ class MergeTest(unittest.TestCase):
             layer_content=b"zstd fixture",
             layer_media="application/vnd.oci.image.layer.v1.tar+zstd",
         )
+        inputs = self.inputs(entries)
         with (
             mock.patch.object(oci, "zstd", None),
             self.assertRaisesRegex(ValueError, "requires Python"),
         ):
-            self.merge(self.inputs(entries))
+            self.merge(inputs)
         self.assertFalse(self.output.exists())
 
     @unittest.skipIf(oci.zstd is None, "Requires standard-library Zstandard")
@@ -480,11 +485,12 @@ class MergeTest(unittest.TestCase):
                 layer_content=invalid,
                 layer_media="application/vnd.oci.image.layer.v1.tar+zstd",
             )
+            inputs = self.inputs(entries)
             with (
                 self.subTest(invalid=invalid),
                 self.assertRaisesRegex(ValueError, "compressed OCI"),
             ):
-                self.merge(self.inputs(entries))
+                self.merge(inputs)
             self.assertFalse(self.output.exists())
 
     def test_provenance_is_distinguished_from_other_attestations(self):
