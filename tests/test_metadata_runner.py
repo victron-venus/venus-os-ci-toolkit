@@ -10,6 +10,9 @@ from pathlib import Path
 
 import yaml
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+from runner_selection import runner_labels
+
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -49,7 +52,7 @@ class MetadataRunnerTests(unittest.TestCase):
                 self.assertEqual(runner["default"], '["ubuntu-latest"]')
                 for job in workflow["jobs"].values():
                     self.assertEqual(
-                        job["runs-on"], "${{ fromJSON(inputs.runner-labels) }}"
+                        job["runs-on"], runner_labels("automation", explicit_input="runner-labels")
                     )
                     for step in job["steps"]:
                         self.assertNotIn("uses", step)

@@ -2,5 +2,33 @@
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
     "local>victron-venus/venus-os-ci-toolkit:renovate-ci"
+  ],
+  "enabledManagers": [
+    "github-actions",
+    "custom.regex",
+    "npm"
+  ],
+  "packageRules": [
+    {
+      "matchManagers": [
+        "npm"
+      ],
+      "enabled": false
+    },
+    {
+      "description": "Keep only the toolkit expression-test engine in the CI update group.",
+      "matchManagers": [
+        "npm"
+      ],
+      "matchFileNames": [
+        "tools/runner-expressions/**"
+      ],
+      "enabled": true,
+      "groupName": "GitHub Actions and reusable workflows",
+      "groupSlug": "ci-workflows",
+      "groupSingleUpdates": true,
+      "separateMajorMinor": false,
+      "separateMinorPatch": false
+    }
   ]
 }

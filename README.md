@@ -75,6 +75,11 @@ JSON manifests and Actions evidence ZIPs use the existing metadata reader.
 
 ## Updating consumers
 
+The [optional runner switch](docs/RUNNERS.md) keeps GitHub-hosted runners by
+default and routes eligible jobs to explicitly configured self-hosted pools.
+`install_release.py --runners-only` adapts existing CI jobs without upgrading
+release scripts; subsequent switching uses Actions variables.
+
 For compiled shared libraries, [verified vendor delivery](docs/VENDOR_DELIVERY.md)
 copies a qualified Actions artifact into a signed draft PR in each consumer.
 Consumers continue to build from their committed files without a producer checkout.

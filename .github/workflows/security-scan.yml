@@ -11,7 +11,7 @@ jobs:
     needs: change-scope
     name: CodeQL Analysis
     if: ${{ (inputs.run-codeql && github.event.repository.private == false) && (needs.change-scope.outputs.run != 'false' || needs.change-scope.outputs.reason != 'documentation-only') }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON((vars.CI_RUNNER_MODE == 'self-hosted' || vars.CI_RUNNER_MODE == 'k3s') && ((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) || (contains(fromJSON('["push","schedule","workflow_dispatch"]'), github.event_name) && github.ref == format('refs/heads/{0}', github.event.repository.default_branch))) && (vars.CI_RUNNER_LABELS || '[]') || '["ubuntu-latest"]') }}
     permissions:
       security-events: write
       actions: read
@@ -33,7 +33,7 @@ jobs:
     needs: change-scope
     name: Trivy Scan
     if: ${{ (inputs.run-trivy || github.event.repository.private == true) && (needs.change-scope.outputs.run != 'false' || needs.change-scope.outputs.reason != 'documentation-only') }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON((vars.CI_RUNNER_MODE == 'self-hosted' || vars.CI_RUNNER_MODE == 'k3s') && ((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) || (contains(fromJSON('["push","schedule","workflow_dispatch"]'), github.event_name) && github.ref == format('refs/heads/{0}', github.event.repository.default_branch))) && (vars.CI_RUNNER_LABELS || '[]') || '["ubuntu-latest"]') }}
     permissions:
       contents: read
     steps:
@@ -55,7 +55,7 @@ jobs:
     needs: change-scope
     name: Dependency Review
     if: ${{ (inputs.run-dependency-review && github.event.repository.private == false && github.event_name == 'pull_request') && (needs.change-scope.outputs.run != 'false' || needs.change-scope.outputs.reason != 'documentation-only') }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ fromJSON((vars.CI_RUNNER_MODE == 'self-hosted' || vars.CI_RUNNER_MODE == 'k3s') && ((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) || (contains(fromJSON('["push","schedule","workflow_dispatch"]'), github.event_name) && github.ref == format('refs/heads/{0}', github.event.repository.default_branch))) && (vars.CI_RUNNER_LABELS || '[]') || '["ubuntu-latest"]') }}
     permissions:
       contents: read
     steps:

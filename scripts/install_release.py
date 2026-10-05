@@ -22,6 +22,10 @@ from pathlib import Path
 
 import yaml
 
+# Absolute sibling source is shared by the generators and their import-based tests.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from runner_selection import render_consumer, runner_labels  # pylint: disable=wrong-import-position
+
 ROOT = Path(__file__).resolve().parents[1]
 ACTION_PINS = json.loads((ROOT / ".github/action-pins.json").read_text())
 ACTION_REFS = {
@@ -32,6 +36,7 @@ UPLOAD = ACTION_REFS["actions/upload-artifact"]
 DOWNLOAD = ACTION_REFS["actions/download-artifact"]
 TOOLKIT = "victron-venus/venus-os-ci-toolkit"
 WORKFLOWS = ".github/workflows"
+POLICY_FILE = ".release-policy.json"
 FULL_SCOPE = "${{ needs.scope.outputs.run == 'true' }}"
 
 
@@ -409,7 +414,7 @@ def scope_job(policy, *, force_input=False):
         )
     return {
         "name": "Change scope",
-        "runs-on": "ubuntu-latest",
+        "runs-on": runner_labels(),
         "timeout-minutes": 5,
         "outputs": {
             "run": "${{ steps.scope.outputs.run }}",
@@ -571,7 +576,7 @@ def quality(policy, directory=None):
         )
         jobs["workflow-contracts"] = {
             "name": "CI configuration contracts",
-            "runs-on": "ubuntu-latest",
+            "runs-on": runner_labels(),
             "timeout-minutes": 5,
             "steps": [
                 {"uses": CHECKOUT, "with": {"persist-credentials": False}},
@@ -592,7 +597,7 @@ def quality(policy, directory=None):
     if policy.get("mode", "release") == "release":
         jobs["release-contracts"] = {
             "name": "Release tooling contracts",
-            "runs-on": "ubuntu-latest",
+            "runs-on": runner_labels(),
             "timeout-minutes": 5,
             "steps": [
                 {"uses": CHECKOUT, "with": {"persist-credentials": False}},
@@ -618,7 +623,7 @@ def quality(policy, directory=None):
         "name": "CI gate",
         "needs": list(jobs),
         "if": "${{ always() }}",
-        "runs-on": "ubuntu-latest",
+        "runs-on": runner_labels(),
         "timeout-minutes": 5,
         "steps": [
             {
@@ -736,12 +741,14 @@ with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
     output.write(f'channel={channel}\\nversion={version}\\nbuild={str(channel != "stable").lower()}\\n')
 PY
 """
+    release_scope = scope_job(policy)
+    release_scope["runs-on"] = runner_labels("release")
     jobs = {
-        "scope": scope_job(policy),
+        "scope": release_scope,
         "prepare": {
             "needs": "scope",
             "if": FULL_SCOPE,
-            "runs-on": "ubuntu-latest",
+            "runs-on": runner_labels("release"),
             "timeout-minutes": 5,
             "outputs": {
                 "channel": "${{ steps.metadata.outputs.channel }}",
@@ -797,7 +804,7 @@ PY
                 "${{ always() && needs.prepare.result != 'skipped' && "
                 "needs.prepare.outputs.channel != 'stable' }}"
             ),
-            "runs-on": "ubuntu-latest",
+            "runs-on": runner_labels("release"),
             "timeout-minutes": 5,
             "steps": [
                 {
@@ -824,7 +831,7 @@ PY
                 "needs.prepare.outputs.channel != 'stable' && "
                 "vars.RELEASE_CHANNELS_ENABLED == 'true' }}"
             ),
-            "runs-on": "ubuntu-latest",
+            "runs-on": runner_labels("release"),
             "timeout-minutes": 30,
             "permissions": {"contents": "write", "actions": "read"},
             "steps": steps_checkout
@@ -872,7 +879,7 @@ PY
         "stable": {
             "needs": "prepare",
             "if": "${{ needs.prepare.outputs.channel == 'stable' }}",
-            "runs-on": "ubuntu-latest",
+            "runs-on": runner_labels("release"),
             "timeout-minutes": 30,
             "environment": "release",
             "permissions": {"contents": "write", "actions": "read"},
@@ -1509,7 +1516,7 @@ def coverage_release_caller(directory, policy):
 
 def render_coverage(directory: Path) -> dict[str, str]:
     """Refresh coverage and its CI contracts without replacing the release engine."""
-    policy = json.loads((directory / ".release-policy.json").read_text())
+    policy = json.loads((directory / POLICY_FILE).read_text())
     validate_policy(directory, policy)
     if coverage_policy(policy) is None or policy.get("single_entry_ci") is not True:
         raise ValueError("Coverage-only adoption requires coverage and single_entry_ci")
@@ -1548,7 +1555,7 @@ def render_coverage(directory: Path) -> dict[str, str]:
 
 def render(directory: Path) -> dict[str, str]:
     """Validate adapters and assemble generated workflows, clients and operator docs."""
-    policy = json.loads((directory / ".release-policy.json").read_text())
+    policy = json.loads((directory / POLICY_FILE).read_text())
     validate_policy(directory, policy)
     local = policy.get("ci_execution") == "local"
     files = (
@@ -1589,6 +1596,16 @@ def render(directory: Path) -> dict[str, str]:
             if name.endswith(".py"):
                 files[name] = consumer_python(source)
     return files
+
+
+def render_runners(directory: Path) -> dict[str, str]:
+    """Adopt runner routing without replacing release clients, docs or test commands."""
+    policy = json.loads((directory / POLICY_FILE).read_text())
+    validate_policy(directory, policy)
+    if policy.get("ci_execution", "github") != "github" or not policy.get("single_entry_ci"):
+        raise ValueError("Runner adoption requires existing hosted single-entry CI")
+    validate_workflow_adapters(directory, policy)
+    return render_consumer(directory, policy)
 
 
 def operator_guide(policy: dict) -> str:
@@ -1865,13 +1882,19 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("directory", type=Path)
     parser.add_argument("--check", action="store_true")
-    parser.add_argument(
-        "--coverage-only", action="store_true",
+    parser.set_defaults(renderer=render)
+    modes = parser.add_mutually_exclusive_group()
+    modes.add_argument(
+        "--coverage-only", action="store_const", dest="renderer", const=render_coverage,
         help="refresh coverage and CI support only; preserve the existing release engine",
+    )
+    modes.add_argument(
+        "--runners-only", action="store_const", dest="renderer", const=render_runners,
+        help="adapt existing Linux/x64 job routing only; preserve other release files",
     )
     args = parser.parse_args()
     try:
-        files = (render_coverage if args.coverage_only else render)(args.directory)
+        files = args.renderer(args.directory)
         drift = []
         for relative, content in files.items():
             path = args.directory / relative
