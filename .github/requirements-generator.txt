@@ -1,0 +1,6 @@
+# Generator/toolkit tests only; consumer workflow contracts do not need ruamel.yaml.
+-r requirements-workflow-contracts.txt
+# Pure-Python wheel from https://pypi.org/pypi/ruamel.yaml/0.19.1/json
+# No extras: round-trip YAML preserves comments without optional C extensions.
+ruamel.yaml==0.19.1 \
+    --hash=sha256:27592957fedf6e0b62f281e96effd28043345e0e66001f97683aa9a40c667c93

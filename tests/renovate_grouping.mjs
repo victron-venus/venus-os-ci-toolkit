@@ -1,11 +1,40 @@
 // Exercise the actual pinned Renovate extractor and branch planner, without API writes.
 import assert from 'node:assert/strict';
-import { glob, readFile } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { glob, mkdtemp, readFile, realpath, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { isAbsolute, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-const installation = resolve(process.argv[2]);
-const moduleAt = (name) => import(pathToFileURL(`${installation}/dist/${name}.js`));
+assert.equal(process.argv.length, 3, 'Pass exactly one installed Renovate package directory');
+assert.ok(isAbsolute(process.argv[2]), 'Renovate installation must be an absolute path');
+assert.ok(!process.argv[2].split(sep).some((part) => part === '..' || part === '.'), 'No path traversal');
+assert.ok(process.env.RUNNER_TEMP && isAbsolute(process.env.RUNNER_TEMP), 'RUNNER_TEMP must be an absolute directory');
+const runnerTemp = await realpath(process.env.RUNNER_TEMP);
+const installation = resolve(runnerTemp, 'renovate/node_modules/renovate');
+assert.equal(await realpath(process.argv[2]), installation, 'Renovate must use the fixed RUNNER_TEMP installation');
+const runtime = JSON.parse(await readFile('.github/renovate-runtime.json', 'utf8'));
+const packageFile = await realpath(resolve(installation, 'package.json'));
+if (!packageFile.startsWith(installation + sep)) throw new Error('Renovate package metadata escapes installation');
+const installed = JSON.parse(await readFile(packageFile, 'utf8'));
+assert.equal(installed.name, 'renovate');
+assert.equal(installed.version, runtime.version);
+const allowedModules = new Set([
+  'config/defaults',
+  'config/global',
+  'config/utils',
+  'modules/manager/github-actions/extract',
+  'modules/manager/custom/regex/index',
+  'workers/repository/updates/flatten',
+  'workers/repository/update/branch/auto-replace',
+]);
+async function moduleAt(name) {
+  assert.ok(allowedModules.has(name), 'Only fixed Renovate test modules may be loaded');
+  const file = await realpath(resolve(installation, 'dist', name + '.js'));
+  if (!file.startsWith(installation + sep + 'dist' + sep)) throw new Error('Renovate module escapes installation');
+  return import(pathToFileURL(file).href);
+}
+await assert.rejects(moduleAt('../package.json'), /Only fixed Renovate test modules/);
+await assert.rejects(moduleAt('config/../../outside'), /Only fixed Renovate test modules/);
 const { getConfig } = await moduleAt('config/defaults');
 const { GlobalConfig } = await moduleAt('config/global');
 GlobalConfig.set({ localDir: process.cwd(), platform: 'github' });
@@ -13,6 +42,7 @@ const { mergeChildConfig } = await moduleAt('config/utils');
 const { extractPackageFile } = await moduleAt('modules/manager/github-actions/extract');
 const { extractPackageFile: extractPins } = await moduleAt('modules/manager/custom/regex/index');
 const { flattenUpdates } = await moduleAt('workers/repository/updates/flatten');
+const { doAutoReplace } = await moduleAt('workers/repository/update/branch/auto-replace');
 const preset = JSON.parse(await readFile('renovate-ci.json', 'utf8'));
 const config = mergeChildConfig(getConfig(), {
   ...preset,
@@ -55,15 +85,75 @@ for (const dep of actions) {
 }
 const manifest = await readFile('.github/action-pins.json', 'utf8');
 const pins = extractPins(manifest, '.github/action-pins.json', preset.customManagers[0]);
-assert.equal(pins.deps.length, 4);
+assert.equal(pins.deps.length, 5);
 for (const dep of pins.deps) {
   dep.updates = [{ updateType: 'digest', newValue: dep.currentValue, newDigest: next }];
 }
+const policyFile = '.release-policy.json';
+const policyManager = preset.customManagers.find((manager) => manager.datasourceTemplate === 'git-refs');
+assert.deepEqual(policyManager.managerFilePatterns, [String.raw`/^\.release-policy\.json$/`]);
+const policy = {
+  repo: 'example/consumer',
+  coverage: { toolkit_ref: old, reports: [{ name: 'python', path: 'coverage.xml' }] },
+  unrelated_ref: old,
+};
+const policyContent = JSON.stringify(policy, null, 2) + '\n';
+const policyPins = extractPins(policyContent, policyFile, policyManager);
+assert.equal(policyPins.deps.length, 1);
+const [policyDep] = policyPins.deps;
+assert.equal(policyDep.depName, 'victron-venus/venus-os-ci-toolkit');
+assert.equal(policyDep.packageName, 'https://github.com/victron-venus/venus-os-ci-toolkit');
+assert.equal(policyDep.datasource, 'git-refs');
+assert.equal(policyDep.currentValue, 'main');
+assert.equal(policyDep.currentDigest, old);
+assert.ok(!policyDep.skipReason);
+policyDep.updates = [{ updateType: 'digest', newValue: 'main', newDigest: next }];
+
+// The actual updater writes files: confine it to a disposable fixture directory.
+const scratch = await mkdtemp(resolve(tmpdir(), 'renovate-policy-'));
+try {
+  GlobalConfig.set({ localDir: scratch, platform: 'github' });
+  async function assertPolicyUpdate(content) {
+    const extractedPolicy = extractPins(content, policyFile, policyManager);
+    const updated = await doAutoReplace({
+      ...config,
+      ...extractedPolicy,
+      ...extractedPolicy.deps[0],
+      manager: 'regex',
+      packageFile: policyFile,
+      depIndex: 0,
+      newValue: 'main',
+      newDigest: next,
+      updateType: 'digest',
+    }, content, false);
+    assert.deepEqual(JSON.parse(updated), { ...policy, coverage: { ...policy.coverage, toolkit_ref: next } });
+    assert.equal(extractPins(updated, policyFile, policyManager).deps[0].currentDigest, next);
+    assert.equal(await readFile(resolve(scratch, policyFile), 'utf8'), updated);
+  }
+  // Both cases mutate the same file and GlobalConfig; deliberately run in sequence.
+  await assertPolicyUpdate(policyContent);
+  await assertPolicyUpdate(JSON.stringify({ ...policy, coverage: { reports: policy.coverage.reports, toolkit_ref: old } }));
+} finally {
+  GlobalConfig.set({ localDir: process.cwd(), platform: 'github' });
+  await rm(scratch, { recursive: true, force: true });
+}
+for (const content of [
+  '{}',
+  JSON.stringify({ unrelated_ref: old }),
+  JSON.stringify({ coverage: { toolkit_ref: 'main' } }),
+  JSON.stringify({ coverage: { toolkit_ref: old.slice(1) } }),
+  JSON.stringify({ coverage: { toolkit_ref: old + 'a' } }),
+]) {
+  assert.equal(extractPins(content, policyFile, policyManager), null);
+}
 const updates = await flattenUpdates(config, {
   'github-actions': [{ packageFile: '.github/workflows/ci.yml', deps: actions }],
-  'custom.regex': [{ packageFile: '.github/action-pins.json', deps: pins.deps }],
+  regex: [
+    { packageFile: '.github/action-pins.json', deps: pins.deps },
+    { packageFile: policyFile, deps: policyPins.deps },
+  ],
 });
-assert.equal(updates.length, 11);
+assert.equal(updates.length, 13);
 assert.deepEqual([...new Set(updates.map((update) => update.branchName))], ['renovate/ci-workflows']);
 assert.ok(updates.every((update) => update.automerge === false));
 for await (const filename of glob(['.github/workflows/*.{yml,yaml}', 'actions/**/action.{yml,yaml}'])) {
@@ -72,4 +162,4 @@ for await (const filename of glob(['.github/workflows/*.{yml,yaml}', 'actions/**
     assert.notEqual(dep.skipReason, 'unversioned-reference', `${filename}: ${dep.depName} needs a version comment`);
   }
 }
-console.log('Renovate groups CodeQL majors, reusable workflow digests, action patches and generator pins into one PR.');
+console.log('Renovate groups CodeQL majors, reusable workflow digests, action patches, generator pins and the coverage policy digest into one PR; the policy updater preserves its immutable SHA.');

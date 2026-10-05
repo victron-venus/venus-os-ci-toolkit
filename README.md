@@ -61,7 +61,7 @@ Private repositories run ordinary OSS checks locally. Unavailable GitHub-hosted 
 ## Validation
 
 ```bash
-python3 -m pip install PyYAML==6.0.3
+python3 -m pip install --require-hashes --only-binary=:all: -r .github/requirements-generator.txt
 bash scripts/ci.sh
 ```
 

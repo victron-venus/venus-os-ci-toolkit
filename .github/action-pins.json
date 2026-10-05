@@ -18,5 +18,10 @@
     "packageName": "actions/setup-python",
     "version": "v7.0.0",
     "digest": "5fda3b95a4ea91299a34e894583c3862153e4b97"
+  },
+  {
+    "packageName": "codecov/codecov-action",
+    "version": "v7.1.1",
+    "digest": "303a32d7a59b442fa8d48b6a1cc6825c09c847a5"
   }
 ]

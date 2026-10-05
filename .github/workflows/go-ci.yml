@@ -39,6 +39,10 @@ on:
         description: 'Minimum coverage percentage'
         type: number
         default: 70
+      coverage-artifact-name:
+        description: 'Export the existing coverage report under this artifact base name; empty keeps legacy inline upload'
+        type: string
+        default: ''
       run-vulncheck:
         description: 'Whether to run govulncheck'
         type: boolean
@@ -55,6 +59,8 @@ jobs:
     if: ${{ needs.change-scope.outputs.run != 'false' || needs.change-scope.outputs.reason != 'documentation-only' }}
     name: CI
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     defaults:
       run:
         working-directory: ${{ inputs.working-directory }}
@@ -98,8 +104,17 @@ jobs:
           fi
 
       - name: Upload coverage
-        if: inputs.run-tests
+        if: ${{ inputs.run-tests && inputs.coverage-artifact-name == '' }}
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:
           files: ./coverage.out
           fail_ci_if_error: false
+
+      - name: Export coverage report
+        if: ${{ inputs.run-tests && inputs.coverage-artifact-name != '' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ inputs.coverage-artifact-name }}-${{ github.run_attempt }}
+          path: ${{ inputs.working-directory }}/coverage.out
+          if-no-files-found: error
+          retention-days: 7

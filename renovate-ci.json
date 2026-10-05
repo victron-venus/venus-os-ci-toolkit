@@ -23,6 +23,15 @@
       "matchStrings": ["\"version\":\\s*\"(?<currentValue>[^\"]+)\""],
       "depNameTemplate": "renovate",
       "datasourceTemplate": "npm"
+    },
+    {
+      "customType": "regex",
+      "managerFilePatterns": ["/^\\.release-policy\\.json$/"],
+      "matchStrings": ["\"toolkit_ref\"\\s*:\\s*\"(?<currentDigest>[a-f0-9]{40})\""],
+      "currentValueTemplate": "main",
+      "depNameTemplate": "victron-venus/venus-os-ci-toolkit",
+      "packageNameTemplate": "https://github.com/victron-venus/venus-os-ci-toolkit",
+      "datasourceTemplate": "git-refs"
     }
   ],
   "packageRules": [
