@@ -6,8 +6,12 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import sys
 from pathlib import Path
 from textwrap import indent
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from runner_selection import runner_labels  # pylint: disable=wrong-import-position
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / "scripts/change_scope.py"
@@ -49,7 +53,7 @@ permissions:
 jobs:
   scope:
     name: Classify changed paths
-    runs-on: ${{ inputs.runner }}
+    runs-on: @RUNNER@
     timeout-minutes: 5
     outputs:
       run: ${{ steps.classify.outputs.run }}
@@ -90,7 +94,8 @@ def render(source: str) -> str:
     checkout = next(pin for pin in pins if pin["packageName"] == "actions/checkout")
     reference = f"actions/checkout@{checkout['digest']} # {checkout['version']}"
     return (
-        TEMPLATE.replace("@CHECKOUT@", reference)
+        TEMPLATE.replace("@RUNNER@", runner_labels(explicit_input="runner", scalar=True))
+        .replace("@CHECKOUT@", reference)
         .replace("@DIGEST@", hashlib.sha256(source.encode()).hexdigest())
         .replace("@RUN@", indent(command, "          ").rstrip("\n"))
     )

@@ -281,7 +281,7 @@ class CodeRabbitReviewContract(unittest.TestCase):
     def test_workflow_and_callers_preserve_trust_boundary(self):
         """No checkout or token inheritance; manual and opened events share one lock."""
         self.assertEqual(self.workflow["permissions"], {})
-        self.assertEqual(self.job["runs-on"], "ubuntu-latest")
+        self.assertIn("vars.CI_RUNNER_AUTOMATION_LABELS", self.job["runs-on"])
         self.assertEqual(self.job["timeout-minutes"], "5")
         self.assertEqual(len(self.job["steps"]), 1)
         self.assertNotIn("uses", self.job["steps"][0])

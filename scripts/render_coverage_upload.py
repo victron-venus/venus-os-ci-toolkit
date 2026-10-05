@@ -6,9 +6,13 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import sys
 from pathlib import Path
 
 import yaml
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from runner_selection import runner_labels  # pylint: disable=wrong-import-position
 
 ROOT = Path(__file__).resolve().parents[1]
 TARGET = ROOT / ".github/workflows/coverage-upload.yml"
@@ -43,7 +47,7 @@ def render(source):
             "if": "${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}"
             if fork
             else "${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}",
-            "runs-on": "ubuntu-latest",
+            "runs-on": runner_labels(),
             "timeout-minutes": 10,
             "permissions": {
                 "contents": "read",
