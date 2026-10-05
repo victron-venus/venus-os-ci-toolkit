@@ -158,12 +158,13 @@ def render_shared_workflow(filename, profile):
     output = io.StringIO()
     if changed:
         editor.dump(workflow, output)
-    return path, output.getvalue() if changed else source
+    return output.getvalue() if changed else source
 
 
 def render_workflows():
     """Update job routing only, preserving repository commands, comments and pins."""
-    return dict(render_shared_workflow(name, profile) for name, profile in ACTIVE_WORKFLOWS.items())
+    return {ROOT / WORKFLOWS / name: render_shared_workflow(name, profile)
+            for name, profile in ACTIVE_WORKFLOWS.items()}
 
 
 def main():
