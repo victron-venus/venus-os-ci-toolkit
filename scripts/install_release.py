@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import copy
 import hashlib
+import io
 import json
 import re
 import sys
@@ -30,6 +31,8 @@ CHECKOUT = ACTION_REFS["actions/checkout"]
 UPLOAD = ACTION_REFS["actions/upload-artifact"]
 DOWNLOAD = ACTION_REFS["actions/download-artifact"]
 TOOLKIT = "victron-venus/venus-os-ci-toolkit"
+WORKFLOWS = ".github/workflows"
+FULL_SCOPE = "${{ needs.scope.outputs.run == 'true' }}"
 
 
 class WorkflowLoader(yaml.SafeLoader):
@@ -77,36 +80,40 @@ def coverage_policy(policy):
     names = set()
     producers = set()
     for report in reports:
-        if not isinstance(report, dict) or set(report) != {
-            "name", "workflow", "job", "path", "format", "required"
-        }:
-            raise ValueError("coverage report needs name, workflow, job, path, format, required")
-        if (
-            not isinstance(report["name"], str)
-            or not re.fullmatch(r"[a-z][a-z0-9-]{0,39}", report["name"])
-            or report["name"] in names
-            or not isinstance(report["workflow"], str)
-            or report["workflow"] not in policy.get("validation_workflows", [])
-            or not isinstance(report["job"], str)
-            or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_-]*", report["job"])
-            or type(report["required"]) is not bool
-            or not isinstance(report["format"], str)
-            or report["format"] not in {"cobertura", "go", "lcov"}
-        ):
-            raise ValueError("Invalid or duplicate coverage report identity")
-        path = report["path"]
-        if (
-            not isinstance(path, str)
-            or not re.fullmatch(r"[A-Za-z0-9_./-]+", path)
-            or any(part in {"", ".", ".."} for part in path.split("/"))
-        ):
-            raise ValueError("coverage path must be an exact safe relative report filename")
-        identity = (report["workflow"], report["job"], path)
-        if identity in producers:
+        validate_coverage_report(report, policy)
+        identity = (report["workflow"], report["job"], report["path"])
+        if identity in producers or report["name"] in names:
             raise ValueError("Duplicate coverage producer report")
         names.add(report["name"])
         producers.add(identity)
     return config
+
+
+def validate_coverage_report(report, policy):
+    """Keep one report identity confined to an explicitly configured validator."""
+    if not isinstance(report, dict) or set(report) != {
+        "name", "workflow", "job", "path", "format", "required"
+    }:
+        raise ValueError("coverage report needs name, workflow, job, path, format, required")
+    if (
+        not isinstance(report["name"], str)
+        or not re.fullmatch(r"[a-z][a-z0-9-]{0,39}", report["name"])
+        or not isinstance(report["workflow"], str)
+        or report["workflow"] not in policy.get("validation_workflows", [])
+        or not isinstance(report["job"], str)
+        or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_-]*", report["job"])
+        or type(report["required"]) is not bool
+        or not isinstance(report["format"], str)
+        or report["format"] not in {"cobertura", "go", "lcov"}
+    ):
+        raise ValueError("Invalid coverage report identity")
+    path = report["path"]
+    if (
+        not isinstance(path, str)
+        or not re.fullmatch(r"[A-Za-z0-9_./-]+", path)
+        or any(part in {"", ".", ".."} for part in path.split("/"))
+    ):
+        raise ValueError("coverage path must be an exact safe relative report filename")
 
 
 def coverage_jobs(policy):
@@ -119,7 +126,7 @@ def coverage_jobs(policy):
         index = policy["validation_workflows"].index(report["workflow"])
         jobs["coverage-" + report["name"]] = {
             "needs": ["scope", f"check-{index}"],
-            "if": "${{ needs.scope.outputs.run == 'true' }}",
+            "if": FULL_SCOPE,
             "uses": f"{TOOLKIT}/.github/workflows/coverage-upload.yml@{config['toolkit_ref']}",
             "permissions": {"contents": "read", "actions": "read", "id-token": "write"},
             "with": {
@@ -133,89 +140,167 @@ def coverage_jobs(policy):
     return jobs
 
 
+def configure_shared_coverage(job, report, ref):
+    """Select the language workflow's existing report without changing tests."""
+    match = re.fullmatch(
+        re.escape(TOOLKIT) + r"/\.github/workflows/(python|go)-ci\.yml@[0-9a-f]{40}",
+        job["uses"],
+    )
+    if not match:
+        raise ValueError("Coverage producer must directly call shared Python/Go or have steps")
+    inputs = job.setdefault("with", {})
+    if inputs.get("run-tests", True) is not True:
+        raise ValueError("Shared coverage producer must enable tests unconditionally")
+    expected = "coverage.xml" if match[1] == "python" else "coverage.out"
+    working = inputs.get("working-directory", ".")
+    if not isinstance(working, str):
+        raise ValueError("Shared coverage working-directory must be a path string")
+    expected = expected if working == "." else working.rstrip("/") + "/" + expected
+    if report["path"] != expected or report["format"] != {"python": "cobertura", "go": "go"}[match[1]]:
+        raise ValueError("Shared coverage profile must match its language and working-directory report")
+    base = "coverage-" + report["name"]
+    if inputs.get("coverage-artifact-name", base) != base:
+        raise ValueError("Shared job cannot export multiple coverage profiles")
+    inputs["coverage-artifact-name"] = base
+    job["uses"] = job["uses"].rsplit("@", 1)[0] + "@" + ref
+
+
+def managed_coverage_export(previous, exported):
+    """Distinguish prior generated exports from unrelated repository-owned steps."""
+    options = previous.get("with", {})
+    return (
+        set(previous) == set(exported)
+        and previous["name"] == exported["name"]
+        and re.fullmatch(r"actions/upload-artifact@[0-9a-f]{40}", previous.get("uses", ""))
+        and isinstance(options, dict)
+        and set(options) == set(exported["with"])
+        and all(options[key] == exported["with"][key] for key in ("name", "if-no-files-found", "retention-days"))
+    )
+
+
+def configure_custom_coverage(job, report):
+    """Append or refresh one managed export while retaining diagnostic artifacts."""
+    steps = job.get("steps")
+    if not isinstance(steps, list):
+        raise ValueError("Coverage producer requires an existing steps list")
+    if any(step.get("uses", "").startswith("codecov/codecov-action@") for step in steps):
+        raise ValueError("Review removal of the existing Codecov upload before opting this producer in")
+    step_id = "export_coverage_" + report["name"].replace("-", "_")
+    exported = {
+        "name": "Export coverage: " + report["name"],
+        "id": step_id,
+        "uses": UPLOAD,
+        "with": {
+            "name": "coverage-" + report["name"] + "-${{ github.run_attempt }}",
+            "path": report["path"],
+            "if-no-files-found": "error",
+            "retention-days": 7,
+        },
+    }
+    existing = [index for index, step in enumerate(steps) if step.get("id") == step_id]
+    if len(existing) > 1:
+        raise ValueError("Duplicate generated coverage step")
+    if existing:
+        if not managed_coverage_export(steps[existing[0]], exported):
+            raise ValueError("Coverage step id collides with a repository-owned step")
+        previous = steps[existing[0]]
+        previous["uses"] = exported["uses"]
+        previous["with"].update(exported["with"])
+    else:
+        steps.append(exported)
+
+
+def coverage_yaml():
+    """Load the generator-only round-trip dependency only for opted-in profiles."""
+    try:
+        # Consumers vendor the lightweight contract checker, not this editor.
+        # pylint: disable-next=import-outside-toplevel
+        from ruamel.yaml import YAML
+        # pylint: disable-next=import-outside-toplevel
+        from ruamel.yaml.comments import CommentedMap
+    except ImportError as error:
+        raise ValueError(
+            "Coverage rendering requires .github/requirements-generator.txt; "
+            "install it with pip --require-hashes --only-binary=:all:"
+        ) from error
+    editor = YAML(typ="rt", pure=True)
+    editor.allow_duplicate_keys = False
+    editor.preserve_quotes = True
+    editor.indent(mapping=2, sequence=4, offset=2)
+    editor.width = 4096
+    return editor, CommentedMap
+
+
+def coverage_pin_comment(mapping, version):
+    """Update a uses-node label without rewriting shell literals or losing notes."""
+    comment = mapping.ca.items.get("uses", [None, None, None, None])[2]
+    if comment is None:
+        mapping.yaml_add_eol_comment(version, key="uses")
+        return
+    existing = comment.value.removeprefix("#").strip()
+    suffix = re.sub(r"^(?:v[0-9][\w.-]*|main)(?:\s+|$)", "", existing)
+    mapping.yaml_add_eol_comment(version + (" " + suffix if suffix else ""), key="uses")
+
+
+def validate_editable_coverage_job(job):
+    """Do not mutate shared aliases or merged settings through a selected producer."""
+    if not isinstance(job, dict) or "strategy" in job:
+        raise ValueError("Coverage producer must be an existing non-matrix job")
+    objects = [job, job.get("with"), job.get("steps")]
+    for step in job.get("steps", []):
+        if step.get("id", "").startswith("export_coverage_"):
+            objects.extend([step, step.get("with")])
+    if any(
+        getattr(getattr(item, "anchor", None), "value", None) or getattr(item, "merge", None)
+        for item in objects
+    ):
+        raise ValueError("Coverage producer settings must not use YAML anchors or merges")
+
+
+def annotate_coverage_export(job, report, mapping_type):
+    """Apply the canonical action label to the managed export node only."""
+    step_id = "export_coverage_" + report["name"].replace("-", "_")
+    version = next(
+        pin["version"] for pin in ACTION_PINS
+        if pin["packageName"] == "actions/upload-artifact"
+    )
+    for index, step in enumerate(job["steps"]):
+        if step.get("id") == step_id:
+            if not isinstance(step, mapping_type):
+                step = mapping_type(step)
+                job["steps"][index] = step
+            coverage_pin_comment(step, version)
+            return
+
+
 def coverage_adapters(directory, policy):
     """Export existing reports declaratively without rerunning or changing tests."""
     config = coverage_policy(policy)
     if config is None:
         return {}
+    editor, mapping_type = coverage_yaml()
     workflows = {}
     for report in config["reports"]:
         filename = report["workflow"]
         if filename not in workflows:
-            workflows[filename] = yaml.load(
-                (directory / ".github/workflows" / filename).read_text(), Loader=WorkflowLoader
-            )
-        workflow = workflows[filename]
-        job = workflow.get("jobs", {}).get(report["job"])
-        if not isinstance(job, dict) or "strategy" in job:
-            raise ValueError("Coverage producer must be an existing non-matrix job")
-        base = "coverage-" + report["name"]
+            source = (directory / WORKFLOWS / filename).read_text()
+            # Fail duplicate keys before editing; never construct Python objects.
+            yaml.load(source, Loader=WorkflowLoader)
+            workflows[filename] = editor.load(source)
+        job = workflows[filename].get("jobs", {}).get(report["job"])
+        validate_editable_coverage_job(job)
         if "uses" in job:
-            match = re.fullmatch(
-                re.escape(TOOLKIT) + r"/\.github/workflows/(python|go)-ci\.yml@[0-9a-f]{40}",
-                job["uses"],
-            )
-            if not match:
-                raise ValueError("Coverage producer must directly call shared Python/Go or have steps")
-            inputs = job.setdefault("with", {})
-            if inputs.get("run-tests", True) is not True:
-                raise ValueError("Shared coverage producer must enable tests unconditionally")
-            expected = "coverage.xml" if match[1] == "python" else "coverage.out"
-            working = inputs.get("working-directory", ".")
-            if not isinstance(working, str):
-                raise ValueError("Shared coverage working-directory must be a path string")
-            expected = expected if working == "." else working.rstrip("/") + "/" + expected
-            if report["path"] != expected or report["format"] != {"python": "cobertura", "go": "go"}[match[1]]:
-                raise ValueError("Shared coverage profile must match its language and working-directory report")
-            if inputs.get("coverage-artifact-name", base) != base:
-                raise ValueError("Shared job cannot export multiple coverage profiles")
-            inputs["coverage-artifact-name"] = base
-            job["uses"] = job["uses"].rsplit("@", 1)[0] + "@" + config["toolkit_ref"]
+            configure_shared_coverage(job, report, config["toolkit_ref"])
+            coverage_pin_comment(job, "main")
         else:
-            steps = job.get("steps")
-            if not isinstance(steps, list):
-                raise ValueError("Coverage producer requires an existing steps list")
-            if any(step.get("uses", "").startswith("codecov/codecov-action@") for step in steps):
-                raise ValueError("Review removal of the existing Codecov upload before opting this producer in")
-            step_id = "export_coverage_" + report["name"].replace("-", "_")
-            exported = {
-                "name": "Export coverage: " + report["name"],
-                "id": step_id,
-                "uses": UPLOAD,
-                "with": {
-                    "name": base + "-${{ github.run_attempt }}",
-                    "path": report["path"],
-                    "if-no-files-found": "error",
-                    "retention-days": 7,
-                },
-            }
-            # A stable generated step id makes repeated rendering byte-identical.
-            existing = [index for index, step in enumerate(steps) if step.get("id") == step_id]
-            if len(existing) > 1:
-                raise ValueError("Duplicate generated coverage step")
-            if existing:
-                previous = steps[existing[0]]
-                options = previous.get("with", {})
-                if (
-                    set(previous) != set(exported)
-                    or previous["name"] != exported["name"]
-                    or not re.fullmatch(r"actions/upload-artifact@[0-9a-f]{40}", previous.get("uses", ""))
-                    or not isinstance(options, dict)
-                    or set(options) != set(exported["with"])
-                    or any(options[key] != exported["with"][key] for key in ("name", "if-no-files-found", "retention-days"))
-                ):
-                    raise ValueError("Coverage step id collides with a repository-owned step")
-                steps[existing[0]] = exported
-            else:
-                steps.append(exported)
-    return {
-        ".github/workflows/" + name: dump(workflow).replace(
-            "# Generated by venus-os-ci-toolkit/scripts/install_release.py; edit .release-policy.json.",
-            "# Coverage exports managed by install_release.py from .release-policy.json; other steps are repository-owned.",
-            1,
-        )
-        for name, workflow in workflows.items()
-    }
+            configure_custom_coverage(job, report)
+            annotate_coverage_export(job, report, mapping_type)
+    files = {}
+    for name, workflow in workflows.items():
+        output = io.StringIO()
+        editor.dump(workflow, output)
+        files[WORKFLOWS + "/" + name] = output.getvalue()
+    return files
 
 
 class Dumper(yaml.SafeDumper):
@@ -387,7 +472,7 @@ def scope_validation_jobs(jobs, always, single_entry):
         if name.startswith("check-") and single_entry:
             job["needs"].append("workflow-contracts")
         if name not in always:
-            job["if"] = "${{ needs.scope.outputs.run == 'true' }}"
+            job["if"] = FULL_SCOPE
 
 
 def requires_security_events(directory, filename, chain=()):
@@ -396,7 +481,7 @@ def requires_security_events(directory, filename, chain=()):
         raise ValueError(f"Recursive local workflow call: {chain} -> {filename}")
     # BaseLoader constructs strings/containers and cannot instantiate Python objects.
     workflow = yaml.load(  # nosec B506
-        (directory / ".github/workflows" / filename).read_text(),
+        (directory / WORKFLOWS / filename).read_text(),
         Loader=yaml.BaseLoader,
     )
     # Shell commands may upload SARIF directly or through an arbitrary script.
@@ -655,7 +740,7 @@ PY
         "scope": scope_job(policy),
         "prepare": {
             "needs": "scope",
-            "if": "${{ needs.scope.outputs.run == 'true' }}",
+            "if": FULL_SCOPE,
             "runs-on": "ubuntu-latest",
             "timeout-minutes": 5,
             "outputs": {
@@ -1084,7 +1169,7 @@ def validate_local_policy(directory: Path, policy: dict) -> None:
 
 def validate_local_workflows(directory: Path) -> None:
     """Allow only explicit manual jobs on an existing self-hosted runner."""
-    for path in (directory / ".github/workflows").glob("*.y*ml"):
+    for path in (directory / WORKFLOWS).glob("*.y*ml"):
         workflow = yaml.load(path.read_text(), Loader=yaml.BaseLoader)
         if set(workflow.get("on", {})) != {"workflow_dispatch"}:
             raise ValueError(f"Archive unavailable automatic workflow: {path}")

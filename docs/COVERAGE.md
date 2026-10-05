@@ -36,12 +36,14 @@ also the Codecov component flag. Percentages remain configured in the project's
 test command, not in this upload policy.
 
 ```bash
+# Install once in the toolkit's Python environment, from the toolkit checkout.
+python3 -m pip install --require-hashes --only-binary=:all: -r .github/requirements-generator.txt
 python3 /path/to/venus-os-ci-toolkit/scripts/install_release.py /path/to/project
 python3 /path/to/venus-os-ci-toolkit/scripts/install_release.py /path/to/project --check
 ```
 
 Review the policy and generated diff together. The renderer preserves existing
-test commands and thresholds. For a direct call to shared Python/Go CI, it updates
+test commands, comments, action-version labels and thresholds. For a direct call to shared Python/Go CI, it updates
 the immutable workflow pin and opts into `coverage-artifact-name`. For a custom
 job, it adds one pinned artifact-export step. TypeScript and Rust may use the same
 custom-job adapter once their existing test command produces a report; enabling
@@ -55,7 +57,7 @@ OIDC adapters, but central coverage does not require it.
 
 No profile means no generated coverage changes. The renderer refuses to silently
 replace an existing inline Codecov step: review its removal first, preserving
-any mandatory upload policy. Matrix producers and indirect/custom reusable
+any mandatory upload policy. Matrix producers, aliased/merged producer settings and indirect/custom reusable
 workflow producers need a reviewed adapter with an unambiguous single report;
 they are rejected rather than guessed. A profile is not a reason to add blanket
 coverage percentages to Terraform, firmware YAML or external integration suites.

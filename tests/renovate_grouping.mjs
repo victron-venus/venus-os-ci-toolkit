@@ -1,14 +1,40 @@
 // Exercise the actual pinned Renovate extractor and branch planner, without API writes.
 import assert from 'node:assert/strict';
-import { glob, mkdtemp, readFile, rm } from 'node:fs/promises';
+import { glob, mkdtemp, readFile, realpath, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { resolve } from 'node:path';
+import { isAbsolute, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-const installation = resolve(process.argv[2]);
+assert.equal(process.argv.length, 3, 'Pass exactly one installed Renovate package directory');
+assert.ok(isAbsolute(process.argv[2]), 'Renovate installation must be an absolute path');
+assert.ok(!process.argv[2].split(sep).some((part) => part === '..' || part === '.'), 'No path traversal');
+assert.ok(process.env.RUNNER_TEMP && isAbsolute(process.env.RUNNER_TEMP), 'RUNNER_TEMP must be an absolute directory');
+const runnerTemp = await realpath(process.env.RUNNER_TEMP);
+const installation = resolve(runnerTemp, 'renovate/node_modules/renovate');
+assert.equal(await realpath(process.argv[2]), installation, 'Renovate must use the fixed RUNNER_TEMP installation');
 const runtime = JSON.parse(await readFile('.github/renovate-runtime.json', 'utf8'));
-assert.equal(JSON.parse(await readFile(`${installation}/package.json`, 'utf8')).version, runtime.version);
-const moduleAt = (name) => import(pathToFileURL(`${installation}/dist/${name}.js`));
+const packageFile = await realpath(resolve(installation, 'package.json'));
+if (!packageFile.startsWith(installation + sep)) throw new Error('Renovate package metadata escapes installation');
+const installed = JSON.parse(await readFile(packageFile, 'utf8'));
+assert.equal(installed.name, 'renovate');
+assert.equal(installed.version, runtime.version);
+const allowedModules = new Set([
+  'config/defaults',
+  'config/global',
+  'config/utils',
+  'modules/manager/github-actions/extract',
+  'modules/manager/custom/regex/index',
+  'workers/repository/updates/flatten',
+  'workers/repository/update/branch/auto-replace',
+]);
+async function moduleAt(name) {
+  assert.ok(allowedModules.has(name), 'Only fixed Renovate test modules may be loaded');
+  const file = await realpath(resolve(installation, 'dist', name + '.js'));
+  if (!file.startsWith(installation + sep + 'dist' + sep)) throw new Error('Renovate module escapes installation');
+  return import(pathToFileURL(file).href);
+}
+await assert.rejects(moduleAt('../package.json'), /Only fixed Renovate test modules/);
+await assert.rejects(moduleAt('config/../../outside'), /Only fixed Renovate test modules/);
 const { getConfig } = await moduleAt('config/defaults');
 const { GlobalConfig } = await moduleAt('config/global');
 GlobalConfig.set({ localDir: process.cwd(), platform: 'github' });
@@ -65,7 +91,7 @@ for (const dep of pins.deps) {
 }
 const policyFile = '.release-policy.json';
 const policyManager = preset.customManagers.find((manager) => manager.datasourceTemplate === 'git-refs');
-assert.deepEqual(policyManager.managerFilePatterns, ['/^\\.release-policy\\.json$/']);
+assert.deepEqual(policyManager.managerFilePatterns, [String.raw`/^\.release-policy\.json$/`]);
 const policy = {
   repo: 'example/consumer',
   coverage: { toolkit_ref: old, reports: [{ name: 'python', path: 'coverage.xml' }] },
@@ -87,10 +113,7 @@ policyDep.updates = [{ updateType: 'digest', newValue: 'main', newDigest: next }
 const scratch = await mkdtemp(resolve(tmpdir(), 'renovate-policy-'));
 try {
   GlobalConfig.set({ localDir: scratch, platform: 'github' });
-  for (const content of [
-    policyContent,
-    JSON.stringify({ ...policy, coverage: { reports: policy.coverage.reports, toolkit_ref: old } }),
-  ]) {
+  async function assertPolicyUpdate(content) {
     const extractedPolicy = extractPins(content, policyFile, policyManager);
     const updated = await doAutoReplace({
       ...config,
@@ -107,6 +130,9 @@ try {
     assert.equal(extractPins(updated, policyFile, policyManager).deps[0].currentDigest, next);
     assert.equal(await readFile(resolve(scratch, policyFile), 'utf8'), updated);
   }
+  // Both cases mutate the same file and GlobalConfig; deliberately run in sequence.
+  await assertPolicyUpdate(policyContent);
+  await assertPolicyUpdate(JSON.stringify({ ...policy, coverage: { reports: policy.coverage.reports, toolkit_ref: old } }));
 } finally {
   GlobalConfig.set({ localDir: process.cwd(), platform: 'github' });
   await rm(scratch, { recursive: true, force: true });

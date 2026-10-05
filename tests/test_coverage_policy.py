@@ -5,6 +5,7 @@ import importlib.util
 import json
 import os
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -189,7 +190,56 @@ class CoveragePolicyTests(unittest.TestCase):
         self.report["path"] = "../coverage.xml"
         (self.root / ".release-policy.json").write_text(json.dumps(self.policy))
         before = {str(path): path.read_bytes() for path in self.root.rglob("*") if path.is_file()}
-        result = subprocess.run(["python3", str(ROOT / "scripts/install_release.py"), str(self.root)], capture_output=True, text=True, check=False)
+        result = subprocess.run([sys.executable, str(ROOT / "scripts/install_release.py"), str(self.root)], capture_output=True, text=True, check=False)
         self.assertNotEqual(result.returncode, 0)
         after = {str(path): path.read_bytes() for path in self.root.rglob("*") if path.is_file()}
         self.assertEqual(after, before)
+
+    def test_round_trip_preserves_maintainer_comments_and_third_party_labels(self):
+        path = self.root / ".github/workflows/ci.yml"
+        source = """# Repository-owned validation: keep this explanation.
+name: CI
+on:
+  workflow_call: {}
+permissions:
+  contents: read
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # Keep the tracked version label for Renovate.
+      - uses: example/vendor-action@bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb # v12.3.4
+      - name: 'Quoted name'
+        run: |
+          # This is shell code, not a YAML comment.
+          cat <<'LITERAL'
+          uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+          LITERAL
+          pytest --cov=app --cov-fail-under=73 --cov-report=xml
+"""
+        path.write_text(source)
+        rendered = installer.coverage_adapters(self.root, self.policy)[".github/workflows/ci.yml"]
+        for line in source.splitlines():
+            self.assertIn(line, rendered)
+        original_workflow = yaml.load(source, Loader=installer.WorkflowLoader)
+        rendered_workflow = yaml.load(rendered, Loader=installer.WorkflowLoader)
+        self.assertEqual(original_workflow["jobs"]["tests"]["steps"], rendered_workflow["jobs"]["tests"]["steps"][:-1])
+        path.write_text(rendered)
+        self.assertEqual(installer.coverage_adapters(self.root, self.policy)[".github/workflows/ci.yml"], rendered)
+
+    def test_aliased_producer_is_rejected_without_modifying_other_jobs(self):
+        path = self.root / ".github/workflows/ci.yml"
+        source = """on: {workflow_call: {}}
+permissions: {contents: read}
+jobs:
+  tests: &common
+    runs-on: ubuntu-latest
+    steps:
+      - run: pytest --cov-report=xml
+  other: *common
+"""
+        path.write_text(source)
+        with self.assertRaisesRegex(ValueError, "YAML anchors"):
+            installer.coverage_adapters(self.root, self.policy)
+        self.assertEqual(path.read_text(), source)

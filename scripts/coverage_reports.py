@@ -10,6 +10,7 @@ import os
 import re
 import xml.etree.ElementTree as ET
 from pathlib import Path, PurePosixPath
+from xml.parsers import expat
 
 MAX_REPORT_BYTES = 20 * 1024 * 1024
 SHA = re.compile(r"[0-9a-f]{40}")
@@ -49,9 +50,13 @@ def configuration(environment, event):
     require(NAME.fullmatch(name) is not None, "Invalid artifact base name")
     require(FLAG.fullmatch(flag) is not None, "Invalid coverage flag")
     require(format_name in FORMATS, "Unsupported coverage format")
-    require(re.fullmatch(r"[1-9][0-9]*", attempt) is not None, "Invalid run attempt")
     require(
-        re.fullmatch(r"[1-9][0-9]*", environment.get("GITHUB_RUN_ID", "")) is not None,
+        re.fullmatch(r"[1-9]\d*", attempt, flags=re.ASCII) is not None,
+        "Invalid run attempt",
+    )
+    require(
+        re.fullmatch(r"[1-9]\d*", environment.get("GITHUB_RUN_ID", ""), flags=re.ASCII)
+        is not None,
         "Invalid run ID",
     )
     repository = event.get("repository", {})
@@ -130,7 +135,8 @@ def configuration(environment, event):
 def integer(value, *, positive=False):
     """Reject negative, fractional and non-finite coverage counters."""
     require(
-        isinstance(value, str) and re.fullmatch(r"[0-9]+", value) is not None,
+        isinstance(value, str)
+        and re.fullmatch(r"\d+", value, flags=re.ASCII) is not None,
         "Invalid coverage counter",
     )
     result = int(value)
@@ -138,13 +144,39 @@ def integer(value, *, positive=False):
     return result
 
 
+def cobertura_tree(text):
+    """Accept generator DTD headers without loading DTDs or expanding entities."""
+
+    def doctype(name, system_id, _public_id, internal_subset):
+        require(
+            name == "coverage" and bool(system_id) and not internal_subset,
+            "Only an external Cobertura DOCTYPE without an internal subset is allowed",
+        )
+
+    def reject_entity(*_args):
+        raise ValueError("XML entity declarations/references are forbidden")
+
+    tree = ET.TreeBuilder()
+    parser = expat.ParserCreate(namespace_separator="}")
+    parser.StartElementHandler = tree.start
+    parser.EndElementHandler = tree.end
+    parser.CharacterDataHandler = tree.data
+    parser.StartDoctypeDeclHandler = doctype
+    parser.EntityDeclHandler = reject_entity
+    parser.ExternalEntityRefHandler = reject_entity
+    parser.SkippedEntityHandler = reject_entity
+    # External DTDs are metadata only: no external parser or I/O is provided.
+    parser.SetParamEntityParsing(expat.XML_PARAM_ENTITY_PARSING_NEVER)
+    try:
+        parser.Parse(text, True)
+    except expat.ExpatError as error:
+        raise ValueError("Malformed Cobertura XML") from error
+    return tree.close()
+
+
 def cobertura(text):
     """Require real file/line measurements, not an empty XML shell."""
-    require(
-        "<!DOCTYPE" not in text.upper() and "<!ENTITY" not in text.upper(),
-        "XML declarations/entities are forbidden",
-    )
-    root = ET.fromstring(text)  # nosec B314: DTD/entities rejected; bounded input.
+    root = cobertura_tree(text)
     require(root.tag == "coverage", "Expected Cobertura coverage root")
     measured = set()
     for item in root.findall("./packages/package/classes/class"):
@@ -168,7 +200,7 @@ def go_profile(text):
     records = {}
     for line in lines[1:]:
         match = re.fullmatch(
-            r"(.+):([0-9]+)\.([0-9]+),([0-9]+)\.([0-9]+) ([0-9]+) ([0-9]+)", line
+            r"(.+):(\d+)\.(\d+),(\d+)\.(\d+) (\d+) (\d+)", line, flags=re.ASCII
         )
         require(match is not None, "Invalid Go coverage block")
         start = (integer(match[2], positive=True), integer(match[3], positive=True))

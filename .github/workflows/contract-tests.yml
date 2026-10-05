@@ -51,8 +51,8 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: '3.12'
-      - name: Install contract test dependency
-        run: 'python3 -m pip install --require-hashes --only-binary=:all: -r .github/requirements-workflow-contracts.txt'
+      - name: Install generator and contract test dependencies
+        run: 'python3 -m pip install --require-hashes --only-binary=:all: -r .github/requirements-generator.txt'
       - name: Exercise type checking and PR automation contracts
         run: python -m unittest discover -s tests -p 'test_*.py' -v
 'on':
