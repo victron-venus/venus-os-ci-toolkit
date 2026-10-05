@@ -102,6 +102,13 @@ These may also be pinned by consumers, though they are primarily consumed intern
 
 #### `python-ci.yml`
 
+Pytest and its minimum coverage threshold remain mandatory. Codecov publication
+is optional at the upload step only. The uploader itself uses
+`fail_ci_if_error: true` so failed signature or checksum validation stops it
+before the downloaded CLI can run; `continue-on-error: true` preserves
+the existing optional publication policy. A green CI job does not by itself
+prove that the report reached Codecov; inspect the upload step outcome.
+
 | Input | Type | Default | Required |
 |---|---|---|---|
 | `python-version` | string | `'3.12'` | No |
