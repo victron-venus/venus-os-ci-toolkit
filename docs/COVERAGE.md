@@ -38,9 +38,20 @@ test command, not in this upload policy.
 ```bash
 # Install once in the toolkit's Python environment, from the toolkit checkout.
 python3 -m pip install --require-hashes --only-binary=:all: -r .github/requirements-generator.txt
-python3 /path/to/venus-os-ci-toolkit/scripts/install_release.py /path/to/project
-python3 /path/to/venus-os-ci-toolkit/scripts/install_release.py /path/to/project --check
+python3 /path/to/venus-os-ci-toolkit/scripts/install_release.py /path/to/project --coverage-only
+python3 /path/to/venus-os-ci-toolkit/scripts/install_release.py /path/to/project --coverage-only --check
 ```
+
+`--coverage-only` adopts coverage in a project that already has a generated
+Quality gate and `single_entry_ci: true`. It refreshes Quality gate, the selected
+producers, change-scope helper and workflow contracts/tests/requirements. Review
+these CI updates together. In an existing Release pipeline it changes only the
+`checks` caller's OIDC permission, retaining the release behavior and comments.
+It does not replace release clients, native build helpers, release tests, version
+files or release documentation. Missing or ambiguous release callers fail before
+any files are written. Its `--check` verifies only this bounded output set; it
+does not certify that the full release engine is current. Use the installer
+without `--coverage-only` for an independently reviewed full release-toolkit update.
 
 Review the policy and generated diff together. The renderer preserves existing
 test commands, comments, action-version labels and thresholds. For a direct call to shared Python/Go CI, it updates

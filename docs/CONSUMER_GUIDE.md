@@ -86,7 +86,7 @@ required/optional policy; configure the repository-owned adapter explicitly.
 ### Central Codecov publication
 
 Use the [coverage policy](COVERAGE.md) to connect an existing report to the shared
-`coverage-upload.yml`. `install_release.py` exports the report and adds the upload
+`coverage-upload.yml`. `install_release.py --coverage-only` exports the report and adds the upload
 caller to Quality gate. Only that caller receives OIDC; test validators need no
 OIDC allowlist entry. Python and Go already produce reports. Other languages must
 first collect a real report in their existing test job.
