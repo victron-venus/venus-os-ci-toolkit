@@ -94,7 +94,7 @@ GitHub outage. No automatic failover is enabled.
 ## Toolkit checks
 
 `scripts/runner_selection.py --check` verifies the shared declarations.
-`tests/runner_selection.mjs` evaluates dispatch using the pinned official
+`tools/runner-expressions/test.mjs` evaluates dispatch using the pinned official
 `@actions/expressions` parser/evaluator, including defaults, profile separation,
 fork exclusion, malformed configuration and private-input compatibility.
 The existing CI contract job installs its locked test dependency and runs it.

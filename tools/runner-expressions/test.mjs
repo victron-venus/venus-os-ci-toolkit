@@ -2,10 +2,10 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
-import { Lexer, Parser, Evaluator, data } from '../tools/runner-expressions/node_modules/@actions/expressions/dist/index.js';
+import { Lexer, Parser, Evaluator, data } from '@actions/expressions';
 
-const expected = JSON.parse(await readFile(new URL('../tools/runner-expressions/package.json', import.meta.url), 'utf8')).dependencies['@actions/expressions'];
-const actual = JSON.parse(await readFile(new URL('../tools/runner-expressions/node_modules/@actions/expressions/package.json', import.meta.url), 'utf8')).version;
+const expected = JSON.parse(await readFile(new URL('./package.json', import.meta.url), 'utf8')).dependencies['@actions/expressions'];
+const actual = JSON.parse(await readFile(new URL('./node_modules/@actions/expressions/package.json', import.meta.url), 'utf8')).version;
 assert.equal(actual, expected);
 const python = process.env.PYTHON || 'python3';
 const declarations = JSON.parse(execFileSync(python, ['-c', [
@@ -13,7 +13,7 @@ const declarations = JSON.parse(execFileSync(python, ['-c', [
   'sys.path.insert(0,"scripts")',
   'from runner_selection import runner_labels',
   'print(json.dumps({"ci":runner_labels(),"automation":runner_labels("automation"),"release":runner_labels("release"),"legacy":runner_labels("automation",explicit_input="runner-labels"),"scope":runner_labels(explicit_input="runner",scalar=True)}))',
-].join(';')], { encoding: 'utf8' }));
+].join(';')], { encoding: 'utf8', cwd: new URL('../../', import.meta.url) }));
 function evaluate(kind, variables = {}, event = 'push', options = {}) {
   const context = {
     vars: variables,

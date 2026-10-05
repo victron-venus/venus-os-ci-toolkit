@@ -9,6 +9,7 @@ import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+WORKFLOWS = ".github/workflows"
 PROFILES = {
     "ci": "CI_RUNNER_LABELS",
     "automation": "CI_RUNNER_AUTOMATION_LABELS",
@@ -74,44 +75,51 @@ def yaml_editor():
     return editor
 
 
-def render_consumer(directory, policy):
-    """Adapt existing Linux/x64 jobs reachable from the declared CI/release graph."""
-    editor = yaml_editor()
-    workflow_dir = directory / ".github/workflows"
-    roots = {name: "ci" for name in policy["validation_workflows"]}
-    roots["quality-gate.yml"] = "ci"
-    if policy.get("mode", "release") == "release":
-        roots.update({"release-pipeline.yml": "release", "release-build.yml": "release"})
-    files = {}
-    visited = {}
+class ConsumerRunnerAdapter:
+    """Traverse one consumer's workflow graph without writing any files."""
 
-    def visit(name, profile, chain=()):
+    def __init__(self, directory, policy):
+        self.directory = directory
+        self.editor = yaml_editor()
+        self.roots = dict.fromkeys(policy["validation_workflows"], "ci")
+        self.roots["quality-gate.yml"] = "ci"
+        if policy.get("mode", "release") == "release":
+            self.roots.update({"release-pipeline.yml": "release", "release-build.yml": "release"})
+        self.files = {}
+        self.visited = {}
+
+    def visit(self, name, profile, chain=()):
+        """Resolve local calls and reject paths or roles that cannot be adapted safely."""
         if not re.fullmatch(r"[A-Za-z0-9_-]+\.ya?ml", name) or name in chain:
             raise ValueError("Invalid or recursive runner adapter: " + name)
-        profile = roots.get(name, profile)
-        if name in visited:
-            if visited[name] != profile:
+        profile = self.roots.get(name, profile)
+        if name in self.visited:
+            if self.visited[name] != profile:
                 raise ValueError("Workflow has conflicting CI/release runner profiles: " + name)
             return
-        visited[name] = profile
-        path = workflow_dir / name
-        if path.resolve() != directory.resolve() / ".github/workflows" / name:
+        self.visited[name] = profile
+        path = self.directory / WORKFLOWS / name
+        if path.resolve() != self.directory.resolve() / WORKFLOWS / name:
             raise ValueError("Runner workflow must not use a symlink: " + name)
         source = path.read_text()
-        workflow = editor.load(source)
+        workflow = self.editor.load(source)
         changed = adapt_jobs(workflow, profile, name)
         for job in workflow["jobs"].values():
             reference = job.get("uses", "")
             if reference.startswith("./.github/workflows/"):
-                visit(reference.removeprefix("./.github/workflows/"), profile, (*chain, name))
+                self.visit(reference.removeprefix("./.github/workflows/"), profile, (*chain, name))
         output = io.StringIO()
         if changed:
-            editor.dump(workflow, output)
-        files[".github/workflows/" + name] = output.getvalue() if changed else source
+            self.editor.dump(workflow, output)
+        self.files[WORKFLOWS + "/" + name] = output.getvalue() if changed else source
 
-    for name, profile in roots.items():
-        visit(name, profile)
-    return files
+
+def render_consumer(directory, policy):
+    """Adapt existing Linux/x64 jobs reachable from the declared CI/release graph."""
+    adapter = ConsumerRunnerAdapter(directory, policy)
+    for name, profile in adapter.roots.items():
+        adapter.visit(name, profile)
+    return adapter.files
 
 
 def adapt_jobs(workflow, profile, name):
@@ -134,28 +142,28 @@ def adapt_jobs(workflow, profile, name):
     return changed
 
 
+def render_shared_workflow(filename, profile):
+    """Normalize one owned workflow while keeping its explicit input contract."""
+    editor = yaml_editor()
+    path = ROOT / WORKFLOWS / filename
+    source = path.read_text()
+    workflow = editor.load(source)
+    changed = False
+    explicit = "runner-labels" if filename in {"auto-merge.yml", "auto-approve-reusable.yml"} else None
+    selected = runner_labels(profile, explicit_input=explicit)
+    for job in workflow["jobs"].values():
+        if "runs-on" in job and job["runs-on"] != selected:
+            job["runs-on"] = selected
+            changed = True
+    output = io.StringIO()
+    if changed:
+        editor.dump(workflow, output)
+    return path, output.getvalue() if changed else source
+
+
 def render_workflows():
     """Update job routing only, preserving repository commands, comments and pins."""
-    editor = yaml_editor()
-    files = {}
-    for filename, profile in ACTIVE_WORKFLOWS.items():
-        path = ROOT / ".github/workflows" / filename
-        source = path.read_text()
-        workflow = editor.load(source)
-        changed = False
-        for job in workflow["jobs"].values():
-            if "runs-on" not in job:
-                continue
-            explicit = "runner-labels" if filename in {"auto-merge.yml", "auto-approve-reusable.yml"} else None
-            selected = runner_labels(profile, explicit_input=explicit)
-            if job["runs-on"] != selected:
-                job["runs-on"] = selected
-                changed = True
-        output = io.StringIO()
-        if changed:
-            editor.dump(workflow, output)
-        files[path] = output.getvalue() if changed else source
-    return files
+    return dict(render_shared_workflow(name, profile) for name, profile in ACTIVE_WORKFLOWS.items())
 
 
 def main():

@@ -34,7 +34,7 @@ jobs:
       - name: Verify runner dispatch with the GitHub expression engine
         run: |
           npm ci --prefix tools/runner-expressions --ignore-scripts --no-audit --no-fund
-          node tests/runner_selection.mjs
+          node tools/runner-expressions/test.mjs
       - name: Install the same Renovate release as the scheduled runner
         run: |
           version=$(python3 -c 'import json; print(json.load(open(".github/renovate-runtime.json"))["version"])')

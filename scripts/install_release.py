@@ -36,6 +36,7 @@ UPLOAD = ACTION_REFS["actions/upload-artifact"]
 DOWNLOAD = ACTION_REFS["actions/download-artifact"]
 TOOLKIT = "victron-venus/venus-os-ci-toolkit"
 WORKFLOWS = ".github/workflows"
+POLICY_FILE = ".release-policy.json"
 FULL_SCOPE = "${{ needs.scope.outputs.run == 'true' }}"
 
 
@@ -1515,7 +1516,7 @@ def coverage_release_caller(directory, policy):
 
 def render_coverage(directory: Path) -> dict[str, str]:
     """Refresh coverage and its CI contracts without replacing the release engine."""
-    policy = json.loads((directory / ".release-policy.json").read_text())
+    policy = json.loads((directory / POLICY_FILE).read_text())
     validate_policy(directory, policy)
     if coverage_policy(policy) is None or policy.get("single_entry_ci") is not True:
         raise ValueError("Coverage-only adoption requires coverage and single_entry_ci")
@@ -1554,7 +1555,7 @@ def render_coverage(directory: Path) -> dict[str, str]:
 
 def render(directory: Path) -> dict[str, str]:
     """Validate adapters and assemble generated workflows, clients and operator docs."""
-    policy = json.loads((directory / ".release-policy.json").read_text())
+    policy = json.loads((directory / POLICY_FILE).read_text())
     validate_policy(directory, policy)
     local = policy.get("ci_execution") == "local"
     files = (
@@ -1599,7 +1600,7 @@ def render(directory: Path) -> dict[str, str]:
 
 def render_runners(directory: Path) -> dict[str, str]:
     """Adopt runner routing without replacing release clients, docs or test commands."""
-    policy = json.loads((directory / ".release-policy.json").read_text())
+    policy = json.loads((directory / POLICY_FILE).read_text())
     validate_policy(directory, policy)
     if policy.get("ci_execution", "github") != "github" or not policy.get("single_entry_ci"):
         raise ValueError("Runner adoption requires existing hosted single-entry CI")
@@ -1881,23 +1882,19 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("directory", type=Path)
     parser.add_argument("--check", action="store_true")
+    parser.set_defaults(renderer=render)
     modes = parser.add_mutually_exclusive_group()
     modes.add_argument(
-        "--coverage-only", action="store_true",
+        "--coverage-only", action="store_const", dest="renderer", const=render_coverage,
         help="refresh coverage and CI support only; preserve the existing release engine",
     )
     modes.add_argument(
-        "--runners-only", action="store_true",
+        "--runners-only", action="store_const", dest="renderer", const=render_runners,
         help="adapt existing Linux/x64 job routing only; preserve other release files",
     )
     args = parser.parse_args()
     try:
-        renderer = render
-        if args.coverage_only:
-            renderer = render_coverage
-        elif args.runners_only:
-            renderer = render_runners
-        files = renderer(args.directory)
+        files = args.renderer(args.directory)
         drift = []
         for relative, content in files.items():
             path = args.directory / relative
