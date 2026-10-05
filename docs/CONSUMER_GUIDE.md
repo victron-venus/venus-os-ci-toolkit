@@ -83,6 +83,14 @@ permission hop. Omitting this field, or using an empty list, preserves existing
 permissions. This capability does not change an uploader's authentication or
 required/optional policy; configure the repository-owned adapter explicitly.
 
+### Central Codecov publication
+
+Use the [coverage policy](COVERAGE.md) to connect an existing report to the shared
+`coverage-upload.yml`. `install_release.py` exports the report and adds the upload
+caller to Quality gate. Only that caller receives OIDC; test validators need no
+OIDC allowlist entry. Python and Go already produce reports. Other languages must
+first collect a real report in their existing test job.
+
 ### Supported Consumer Workflow Files
 
 | Consumer workflow file | Toolkit workflow called | Notes |
@@ -131,8 +139,10 @@ prove that the report reached Codecov; inspect the upload step outcome.
 | `run-tests` | boolean | `true` | No |
 | `test-args` | string | `''` | No |
 | `coverage-threshold` | number | `80` | No |
+| `coverage-artifact-name` | string | `''` (legacy inline upload) | No |
 
-Secrets: `GITHUB_TOKEN` (codecov upload).
+No Codecov secret is forwarded. Opt-in central publication uses GitHub OIDC;
+`GITHUB_TOKEN` and `BOT_PAT` are not Codecov upload tokens.
 
 #### `go-ci.yml`
 
@@ -145,8 +155,9 @@ Secrets: `GITHUB_TOKEN` (codecov upload).
 | `run-vulncheck` | boolean | `true` | No |
 | `test-args` | string | `'-race -coverprofile=coverage.out -covermode=atomic'` | No |
 | `coverage-threshold` | number | `70` | No |
+| `coverage-artifact-name` | string | `''` (legacy inline upload) | No |
 
-Secrets: `GITHUB_TOKEN` (codecov upload).
+No Codecov secret is forwarded. Opt-in central publication uses GitHub OIDC.
 
 #### `rust-ci.yml`
 

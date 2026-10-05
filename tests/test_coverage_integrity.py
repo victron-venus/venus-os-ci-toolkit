@@ -32,7 +32,10 @@ class CoverageIntegrityTests(unittest.TestCase):
         self.assertEqual(hashlib.sha256(FIXTURE.read_bytes()).hexdigest(), WRAPPER_SHA256)
         self.assertIs(self.upload["with"]["fail_ci_if_error"], True)
         self.assertIs(self.upload["continue-on-error"], True)
-        self.assertEqual(self.upload["if"], "inputs.run-tests")
+        self.assertEqual(
+            self.upload["if"],
+            "${{ inputs.run-tests && inputs.coverage-artifact-name == '' }}",
+        )
         self.assertEqual(self.upload["with"]["files"], "./coverage.xml")
         self.assertFalse(self.job.get("continue-on-error", False))
         for step in self.job["steps"]:

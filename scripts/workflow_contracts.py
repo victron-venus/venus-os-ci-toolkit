@@ -78,6 +78,10 @@ def validate_generator_pins(directory, workflows):
     }
     if pins is not None and any(not re.fullmatch(r"[0-9a-f]{40}", pin) for pin in pins.values()):
         raise ValueError("Generator pins must be full commit SHAs")
+    policy_path = directory / ".release-policy.json"
+    coverage = json.loads(policy_path.read_text()).get("coverage") if policy_path.exists() else None
+    if pins is not None and coverage:
+        pins["victron-venus/venus-os-ci-toolkit/.github/workflows/coverage-upload.yml"] = coverage["toolkit_ref"]
     for filename, workflow in workflows.items():
         if filename not in {"quality-gate.yml", "release-pipeline.yml"}:
             validate_workflow_pins(filename, workflow, None)
@@ -143,6 +147,41 @@ def validate(directory: Path, *, actions_only=False) -> None:
     expected = {
         f"./.github/workflows/{filename}" for filename in policy["validation_workflows"]
     }
+    coverage = policy.get("coverage")
+    if coverage:
+        ref = coverage["toolkit_ref"]
+        if not isinstance(ref, str) or not re.fullmatch(r"[0-9a-f]{40}", ref):
+            raise ValueError("Coverage toolkit_ref must be a full commit SHA")
+        reference = "victron-venus/venus-os-ci-toolkit/.github/workflows/coverage-upload.yml@" + ref
+        expected.add(reference)
+        for report in coverage["reports"]:
+            name = "coverage-" + report["name"]
+            upload = gate.get(name, {})
+            producer_index = policy["validation_workflows"].index(report["workflow"])
+            if (
+                upload.get("uses") != reference
+                or upload.get("needs") != ["scope", f"check-{producer_index}"]
+                or upload.get("permissions") != {"contents": "read", "actions": "read", "id-token": "write"}
+                or upload.get("with") != {
+                    "artifact-name": name,
+                    "report-file": report["path"].rsplit("/", 1)[-1],
+                    "format": report["format"],
+                    "flags": report["name"],
+                    "required": str(report["required"]).lower(),
+                }
+            ):
+                raise ValueError("Coverage upload caller differs from its policy or producer dependency")
+            producer = workflows[report["workflow"]]["jobs"][report["job"]]
+            if "uses" in producer:
+                if (
+                    producer["uses"].rsplit("@", 1)[-1] != ref
+                    or producer.get("with", {}).get("coverage-artifact-name") != name
+                ):
+                    raise ValueError("Coverage producer pin or artifact differs from policy")
+            else:
+                exports = [step for step in producer.get("steps", []) if step.get("id") == "export_coverage_" + report["name"].replace("-", "_")]
+                if len(exports) != 1 or exports[0].get("with", {}).get("name") != name + "-${{ github.run_attempt }}" or exports[0].get("with", {}).get("path") != report["path"]:
+                    raise ValueError("Coverage producer export differs from policy")
     actual = {job.get("uses") for job in gate.values() if "uses" in job}
     if actual != expected or set(gate["gate"].get("needs", [])) != set(gate) - {"gate"}:
         raise ValueError(
