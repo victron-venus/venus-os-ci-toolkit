@@ -98,6 +98,30 @@ def scope_policy(policy):
     return result
 
 
+def validation_oidc_workflows(policy):
+    """Allow OIDC only for explicitly selected, configured validator filenames."""
+    selected = policy.get("validation_oidc_workflows", [])
+    if (
+        not isinstance(selected, list)
+        or any(
+            not isinstance(name, str)
+            or not re.fullmatch(r"[A-Za-z0-9_-]+\.ya?ml", name)
+            or name in {"quality-gate.yml", "release-pipeline.yml"}
+            for name in selected
+        )
+        or len(selected) != len(set(selected))
+    ):
+        raise ValueError("validation_oidc_workflows must be unique validator filenames")
+    validators = policy.get("validation_workflows", [])
+    if not isinstance(validators, list) or any(
+        not isinstance(name, str) for name in validators
+    ):
+        raise ValueError("validation_workflows must be a list of filenames")
+    if set(selected) - set(validators):
+        raise ValueError("validation_oidc_workflows must name configured validators")
+    return set(selected)
+
+
 def scope_job(policy, *, force_input=False):
     """Classify the complete Git diff before installing project toolchains."""
     config = scope_policy(policy)
@@ -234,6 +258,7 @@ def quality(policy, directory=None):
     if not validators:
         raise ValueError("At least one real validation workflow is required")
     config = scope_policy(policy)
+    oidc = validation_oidc_workflows(policy)
     jobs = {"scope": scope_job(policy, force_input=True)}
     always = {"scope"}
     for i, filename in enumerate(validators):
@@ -247,6 +272,7 @@ def quality(policy, directory=None):
             "permissions": {
                 "contents": "read",
                 "actions": "read",
+                **({"id-token": "write"} if filename in oidc else {}),
                 **(
                     {"security-events": "write"}
                     if policy.get("visibility") != "private"
@@ -389,6 +415,7 @@ def schedule(policy):
 def _legacy_release(policy):
     """Build the gated candidate/publication workflow from the reviewed policy."""
     publication_env = publication_token_env(policy)
+    oidc = validation_oidc_workflows(policy)
     build_credentials = build_secrets(policy)
     branch = policy.get("default_branch", "main")
     candidate = "${{ needs.prepare.outputs.build == 'true' }}"
@@ -470,6 +497,7 @@ PY
                 "contents": "read",
                 "actions": "read",
                 "security-events": "write",
+                **({"id-token": "write"} if oidc else {}),
             },
         },
         "build": {
@@ -796,6 +824,7 @@ def validate_policy(directory: Path, policy: dict) -> None:
     """Reject unsupported policy modes, stale publishers and invalid repository names."""
     mode = policy.get("mode", "release")
     validate_asset_restrictions(policy)
+    validation_oidc_workflows(policy)
     publication_token_env(policy)
     scope_policy(policy)
     if policy.get("versioning"):

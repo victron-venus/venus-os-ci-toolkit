@@ -71,6 +71,18 @@ test jobs can declare `contents: read`. The generator rejects inherited shell
 permissions because an arbitrary script's API calls cannot be inferred safely.
 Nested wrappers must forward every scope their validators require.
 
+Validators that authenticate through GitHub OIDC must explicitly opt in through
+`.release-policy.json`, for example
+`"validation_oidc_workflows": ["python-ci.yml"]`. This list must contain unique
+filenames already listed in `validation_workflows`; paths, wildcards and generated
+caller workflows are rejected. The generator adds `id-token: write` only to those
+Quality gate caller jobs and to the Release pipeline's `checks` forwarding job.
+It does not grant OIDC to build or publication jobs. The leaf job and any nested
+wrapper must also declare the scope; configuration validation rejects a missing
+permission hop. Omitting this field, or using an empty list, preserves existing
+permissions. This capability does not change an uploader's authentication or
+required/optional policy; configure the repository-owned adapter explicitly.
+
 ### Supported Consumer Workflow Files
 
 | Consumer workflow file | Toolkit workflow called | Notes |
