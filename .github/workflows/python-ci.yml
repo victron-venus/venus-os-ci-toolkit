@@ -183,7 +183,9 @@ jobs:
 
       - name: Upload coverage
         if: inputs.run-tests
+        # Integrity failures must stop the uploader; publication itself is optional.
+        continue-on-error: true
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:
           files: ./coverage.xml
-          fail_ci_if_error: false
+          fail_ci_if_error: true
