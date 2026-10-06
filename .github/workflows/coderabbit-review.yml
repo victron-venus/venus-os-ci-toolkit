@@ -1,22 +1,110 @@
-name: CodeRabbit Review Requests
-
-on:
-  pull_request_target:
-    types: [opened]
-  workflow_dispatch:
-    inputs:
-      pull-request-number:
-        description: Open PR number to request a review for
-        required: true
-        type: string
-
-permissions: {}
-
+name: Build reviewed reserve worker image
+'on':
+  workflow_dispatch: {}
+permissions:
+  contents: read
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
 jobs:
-  request-review:
-    if: github.event.repository.private == false
-    uses: ./.github/workflows/coderabbit-review-reusable.yml
-    with:
-      pull-request-number: ${{ inputs.pull-request-number || '' }}
-    secrets:
-      BOT_PAT: ${{ secrets.BOT_PAT }}
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        ref: e8120d3331224312f15e226803298298109af99e
+        persist-credentials: false
+    - name: Install public guard trust certificate
+      env:
+        GUARD_CERT: '-----BEGIN CERTIFICATE-----
+
+          MIIEUTCCArmgAwIBAgIUYBKwDb4SA69U2qIywT8I3NBRZK0wDQYJKoZIhvcNAQEL
+
+          BQAwJTEjMCEGA1UEAwwadmljdHJvbi1yZXNlcnZlLW5vZGUtZ3VhcmQwHhcNMjYx
+
+          MDA2MDEyOTUwWhcNMjgxMDA1MDEyOTUwWjAlMSMwIQYDVQQDDBp2aWN0cm9uLXJl
+
+          c2VydmUtbm9kZS1ndWFyZDCCAaIwDQYJKoZIhvcNAQEBBQADggGPADCCAYoCggGB
+
+          ALc7pGkEtgE1HNqDYKi34nH/jRfz0OR0b4HSqurNJRFMogRTwZoeE7KffMJRysas
+
+          LIFa6pvzRI68k7ifXZ/6fHGk4D2nOLqafnV/5HFTc/uGFb6By3YSOq5h8tpPgGRL
+
+          OSGJIlSy53x3ThQZY/wyYXMY1/uNGzLR5ahHCg8YbdMuPotVYCrahvjrKXejl9HH
+
+          gcJpVLJfIQGf0MC1rEQDgATkp0ahSrJnziVo+ceqaZF94Ae9iy3UIHnU6uzWvKTs
+
+          nUmxsLUiSB6dj3lTy54+o1lwgYBHXVqSyikjV/kTxLL4Y7Or1mHx7PW3JBrt3K56
+
+          YjidCyg823dKPAh+45fiQzTSBNaX/qH2mPlqUBvV84XdZVatVb1p/WD4JED5k+5Z
+
+          gcsDFKka4PH06SDOn12w9jI1POWzKQfpGzD5v9W00l75PSpHS5PoStZfsabCk2Yl
+
+          3fm2oxXojLuriiyhB/aj3kx7l2l56iHldcOKXdFuWG8U7ztRb1bvOD2QDibNjVgA
+
+          /QIDAQABo3kwdzAdBgNVHQ4EFgQUqzr9dICKCEGVWEfMqQZRzXuawuswHwYDVR0j
+
+          BBgwFoAUqzr9dICKCEGVWEfMqQZRzXuawuswDwYDVR0TAQH/BAUwAwEB/zAPBgNV
+
+          HREECDAGhwQKQgoCMBMGA1UdJQQMMAoGCCsGAQUFBwMBMA0GCSqGSIb3DQEBCwUA
+
+          A4IBgQB6qirAqZ4Alp4+t4nEOgmn1Xtvq44hKjq5g/KmmWD5VYY2NoNHJe4hGy/X
+
+          A8iPxwxk0UVV0CKxW+k+3XLHZ1QOsr4StvU1+A6HzUiuyLY7TpIeye/VRoXTwBPs
+
+          +UBrOvd1elpccD3KHkZQ2j4eopbRZFSSxdsEJWoPrru5MR2u8adeI9tdBGs1G8QV
+
+          pYar5Yk10qMhPr3IBQ8I8We73rnHP/Kzi+NS0b9QMGC5eo/jBH4Tfzvjz4MyeRjq
+
+          6/5zEgxHGUL0eelDgyMXxZWn1DppjWkhZZ2CUKbRCUK4RGlA2GdLdrfeAe1yfRLt
+
+          3v7nR1+JVX51b4WGuUuJ8cfyCLr6E2/MHwdvOPKF/+5gHKOyF9kZjOq3FayANzu/
+
+          POoDdewURhd+0sqOdBONmGdSgH2MdT2C/cWQeCFsHSUxOG/qzoJXGowfMy725XfK
+
+          AoCEv82pTCZQvOoSNql6CLHx+dDHQsAzJeTJNWdXU15CjPeQ+2hC4R9ldT7ewf2S
+
+          SVJqRFI=
+
+          -----END CERTIFICATE-----
+
+          '
+      run: printf '%s\n' "$GUARD_CERT" > deploy/runner-reserve/guard-ca.crt
+    - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069
+      with:
+        version: v0.37.2
+        platforms: linux/amd64
+    - name: Build native amd64 image archive
+      env:
+        IMAGE: localhost/victron-reserve-worker:20261006-reviewed
+        SOURCE_COMMIT: e8120d3331224312f15e226803298298109af99e
+      run: 'docker buildx build --platform linux/amd64 --label "org.opencontainers.image.revision=$SOURCE_COMMIT"
+        --label org.opencontainers.image.source=https://github.com/victron-venus/venus-os-ci-toolkit
+        --tag "$IMAGE" --output "type=docker,dest=$RUNNER_TEMP/worker-image.tar,compression=uncompressed"
+        deploy/runner-reserve
+
+        docker load --input "$RUNNER_TEMP/worker-image.tar"'
+    - name: Verify reviewed payload and non-root default
+      env:
+        IMAGE: localhost/victron-reserve-worker:20261006-reviewed
+        SOURCE_COMMIT: e8120d3331224312f15e226803298298109af99e
+        EXPECTED: '{"start-runner.sh": "61aaffaa1be8b191f9eba7a46cb946b4868511f8c0c4f00a80960de58b69657e",
+          "qualify.sh": "630934e8f4cdd8353b7f339e333a2da492d52c35b36099dbc27f0b46efe6192e",
+          "guard-ca.crt": "5605083d4b0c1f5af9cb7050e5919d10fa4bef4d829f22d47684bcae6e7c9d56"}'
+      run: "python3 - <<'PY'\nimport os,pathlib,subprocess,json,hashlib\nname=os.environ['IMAGE']\n\
+        assert subprocess.check_output(['docker','image','inspect',name,'--format','{{.Config.User}}'],text=True).strip()=='1001:1001'\n\
+        expected=json.loads(os.environ['EXPECTED'])\nchecks=subprocess.check_output(['docker','run','--rm','--network','none','--read-only','--cap-drop','ALL','--security-opt','no-new-privileges=true','--entrypoint','sha256sum',name,*['/opt/victron-ci-reserve/'+n\
+        \ for n in expected]],text=True)\nfor line in checks.splitlines():\n digest,path=line.split();assert\
+        \ expected[pathlib.Path(path).name]==digest\narchive=pathlib.Path(os.environ['RUNNER_TEMP'])/'worker-image.tar'\n\
+        metadata={'image_tag':name,'source_commit':os.environ['SOURCE_COMMIT'],'archive_sha256':hashlib.file_digest(archive.open('rb'),'sha256').hexdigest(),'files':expected,'user':'1001:1001'}\n\
+        (archive.parent/'worker-metadata.json').write_text(json.dumps(metadata,indent=2)+'\\\
+        n')\nprint(json.dumps(metadata))\nPY\n"
+    - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      with:
+        name: reserve-worker-e8120d3
+        path: '${{ runner.temp }}/worker-image.tar
+
+          ${{ runner.temp }}/worker-metadata.json'
+        retention-days: 1
+        compression-level: 0
+        if-no-files-found: error
