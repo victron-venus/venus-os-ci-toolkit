@@ -109,6 +109,16 @@ def validate_workflow_policy(policy: dict) -> None:
         )
 
 
+def valid_selection(selected, repositories: dict) -> bool:
+    """Group selections contain unique explicit configured repository identities."""
+    return (
+        isinstance(selected, list)
+        and bool(selected)
+        and all(isinstance(r, str) and r in repositories.values() for r in selected)
+        and len(selected) == len(set(selected))
+    )
+
+
 def configured_groups(raw_groups, repositories: dict) -> dict:
     """Validate explicit private group membership and workflow restrictions."""
     if not isinstance(raw_groups, list) or not raw_groups:
@@ -129,14 +139,7 @@ def configured_groups(raw_groups, repositories: dict) -> dict:
         ):
             raise PreflightError("Configured groups must exclude public repositories.")
         selected = policy["repositories"]
-        if (
-            not isinstance(selected, list)
-            or not selected
-            or not all(
-                isinstance(r, str) and r in repositories.values() for r in selected
-            )
-            or len(selected) != len(set(selected))
-        ):
+        if not valid_selection(selected, repositories):
             raise PreflightError(
                 "Group selection must contain configured consumers only."
             )
