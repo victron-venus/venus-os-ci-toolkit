@@ -219,7 +219,7 @@ def main():
                              handler(guard), tls_context=context)
     # S5332 does not follow get_request's mandatory TLS wrapper in older analyzers.
     # TLSAdmissionTests checks trust, hostname, pod identity and rejects plaintext.
-    server.serve_forever()  # NOSONAR: TLS-only socket; no plaintext request handler.
+    server.serve_forever()  # NOSONAR(S5332) TLS-only socket; rejects plaintext.
 
 
 if __name__ == "__main__":
