@@ -73,14 +73,15 @@ class NetworkAdmissionTests(unittest.TestCase):
 
     def test_readiness_endpoint_bounds_connections_and_releases_failed_handlers(self):
         with guard_module.ReadinessServer(('127.0.0.1', 0), guard_module.handler(
-                guard_module.Guard({}))) as server:
+                guard_module.Guard({})), tls_context=guard_module.ssl.SSLContext(
+                    guard_module.ssl.PROTOCOL_TLS_SERVER)) as server:
             for _ in range(16):
                 self.assertTrue(server.slots.acquire(blocking=False))
             with patch.object(server, 'shutdown_request') as shutdown:
                 server.process_request(object(), ('127.0.0.1', 1000))
                 shutdown.assert_called_once()
             server.slots.release()
-            with patch.object(guard_module.ThreadingHTTPServer, 'process_request_thread',
+            with patch.object(guard_module.ThreadingMixIn, 'process_request_thread',
                               side_effect=RuntimeError('handler failed')):
                 server.slots.acquire()
                 with self.assertRaises(RuntimeError):
@@ -169,7 +170,7 @@ class TLSAdmissionTests(unittest.TestCase):
                 thread = threading.Thread(target=server.serve_forever, daemon=True)
                 thread.start()
                 try:
-                    url = f'https://localhost:{server.server_port}/ready/pod-1'
+                    url = f'https://localhost:{server.server_address[1]}/ready/pod-1'
                     trusted = ssl.create_default_context(cafile=str(cert))
                     with urllib.request.urlopen(url, context=trusted, timeout=4) as result:
                         self.assertTrue(json.load(result)['admitted'])
@@ -178,8 +179,9 @@ class TLSAdmissionTests(unittest.TestCase):
                         with self.assertRaises(urllib.error.URLError) as error:
                             urllib.request.urlopen(target, context=context, timeout=4)
                         self.assertIsInstance(error.exception.reason, ssl.SSLCertVerificationError)
+                    wrong_url = url.replace('pod-1', 'wrong-pod')
                     with self.assertRaises(urllib.error.HTTPError) as denied:
-                        urllib.request.urlopen(url.replace('pod-1', 'wrong-pod'), context=trusted, timeout=4)
+                        urllib.request.urlopen(wrong_url, context=trusted, timeout=4)
                     self.assertEqual(denied.exception.code, 503)
                 finally:
                     server.shutdown()

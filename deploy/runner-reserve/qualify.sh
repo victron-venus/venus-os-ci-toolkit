@@ -3,7 +3,7 @@
 set -euo pipefail
 [[ "$(id -u)" == 1001 ]]
 [[ "$(uname -r)" == *-gvisor ]]
-test ! -e /var/run/secrets/kubernetes.io/serviceaccount/token
+[[ ! -e /var/run/secrets/kubernetes.io/serviceaccount/token ]]
 node --version
 npm --version
 python3 --version
@@ -23,13 +23,14 @@ CMD ["cat", "/proof"]
 DOCKERFILE
 docker buildx build --load --tag reserve-smoke:local "$work"
 [[ "$(docker run --rm reserve-smoke:local)" == nested-build-ok ]]
+password=$(openssl rand -hex 24)
 docker run --detach --name reserve-postgres \
-  --publish 127.0.0.1:55432:5432 --env POSTGRES_PASSWORD=local-probe-only \
+  --publish 127.0.0.1:55432:5432 --env POSTGRES_PASSWORD="$password" \
   postgres@sha256:b0f9560a2de083e2cc7382e75f808c7381a32852a7ec49117deedb300e552b24
 for attempt in {1..60}; do
   pg_isready --host=127.0.0.1 --port=55432 --username=postgres && break
   [[ "$attempt" != 60 ]] || exit 1
   sleep 1
 done
-[[ "$(PGPASSWORD=local-probe-only psql --host=127.0.0.1 --port=55432 --username=postgres --no-psqlrc --tuples-only --no-align --command='SELECT 1')" == 1 ]]
+[[ "$(PGPASSWORD="$password" psql --host=127.0.0.1 --port=55432 --username=postgres --no-psqlrc --tuples-only --no-align --command='SELECT 1')" == 1 ]]
 printf 'PASS: sandbox, HTTPS, toolchains, nested BuildKit and PostgreSQL published port\n'

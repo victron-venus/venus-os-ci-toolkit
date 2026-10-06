@@ -4,7 +4,8 @@ FROM ghcr.io/actions/actions-runner@sha256:e5496277be5d09bc968b3d64911b74e219ac4
 FROM docker.io/library/ubuntu@sha256:534baea6a22c03a63003dbc8dbe78fe34bc0d7e595d9a9dc9834884ff530eb55
 SHELL ["/bin/bash", "-eo", "pipefail", "-c"]
 ENV DEBIAN_FRONTEND=noninteractive
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# This disposable build layer is exported only after package installation succeeds.
+RUN apt-get update && apt-get -o Dpkg::Options::=--force-unsafe-io install -y --no-install-recommends \
     bash \
     build-essential \
     ca-certificates \

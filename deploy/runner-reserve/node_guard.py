@@ -15,7 +15,8 @@ import ssl
 import subprocess
 import threading
 import time
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler
+from socketserver import TCPServer, ThreadingMixIn
 from pathlib import Path
 
 TABLE = "victron_ci_reserve"
@@ -147,11 +148,12 @@ class Guard:
             time.sleep(2)
 
 
-class ReadinessServer(ThreadingHTTPServer):
+class ReadinessServer(ThreadingMixIn, TCPServer):
     """Bound both concurrent connections and time spent reading each request."""
     daemon_threads = True
+    allow_reuse_address = True
 
-    def __init__(self, *args, tls_context=None, **kwargs):
+    def __init__(self, *args, tls_context, **kwargs):
         self.slots = threading.BoundedSemaphore(16)
         self.tls_context = tls_context
         super().__init__(*args, **kwargs)
@@ -160,8 +162,7 @@ class ReadinessServer(ThreadingHTTPServer):
         request, address = super().get_request()
         request.settimeout(2)
         try:
-            if self.tls_context:
-                request = self.tls_context.wrap_socket(request, server_side=True)
+            request = self.tls_context.wrap_socket(request, server_side=True)
             return request, address
         except Exception:
             request.close()
