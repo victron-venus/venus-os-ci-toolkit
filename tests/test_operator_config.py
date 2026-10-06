@@ -4,6 +4,7 @@ import copy
 import importlib.util
 import io
 import json
+import os
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
@@ -130,6 +131,30 @@ class OperatorConfigTests(unittest.TestCase):
                         mode.main(["--config", str(path), "--repo", alias]), 2
                     )
                     api.assert_not_called()
+
+    def test_regular_external_cli_file_and_unsafe_descriptors(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            valid = root / "operator.json"
+            valid.write_text(json.dumps(fixture()))
+            valid.chmod(0o600)
+            mode.load_config(valid)
+            self.assertEqual(mode.ORG, "example-org")
+            fifo = root / "pipe"
+            os.mkfifo(fifo)
+            for path in (fifo, root):
+                with (
+                    self.subTest(path=path),
+                    self.assertRaises((OSError, mode.PreflightError)),
+                ):
+                    mode.load_config(path)
+            valid.chmod(0o622)
+            with self.assertRaises(mode.PreflightError):
+                mode.load_config(valid)
+            valid.chmod(0o600)
+            with patch.object(mode.os, "getuid", return_value=os.getuid() + 1):
+                with self.assertRaises(mode.PreflightError):
+                    mode.load_config(valid)
 
     def test_duplicate_json_keys_cannot_replace_an_access_policy(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -323,6 +323,24 @@ def parse_args(argv=None):
     return parser.parse_args(argv)
 
 
+def inventory_identity(item) -> tuple[str, str]:
+    """Validate one repository identity and its immediate checkout child name."""
+    if not isinstance(item, dict):
+        raise TypeError("Invalid fleet repository entry")
+    name, directory = item.get("repository"), item.get("directory")
+    if not isinstance(name, str) or not re.fullmatch(
+        r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", name
+    ):
+        raise ValueError("Invalid fleet repository identity")
+    if (
+        not isinstance(directory, str)
+        or directory in {".", ".."}
+        or not re.fullmatch(r"[A-Za-z0-9_.-]+", directory)
+    ):
+        raise ValueError("Fleet directories must be immediate child names")
+    return name, directory
+
+
 def load_inventory(path, selected):
     """Reject ambiguous identities, escaped directories and unknown selections."""
     manifest = json.loads(path.read_text())
@@ -335,19 +353,7 @@ def load_inventory(path, selected):
         raise ValueError("Expected fleet inventory schema 1")
     names, directories, active = set(), set(), set()
     for item in manifest["repositories"]:
-        if not isinstance(item, dict):
-            raise TypeError("Invalid fleet repository entry")
-        name, directory = item.get("repository"), item.get("directory")
-        if not isinstance(name, str) or not re.fullmatch(
-            r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", name
-        ):
-            raise ValueError("Invalid fleet repository identity")
-        if (
-            not isinstance(directory, str)
-            or directory in {".", ".."}
-            or not re.fullmatch(r"[A-Za-z0-9_.-]+", directory)
-        ):
-            raise ValueError("Fleet directories must be immediate child names")
+        name, directory = inventory_identity(item)
         if name.casefold() in names or directory.casefold() in directories:
             raise ValueError("Duplicate fleet repository or directory")
         names.add(name.casefold())
