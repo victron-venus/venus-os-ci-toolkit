@@ -12,7 +12,7 @@ jobs:
     steps:
     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       with:
-        ref: e8120d3331224312f15e226803298298109af99e
+        ref: 24e50ad0373b6d25442b8492896ac012af5ced4c
         persist-credentials: false
     - name: Install public guard trust certificate
       env:
@@ -76,24 +76,26 @@ jobs:
         platforms: linux/amd64
     - name: Build native amd64 image archive
       env:
-        IMAGE: localhost/victron-reserve-worker:20261006-reviewed
-        SOURCE_COMMIT: e8120d3331224312f15e226803298298109af99e
+        IMAGE: localhost/victron-reserve-worker:20261006-bootstrap-v2
+        SOURCE_COMMIT: 24e50ad0373b6d25442b8492896ac012af5ced4c
       run: 'docker buildx build --platform linux/amd64 --label "org.opencontainers.image.revision=$SOURCE_COMMIT"
         --label org.opencontainers.image.source=https://github.com/victron-venus/venus-os-ci-toolkit
-        --tag "$IMAGE" --output "type=docker,dest=$RUNNER_TEMP/worker-image.tar,compression=uncompressed"
+        --tag "$IMAGE" --output "type=docker,dest=$RUNNER_TEMP/worker-image.tar,compression=gzip,compression-level=1,force-compression=true"
         deploy/runner-reserve
 
         docker load --input "$RUNNER_TEMP/worker-image.tar"'
     - name: Verify reviewed payload and non-root default
       env:
-        IMAGE: localhost/victron-reserve-worker:20261006-reviewed
-        SOURCE_COMMIT: e8120d3331224312f15e226803298298109af99e
-        EXPECTED: '{"start-runner.sh": "61aaffaa1be8b191f9eba7a46cb946b4868511f8c0c4f00a80960de58b69657e",
+        IMAGE: localhost/victron-reserve-worker:20261006-bootstrap-v2
+        SOURCE_COMMIT: 24e50ad0373b6d25442b8492896ac012af5ced4c
+        EXPECTED: '{"start-runner.sh": "d6b77ecbee0b0a7caebafd7c45a0d19ce0633c51fe2e63bfa3fba8aceba5ebbf",
           "qualify.sh": "630934e8f4cdd8353b7f339e333a2da492d52c35b36099dbc27f0b46efe6192e",
           "guard-ca.crt": "5605083d4b0c1f5af9cb7050e5919d10fa4bef4d829f22d47684bcae6e7c9d56"}'
       run: "python3 - <<'PY'\nimport os,pathlib,subprocess,json,hashlib\nname=os.environ['IMAGE']\n\
         assert subprocess.check_output(['docker','image','inspect',name,'--format','{{.Config.User}}'],text=True).strip()=='1001:1001'\n\
-        expected=json.loads(os.environ['EXPECTED'])\nchecks=subprocess.check_output(['docker','run','--rm','--network','none','--read-only','--cap-drop','ALL','--security-opt','no-new-privileges=true','--entrypoint','sha256sum',name,*['/opt/victron-ci-reserve/'+n\
+        ownership=subprocess.check_output(['docker','run','--rm','--network','none','--read-only','--cap-drop','ALL','--security-opt','no-new-privileges=true','--entrypoint','stat',name,'-c','%u:%g','/home/runner','/home/runner/bin/Runner.Listener'],text=True)\n\
+        assert ownership.splitlines()==['1001:1001','1001:1001']\nexpected=json.loads(os.environ['EXPECTED'])\n\
+        checks=subprocess.check_output(['docker','run','--rm','--network','none','--read-only','--cap-drop','ALL','--security-opt','no-new-privileges=true','--entrypoint','sha256sum',name,*['/opt/victron-ci-reserve/'+n\
         \ for n in expected]],text=True)\nfor line in checks.splitlines():\n digest,path=line.split();assert\
         \ expected[pathlib.Path(path).name]==digest, (path, digest, expected[pathlib.Path(path).name])\n\
         archive=pathlib.Path(os.environ['RUNNER_TEMP'])/'worker-image.tar'\nmetadata={'image_tag':name,'source_commit':os.environ['SOURCE_COMMIT'],'archive_sha256':hashlib.file_digest(archive.open('rb'),'sha256').hexdigest(),'files':expected,'user':'1001:1001'}\n\
@@ -101,7 +103,7 @@ jobs:
         n')\nprint(json.dumps(metadata))\nPY\n"
     - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
       with:
-        name: reserve-worker-e8120d3
+        name: reserve-worker-24e50ad
         path: '${{ runner.temp }}/worker-image.tar
 
           ${{ runner.temp }}/worker-metadata.json'
