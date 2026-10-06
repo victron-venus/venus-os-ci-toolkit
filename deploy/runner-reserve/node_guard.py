@@ -215,8 +215,11 @@ def main():
     context.load_cert_chain(config["tls_certificate"], config["tls_private_key"])
     guard = Guard(config)
     threading.Thread(target=guard.loop, daemon=True).start()
-    ReadinessServer((str(ipaddress.IPv4Address(config["node_ip"])), PORT),
-                    handler(guard), tls_context=context).serve_forever()
+    server = ReadinessServer((str(ipaddress.IPv4Address(config["node_ip"])), PORT),
+                             handler(guard), tls_context=context)
+    # S5332 does not follow get_request's mandatory TLS wrapper in older analyzers.
+    # TLSAdmissionTests checks trust, hostname, pod identity and rejects plaintext.
+    server.serve_forever()  # NOSONAR: TLS-only socket; no plaintext request handler.
 
 
 if __name__ == "__main__":

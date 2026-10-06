@@ -172,7 +172,11 @@ reserved worker namespaces/labels are affected. Private, metadata, node and
 cluster destinations are blocked; public TCP 80/443 and cluster DNS are allowed.
 A bounded read-only HTTPS endpoint admits only the source pod's exact UID.
 The worker verifies its certificate against the public CA bundled in its image;
-no insecure TLS bypass is permitted.
+no insecure TLS bypass is permitted. A focused regression test rejects plaintext,
+untrusted certificates and hostname mismatches. The single S5332 suppression at
+`serve_forever` accounts for older Sonar analyzers that classify the inherited
+server loop as plaintext without following its mandatory TLS wrapper (see the
+[upstream check and its documented limitation](https://github.com/SonarSource/sonar-python/blob/master/python-checks/src/main/java/org/sonar/python/checks/hotspots/ClearTextProtocolsCheck.java)).
 If discovery or the firewall transaction fails, new workers cannot register.
 NetworkPolicy provides another boundary; it does not replace the node fence.
 

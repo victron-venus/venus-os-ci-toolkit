@@ -149,6 +149,7 @@ class StandbyPoolTests(unittest.TestCase):
 class TLSAdmissionTests(unittest.TestCase):
     def test_real_https_requires_trusted_ca_matching_hostname_and_pod_identity(self):
         import ssl
+        import socket
         import subprocess
         import tempfile
         import threading
@@ -183,6 +184,14 @@ class TLSAdmissionTests(unittest.TestCase):
                     with self.assertRaises(urllib.error.HTTPError) as denied:
                         urllib.request.urlopen(wrong_url, context=trusted, timeout=4)
                     self.assertEqual(denied.exception.code, 503)
+                    with socket.create_connection(server.server_address, timeout=4) as plain:
+                        plain.sendall(b'GET /ready/pod-1 HTTP/1.1\r\nHost: localhost\r\n\r\n')
+                        try:
+                            reply = plain.recv(1024)
+                        except ConnectionResetError:
+                            reply = b''
+                        self.assertNotIn(b'HTTP/', reply)
+                        self.assertNotIn(b'admitted', reply)
                 finally:
                     server.shutdown()
                     thread.join(timeout=4)
