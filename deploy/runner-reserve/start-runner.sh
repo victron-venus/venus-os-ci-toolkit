@@ -18,13 +18,14 @@ for attempt in {1..60}; do
   [[ "$attempt" != 60 ]] || exit 1
   sleep 2
 done
-cp -R -P --no-preserve=ownership,timestamps /opt/actions-runner/. /home/runner/
 mkdir -p /home/runner/_work "$RUNNER_TOOL_CACHE"
-chown -R runner:runner /home/runner "$RUNNER_TOOL_CACHE"
+chown runner:runner /home/runner/_work "$RUNNER_TOOL_CACHE"
 # Required by upstream gVisor's Docker-in-sandbox reference configuration.
 interface=$(ip -o -4 route show default | awk '{print $5; exit}')
 address=$(ip -o -4 addr show dev "$interface" | awk '{split($4,a,"/"); print a[1]; exit}')
-mtu=$(cat "/sys/class/net/$interface/mtu")
+# gVisor exposes link MTU through netlink, without Linux's /sys/class/net files.
+mtu=$(ip -o link show dev "$interface" | awk '{for (i=1;i<NF;i++) if ($i=="mtu") {print $(i+1); exit}}')
+[[ "$mtu" =~ ^[0-9]+$ ]]
 printf 1 > /proc/sys/net/ipv4/ip_forward
 for protocol in tcp udp; do
   iptables-legacy -t nat -A POSTROUTING -o "$interface" -p "$protocol" -j SNAT --to-source "$address"

@@ -211,6 +211,9 @@ no host/persistent/credential volumes, no API token and no privileged host
 container. The image defaults to UID 1001; only the enforced gVisor pod specification
 requests root for bootstrap. Root and Docker capabilities are emulated **inside Sentry**. Each job
 gets a fresh container filesystem, including Docker storage and the tool cache.
+The runner payload is installed with its final ownership in the image, avoiding
+a full payload copy at every cold start. Link MTU is read through netlink because
+gVisor does not expose Linux sysfs network-interface files.
 The bootstrap refuses an ordinary Linux runtime and waits for node admission
 before starting Docker or the JIT-configured runner. It never mounts a host socket.
 
