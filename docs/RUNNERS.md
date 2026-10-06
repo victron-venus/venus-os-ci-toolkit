@@ -150,7 +150,9 @@ Keep normal routing on `github` until all applicable checks are evidenced.
 The files under `deploy/runner-reserve/` prepare the public reserve independently
 of normal GitHub routing. `render_pool.py` reads the same public inventory and
 renders three organization scale sets and three per personal repository (51 for
-the current inventory). Each set has `minRunners: 0`, `maxRunners: 1`: standby can
+the current inventory). Kubernetes scale-set names include the repository scope;
+ARC 0.15 custom `scaleSetLabels` preserve the shared Actions-variable labels
+without collisions between personal repositories in the same namespace. Each set has `minRunners: 0`, `maxRunners: 1`: standby can
 accept selected jobs without another Helm change. Namespace quotas bound the
 combined worker population to two jobs per profile, including gVisor overhead.
 This is reduced emergency capacity, not a replacement for GitHub's fleet size.

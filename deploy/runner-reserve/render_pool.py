@@ -14,6 +14,11 @@ NETWORK = json.loads((ROOT / 'network-policy.json').read_text())
 DENIED = NETWORK['denied_networks'] + NETWORK['extra_denied']
 
 
+def release_name(scope, profile):
+    """Kubernetes names must be unique even when repository routing labels match."""
+    return 'reserve-' + profile + '-' + hashlib.sha256(scope.encode()).hexdigest()[:12]
+
+
 def pool_values(scope, profile, image, node, node_ip, inventory):
     """Separate profiles and owners; all workers start from a fresh filesystem."""
     organizations = inventory['organizations']
@@ -39,7 +44,8 @@ def pool_values(scope, profile, image, node, node_ip, inventory):
                                      'capabilities': {'drop': ['ALL'], 'add': ['ALL']}}}
     result = {'githubConfigUrl': 'https://github.com/' + scope,
               'githubConfigSecret': 'reserve-org-app' if scope in organizations else 'reserve-personal-app',
-              'runnerScaleSetName': profile_label, 'minRunners': 0, 'maxRunners': 1,
+              'runnerScaleSetName': release_name(scope, profile),
+              'scaleSetLabels': [profile_label], 'minRunners': 0, 'maxRunners': 1,
               'controllerServiceAccount': {'namespace': 'runner-reserve-system',
                                            'name': 'victron-reserve-controller'},
               'listenerTemplate': {'spec': {'nodeSelector': {'kubernetes.io/hostname': node},
@@ -125,7 +131,7 @@ def main():
     index = []
     for scope in scopes:
         for profile in inventory['profiles']:
-            release = 'reserve-' + profile + '-' + hashlib.sha256(scope.encode()).hexdigest()[:12]
+            release = release_name(scope, profile)
             values = pool_values(scope, profile, args.worker_image, args.node, args.node_ip, inventory)
             rendered[release + '.json'] = values
             index.append({'scope': scope, 'profile': profile, 'release': release,

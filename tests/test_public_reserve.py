@@ -130,6 +130,19 @@ class StandbyPoolTests(unittest.TestCase):
             self.assertEqual(spec['containers'][0]['image'], self.image)
             self.assertEqual(spec['containers'][0]['command'], ['/opt/victron-ci-reserve/start-runner.sh'])
 
+    def test_shared_routing_labels_do_not_collide_in_kubernetes(self):
+        scopes = ['victron-venus'] + [r['name'] for r in self.inventory['repositories']
+                                      if r['name'].startswith('4alvit/')]
+        names = set()
+        for scope in scopes:
+            for profile, label in self.inventory['profiles'].items():
+                values = self.values(scope, profile)
+                self.assertNotIn(values['runnerScaleSetName'], names)
+                self.assertLessEqual(len(values['runnerScaleSetName']), 45)
+                names.add(values['runnerScaleSetName'])
+                self.assertEqual(values['scaleSetLabels'], [label])
+        self.assertEqual(len(names), 51)
+
     def test_foundations_fail_closed_and_preserve_three_profile_boundaries(self):
         docs = pool_module.foundations(self.inventory['profiles'], self.image, '10.66.10.2')['items']
         policies = [d for d in docs if d['kind'] == 'NetworkPolicy']
