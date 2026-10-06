@@ -45,7 +45,7 @@ RUN apt-get update && apt-get -o Dpkg::Options::=--force-unsafe-io install -y --
     useradd --uid 1001 --create-home --shell /bin/bash runner && \
     printf 'runner ALL=(ALL) NOPASSWD:ALL\n' > /etc/sudoers.d/runner && \
     chmod 0440 /etc/sudoers.d/runner && \
-    mkdir -p /opt/hostedtoolcache /opt/actions-runner && \
+    mkdir -p /opt/hostedtoolcache && \
     chown runner:runner /opt/hostedtoolcache
 COPY --from=docker /usr/local/bin/ /usr/local/bin/
 COPY --from=docker /usr/local/libexec/docker/cli-plugins/ /usr/local/libexec/docker/cli-plugins/
@@ -53,10 +53,10 @@ COPY --from=node /usr/local/bin/node /usr/local/bin/node
 COPY --from=node /usr/local/lib/node_modules/ /usr/local/lib/node_modules/
 RUN ln -s /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm && \
     ln -s /usr/local/lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx
-COPY --from=runner /home/runner/ /opt/actions-runner/
+COPY --from=runner --chown=1001:1001 /home/runner/ /home/runner/
 COPY start-runner.sh qualify.sh guard-ca.crt /opt/victron-ci-reserve/
 RUN chmod 0755 /opt/victron-ci-reserve/*.sh && \
-    node --version && docker --version && /opt/actions-runner/bin/Runner.Listener --version
+    node --version && docker --version && /home/runner/bin/Runner.Listener --version
 ENV HOME=/home/runner RUNNER_TOOL_CACHE=/opt/hostedtoolcache AGENT_TOOLSDIRECTORY=/opt/hostedtoolcache ImageOS=ubuntu24
 WORKDIR /home/runner
 USER 1001:1001

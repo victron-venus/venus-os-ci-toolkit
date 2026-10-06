@@ -40,8 +40,9 @@ def pool_values(scope, profile, image, node, node_ip, inventory):
                  'resources': {'requests': {'cpu': '500m', 'memory': '2Gi', 'ephemeral-storage': '5Gi'},
                                'limits': {'cpu': '2', 'memory': '4Gi', 'ephemeral-storage': '20Gi'}},
                  # Capabilities are emulated inside Sentry, never a privileged host container.
+                 # Combining add/drop ALL makes containerd emit an empty capability set.
                  'securityContext': {'runAsUser': 0, 'privileged': False,
-                                     'capabilities': {'drop': ['ALL'], 'add': ['ALL']}}}
+                                     'capabilities': {'add': ['ALL']}}}
     result = {'githubConfigUrl': 'https://github.com/' + scope,
               'githubConfigSecret': 'reserve-org-app' if scope in organizations else 'reserve-personal-app',
               'runnerScaleSetName': release_name(scope, profile),

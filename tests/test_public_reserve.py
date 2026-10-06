@@ -129,6 +129,12 @@ class StandbyPoolTests(unittest.TestCase):
             self.assertNotIn('initContainers', spec)
             self.assertEqual(spec['containers'][0]['image'], self.image)
             self.assertEqual(spec['containers'][0]['command'], ['/opt/victron-ci-reserve/start-runner.sh'])
+            context = spec['containers'][0]['securityContext']
+            self.assertFalse(context['privileged'])
+            capabilities = context['capabilities']
+            self.assertFalse('ALL' in capabilities.get('add', []) and
+                             'ALL' in capabilities.get('drop', []),
+                             'containerd clears every bootstrap capability for add/drop ALL')
 
     def test_shared_routing_labels_do_not_collide_in_kubernetes(self):
         scopes = ['victron-venus'] + [r['name'] for r in self.inventory['repositories']
