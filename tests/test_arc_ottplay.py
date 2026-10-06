@@ -26,21 +26,21 @@ def job(pool):
 class ArcOttplayTests(unittest.TestCase):
     def test_exact_scopes_and_release_admission(self):
         groups = json.loads((CONFIG / "github-groups.json").read_text())
-        self.assertEqual(groups["organization"], "open-ott-play")
+        self.assertEqual(groups["organization"], "example-org")
         ordinary, release = groups["groups"]
         self.assertEqual(ordinary["name"], "ottplay-private-ci")
         self.assertEqual(
             set(ordinary["repositories"]),
-            {"open-ott-play/ottplay-core", "open-ott-play/ottplay-android"},
+            {"example-org/console", "example-org/mobile"},
         )
         self.assertEqual(release["name"], "ottplay-private-release")
-        self.assertEqual(release["repositories"], ["open-ott-play/ottplay-android"])
+        self.assertEqual(release["repositories"], ["example-org/mobile"])
         self.assertTrue(release["restricted_to_workflows"])
         self.assertEqual(
             set(release["selected_workflows"]),
             {
-                "open-ott-play/ottplay-android/.github/workflows/release.yml@refs/heads/main",
-                "open-ott-play/ottplay-android/.github/workflows/runner-smoke.yml@refs/heads/main",
+                "example-org/mobile/.github/workflows/release.yml@refs/heads/main",
+                "example-org/mobile/.github/workflows/runner-smoke.yml@refs/heads/main",
             },
         )
         for group in groups["groups"]:

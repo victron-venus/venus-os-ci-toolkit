@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+OPERATOR_INVENTORY = Path.home() / ".config/venus-os-ci-toolkit/fleet.json"
 REPOSITORY = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\Z")
 ORIGIN = re.compile(
     r"(?:https://github\.com/|git@github\.com:|ssh://git@github\.com/)"
@@ -285,7 +286,14 @@ def main():
         action="append",
         help="OWNER/REPO to check (repeatable; default: all active entries)",
     )
-    parser.add_argument("--inventory", type=Path, default=ROOT / "fleet.json")
+    parser.add_argument(
+        "--inventory",
+        type=Path,
+        default=OPERATOR_INVENTORY
+        if OPERATOR_INVENTORY.exists() or OPERATOR_INVENTORY.is_symlink()
+        else ROOT / "fleet.json",
+        help="Reviewed fleet JSON; defaults to user config when provisioned, otherwise public fleet",
+    )
     parser.add_argument(
         "--timeout",
         type=float,

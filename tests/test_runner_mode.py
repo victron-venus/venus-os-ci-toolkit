@@ -18,9 +18,21 @@ mode = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(mode)
 NOW = datetime(2026, 9, 24, 18, tzinfo=timezone.utc)
 REVIEWED_SHA = "a" * 40
+CONFIG_PATH = (
+    Path(__file__).resolve().parents[1] / "deploy/arc-ottplay/runner-mode.example.json"
+)
+CI_GROUP = "ottplay-private-ci"
+RELEASE_GROUP = "ottplay-private-release"
+
+
+def example_config():
+    return json.loads(CONFIG_PATH.read_text())
 
 
 class ApiBoundaryTests(unittest.TestCase):
+    def setUp(self):
+        mode.configure(example_config())
+
     def assert_rejected(self, path, method="GET", payload=None):
         with patch.object(mode.subprocess, "run") as run:
             with self.assertRaises(mode.PreflightError):
@@ -29,8 +41,8 @@ class ApiBoundaryTests(unittest.TestCase):
 
     def test_only_required_reads_reach_gh_with_options_terminated(self):
         paths = [
-            f"repos/open-ott-play/{repo}{suffix}"
-            for repo in ("ottplay-core", "ottplay-android")
+            f"repos/example-org/{repo}{suffix}"
+            for repo in ("console", "mobile")
             for suffix in (
                 "",
                 "/branches/main",
@@ -41,8 +53,8 @@ class ApiBoundaryTests(unittest.TestCase):
             )
         ]
         paths += [
-            "orgs/open-ott-play/actions/runner-groups?per_page=100&page=1",
-            "orgs/open-ott-play/actions/runner-groups/3/repositories?per_page=100&page=99",
+            "orgs/example-org/actions/runner-groups?per_page=100&page=1",
+            "orgs/example-org/actions/runner-groups/3/repositories?per_page=100&page=99",
         ]
         for path in paths:
             with self.subTest(path=path), patch.object(mode.subprocess, "run") as run:
@@ -65,10 +77,10 @@ class ApiBoundaryTests(unittest.TestCase):
                 self.assertIsNone(run.call_args.kwargs["input"])
 
     def test_only_exact_variable_writes_reach_gh(self):
-        for repo in ("ottplay-core", "ottplay-android"):
+        for repo in ("console", "mobile"):
             for method, suffix in (("POST", ""), ("PATCH", "/CI_RUNNER_MODE")):
                 for value in ("github", "k3s"):
-                    path = f"repos/open-ott-play/{repo}/actions/variables{suffix}"
+                    path = f"repos/example-org/{repo}/actions/variables{suffix}"
                     payload = {"name": mode.VARIABLE, "value": value}
                     with (
                         self.subTest(path=path, method=method, value=value),
@@ -97,7 +109,7 @@ class ApiBoundaryTests(unittest.TestCase):
                         )
 
     def test_flags_foreign_endpoints_and_noncanonical_paths_never_spawn(self):
-        root = "repos/open-ott-play/ottplay-core"
+        root = "repos/example-org/console"
         for path in (
             "--hostname=attacker.invalid",
             "--input=/private/key",
@@ -105,8 +117,8 @@ class ApiBoundaryTests(unittest.TestCase):
             "https://api.github.com/" + root,
             "//api.github.com/" + root,
             "/" + root,
-            "repos/another-org/ottplay-core",
-            "repos/open-ott-play/ottplay-foss",
+            "repos/another-org/console",
+            "repos/example-org/ottplay-foss",
             "orgs/another-org/actions/runner-groups",
             root + "/actions/secrets",
             root + "/branches/feature",
@@ -131,7 +143,7 @@ class ApiBoundaryTests(unittest.TestCase):
                 self.assert_rejected(path)
 
     def test_methods_payloads_and_write_targets_are_allowlisted(self):
-        base = "repos/open-ott-play/ottplay-core/actions/variables"
+        base = "repos/example-org/console/actions/variables"
         valid = {"name": mode.VARIABLE, "value": "k3s"}
         for method in (
             "DELETE",
@@ -168,8 +180,8 @@ class ApiBoundaryTests(unittest.TestCase):
             (base + "/CI_RUNNER_MODE", "POST"),
             (base + "/OTHER", "PATCH"),
             (base + "?per_page=100&page=1", "POST"),
-            ("orgs/open-ott-play/actions/runner-groups", "POST"),
-            ("repos/open-ott-play/ottplay-core/actions/runs/1", "POST"),
+            ("orgs/example-org/actions/runner-groups", "POST"),
+            ("repos/example-org/console/actions/runs/1", "POST"),
         ):
             with self.subTest(path=path, method=method):
                 self.assert_rejected(path, method, valid)
@@ -177,7 +189,11 @@ class ApiBoundaryTests(unittest.TestCase):
 
 class RunnerModeTests(unittest.TestCase):
     def setUp(self):
-        self.repo = "open-ott-play/ottplay-android"
+        mode.configure(example_config())
+        config_patch = patch.object(mode, "DEFAULT_CONFIG", CONFIG_PATH)
+        config_patch.start()
+        self.addCleanup(config_patch.stop)
+        self.repo = "example-org/mobile"
         self.metadata = {
             "private": True,
             "full_name": self.repo,
@@ -200,13 +216,13 @@ class RunnerModeTests(unittest.TestCase):
         self.groups = [
             {
                 "id": 11,
-                "name": mode.CI_GROUP,
+                "name": CI_GROUP,
                 "visibility": "selected",
                 "allows_public_repositories": False,
             },
             {
                 "id": 12,
-                "name": mode.RELEASE_GROUP,
+                "name": RELEASE_GROUP,
                 "visibility": "selected",
                 "allows_public_repositories": False,
                 "restricted_to_workflows": True,
@@ -222,10 +238,10 @@ class RunnerModeTests(unittest.TestCase):
                 "status": "completed",
                 "conclusion": "success",
                 "labels": [label],
-                "runner_group_id": 12 if group == mode.RELEASE_GROUP else 11,
+                "runner_group_id": 12 if group == RELEASE_GROUP else 11,
                 "runner_name": "ephemeral-deleted-after-job",
             }
-            for name, (label, group) in mode.POOLS["ottplay-android"].items()
+            for name, (label, group) in mode.POOLS["mobile"].items()
         ]
 
     def api(self, path, method="GET", payload=None):
@@ -269,17 +285,15 @@ class RunnerModeTests(unittest.TestCase):
                 sha_argument = (
                     [] if expected_sha is None else ["--expected-sha", expected_sha]
                 )
-                return mode.main(
-                    ["--repo", "ottplay-android", *arguments, *sha_argument]
-                )
+                return mode.main(["--repo", "mobile", *arguments, *sha_argument])
 
     def test_scale_zero_needs_no_online_runner_inventory(self):
         self.verify()  # The fake API deliberately implements no /actions/runners endpoint.
 
     def test_read_only_status_uses_only_literal_repository_identities(self):
         for selection, repository in (
-            ("ottplay-core", "open-ott-play/ottplay-core"),
-            ("ottplay-android", "open-ott-play/ottplay-android"),
+            ("console", "example-org/console"),
+            ("mobile", "example-org/mobile"),
         ):
             metadata = {**self.metadata, "full_name": repository}
             with (
@@ -297,11 +311,11 @@ class RunnerModeTests(unittest.TestCase):
     def test_unknown_repository_cannot_reach_api_even_without_argparse(self):
         for selection in (
             "ottplay-foss",
-            "ottplay-core/../../other",
+            "console/../../other",
             "--hostname=other",
-            "open-ott-play/ottplay-core",
-            "ottplay-core\n",
-            "OTTPLAY-CORE",
+            "example-org/console",
+            "console\n",
+            "CONSOLE",
         ):
             with self.subTest(selection=selection), patch.object(mode, "api") as api:
                 with self.assertRaises(KeyError):
@@ -464,7 +478,7 @@ class RunnerModeTests(unittest.TestCase):
             redirect_stderr(io.StringIO()),
         ):
             self.assertEqual(
-                mode.main(["--repo", "ottplay-core", "--mode", "github", "--apply"]),
+                mode.main(["--repo", "console", "--mode", "github", "--apply"]),
                 2,
             )
         self.assertEqual(self.writes, [])

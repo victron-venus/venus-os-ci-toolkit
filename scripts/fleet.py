@@ -17,6 +17,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 POLICY_FILE = ".release-policy.json"
+OPERATOR_INVENTORY = Path.home() / ".config/venus-os-ci-toolkit/fleet.json"
 
 
 def run(args, directory, *, capture=False, check=True):
@@ -293,7 +294,7 @@ def process_repository(directory, item, args, row):
     return {}
 
 
-def parse_args():
+def parse_args(argv=None):
     """Parse the requested fleet operation, subset and explicit submission flag."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("command", choices=["status", "render", "check", "submit"])
@@ -311,13 +312,61 @@ def parse_args():
         action="store_true",
         help="Commit, push a feature branch and create/update a draft PR",
     )
-    return parser.parse_args()
+    parser.add_argument(
+        "--inventory",
+        type=Path,
+        default=OPERATOR_INVENTORY
+        if OPERATOR_INVENTORY.exists() or OPERATOR_INVENTORY.is_symlink()
+        else ROOT / "fleet.json",
+        help="Reviewed fleet JSON; defaults to user config when provisioned, otherwise public fleet",
+    )
+    return parser.parse_args(argv)
+
+
+def load_inventory(path, selected):
+    """Reject ambiguous identities, escaped directories and unknown selections."""
+    manifest = json.loads(path.read_text())
+    if (
+        not isinstance(manifest, dict)
+        or type(manifest.get("schema")) is not int
+        or manifest.get("schema") != 1
+        or not isinstance(manifest.get("repositories"), list)
+    ):
+        raise ValueError("Expected fleet inventory schema 1")
+    names, directories, active = set(), set(), set()
+    for item in manifest["repositories"]:
+        if not isinstance(item, dict):
+            raise TypeError("Invalid fleet repository entry")
+        name, directory = item.get("repository"), item.get("directory")
+        if not isinstance(name, str) or not re.fullmatch(
+            r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", name
+        ):
+            raise ValueError("Invalid fleet repository identity")
+        if (
+            not isinstance(directory, str)
+            or directory in {".", ".."}
+            or not re.fullmatch(r"[A-Za-z0-9_.-]+", directory)
+        ):
+            raise ValueError("Fleet directories must be immediate child names")
+        if name.casefold() in names or directory.casefold() in directories:
+            raise ValueError("Duplicate fleet repository or directory")
+        names.add(name.casefold())
+        directories.add(directory.casefold())
+        if not item.get("excluded_reason"):
+            active.add(name)
+    if selected and set(selected) - active:
+        raise ValueError(
+            "Unknown repository selection or excluded repository in the reviewed inventory"
+        )
+    if not active:
+        raise ValueError("No active repositories in the reviewed inventory")
+    return manifest
 
 
 def main():
     """Report each selected repository independently, preserving failures in JSONL."""
     args = parse_args()
-    manifest = json.loads((ROOT / "fleet.json").read_text())
+    manifest = load_inventory(args.inventory, args.repo)
     failed = False
     for item in manifest["repositories"]:
         if item.get("excluded_reason") or (

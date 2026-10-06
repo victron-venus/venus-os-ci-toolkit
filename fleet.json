@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "inventory_date": "2026-09-12",
+  "inventory_date": "2026-10-06",
   "repositories": [
     {
       "repository": "victron-venus/inverter-gateway",
@@ -126,7 +126,8 @@
       "mode": "release",
       "base_sha": "d0d0ca150ca9746d0b254df6f2d2d213383eee38",
       "branch": "ci/release-standard",
-      "visibility": "public"
+      "visibility": "public",
+      "excluded_reason": "Archived repository; retained for reference only."
     },
     {
       "repository": "victron-venus/dbus-ev",
@@ -222,7 +223,7 @@
       "repository": "victron-venus/venus-os-governance",
       "directory": "venus-os-governance",
       "default_branch": "main",
-      "excluded_reason": "Archived repository",
+      "excluded_reason": "Archived repository; retained for reference only.",
       "visibility": "public"
     },
     {
@@ -278,13 +279,6 @@
       "visibility": "public"
     },
     {
-      "repository": "open-ott-play/foss-cloudflare-infrastructure",
-      "directory": "foss-cloudflare-infrastructure",
-      "default_branch": "main",
-      "excluded_reason": "Archived repository",
-      "visibility": "public"
-    },
-    {
       "repository": "4alvit/amazon-echo-home-voice",
       "directory": "amazon-echo-home-voice",
       "default_branch": "main",
@@ -321,26 +315,6 @@
       "visibility": "public"
     },
     {
-      "repository": "4alvit/terraform-portainer-synology",
-      "directory": "terraform-portainer-synology",
-      "default_branch": "main",
-      "mode": "validation-only",
-      "base_sha": "a480d3fa48eb5a089965af61efdc6b1a81db6201",
-      "branch": "ci/release-standard",
-      "visibility": "private",
-      "ci_execution": "local"
-    },
-    {
-      "repository": "4alvit/k3s-self-healing",
-      "directory": "k3s-self-healing",
-      "default_branch": "main",
-      "mode": "validation-only",
-      "base_sha": "c622adf6251feae43f07dcd99c4ce642bf66d15a",
-      "branch": "ci/release-standard",
-      "visibility": "private",
-      "ci_execution": "local"
-    },
-    {
       "repository": "4alvit/fastapi-mqtt-gateway",
       "directory": "fastapi-mqtt-gateway",
       "default_branch": "main",
@@ -348,16 +322,6 @@
       "base_sha": "1ddacbce0f14c2df1a9f9d2926ff506d60bdd25f",
       "branch": "ci/release-standard",
       "visibility": "public"
-    },
-    {
-      "repository": "4alvit/terraform-synology-alvit",
-      "directory": "terraform-synology-alvit",
-      "default_branch": "main",
-      "mode": "validation-only",
-      "base_sha": "a6034085427be4fef285f3530989318d8d23e302",
-      "branch": "ci/release-standard",
-      "visibility": "private",
-      "ci_execution": "local"
     },
     {
       "repository": "4alvit/4alvit",
@@ -369,46 +333,6 @@
       "visibility": "public"
     },
     {
-      "repository": "4alvit/terraform-oracle-oci",
-      "directory": "terraform-oracle-oci",
-      "default_branch": "main",
-      "mode": "validation-only",
-      "base_sha": "7a05a9cb40f7052bc75166e56e0f6686f07f75c7",
-      "branch": "ci/release-standard",
-      "visibility": "private",
-      "ci_execution": "local"
-    },
-    {
-      "repository": "4alvit/terraform-cloudflare-alvit",
-      "directory": "terraform-cloudflare-alvit",
-      "default_branch": "main",
-      "mode": "validation-only",
-      "base_sha": "08c368bff245e44472fbadf3722fad0e8f7b5afa",
-      "branch": "ci/release-standard",
-      "visibility": "private",
-      "ci_execution": "local"
-    },
-    {
-      "repository": "4alvit/home-assistant-k3s",
-      "directory": "home-assistant-k3s",
-      "default_branch": "main",
-      "mode": "validation-only",
-      "base_sha": "47e879fc7d23f3698bccf0613c557e7f6c6953b8",
-      "branch": "ci/release-standard",
-      "visibility": "private",
-      "ci_execution": "local"
-    },
-    {
-      "repository": "4alvit/demo",
-      "directory": "demo",
-      "default_branch": "main",
-      "mode": "validation-only",
-      "base_sha": "cd0b6fbaf2aa6962e81398705d87cc81a6b17902",
-      "branch": "ci/release-standard",
-      "visibility": "private",
-      "ci_execution": "local"
-    },
-    {
       "repository": "4alvit/iot-project-builder-profile",
       "directory": "iot-project-builder-profile",
       "default_branch": "main",
@@ -416,16 +340,6 @@
       "base_sha": "b4625809a89866a4f35501e152421ca2e2f40f46",
       "branch": "ci/release-standard",
       "visibility": "public"
-    },
-    {
-      "repository": "4alvit/github-deploy-webhook",
-      "directory": "github-deploy-webhook",
-      "default_branch": "main",
-      "mode": "validation-only",
-      "base_sha": "e0b37ff5c3c40f71d399073b503da8d67eed052a",
-      "branch": "ci/release-standard",
-      "visibility": "private",
-      "ci_execution": "local"
     },
     {
       "repository": "4alvit/terraform-github-victron",
@@ -489,30 +403,6 @@
       "base_sha": "24cc7cdafaa14e6530b685fdf7b581432a7e9baf",
       "branch": "ci/release-standard",
       "visibility": "public"
-    },
-    {
-      "repository": "4alvit/home-assistant",
-      "directory": "home-assistant",
-      "default_branch": "main",
-      "mode": "validation-only",
-      "base_sha": "3641fb09507886dbd5a159659b42c5c2275ef9f5",
-      "branch": "ci/release-standard",
-      "visibility": "private",
-      "ci_execution": "local"
-    },
-    {
-      "repository": "4alvit/tmp-runner-test2",
-      "directory": "tmp-runner-test2",
-      "default_branch": "",
-      "excluded_reason": "Empty runner test repository",
-      "visibility": "private"
-    },
-    {
-      "repository": "4alvit/tmp-runner-test",
-      "directory": "tmp-runner-test",
-      "default_branch": "",
-      "excluded_reason": "Empty runner test repository",
-      "visibility": "private"
     }
   ]
 }
