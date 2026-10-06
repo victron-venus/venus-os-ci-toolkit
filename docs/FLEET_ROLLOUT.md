@@ -1,13 +1,13 @@
 # Fleet rollout: gated CI and release channels
 
-Inventory: 2026-09-12, GitHub owners `victron-venus`, `open-ott-play`, `4alvit`.
-`fleet.json` records every discovered repository, its default branch, isolated
-worktree and exclusions. There are 52 active owned repositories: 25 application
-release policies and 27 validation-only policies. Five repositories are excluded
-because they are archived, empty runner experiments, or an upstream fork.
-Read-only visibility verification found 43 public and nine private repositories.
-All current application release policies are public. The private repositories use
-validation/deployment policies and require no paid GitHub security/governance features.
+This guide describes the shared rollout procedure; it is not a live deployment
+inventory or proof that a repository has completed the migration. Use each
+repository's current policy, default-branch workflows and check results.
+
+Public inventories and documentation may identify only verified public
+repositories. Keep non-public consumer inventories, rollout evidence, runner
+registrations and deployment ownership in access-controlled operator storage.
+Do not publish authenticated API results before filtering repository visibility.
 
 ## Documentation layout
 
@@ -31,9 +31,9 @@ entire fleet after changing the template or an individual policy.
    the first unpublished nightly/default-branch build after merging; require that
    complete matrix to pass before enabling public release channels.
 3. Merge workflow migrations. Public nightly/default-branch builds retain Actions
-   artifacts, but candidate publication remains disabled by default. The nine private
-   repositories remove unavailable hosted workflows and use local validation; they
-   have no hosted nightly or CI gate. Use the [local nightly runner](LOCAL_NIGHTLY.md).
+   artifacts, but candidate publication remains disabled by default. Consumers
+   configured for local-only validation remove unavailable hosted validators and have no hosted nightly or
+   CI gate. Use the [local nightly runner](LOCAL_NIGHTLY.md).
    Default-branch schedules and `pull_request_target` callers disappear after merge;
    a draft migration PR does not itself disable definitions on the default branch.
 4. Deploy the reviewed webhook changes before enabling prereleases. Both webhook
@@ -43,10 +43,10 @@ entire fleet after changing the template or an individual policy.
    configured, since a GitHub release can be published before its registry import.
    The shared webhook image also moves to UID/GID 10001. Coordinate that image with
    its Compose update and prepare the narrow SSH/secret/config permissions described
-   in its README. Do not recursively change monitoring data ownership. Portainer's
-   committed redacted Compose is a template; materialize the ignored live Compose
-   with the existing secrets before applying its deployment. No host changes are
-   performed by this migration.
+   in its README. Do not recursively change monitoring data ownership. Treat
+   committed redacted Compose files as templates; materialize live configuration
+   through the operator’s secret store before a separately reviewed deployment.
+   No host changes are performed by this migration.
 5. In each GitHub Terraform governance repository, review the additive
    `release-standards.tf` resources. Add only migrated repositories to
    `release_gate_repositories`, and only configured applications to
@@ -89,25 +89,26 @@ Use the project's committed version; commands with publication effects dispatch 
 protected default-branch workflow. The CLI pins the requested default-branch SHA and
 refuses dirty/out-of-date checkouts. `--dry-run` displays a request without dispatch.
 Public infrastructure and template repositories offer local checks and nightly validation.
-Private repositories expose only `check`, `status` and `doctor` through the local
-client; they have no GitHub dispatch or publication commands. The retained manual
-Portainer deployment checks the reviewed source and live Compose bytes on the
-existing LAN runner before plan/apply.
+Consumers with `ci_execution: local` expose only `check`, `status` and `doctor`
+through the local client; they have no GitHub dispatch or publication commands.
+A manual deployment must check the reviewed source and actual deployment
+configuration before plan/apply.
 `check` runs every declared `local_checks` command, including security/integration
 commands. It stops on failure and does not qualify an RC for publication.
 
 ## Private repository cost boundary
 
-The nine private repositories use `ci_execution: local` and no hosted validators.
+Consumers opting into `ci_execution: local` use local validation instead of
+hosted validators.
 Unavailable validation, security, automatic approval and automatic merge workflow
 files are removed from `.github/workflows/`; their reviewed definitions remain as
 reference text in `docs/github-hosted-workflows/`. There are no hosted scheduled,
 PR or manual validation callers to leave failing because of account billing.
 
-The sole retained private workflow is Portainer's manual redeployment on its
-existing LAN runner. Selection, source approval, local validation, security checks,
-and deployment all use that runner. No new runner, paid protection, Code Scanning
-upload, spending-limit change or production apply is introduced.
+A retained manual deployment workflow must keep source approval, local
+validation, security checks and deployment on its approved trusted runner.
+Review this per consumer; no runner provisioning, paid protection, Code Scanning
+upload, spending-limit change or production apply is implied by the policy.
 
 Local scans use OSS tools and return failure for findings or incomplete scans. The
 local nightly runner uses normal toolchains on an existing machine, records the
@@ -123,50 +124,27 @@ and [Actions usage](https://docs.github.com/en/actions/concepts/billing-and-usag
 
 ## Verification and known boundaries
 
-- Local verification: 146 toolkit contract tests passed; generated-file,
-  identity, whitespace and Actions schema checks passed for all 52 repositories.
-  All 25 English strategy documents and 52 runbooks passed link/substitution checks.
-  This evidence does not mean the changes are merged or that every hosted build
-  and external acceptance check has passed on the submitted revision. Five local-only
-  contracts additionally verify ordered checks, failure propagation, configuration-only
-  status, absence of publishing commands and rejection of hosted dependencies.
-- The nine private repositories were scanned with ordinary OSS tools. Five passed;
-  four retain blocking infrastructure misconfigurations: `terraform-portainer-synology`,
-  `home-assistant-k3s`, `terraform-oracle-oci`, and `k3s-self-healing`. Their
-  `docs/security-checks.md` records the findings. Root/container capabilities and
-  cluster RBAC need service-specific review; this migration does not suppress those
-  findings or change production runtime permissions to make local checks pass.
-- Toolkit: offline publication/promotion rejection tests, local-client tests,
-  renderer contracts, registry byte identity and deployment digest tests. Existing
-  PR-automation and Python typecheck contracts are retained. The typecheck install
-  test needs PyPI access in its disposable environment.
-- Service family: eight source/native archive adapters checked for reproducibility,
-  file completeness, executable modes, version preservation, checksums and rejection
-  of symlinks, missing files, untracked secrets and stale output. Four Python
-  distributions built with strict Twine/checksum checks and temporary source staging.
-- Applications: Vue 43 tests and SPA/library bundles; Python dashboard 179 tests,
-  69.73% application-source coverage against the existing 68% baseline, frozen binary
-  HTTP/SPA smoke; Go host binary/version smoke; Ottplay frontend regression tests,
-  emitted classic-bundle smoke, ES5 grammar for 291 scripts and standard/Mode A bundles;
-  Swop Worker dry-run bundle. Full native matrices remain hosted checks.
-- Deployment hooks: 23 shared-webhook and 65 monitoring-webhook tests, with deployment
-  commands mocked. Beta, RC, draft, push/tag/CI events cannot trigger deployment.
-- Additional services: controller 573 tests, monitoring 79, FastAPI gateway 76,
-  solar forecasting 91, MQTT interceptor 25 and exporter 20 tests pass. External
-  database/container integration remains a required hosted gate.
-- Infrastructure: source syntax and Actions schema checks; eight Terraform repos
-  validate with backend disabled, including all 18 Portainer roots and the new GitHub
-  governance resources. K3s seven tests and vitrine seven tests pass. Amazon voice:
-  15 pass, three optional signature tests need the full webhook extras/container job.
-- Physical Venus OS/GX, TVs, native decoders, DRM, real streams, external credentials
-  and production cluster behavior are separate acceptance work. Docker/ESPHome/native
-  matrices were not run on this workstation where their runtimes are unavailable.
+Record validation against an exact source revision. Historical fleet-wide test
+counts cannot qualify a newer PR or release candidate. Verify, as applicable:
 
-Swop and IOT profile policies explicitly block RC/stable until the
-missing application unit suites are on the candidate's source revision. Source
-policy is part of immutable evidence; later policy edits cannot qualify an older RC.
-Python dashboard gradual typing remains a documented baseline gap; the previous
-silent mypy skip has been removed and no passing typecheck is claimed.
+- Toolkit contracts, generated-file drift, identity checks and Actions schemas.
+- Ordered local checks, failure propagation and rejection of unsupported
+  publication commands for validation-only consumers.
+- Source/native archive reproducibility, executable modes, versions, checksums
+  and rejection of symlinks, missing files, untracked secrets and stale output.
+- Application unit suites, integration services, native OS matrices and immutable
+  release artifact identity on the actual candidate revision.
+- Deployment-hook rejection of beta, RC, draft, push/tag and CI events. Mocked
+  command tests do not establish production behavior.
+- Infrastructure syntax and backend-disabled validation before a separately
+  reviewed plan/apply. Do not suppress findings or broaden runtime permissions
+  merely to make a check pass.
+
+Physical Venus OS/GX, TVs, native decoders, real streams, external credentials
+and production clusters require separate acceptance. A missing runtime or
+skipped suite is an unresolved check, not a pass. Source policy is part of
+immutable evidence; a later policy edit cannot qualify an older RC. Keep detailed
+non-public rollout results in the affected project's access-controlled records.
 
 ## Recovery and rollback
 
