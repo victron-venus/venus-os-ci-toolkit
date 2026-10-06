@@ -1,0 +1,14 @@
+{
+  "arc": {
+    "version": "0.15.0",
+    "controller_digest": "sha256:20a369215b8c2ed981c4c0c75e56e6009564d51fffcbbd314d5da0ef82de253a",
+    "scale_set_digest": "sha256:bdfdad17cf8e45ae064c73ed6764f0c75d4bf71a6e2912e6363a43d6dfc787de",
+    "controller_image_digest": "sha256:162dfb5bfbda9e7e49fbed67d428994c9ced55b41a37a18b75b46dab0aa98d37"
+  },
+  "gvisor": {
+    "version": "release-20260928.0",
+    "amd64_sha256": "f3ed9131bc252259df150e270154180188f9df56b73a2312940325e1f522a2d6",
+    "arm64_sha256": "b7e11d27cbd69370ed7addb6c0d1c33e70e57a153cee57b5fdc5344bf303c7eb"
+  },
+  "runner_version": "2.337.0"
+}

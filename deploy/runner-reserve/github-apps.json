@@ -1,0 +1,18 @@
+{
+  "organization": {
+    "name": "Victron public runner reserve",
+    "url": "https://github.com/victron-venus/venus-os-ci-toolkit",
+    "public": false,
+    "default_permissions": {"organization_self_hosted_runners": "write"},
+    "default_events": [],
+    "hook_attributes": {"active": false}
+  },
+  "personal": {
+    "name": "4alvit public runner reserve",
+    "url": "https://github.com/victron-venus/venus-os-ci-toolkit",
+    "public": false,
+    "default_permissions": {"administration": "write"},
+    "default_events": [],
+    "hook_attributes": {"active": false}
+  }
+}
