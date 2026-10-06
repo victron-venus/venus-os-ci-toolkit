@@ -63,7 +63,7 @@ available. Never remove existing branch protections to use this mode.
 Both `auto-merge.yml` and `auto-approve-reusable.yml` accept `runner-labels`, a
 JSON array that defaults to `["ubuntu-latest"]`. A private consumer can select an
 existing dedicated trusted runner, for example
-`["self-hosted","Linux","X64","mp","private-ci","robinhood"]`. The runner must
+`["self-hosted","Linux","X64","trusted-metadata"]`. The runner must
 already provide `python3` and `gh`; neither workflow checks out source or installs
 packages. Set labels in the trusted base workflow, never from PR title, body,
 branch name or another contributor-controlled value. Keep the token confined to

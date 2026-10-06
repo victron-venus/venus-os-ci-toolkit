@@ -33,7 +33,7 @@ For example, after replacing the absolute paths with your own:
   /Users/you/ci-toolkit/scripts/run_nightly.py \
   --root /Users/you/nightly-checkouts \
   --logs /Users/you/Library/Logs/venus-nightly \
-  --repo 4alvit/github-deploy-webhook \
+  --repo victron-venus/inverter-control \
   --timeout 3600
 ```
 
@@ -101,7 +101,7 @@ directory first. Save the reviewed file as
     <string>/Users/you/ci-toolkit/scripts/run_nightly.py</string>
     <string>--root</string><string>/Users/you/nightly-checkouts</string>
     <string>--logs</string><string>/Users/you/Library/Logs/venus-nightly</string>
-    <string>--repo</string><string>4alvit/github-deploy-webhook</string>
+    <string>--repo</string><string>victron-venus/inverter-control</string>
     <string>--timeout</string><string>3600</string>
   </array>
   <key>EnvironmentVariables</key>
@@ -139,7 +139,7 @@ Description=Local checked-in fleet validation
 [Service]
 Type=oneshot
 Environment=PATH=/home/you/.local/bin:/usr/local/bin:/usr/bin:/bin
-ExecStart=/usr/bin/python3 /home/you/ci-toolkit/scripts/run_nightly.py --root /home/you/nightly-checkouts --logs /home/you/.local/state/venus-nightly --repo 4alvit/github-deploy-webhook --timeout 3600
+ExecStart=/usr/bin/python3 /home/you/ci-toolkit/scripts/run_nightly.py --root /home/you/nightly-checkouts --logs /home/you/.local/state/venus-nightly --repo victron-venus/inverter-control --timeout 3600
 TimeoutStartSec=infinity
 UMask=0077
 ```

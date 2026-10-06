@@ -1,15 +1,13 @@
-# Private OttPlay runners on k3s
+# Isolated runner templates on k3s
 
-These are **unapplied templates**, not evidence of a working pool. They target
-private `open-ott-play/ottplay-core` and `open-ott-play/ottplay-android` only.
-Public FOSS keeps standard GitHub-hosted runners. Do not reuse the FCC,
-Portainer, Robinhood or EPG Voice registrations, namespaces or credentials.
+These are **unapplied reference templates**, not evidence of a working pool.
+The templates describe isolated CI, emulator and release roles for trusted
+consumers. Keep concrete consumer identities, registration credentials, host
+inventories and deployment evidence in access-controlled operator records.
+Never reuse an unrelated runner registration, namespace or credential.
 
-The read-only check on 2026-09-24 found mp to be Linux/x64 with 16 CPUs,
-40 GiB RAM and approximately 263 GiB free disk. **`/dev/kvm` was absent.**
-Cluster-wide scheduling, current ARC installation, admission and network policy
-enforcement still need verification: direct API access failed and the h7 SSH
-alias did not pass host-key verification. Do not bypass that verification.
+The public-project reserve is documented separately in [RUNNERS.md](RUNNERS.md).
+Preparing either pool does not switch consumers away from GitHub-hosted runners.
 
 ## Pools and access
 
@@ -26,29 +24,20 @@ All scale sets have `minRunners: 0`. At approved maxima the runner limits total
 actual existing workload reservations must be checked before enabling all pools.
 No workspace, toolcache, registration or SDK PVC is shared between jobs.
 
-Create groups with the exact selected-repository and workflow policies in
-[`github-groups.json`](../deploy/arc-ottplay/github-groups.json). The release
-group must restrict jobs to Android's `release.yml@refs/heads/main` and
-`runner-smoke.yml@refs/heads/main`. Verify the returned GitHub policy rather
-than treating a group name as an access boundary. If the account cannot enforce
-`restricted_to_workflows`, keep release disabled and Android in `github` mode;
-do not silently broaden access. Enable branch protection when available and
-review changes to those files. Main is currently unprotected in both private
-repositories; activation requires an operator-reviewed commit SHA explicitly.
-
-The operator has now created CI group ID 3 and release group ID 4 in the Free
-organization and verified selected private repositories/public access disabled.
-Release group 4 currently permits only the existing main-branch `release.yml`:
-GitHub rejected the future `runner-smoke.yml` because it does not yet exist on
-main, not because workflow restrictions require a paid plan. Merge the smoke
-workflow, then add its exact main reference and verify the full desired policy
-before activation. The CLI must reject the current bootstrap-only policy.
+Review the selected-repository and workflow policies in a private operator copy
+of [`github-groups.json`](../deploy/arc-ottplay/github-groups.json). Release runners
+must accept only reviewed release and smoke workflows at their exact default-
+branch references. Verify GitHub's returned policy; a group name is not an access
+boundary. If a restriction is unsupported or references a workflow not yet present
+on the default branch, leave the affected pool disabled. Do not broaden access to
+make activation succeed. Review branch protection and an exact source SHA before
+activation.
 
 Create a dedicated organization-owned GitHub App: organization **Self-hosted
 runners: read/write**, repository **Metadata: read-only**. Organization scope
 does not need repository Administration permission. Install it only for the
-two private repositories. No PAT, existing runner token or signing secret belongs
-in these values. The App secret `ottplay-runner-app` has keys `github_app_id`,
+selected consumer repositories. No PAT, existing runner token or signing secret
+belongs in these values. The App secret `ottplay-runner-app` has keys `github_app_id`,
 `github_app_installation_id` and `github_app_private_key`. Provision it through
 the approved secret store into **each scale-set namespace**, not the controller
 namespace; the charts create the controller's required namespaced bindings.
@@ -83,11 +72,11 @@ After cluster/API access and namespace policies are reviewed:
    policies allow cluster DNS and public HTTPS, denying ingress and private-network
    egress. Verify CNI enforcement and registry/cache needs. Controller/listener
    pods need Kubernetes API and GitHub access and are not job pods.
-   Kubernetes NetworkPolicy does not replace mp's existing host firewall and
+   Kubernetes NetworkPolicy does not replace the worker node's host firewall and
    routed-overlay rules: standard policy semantics exempt traffic to/from the
    pod's hosting node. RFC1918 exclusions therefore do not prove isolation from
-   services on mp itself. Require a separate host-firewall admission and live
-   node-service denial test. Test DNS/HTTPS from the actual runner pod, not only
+   services on the worker node itself. Require separate host-firewall admission and
+   a live node-service denial test. Test DNS/HTTPS from the actual runner pod, not only
    the host, and verify denied private/API paths after CNI translation. Do not
    open the host firewall broadly to resolve a failed download.
 3. Install controller and scale-set charts at **0.14.2**, whose reviewed OCI
@@ -115,12 +104,10 @@ configured here. [ARC configuration and restrictions](https://docs.github.com/en
 
 ## KVM admission
 
-KVM stays off on the currently observed mp. It is a VirtualBox guest exposing
-neither `vmx` nor `svm` on its 16 CPUs; kernel KVM modules are installed.
-Loading a guest module alone cannot supply the missing virtualization capability.
-First enable and verify nested
-virtualization in the VM/host through a separate reviewed infrastructure change.
-Require a real character device, then a device plugin that advertises
+KVM stays disabled until the worker host actually exposes hardware virtualization.
+Loading a guest module alone cannot supply a missing capability. Enable and verify
+nested virtualization, if required, through a separate reviewed infrastructure
+change. Require a real character device, then a device plugin that advertises
 `devic.es/kvm` and injects `/dev/kvm` with device-cgroup permission. A hostPath
 alone is insufficient. Do not mount the host Docker/containerd socket, all of
 `/dev`, or make a runner privileged.
@@ -130,8 +117,8 @@ configured for only `{"name":"kvm","groups":[{"paths":[{"path":"/dev/kvm"}]}]}`
 with the default `devic.es` domain and one allocation. Its pinned image,
 kubelet-socket access and node installation require their own review; no plugin
 DaemonSet or privileged bootstrap is included here. Verify the injected device's
-GID: the existing mp `kvm` group is 993, used by `supplementalGroups`, but the
-device itself was absent. Adjust the group after actual device creation.
+GID and set `supplementalGroups` to the actual device group. A template value
+is not evidence that the device exists or is accessible.
 
 After allocation, verify `KVM_GET_API_VERSION` and the installed Android
 emulator's `-accel-check` under UID 1001 and RuntimeDefault seccomp. Only then
@@ -152,8 +139,8 @@ ARC_TEST_DOCKER_IMAGE=python@sha256:2f17fc044b579bab302c2e8054d3a686e2cb9a83de48
 uv run --with pyyaml python -m unittest tests/test_arc_ottplay.py -v
 ```
 
-All ten tests passed with the cached image and ARC 0.14.2 charts. This tests
-the startup permission contract; it does not qualify the built worker image.
+This tests the startup permission contract; it does not qualify the built worker
+image. Record the result against the exact image, chart and source revision.
 
 `deploy/arc-ottplay/smoke.sh linux|kvm|release` checks tools, non-root execution,
 writable job directories, absence of host sockets/API tokens and public egress;
@@ -170,19 +157,16 @@ Activation therefore requires a successful current-main smoke for each required
 pool, no older than 24 hours, plus the group policy checks. Its head must match
 both current main and the operator's explicit `--expected-sha` (full 40-character
 reviewed commit SHA); the CLI rechecks these before applying. The operator CLI may
-then set `CI_RUNNER_MODE=k3s`. Android requires all three pools; Core requires
-Linux only. KVM absence presently blocks Android activation.
+then set `CI_RUNNER_MODE=k3s` after explicit activation approval. A consumer that
+requires emulator and signing jobs must qualify all three pools. KVM absence
+blocks any consumer whose required jobs need hardware acceleration.
 
-From the toolkit root, inspect the operator's plan first; add `--apply` only for
-the reviewed switch (these commands were not run during template preparation):
+Keep concrete CLI repository selections in the operator's access-controlled
+runbook. Inspect the plan without `--apply`, verify the current reviewed SHA and
+fresh smoke results, then add `--apply` only for an explicitly approved switch.
+The target must be present in the CLI's reviewed consumer configuration; a public
+example must not imply that an arbitrary repository name is already supported.
 
-```sh
-python3 scripts/runner_mode.py --repo ottplay-core --mode k3s --smoke-run RUN_ID --expected-sha REVIEWED_SHA
-python3 scripts/runner_mode.py --repo ottplay-core --mode k3s --smoke-run RUN_ID --expected-sha REVIEWED_SHA --apply
-python3 scripts/runner_mode.py --repo ottplay-core --mode github --apply
-```
-
-Use `--repo ottplay-android` with its qualifying three-pool smoke for Android.
 The operator's separate credential needs repository Metadata/Actions read,
 Variables write, and organization Self-hosted runners read to verify the groups.
 Registration App credentials must not be used for the operator CLI. The CLI
