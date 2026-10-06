@@ -1,0 +1,182 @@
+{
+  "schema": 1,
+  "default_mode": "github",
+  "organizations": [
+    "victron-venus"
+  ],
+  "profiles": {
+    "ci": "victron-reserve-ci-x64",
+    "automation": "victron-reserve-automation-x64",
+    "release": "victron-reserve-release-x64"
+  },
+  "repositories": [
+    {
+      "name": "4alvit/4alvit",
+      "default_branch": "main"
+    },
+    {
+      "name": "4alvit/amazon-echo-home-voice",
+      "default_branch": "main"
+    },
+    {
+      "name": "4alvit/dbus-service-template",
+      "default_branch": "main"
+    },
+    {
+      "name": "4alvit/default",
+      "default_branch": "master"
+    },
+    {
+      "name": "4alvit/energy-data-rag-pipeline",
+      "default_branch": "main"
+    },
+    {
+      "name": "4alvit/esphome-ble-sensor-patterns",
+      "default_branch": "main"
+    },
+    {
+      "name": "4alvit/fastapi-mqtt-gateway",
+      "default_branch": "main"
+    },
+    {
+      "name": "4alvit/google-home-voice-stats",
+      "default_branch": "main"
+    },
+    {
+      "name": "4alvit/iot-project-builder-profile",
+      "default_branch": "main"
+    },
+    {
+      "name": "4alvit/mcp-venus-os",
+      "default_branch": "main"
+    },
+    {
+      "name": "4alvit/mqtt-observability-opentelemetry",
+      "default_branch": "main"
+    },
+    {
+      "name": "4alvit/solar-forecast-langgraph",
+      "default_branch": "main"
+    },
+    {
+      "name": "4alvit/terraform-github-4alvit",
+      "default_branch": "main"
+    },
+    {
+      "name": "4alvit/terraform-github-ha-homelab",
+      "default_branch": "main"
+    },
+    {
+      "name": "4alvit/terraform-github-open-ott-play",
+      "default_branch": "main"
+    },
+    {
+      "name": "4alvit/terraform-github-victron",
+      "default_branch": "main"
+    },
+    {
+      "name": "victron-venus/.github",
+      "default_branch": "main"
+    },
+    {
+      "name": "victron-venus/SetupHelper",
+      "default_branch": "main"
+    },
+    {
+      "name": "victron-venus/dbus-emporia-vue",
+      "default_branch": "main"
+    },
+    {
+      "name": "victron-venus/dbus-esphome-grid-sensor",
+      "default_branch": "main"
+    },
+    {
+      "name": "victron-venus/dbus-ev",
+      "default_branch": "main"
+    },
+    {
+      "name": "victron-venus/dbus-event-log",
+      "default_branch": "main"
+    },
+    {
+      "name": "victron-venus/dbus-mqtt-battery",
+      "default_branch": "main"
+    },
+    {
+      "name": "victron-venus/dbus-pump",
+      "default_branch": "main"
+    },
+    {
+      "name": "victron-venus/dbus-tasmota-pv",
+      "default_branch": "main"
+    },
+    {
+      "name": "victron-venus/dbus-virtual-battery",
+      "default_branch": "main"
+    },
+    {
+      "name": "victron-venus/esphome-jbd-bms-mqtt",
+      "default_branch": "main"
+    },
+    {
+      "name": "victron-venus/integration-tests",
+      "default_branch": "main"
+    },
+    {
+      "name": "victron-venus/inverter-climate",
+      "default_branch": "main"
+    },
+    {
+      "name": "victron-venus/inverter-control",
+      "default_branch": "main"
+    },
+    {
+      "name": "victron-venus/inverter-dashboard",
+      "default_branch": "main"
+    },
+    {
+      "name": "victron-venus/inverter-dashboard-go",
+      "default_branch": "main"
+    },
+    {
+      "name": "victron-venus/inverter-dashboard-vue",
+      "default_branch": "main"
+    },
+    {
+      "name": "victron-venus/inverter-desktop",
+      "default_branch": "main"
+    },
+    {
+      "name": "victron-venus/inverter-gateway",
+      "default_branch": "main"
+    },
+    {
+      "name": "victron-venus/inverter-monitoring",
+      "default_branch": "main"
+    },
+    {
+      "name": "victron-venus/inverter-web-vitrine",
+      "default_branch": "main"
+    },
+    {
+      "name": "victron-venus/terraform-cloudflare-inverter-gateway",
+      "default_branch": "main"
+    },
+    {
+      "name": "victron-venus/venus-os-ci-toolkit",
+      "default_branch": "main"
+    },
+    {
+      "name": "victron-venus/venus-os-integration-patterns",
+      "default_branch": "main"
+    },
+    {
+      "name": "victron-venus/venus-os-observability",
+      "default_branch": "main"
+    },
+    {
+      "name": "victron-venus/victron-venus.github.io",
+      "default_branch": "feature/redirect"
+    }
+  ]
+}

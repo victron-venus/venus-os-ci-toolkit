@@ -102,3 +102,45 @@ The existing CI contract job installs its locked test dependency and runs it.
 References: [reusable workflow runners and variables](https://docs.github.com/en/actions/reference/workflows-and-actions/reusing-workflow-configurations),
 [runner group access](https://docs.github.com/en/actions/how-tos/manage-runners/self-hosted-runners/manage-access),
 [self-hosted runner security](https://docs.github.com/en/actions/reference/security/secure-use).
+
+## Public reserve preparation
+
+The public reserve inventory is `deploy/runner-reserve/repositories.json`.
+It is separate from private runner groups and the Renovate repository inventory.
+Organization variables must have selected-repository visibility matching that
+inventory; personal-account repositories need their own variables. Prepare all
+four variables with `CI_RUNNER_MODE=github`. The label values alone do not prove
+that a corresponding pool exists or has passed qualification.
+
+For the one-time adoption across existing consumer workflows, including projects
+without a single-entry release policy:
+
+```bash
+python3 scripts/prepare_runner_reserve.py /path/to/consumer --toolkit-ref REVIEWED_40_CHARACTER_SHA
+python3 scripts/prepare_runner_reserve.py /path/to/consumer --toolkit-ref REVIEWED_40_CHARACTER_SHA --check
+```
+
+This uses the existing runner-expression generator, updates shared workflow pins
+and keeps a coverage policy's pin consistent. It preserves the release engine
+revision, platform matrices, fixed Ubuntu images, hardware/private selections,
+commands, permissions and event filters. Review platform exceptions and qualify
+the actual workflow graph before activation. No mode or runner registration is
+changed by this command.
+
+OpenSSF Scorecard publication also stays on its required literal `ubuntu-latest`
+runner. Its publishing service validates the workflow's hosted-runner identity;
+the reserve must not weaken that contract. Local scan/completeness jobs can use
+the CI pool, but public Scorecard publication remains a hosted-service dependency.
+
+The GitHub App specifications in `deploy/runner-reserve/github-apps.json` keep
+organization runner administration separate from the repository administration
+permission GitHub requires for personal repository runners. Install only for the
+listed public projects. Do not copy a developer PAT or `BOT_PAT` into the runner
+controller, worker image, workspace or source repository. Private keys belong in
+controller-only secrets; workers receive ephemeral registration material.
+
+Prepared variable values, a merged adoption PR, or downloaded ARC/gVisor versions
+are not a readiness certificate. Readiness requires registered pools, admission
+and network isolation, toolchain/service-container tests, same-owner and
+cross-owner reusable calls, and a successful job followed by worker destruction.
+Keep normal routing on `github` until all applicable checks are evidenced.

@@ -126,6 +126,12 @@ def adapt_jobs(workflow, profile, name):
     """Edit owned Linux selections while preserving matrices and other platforms."""
     changed = False
     for job in workflow["jobs"].values():
+        # OpenSSF's publishing service verifies this exact hosted runner label.
+        # Keep its publication identity contract even during a compute outage.
+        if any(step.get("uses", "").startswith("ossf/scorecard-action@")
+               and str(step.get("with", {}).get("publish_results", "")).lower() == "true"
+               for step in job.get("steps", [])):
+            continue
         runner = job.get("runs-on")
         managed = isinstance(runner, str) and runner.startswith(
             "${{ fromJSON((vars.CI_RUNNER_MODE == 'self-hosted' || vars.CI_RUNNER_MODE == 'k3s') && "
