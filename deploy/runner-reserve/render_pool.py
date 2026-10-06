@@ -10,9 +10,8 @@ import re
 
 ROOT = Path(__file__).resolve().parent
 LABEL = 'runner-reserve.github.io/role'
-DENIED = ['0.0.0.0/8', '10.0.0.0/8', '100.64.0.0/10', '127.0.0.0/8',
-          '169.254.0.0/16', '172.16.0.0/12', '192.168.0.0/16',
-          '198.18.0.0/15', '224.0.0.0/4', '240.0.0.0/4', '129.159.41.15/32']
+NETWORK = json.loads((ROOT / 'network-policy.json').read_text())
+DENIED = NETWORK['denied_networks'] + NETWORK['extra_denied']
 
 
 def pool_values(scope, profile, image, node, node_ip, inventory):
@@ -116,7 +115,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--worker-image', required=True, help='Preloaded, qualified image reference with sha256 digest')
     parser.add_argument('--node', default='mp')
-    parser.add_argument('--node-ip', default='10.66.10.2')
+    parser.add_argument('--node-ip', required=True, help='Address covered by the guard certificate')
     parser.add_argument('--output', type=Path, required=True)
     args = parser.parse_args()
     inventory = json.loads((ROOT / 'repositories.json').read_text())

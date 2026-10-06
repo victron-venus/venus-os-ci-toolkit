@@ -143,3 +143,44 @@ class StandbyPoolTests(unittest.TestCase):
         self.assertIn(self.image, json.dumps(admission))
         binding = next(d for d in docs if d['kind'] == 'ValidatingAdmissionPolicyBinding')
         self.assertEqual(binding['spec']['validationActions'], ['Deny'])
+
+
+class TLSAdmissionTests(unittest.TestCase):
+    def test_real_https_requires_trusted_ca_matching_hostname_and_pod_identity(self):
+        import ssl
+        import subprocess
+        import tempfile
+        import threading
+        import urllib.error
+        import urllib.request
+        with tempfile.TemporaryDirectory() as directory:
+            key, cert = [Path(directory) / name for name in ('key.pem', 'cert.pem')]
+            subprocess.run(['openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-nodes',
+                            '-days', '1', '-keyout', str(key), '-out', str(cert),
+                            '-subj', '/CN=localhost', '-addext', 'subjectAltName=DNS:localhost'],
+                           capture_output=True, check=True)
+            server_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            server_context.minimum_version = ssl.TLSVersion.TLSv1_2
+            server_context.load_cert_chain(cert, key)
+            guard = guard_module.Guard({})
+            guard.admitted = {'127.0.0.1': 'pod-1'}
+            with guard_module.ReadinessServer(('127.0.0.1', 0), guard_module.handler(guard),
+                                             tls_context=server_context) as server:
+                thread = threading.Thread(target=server.serve_forever, daemon=True)
+                thread.start()
+                try:
+                    url = f'https://localhost:{server.server_port}/ready/pod-1'
+                    trusted = ssl.create_default_context(cafile=str(cert))
+                    with urllib.request.urlopen(url, context=trusted, timeout=4) as result:
+                        self.assertTrue(json.load(result)['admitted'])
+                    for context, target in [(ssl.create_default_context(), url),
+                                            (trusted, url.replace('localhost', '127.0.0.1'))]:
+                        with self.assertRaises(urllib.error.URLError) as error:
+                            urllib.request.urlopen(target, context=context, timeout=4)
+                        self.assertIsInstance(error.exception.reason, ssl.SSLCertVerificationError)
+                    with self.assertRaises(urllib.error.HTTPError) as denied:
+                        urllib.request.urlopen(url.replace('pod-1', 'wrong-pod'), context=trusted, timeout=4)
+                    self.assertEqual(denied.exception.code, 503)
+                finally:
+                    server.shutdown()
+                    thread.join(timeout=4)

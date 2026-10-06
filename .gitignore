@@ -62,3 +62,6 @@ inverter-monitoring
 release.txt
 *.bak
 **/node_modules/
+
+# Deployment-specific public guard certificate; its private key stays on the node.
+/deploy/runner-reserve/guard-ca.crt

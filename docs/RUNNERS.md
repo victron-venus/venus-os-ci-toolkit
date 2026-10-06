@@ -170,9 +170,17 @@ specific to this K3s/flannel deployment. It binds sandbox identity to the actual
 host veth and MAC before atomically installing an nftables bridge fence. Only
 reserved worker namespaces/labels are affected. Private, metadata, node and
 cluster destinations are blocked; public TCP 80/443 and cluster DNS are allowed.
-A bounded read-only readiness endpoint admits only the source pod's exact UID.
+A bounded read-only HTTPS endpoint admits only the source pod's exact UID.
+The worker verifies its certificate against the public CA bundled in its image;
+no insecure TLS bypass is permitted.
 If discovery or the firewall transaction fails, new workers cannot register.
 NetworkPolicy provides another boundary; it does not replace the node fence.
+
+Generate the node guard TLS key and certificate on the node, with the node IP in
+the certificate SAN. Keep the private key root-readable on that node; configure
+`tls_private_key` and `tls_certificate` in the node service configuration. Copy
+only the public certificate to the build context as `guard-ca.crt` (Git-ignored).
+Rebuild/requalify the worker image before certificate expiry or trust rotation.
 
 Build `Dockerfile` with BuildKit from this directory, preserving every base-image
 digest. Preload the resulting image into K3s containerd on the selected node and
@@ -184,6 +192,7 @@ archive and requalify after node replacement or cache eviction.
 ```bash
 python3 deploy/runner-reserve/render_pool.py \
   --worker-image 'localhost/victron-reserve-worker@sha256:QUALIFIED_MANIFEST_DIGEST' \
+  --node-ip NODE_ADDRESS_COVERED_BY_GUARD_CERTIFICATE \
   --output /path/to/new-reserve-plan
 ```
 
@@ -193,7 +202,8 @@ directory, and never installs resources or changes Actions variables. Its
 quotas, network policies and a fail-closed Kubernetes admission policy. Admission
 requires the pinned worker image, gVisor, the fixed bootstrap, no host namespaces,
 no host/persistent/credential volumes, no API token and no privileged host
-container. Root and Docker capabilities are emulated **inside Sentry**. Each job
+container. The image defaults to UID 1001; only the enforced gVisor pod specification
+requests root for bootstrap. Root and Docker capabilities are emulated **inside Sentry**. Each job
 gets a fresh container filesystem, including Docker storage and the tool cache.
 The bootstrap refuses an ordinary Linux runtime and waits for node admission
 before starting Docker or the JIT-configured runner. It never mounts a host socket.
@@ -205,6 +215,11 @@ Workers have no Kubernetes API credentials or network route to the API. Render
 and validate the pinned scale-set Helm chart with the corresponding values file
 from `index.json`, and install each release in the namespace specified there.
 Keep `CI_RUNNER_MODE=github` throughout preparation and manual qualification.
+
+`RUNNER_RESERVE_QUALIFICATION=1` selects the fixed manual probe after the same
+TLS admission and Docker bootstrap; it never registers a GitHub runner. It
+checks sandbox/toolchain prerequisites, public HTTPS, a nested BuildKit build
+and a published PostgreSQL service. Never set it in normal scale-set values.
 
 A local Docker or networking probe is insufficient to certify a pool. Record a
 real GitHub JIT worker for each profile/owner, a cross-owner reusable call,

@@ -11,6 +11,7 @@ import argparse
 import ipaddress
 import json
 import re
+import ssl
 import subprocess
 import threading
 import time
@@ -20,9 +21,7 @@ from pathlib import Path
 TABLE = "victron_ci_reserve"
 LABEL = "runner-reserve.github.io/role"
 NAMESPACES = {"runner-reserve-ci", "runner-reserve-automation", "runner-reserve-release"}
-DENIED = ("0.0.0.0/8", "10.0.0.0/8", "100.64.0.0/10", "127.0.0.0/8",
-          "169.254.0.0/16", "172.16.0.0/12", "192.168.0.0/16",
-          "198.18.0.0/15", "224.0.0.0/4", "240.0.0.0/4")
+DENIED = tuple(json.loads(Path(__file__).with_name("network-policy.json").read_text())["denied_networks"])
 PORT = 19999
 
 
@@ -152,9 +151,21 @@ class ReadinessServer(ThreadingHTTPServer):
     """Bound both concurrent connections and time spent reading each request."""
     daemon_threads = True
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, tls_context=None, **kwargs):
         self.slots = threading.BoundedSemaphore(16)
+        self.tls_context = tls_context
         super().__init__(*args, **kwargs)
+
+    def get_request(self):
+        request, address = super().get_request()
+        request.settimeout(2)
+        try:
+            if self.tls_context:
+                request = self.tls_context.wrap_socket(request, server_side=True)
+            return request, address
+        except Exception:
+            request.close()
+            raise
 
     def process_request(self, request, client_address):
         if not self.slots.acquire(blocking=False):
@@ -188,6 +199,7 @@ def handler(guard):
             self.wfile.write(json.dumps({"admitted": allowed, "guard_version": 1}).encode())
 
         def log_message(self, *_args):
+            # Health probes have no useful request payload to retain; sync errors are logged.
             pass
     return Readiness
 
@@ -197,9 +209,13 @@ def main():
     parser.add_argument("--config", type=Path, required=True)
     args = parser.parse_args()
     config = json.loads(args.config.read_text())
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
+    context.load_cert_chain(config["tls_certificate"], config["tls_private_key"])
     guard = Guard(config)
     threading.Thread(target=guard.loop, daemon=True).start()
-    ReadinessServer((str(ipaddress.IPv4Address(config["node_ip"])), PORT), handler(guard)).serve_forever()
+    ReadinessServer((str(ipaddress.IPv4Address(config["node_ip"])), PORT),
+                    handler(guard), tls_context=context).serve_forever()
 
 
 if __name__ == "__main__":

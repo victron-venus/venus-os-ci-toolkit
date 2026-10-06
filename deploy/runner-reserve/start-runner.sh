@@ -5,12 +5,13 @@ umask 077
 [[ "$(id -u)" == 0 ]]
 [[ "$(uname -r)" == *-gvisor ]]
 [[ -n "${RUNNER_RESERVE_NODE_IP:-}" && -n "${RUNNER_RESERVE_POD_UID:-}" ]]
-[[ -n "${ACTIONS_RUNNER_INPUT_JITCONFIG:-}" ]]
+[[ -n "${ACTIONS_RUNNER_INPUT_JITCONFIG:-}" || "${RUNNER_RESERVE_QUALIFICATION:-}" == 1 ]]
 [[ ! -e /home/runner/.runner ]]
 # The node must acknowledge this exact pod after committing its network fence.
 for attempt in {1..60}; do
   if curl --fail --silent --connect-timeout 2 --max-time 3 \
-      "http://${RUNNER_RESERVE_NODE_IP}:19999/ready/${RUNNER_RESERVE_POD_UID}" |
+      --cacert /opt/victron-ci-reserve/guard-ca.crt \
+      "https://${RUNNER_RESERVE_NODE_IP}:19999/ready/${RUNNER_RESERVE_POD_UID}" |
       python3 -c 'import json,sys; assert json.load(sys.stdin)["admitted"] is True'; then
     break
   fi
@@ -35,4 +36,7 @@ for attempt in {1..60}; do
   [[ "$attempt" != 60 ]] || { tail -30 /tmp/dockerd.log; exit 1; }
   sleep 1
 done
+if [[ "${RUNNER_RESERVE_QUALIFICATION:-}" == 1 ]]; then
+  exec setpriv --reuid=runner --regid=runner --init-groups /opt/victron-ci-reserve/qualify.sh
+fi
 exec setpriv --reuid=runner --regid=runner --init-groups ./run.sh
