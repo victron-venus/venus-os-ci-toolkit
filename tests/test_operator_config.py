@@ -152,9 +152,11 @@ class OperatorConfigTests(unittest.TestCase):
             with self.assertRaises(mode.PreflightError):
                 mode.load_config(valid)
             valid.chmod(0o600)
-            with patch.object(mode.os, "getuid", return_value=os.getuid() + 1):
-                with self.assertRaises(mode.PreflightError):
-                    mode.load_config(valid)
+            with (
+                patch.object(mode.os, "getuid", return_value=os.getuid() + 1),
+                self.assertRaises(mode.PreflightError),
+            ):
+                mode.load_config(valid)
 
     def test_duplicate_json_keys_cannot_replace_an_access_policy(self):
         with tempfile.TemporaryDirectory() as tmp:
