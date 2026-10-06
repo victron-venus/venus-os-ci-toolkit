@@ -10,5 +10,9 @@
     "amd64_sha256": "f3ed9131bc252259df150e270154180188f9df56b73a2312940325e1f522a2d6",
     "arm64_sha256": "b7e11d27cbd69370ed7addb6c0d1c33e70e57a153cee57b5fdc5344bf303c7eb"
   },
-  "runner_version": "2.337.0"
+  "runner_version": "2.337.0",
+  "cri_tools": {
+    "version": "v1.31.1",
+    "amd64_sha256": "0a03ba6b1e4c253d63627f8d210b2ea07675a8712587e697657b236d06d7d231"
+  }
 }

@@ -144,3 +144,74 @@ are not a readiness certificate. Readiness requires registered pools, admission
 and network isolation, toolchain/service-container tests, same-owner and
 cross-owner reusable calls, and a successful job followed by worker destruction.
 Keep normal routing on `github` until all applicable checks are evidenced.
+
+### Linux/x64 sandbox deployment
+
+The files under `deploy/runner-reserve/` prepare the public reserve independently
+of normal GitHub routing. `render_pool.py` reads the same public inventory and
+renders three organization scale sets and three per personal repository (51 for
+the current inventory). Each set has `minRunners: 0`, `maxRunners: 1`: standby can
+accept selected jobs without another Helm change. Namespace quotas bound the
+combined worker population to two jobs per profile, including gVisor overhead.
+This is reduced emergency capacity, not a replacement for GitHub's fleet size.
+
+The node runtime uses the pinned gVisor release with `systrap`, which works in a
+nested VM without KVM. `containerd-config.toml.tmpl` extends K3s's base template;
+never replace an existing custom template without integrating its settings.
+`runsc.toml`, the shim and `RuntimeClass` must agree on their installed paths and
+handler. Runtime configuration needs an approved node restart; it must not be
+applied blindly to a control-plane server. Private runners retain their runtime.
+
+`node_guard.py` is a node service, not code supplied to a job. Install the pinned
+CRI client at `/opt/victron-ci-reserve/crictl`; `versions.json` records its checksum.
+Its root-owned configuration supplies `node_ip`, `dns_ip` and `extra_denied`
+(including any public address of local infrastructure). The CNI cache contract is
+specific to this K3s/flannel deployment. It binds sandbox identity to the actual
+host veth and MAC before atomically installing an nftables bridge fence. Only
+reserved worker namespaces/labels are affected. Private, metadata, node and
+cluster destinations are blocked; public TCP 80/443 and cluster DNS are allowed.
+A bounded read-only readiness endpoint admits only the source pod's exact UID.
+If discovery or the firewall transaction fails, new workers cannot register.
+NetworkPolicy provides another boundary; it does not replace the node fence.
+
+Build `Dockerfile` with BuildKit from this directory, preserving every base-image
+digest. Preload the resulting image into K3s containerd on the selected node and
+use its immutable **manifest digest**, not the Docker configuration/image ID.
+Workers use `imagePullPolicy: Never` so a standby launch does not need a registry
+credential or a new image download during an outage. Keep a recoverable image
+archive and requalify after node replacement or cache eviction.
+
+```bash
+python3 deploy/runner-reserve/render_pool.py \
+  --worker-image 'localhost/victron-reserve-worker@sha256:QUALIFIED_MANIFEST_DIGEST' \
+  --output /path/to/new-reserve-plan
+```
+
+The renderer validates the inventory and digest format, creates a new output
+directory, and never installs resources or changes Actions variables. Its
+`foundations.json` contains namespaces, no-permission worker service accounts,
+quotas, network policies and a fail-closed Kubernetes admission policy. Admission
+requires the pinned worker image, gVisor, the fixed bootstrap, no host namespaces,
+no host/persistent/credential volumes, no API token and no privileged host
+container. Root and Docker capabilities are emulated **inside Sentry**. Each job
+gets a fresh container filesystem, including Docker storage and the tool cache.
+The bootstrap refuses an ordinary Linux runtime and waits for node admission
+before starting Docker or the JIT-configured runner. It never mounts a host socket.
+
+Validate foundations on the server, then install them before any scale set. Put
+the separately scoped GitHub App secrets in each worker namespace using the
+names emitted in the values files; only the ARC control plane may read them.
+Workers have no Kubernetes API credentials or network route to the API. Render
+and validate the pinned scale-set Helm chart with the corresponding values file
+from `index.json`, and install each release in the namespace specified there.
+Keep `CI_RUNNER_MODE=github` throughout preparation and manual qualification.
+
+A local Docker or networking probe is insufficient to certify a pool. Record a
+real GitHub JIT worker for each profile/owner, a cross-owner reusable call,
+Python/Node/Go setup, a Docker build, a published PostgreSQL service, artifact
+upload/download, blocked private endpoints and destruction of the worker after
+completion. No GitHub registration or successful smoke job means **not ready**.
+ARM64, fixed Ubuntu/platform matrices, macOS, Windows, hardware jobs and Scorecard
+publication remain explicit exceptions from the one-time adoption described
+above. A hosted-compute outage and a GitHub control-plane outage are different;
+ARC still requires GitHub's orchestration and artifact services.

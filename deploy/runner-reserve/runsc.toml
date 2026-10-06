@@ -1,0 +1,5 @@
+binary_name = "/opt/victron-ci-reserve/gvisor-20260928/runsc"
+[runsc_config]
+  platform = "systrap"
+  net-raw = "true"
+  allow-packet-socket-write = "true"

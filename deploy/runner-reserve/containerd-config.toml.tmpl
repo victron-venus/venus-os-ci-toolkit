@@ -1,0 +1,6 @@
+{{ template "base" . }}
+[plugins."io.containerd.grpc.v1.cri".containerd.runtimes.victron-reserve]
+  runtime_type = "io.containerd.runsc.v1"
+[plugins."io.containerd.grpc.v1.cri".containerd.runtimes.victron-reserve.options]
+  TypeUrl = "io.containerd.runsc.v1.options"
+  ConfigPath = "/etc/victron-ci-reserve/runsc.toml"
