@@ -338,6 +338,11 @@ class CoverageWorkflowTests(unittest.TestCase):
     def setUp(self):
         self.source = (ROOT / "scripts/coverage_reports.py").read_text()
         self.workflow = yaml.safe_load(renderer.render(self.source))
+        for job in self.workflow["jobs"].values():
+            self.assertEqual(job["steps"][0], renderer.harden_step())
+            # Keep the ordering contract for validation, download and checkout
+            # independent of the verified runner protection that precedes it.
+            job["steps"] = job["steps"][1:]
 
     def test_generated_bytes_and_embedded_program_match(self):
         self.assertEqual(
@@ -345,7 +350,7 @@ class CoverageWorkflowTests(unittest.TestCase):
             (ROOT / ".github/workflows/coverage-upload.yml").read_text(),
         )
         for job in self.workflow["jobs"].values():
-            run = job["steps"][0]["run"]
+            run = next(step["run"] for step in job["steps"] if "run" in step)
             embedded = run.split(renderer.DELIMITER + "'\n", 1)[1].split(
                 renderer.DELIMITER + "\n", 1
             )[0]

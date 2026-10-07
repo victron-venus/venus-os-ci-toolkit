@@ -85,7 +85,12 @@ for (const dep of actions) {
 }
 const manifest = await readFile('.github/action-pins.json', 'utf8');
 const pins = extractPins(manifest, '.github/action-pins.json', preset.customManagers[0]);
-assert.equal(pins.deps.length, 5);
+assert.deepEqual(pins.deps.map((dep) => ({
+  packageName: dep.depName,
+  version: dep.currentValue,
+  digest: dep.currentDigest,
+})), JSON.parse(manifest));
+assert.ok(pins.deps.some((dep) => dep.depName === 'step-security/harden-runner'));
 for (const dep of pins.deps) {
   dep.updates = [{ updateType: 'digest', newValue: dep.currentValue, newDigest: next }];
 }
@@ -153,7 +158,7 @@ const updates = await flattenUpdates(config, {
     { packageFile: policyFile, deps: policyPins.deps },
   ],
 });
-assert.equal(updates.length, 13);
+assert.equal(updates.length, actions.length + pins.deps.length + policyPins.deps.length);
 assert.deepEqual([...new Set(updates.map((update) => update.branchName))], ['renovate/ci-workflows']);
 assert.ok(updates.every((update) => update.automerge === false));
 for await (const filename of glob(['.github/workflows/*.{yml,yaml}', 'actions/**/action.{yml,yaml}'])) {

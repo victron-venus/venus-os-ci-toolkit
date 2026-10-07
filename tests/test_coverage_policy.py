@@ -75,7 +75,7 @@ class CoveragePolicyTests(unittest.TestCase):
     def test_gate_accepts_only_documented_skip_and_rejects_missing_upload(self):
         self.policy["change_scope"] = {"documentation_paths": ["docs"], "always_validate_workflows": ["ci.yml"]}
         jobs = installer.quality(self.policy, self.root)["jobs"]
-        run = jobs["gate"]["steps"][0]["run"]
+        run = next(step["run"] for step in jobs["gate"]["steps"] if "run" in step)
         results = {name: {"result": "success"} for name in jobs if name != "gate"}
         results["scope"]["outputs"] = {"run": "false", "reason": "documentation-only"}
         results["coverage-python"]["result"] = "skipped"

@@ -27,6 +27,9 @@ on:
         description: Optional separate reviewer token when BOT_PAT owns the PR
         required: false
 
+permissions:
+  contents: read
+
 jobs:
   auto-approve:
     name: Auto Approve
@@ -42,6 +45,11 @@ jobs:
       pull-requests: write
     steps:
       # This workflow handles metadata only. Never check out or execute PR code.
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@351661ca32ac09a36dc5ee2d536e3128f2a3c8ed # v2.22.0
+        with:
+          egress-policy: audit
+
       - name: Approve the current head as an independent reviewer
         shell: python3 -I {0}
         env:

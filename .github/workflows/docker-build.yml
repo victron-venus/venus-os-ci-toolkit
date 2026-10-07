@@ -70,6 +70,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
+    - name: Harden the runner (Audit all outbound calls)
+      uses: step-security/harden-runner@351661ca32ac09a36dc5ee2d536e3128f2a3c8ed # v2.22.0
+      with:
+        egress-policy: audit
+
     - name: Use the gated release policy
       run: 'echo "This legacy entry point is retired. Install the reviewed release policy and build-only adapter;
         see docs/release-workflow.md and docs/FLEET_ROLLOUT.md." >&2

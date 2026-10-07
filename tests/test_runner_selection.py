@@ -33,7 +33,8 @@ class RunnerSelectionTests(unittest.TestCase):
             workflow = yaml.load((ROOT / ".github/workflows" / name).read_text(), Loader=yaml.BaseLoader)
             for job in workflow["jobs"].values():
                 for step in job["steps"]:
-                    self.assertNotIn("uses", step)
+                    if "uses" in step:
+                        self.assertEqual(step["uses"], "step-security/harden-runner@351661ca32ac09a36dc5ee2d536e3128f2a3c8ed")
                     self.assertNotIn("checkout", step.get("run", ""))
 
 

@@ -21,7 +21,7 @@ def metadata_entrypoint(filename, script):
     workflow = yaml.load(
         (ROOT / ".github/workflows" / filename).read_text(), Loader=yaml.BaseLoader
     )
-    step = next(iter(workflow["jobs"].values()))["steps"][0]
+    step = next(step for step in next(iter(workflow["jobs"].values()))["steps"] if "run" in step)
     if "shell" in step:
         script.write_text(step["run"])
         command = shlex.split(step["shell"].format(shlex.quote(str(script))))
@@ -55,7 +55,8 @@ class MetadataRunnerTests(unittest.TestCase):
                         job["runs-on"], runner_labels("automation", explicit_input="runner-labels")
                     )
                     for step in job["steps"]:
-                        self.assertNotIn("uses", step)
+                        if "uses" in step:
+                            self.assertEqual(step["uses"], "step-security/harden-runner@351661ca32ac09a36dc5ee2d536e3128f2a3c8ed")
                         self.assertNotIn("checkout", step.get("run", ""))
 
     def test_approval_requires_python3_on_selected_runner(self):
@@ -65,7 +66,7 @@ class MetadataRunnerTests(unittest.TestCase):
             Loader=yaml.BaseLoader,
         )
         self.assertEqual(
-            workflow["jobs"]["auto-approve"]["steps"][0]["shell"], "python3 -I {0}"
+            next(step["shell"] for step in workflow["jobs"]["auto-approve"]["steps"] if "run" in step), "python3 -I {0}"
         )
 
     def test_python_entrypoints_ignore_workspace_and_pythonpath_modules(self):

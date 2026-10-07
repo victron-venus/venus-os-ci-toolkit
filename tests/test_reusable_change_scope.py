@@ -62,7 +62,7 @@ class ReusableScopeContracts(unittest.TestCase):
         self.assertEqual(
             job["outputs"]["reason"], "${{ steps.classify.outputs.reason }}"
         )
-        checkout = job["steps"][0]
+        checkout = next(step for step in job["steps"] if step.get("uses", "").startswith("actions/checkout@"))
         self.assertEqual(checkout["if"], "${{ !inputs.force-full }}")
         self.assertEqual(
             checkout["with"], {"fetch-depth": "0", "persist-credentials": "false"}
@@ -116,7 +116,7 @@ class ReusableScopeContracts(unittest.TestCase):
         # Retired publishing entrypoints must still fail even for a docs-only PR.
         retired = workflow("docker-build.yml")["jobs"]
         self.assertEqual(set(retired), {"migration-required"})
-        self.assertIn("exit 1", retired["migration-required"]["steps"][0]["run"])
+        self.assertIn("exit 1", next(step["run"] for step in retired["migration-required"]["steps"] if "run" in step))
 
     def test_missing_or_inconsistent_scope_outputs_cannot_skip(self):
         """Only a consistent documentation-only decision may suppress work."""

@@ -200,7 +200,7 @@ class CoupledWorkflowTests(unittest.TestCase):
             self.assertIn(name + "@" + pin["digest"] + " # " + pin["version"], workflow)
         parsed = yaml.safe_load(workflow)
         self.assertEqual(
-            parsed["jobs"]["build"]["steps"][0]["uses"], installer.CHECKOUT
+            next(step["uses"] for step in parsed["jobs"]["build"]["steps"] if step["uses"].startswith("actions/checkout@")), installer.CHECKOUT
         )
 
     def test_workflow_update_without_generator_update_fails(self):

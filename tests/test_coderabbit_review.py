@@ -28,7 +28,7 @@ class CodeRabbitReviewContract(unittest.TestCase):
     def setUp(self):
         self.workflow = yaml.load(WORKFLOW.read_text(), Loader=yaml.BaseLoader)
         self.job = self.workflow["jobs"]["request-review"]
-        self.code = self.job["steps"][0]["run"]
+        self.code = next(step["run"] for step in self.job["steps"] if "run" in step)
         self.environment = {
             "GITHUB_REPOSITORY": REPOSITORY,
             "GITHUB_EVENT_NAME": "pull_request_target",
@@ -283,9 +283,11 @@ class CodeRabbitReviewContract(unittest.TestCase):
         self.assertEqual(self.workflow["permissions"], {})
         self.assertIn("vars.CI_RUNNER_AUTOMATION_LABELS", self.job["runs-on"])
         self.assertEqual(self.job["timeout-minutes"], "5")
-        self.assertEqual(len(self.job["steps"]), 1)
-        self.assertNotIn("uses", self.job["steps"][0])
-        self.assertEqual(self.job["steps"][0]["shell"], "python3 -I {0}")
+        self.assertEqual(len(self.job["steps"]), 2)
+        self.assertEqual(self.job["steps"][0]["uses"], "step-security/harden-runner@351661ca32ac09a36dc5ee2d536e3128f2a3c8ed")
+        command = next(step for step in self.job["steps"] if "run" in step)
+        self.assertNotIn("uses", command)
+        self.assertEqual(command["shell"], "python3 -I {0}")
         concurrency = self.job["concurrency"]
         self.assertEqual(concurrency["cancel-in-progress"], "false")
         self.assertIn("github.repository", concurrency["group"])

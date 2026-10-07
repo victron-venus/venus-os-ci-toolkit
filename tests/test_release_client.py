@@ -388,7 +388,7 @@ class GeneratorTest(unittest.TestCase):
         self.assertNotIn("secrets", jobs["build"])
         self.assertIn(
             "dict.fromkeys(('prepare', 'checks', 'build'), 'success')",
-            jobs["gate"]["steps"][0]["run"],
+            next(step["run"] for step in jobs["gate"]["steps"] if "run" in step),
         )
 
     def release_policies(self):
@@ -455,7 +455,7 @@ class GeneratorTest(unittest.TestCase):
                         }
                         results[dependency]["result"] = result
                         checked = subprocess.run(
-                            ["bash", "-e", "-c", gate["steps"][0]["run"]],
+                            ["bash", "-e", "-c", next(step["run"] for step in gate["steps"] if "run" in step)],
                             env=dict(os.environ, RESULTS=json.dumps(results)),
                             check=False,
                             capture_output=True,
