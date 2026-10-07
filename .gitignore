@@ -65,3 +65,7 @@ release.txt
 
 # Deployment-specific public guard certificate; its private key stays on the node.
 /deploy/runner-reserve/guard-ca.crt
+
+# Operator inventories belong outside public source.
+operator-config/
+*.operator.json

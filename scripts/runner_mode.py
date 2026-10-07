@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Plan or apply the private OTTPlay CI runner switch using verified smoke runs.
+"""Plan or apply a configured private CI runner switch using verified smoke runs.
 
 Uses the operator's gh authentication; never reads billing or dispatches builds.
 """
@@ -8,49 +8,227 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
+import stat
 import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
-ORG = "open-ott-play"
+DEFAULT_CONFIG = Path.home() / ".config/venus-os-ci-toolkit/runner-mode.json"
 VARIABLE = "CI_RUNNER_MODE"
 SMOKE_PATH = ".github/workflows/runner-smoke.yml"
-CI_GROUP = "ottplay-private-ci"
-RELEASE_GROUP = "ottplay-private-release"
-REPOSITORIES = {
-    "ottplay-core": "open-ott-play/ottplay-core",
-    "ottplay-android": "open-ott-play/ottplay-android",
-}
-POOLS = {
-    "ottplay-core": {"smoke-linux": ("ottplay-k3s-linux-x64", CI_GROUP)},
-    "ottplay-android": {
-        "smoke-linux": ("ottplay-k3s-linux-x64", CI_GROUP),
-        "smoke-kvm": ("ottplay-k3s-kvm-x64", CI_GROUP),
-        "smoke-release": ("ottplay-k3s-release-x64", RELEASE_GROUP),
-    },
-}
-REPOSITORY_PATH = r"repos/open-ott-play/(?:ottplay-core|ottplay-android)"
+ORG = ""
+REPOSITORIES: dict[str, str] = {}
+POOLS: dict[str, dict[str, tuple[str, str]]] = {}
+GROUP_POLICIES: dict[str, dict] = {}
 PAGE_QUERY = r"(?:\?per_page=100&page=(?:[1-9]|[1-9][0-9]|100))?"
-READ_PATHS = (
-    REPOSITORY_PATH,
-    REPOSITORY_PATH + r"/branches/main",
-    REPOSITORY_PATH + r"/actions/variables" + PAGE_QUERY,
-    REPOSITORY_PATH + r"/actions/runs/[1-9][0-9]*",
-    REPOSITORY_PATH
-    + r"/actions/runs/[1-9][0-9]*/attempts/[1-9][0-9]*/jobs"
-    + PAGE_QUERY,
-    r"orgs/open-ott-play/actions/runner-groups" + PAGE_QUERY,
-    r"orgs/open-ott-play/actions/runner-groups/[1-9][0-9]*/repositories" + PAGE_QUERY,
-)
-WRITE_PATHS = {
-    "POST": REPOSITORY_PATH + r"/actions/variables",
-    "PATCH": REPOSITORY_PATH + r"/actions/variables/CI_RUNNER_MODE",
-}
+READ_PATHS: tuple[str, ...] = ()
+WRITE_PATHS: dict[str, str] = {}
 
 
 class PreflightError(ValueError):
     """Readiness could not be established; no variable should be changed."""
+
+
+NAME_PATTERN = r"[A-Za-z0-9][A-Za-z0-9_.-]{0,99}"
+GROUP_FIELDS = {
+    "name",
+    "visibility",
+    "allows_public_repositories",
+    "repositories",
+    "restricted_to_workflows",
+}
+
+
+def valid_name(value) -> bool:
+    """GitHub identities and pool names cannot inject paths or expressions."""
+    return isinstance(value, str) and re.fullmatch(NAME_PATTERN, value) is not None
+
+
+def configured_pools(jobs) -> dict:
+    """Require a Linux smoke job and explicit runner/group pairs."""
+    if not isinstance(jobs, dict) or not jobs or "smoke-linux" not in jobs:
+        raise PreflightError("Each consumer requires a Linux smoke pool.")
+    result = {}
+    for job, pair in jobs.items():
+        if job not in {"smoke-linux", "smoke-kvm", "smoke-release"} or not (
+            isinstance(pair, list) and len(pair) == 2 and all(map(valid_name, pair))
+        ):
+            raise PreflightError("Invalid smoke pool or runner-group binding.")
+        result[job] = tuple(pair)
+    return result
+
+
+def configured_consumers(consumers, organization: str) -> tuple[dict, dict]:
+    """Reject cross-organization and duplicate targets before installing fences."""
+    if not isinstance(consumers, dict) or not consumers:
+        raise PreflightError("Configure at least one explicit consumer.")
+    repositories, pools = {}, {}
+    for alias, consumer in consumers.items():
+        if not valid_name(alias):
+            raise PreflightError("Invalid consumer alias.")
+        if not isinstance(consumer, dict) or set(consumer) != {"repository", "pools"}:
+            raise PreflightError("Invalid consumer configuration.")
+        full_name = consumer["repository"]
+        if (
+            not isinstance(full_name, str)
+            or not re.fullmatch(re.escape(organization) + "/" + NAME_PATTERN, full_name)
+            or full_name.casefold() in {r.casefold() for r in repositories.values()}
+        ):
+            raise PreflightError("Consumer identity is invalid or duplicated.")
+        pools[alias] = configured_pools(consumer["pools"])
+        repositories[alias] = full_name
+    return repositories, pools
+
+
+def validate_workflow_policy(policy: dict) -> None:
+    """Restricted groups admit only the selected consumers' reviewed workflows."""
+    restricted = policy["restricted_to_workflows"]
+    workflows = policy.get("selected_workflows", [])
+    if type(restricted) is not bool or not isinstance(workflows, list):
+        raise PreflightError("Invalid group workflow policy.")
+    if restricted:
+        expected = {
+            f"{repo}/.github/workflows/{file}@refs/heads/main"
+            for repo in policy["repositories"]
+            for file in ("release.yml", "runner-smoke.yml")
+        }
+        if (
+            not all(isinstance(w, str) for w in workflows)
+            or set(workflows) != expected
+            or len(workflows) != len(expected)
+        ):
+            raise PreflightError(
+                "Restricted groups require exact release and smoke workflow references."
+            )
+    elif workflows:
+        raise PreflightError(
+            "Unrestricted groups cannot declare an unenforced workflow fence."
+        )
+
+
+def valid_selection(selected, repositories: dict) -> bool:
+    """Group selections contain unique explicit configured repository identities."""
+    return (
+        isinstance(selected, list)
+        and bool(selected)
+        and all(isinstance(r, str) and r in repositories.values() for r in selected)
+        and len(selected) == len(set(selected))
+    )
+
+
+def configured_groups(raw_groups, repositories: dict) -> dict:
+    """Validate explicit private group membership and workflow restrictions."""
+    if not isinstance(raw_groups, list) or not raw_groups:
+        raise PreflightError("Explicit runner-group policies are required.")
+    groups = {}
+    for policy in raw_groups:
+        if not isinstance(policy, dict) or set(policy) not in (
+            GROUP_FIELDS,
+            GROUP_FIELDS | {"selected_workflows"},
+        ):
+            raise PreflightError("Invalid runner-group policy fields.")
+        name = policy["name"]
+        if not valid_name(name) or name in groups:
+            raise PreflightError("Invalid or duplicate runner group.")
+        if (
+            policy["visibility"] != "selected"
+            or policy["allows_public_repositories"] is not False
+        ):
+            raise PreflightError("Configured groups must exclude public repositories.")
+        selected = policy["repositories"]
+        if not valid_selection(selected, repositories):
+            raise PreflightError(
+                "Group selection must contain configured consumers only."
+            )
+        validate_workflow_policy(policy)
+        groups[name] = policy
+    return groups
+
+
+def validate_pool_membership(pools: dict, groups: dict, repositories: dict) -> None:
+    """Every pool must admit its consumer; release pools need a workflow fence."""
+    for alias, jobs in pools.items():
+        for job, (_, group) in jobs.items():
+            if (
+                group not in groups
+                or repositories[alias] not in groups[group]["repositories"]
+            ):
+                raise PreflightError("Smoke pool uses a group without its consumer.")
+            if job == "smoke-release" and not groups[group]["restricted_to_workflows"]:
+                raise PreflightError(
+                    "Release pools require an enforced workflow fence."
+                )
+
+
+def configure(manifest: dict) -> None:
+    """Install only validated operator-selected consumers and exact API fences."""
+    global ORG, REPOSITORIES, POOLS, GROUP_POLICIES, READ_PATHS, WRITE_PATHS
+    if (
+        not isinstance(manifest, dict)
+        or set(manifest) != {"schema", "organization", "repositories", "groups"}
+        or type(manifest["schema"]) is not int
+        or manifest["schema"] != 1
+    ):
+        raise PreflightError("Expected runner configuration schema 1.")
+    organization = manifest["organization"]
+    if not valid_name(organization):
+        raise PreflightError("Invalid configured organization.")
+    repositories, pools = configured_consumers(manifest["repositories"], organization)
+    groups = configured_groups(manifest["groups"], repositories)
+    validate_pool_membership(pools, groups, repositories)
+    repo_path = (
+        r"repos/(?:" + "|".join(re.escape(r) for r in repositories.values()) + ")"
+    )
+    org_path = "orgs/" + re.escape(organization)
+    read_paths = (
+        repo_path,
+        repo_path + r"/branches/main",
+        repo_path + r"/actions/variables" + PAGE_QUERY,
+        repo_path + r"/actions/runs/[1-9][0-9]*",
+        repo_path + r"/actions/runs/[1-9][0-9]*/attempts/[1-9][0-9]*/jobs" + PAGE_QUERY,
+        org_path + r"/actions/runner-groups" + PAGE_QUERY,
+        org_path + r"/actions/runner-groups/[1-9][0-9]*/repositories" + PAGE_QUERY,
+    )
+    ORG, REPOSITORIES, POOLS, GROUP_POLICIES = organization, repositories, pools, groups
+    READ_PATHS = read_paths
+    WRITE_PATHS = {
+        "POST": repo_path + r"/actions/variables",
+        "PATCH": repo_path + r"/actions/variables/CI_RUNNER_MODE",
+    }
+
+
+def unique_object(pairs):
+    """Reject duplicate JSON keys instead of silently replacing an access policy."""
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise PreflightError("Duplicate key in runner configuration.")
+        result[key] = value
+    return result
+
+
+def load_config(path: Path) -> None:
+    """Read a trusted operator CLI path; never accept remote or PR-supplied paths.
+
+    Opening the descriptor without following a symlink avoids a check/open race.
+    Nonblocking mode lets us reject FIFOs without hanging. The descriptor checks
+    reject nonregular files and configuration writable by another local user.
+    """
+    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(descriptor, encoding="utf-8") as source:
+        metadata = os.fstat(source.fileno())
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_uid != os.getuid()
+            or metadata.st_mode & 0o022
+        ):
+            raise PreflightError(
+                "Runner config must be an operator-owned regular file."
+            )
+        configure(json.load(source, object_pairs_hook=unique_object))
 
 
 def validate_api_request(path: str, method: str, payload: dict | None) -> None:
@@ -141,9 +319,7 @@ def verify_group_repositories(repo: str, name: str, group_id: int) -> None:
         f"orgs/{ORG}/actions/runner-groups/{group_id}/repositories", "repositories"
     )
     names = {item["full_name"] for item in allowed}
-    maximum = {f"{ORG}/ottplay-android"}
-    if name == CI_GROUP:
-        maximum.add(f"{ORG}/ottplay-core")
+    maximum = set(GROUP_POLICIES[name]["repositories"])
     if repo not in names or not names <= maximum:
         raise PreflightError(f"Runner group {name} has unexpected repository access.")
     if any(item.get("private") is not True for item in allowed):
@@ -152,10 +328,7 @@ def verify_group_repositories(repo: str, name: str, group_id: int) -> None:
 
 def verify_release_workflows(group: dict) -> None:
     """Require GitHub's workflow fence rather than trusting a runner label."""
-    workflows = {
-        f"{ORG}/ottplay-android/.github/workflows/{file}@refs/heads/main"
-        for file in ("release.yml", "runner-smoke.yml")
-    }
+    workflows = set(GROUP_POLICIES[group["name"]]["selected_workflows"])
     if (
         group.get("restricted_to_workflows") is not True
         or set(group.get("selected_workflows", [])) != workflows
@@ -168,12 +341,17 @@ def verify_release_workflows(group: dict) -> None:
 
 def verify_groups(repo: str, groups: list[dict]) -> dict[str, int]:
     """Check actual access policy, especially the signing pool's workflow fence."""
-    required = {group for _, group in POOLS[repo.split("/")[1]].values()}
+    required = {
+        group
+        for _, group in POOLS[
+            next(alias for alias, full in REPOSITORIES.items() if full == repo)
+        ].values()
+    }
     result = {}
     for name in sorted(required):
         group = selected_group(name, groups)
         verify_group_repositories(repo, name, group["id"])
-        if name == RELEASE_GROUP:
+        if GROUP_POLICIES[name]["restricted_to_workflows"]:
             verify_release_workflows(group)
         result[name] = group["id"]
     return result
@@ -234,7 +412,9 @@ def verify_smoke(
     jobs = collection(
         f"repos/{repo}/actions/runs/{run_id}/attempts/{attempt}/jobs", "jobs"
     )
-    for name, (label, group) in POOLS[repo.split("/")[1]].items():
+    for name, (label, group) in POOLS[
+        next(alias for alias, full in REPOSITORIES.items() if full == repo)
+    ].items():
         matches = [job for job in jobs if job.get("name") == name]
         if len(matches) != 1:
             raise PreflightError(f"Smoke job {name} is missing or ambiguous.")
@@ -334,7 +514,17 @@ def run_switch(args) -> int:
 def main(argv=None) -> int:
     """Read-only by default; the only write is the explicitly requested variable."""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--repo", required=True, choices=sorted(REPOSITORIES))
+    parser.add_argument(
+        "--repo",
+        required=True,
+        help="Exact alias in the reviewed operator configuration",
+    )
+    parser.add_argument(
+        "--config",
+        type=Path,
+        default=DEFAULT_CONFIG,
+        help="External runner metadata JSON (no credentials)",
+    )
     parser.add_argument("--mode", choices=("github", "k3s"))
     parser.add_argument("--smoke-run", type=int, help="Successful manual smoke run ID")
     parser.add_argument(
@@ -347,6 +537,9 @@ def main(argv=None) -> int:
     if args.apply and args.mode is None:
         parser.error("--apply requires --mode")
     try:
+        load_config(args.config)
+        if args.repo not in REPOSITORIES:
+            raise PreflightError("Unknown consumer alias in runner configuration.")
         return run_switch(args)
     except (
         OSError,

@@ -3,6 +3,13 @@
 [CI dependency updates](docs/DEPENDENCY_UPDATES.md): Renovate updates related
 actions and reusable workflows together, with required consistency checks.
 
+## Operator inventories
+
+See [public source and operator configuration](docs/OPERATOR_CONFIG.md) before
+updating a local fleet or private-runner operator installation. Public source
+contains public inventory and synthetic examples; reviewed operational metadata
+lives outside the checkout. Preparing that configuration does not switch runners.
+
 ## Runtime scope
 
 This toolkit runs in GitHub Actions; it is not a service installed on Venus OS.
