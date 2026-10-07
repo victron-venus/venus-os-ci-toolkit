@@ -45,6 +45,8 @@ jobs:
           STATUS_HEAD: ${{ github.event.sha }}
           STATUS_CONTEXT: ${{ github.event.context }}
           STATUS_STATE: ${{ github.event.state }}
+          STATUS_SENDER: ${{ github.event.sender.login }}
+          STATUS_SENDER_TYPE: ${{ github.event.sender.type }}
           DRY_RUN: ${{ inputs.dry-run }}
         run: |
           import hashlib
@@ -107,7 +109,9 @@ jobs:
               # GitHub lists statuses newest first. An older success cannot override a rerun.
               statuses = items(f"repos/{repository}/commits/{head}/statuses?per_page=100", token)
               status = next((s for s in statuses if s.get("context") == "CodeRabbit"), {})
-              if status.get("state") != "success":
+              creator = status.get("creator") or {}
+              if (status.get("state") != "success"
+                      or creator.get("login") != REVIEWER or creator.get("type") != "Bot"):
                   return False
               reviews = items(f"repos/{repository}/pulls/{number}/reviews?per_page=100", token)
               return any(r.get("user", {}).get("login") == REVIEWER
@@ -190,7 +194,9 @@ jobs:
               expected = os.environ.get("EXPECTED_HEAD", "")
               automatic = (event == "status" and not number and not expected
                            and os.environ.get("STATUS_CONTEXT") == "CodeRabbit"
-                           and os.environ.get("STATUS_STATE") == "success")
+                           and os.environ.get("STATUS_STATE") == "success"
+                           and os.environ.get("STATUS_SENDER") == REVIEWER
+                           and os.environ.get("STATUS_SENDER_TYPE") == "Bot")
               manual = event == "workflow_dispatch" and re.fullmatch(r"[1-9][0-9]*", number)
               head = os.environ.get("STATUS_HEAD", "") if automatic else expected
               if not (automatic or manual) or re.fullmatch(r"[0-9a-f]{40}", head) is None:

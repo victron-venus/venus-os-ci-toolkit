@@ -29,6 +29,7 @@ class AutofixContract(unittest.TestCase):
         self.environment = {
             "GITHUB_EVENT_NAME": "status", "GITHUB_REPOSITORY": REPO,
             "STATUS_HEAD": HEAD, "STATUS_CONTEXT": "CodeRabbit", "STATUS_STATE": "success",
+            "STATUS_SENDER": "coderabbitai[bot]", "STATUS_SENDER_TYPE": "Bot",
             "PR_NUMBER": "", "EXPECTED_HEAD": "", "BOT_PAT": "test-token", "DRY_RUN": "false",
         }
         self.repository = {"full_name": REPO, "private": False, "visibility": "public", "archived": False}
@@ -37,7 +38,8 @@ class AutofixContract(unittest.TestCase):
                    "base": {"repo": {"full_name": REPO}}}
         self.current = copy.deepcopy(self.pr)
         self.identity = dict(BOT)
-        self.statuses = [[{"context": "CodeRabbit", "state": "success"}]]
+        self.statuses = [[{"context": "CodeRabbit", "state": "success",
+                           "creator": {"login": "coderabbitai[bot]", "type": "Bot"}}]]
         self.reviews = [[{"user": {"login": "coderabbitai[bot]", "type": "Bot"},
                          "commit_id": HEAD, "state": "COMMENTED"}]]
         self.thread = {"id": "thread-1", "isResolved": False, "isOutdated": False,
@@ -125,6 +127,7 @@ class AutofixContract(unittest.TestCase):
     def test_invalid_events_never_reach_api(self):
         for changes in ({"GITHUB_EVENT_NAME": "pull_request_review"}, {"STATUS_CONTEXT": "Other"},
                         {"STATUS_STATE": "pending"}, {"STATUS_HEAD": "bad"},
+                        {"STATUS_SENDER": "contributor"}, {"STATUS_SENDER_TYPE": "User"},
                         {"PR_NUMBER": "17"}, {"EXPECTED_HEAD": HEAD}):
             with self.subTest(changes=changes):
                 self.setUp()
@@ -161,6 +164,21 @@ class AutofixContract(unittest.TestCase):
 
     def test_latest_status_must_be_success(self):
         self.statuses[0].insert(0, {"context": "CodeRabbit", "state": "pending"})
+        self.execute()
+        self.assertEqual(self.posted, [])
+
+    def test_forged_status_creator_cannot_trigger_autofix(self):
+        for creator in (None, {"login": "contributor", "type": "User"},
+                        {"login": "coderabbitai[bot]", "type": "User"}):
+            with self.subTest(creator=creator):
+                self.setUp()
+                self.statuses[0][0]["creator"] = creator
+                self.execute()
+                self.assertEqual(self.posted, [])
+
+    def test_manual_dispatch_still_authenticates_status_creator(self):
+        self.environment.update(GITHUB_EVENT_NAME="workflow_dispatch", PR_NUMBER="17", EXPECTED_HEAD=HEAD)
+        self.statuses[0][0]["creator"] = {"login": "contributor", "type": "User"}
         self.execute()
         self.assertEqual(self.posted, [])
 
@@ -255,6 +273,8 @@ class AutofixContract(unittest.TestCase):
             self.assertEqual(caller["permissions"], {})
             job = caller["jobs"]["request-autofix"]
             self.assertIn("github.event.repository.private == false", job["if"])
+            self.assertIn("github.event.sender.login == 'coderabbitai[bot]'", job["if"])
+            self.assertIn("github.event.sender.type == 'Bot'", job["if"])
             self.assertEqual(set(job["secrets"]), {"BOT_PAT"})
 
 

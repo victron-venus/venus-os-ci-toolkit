@@ -108,7 +108,9 @@ The caller must be merged onto the default branch before status events reach it.
 The [status event](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#status)
 runs the default-branch workflow when CodeRabbit reports success. It works for
 fork PRs without checking out their code or exposing secrets to a PR workflow.
-The reusable job verifies an actual submitted CodeRabbit review on the current
+The caller authenticates the event sender as `coderabbitai[bot]` with type `Bot`;
+the reusable job also verifies the live status creator, including for manual dispatch.
+It verifies an actual submitted CodeRabbit review on the current
 head; a successful status alone, including a skipped review, is insufficient.
 It then finds unresolved, non-outdated CodeRabbit review threads containing
 `Prompt for AI Agents` instructions and posts this command as the verified bot:

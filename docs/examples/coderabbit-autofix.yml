@@ -24,7 +24,8 @@ jobs:
     if: >-
       github.event.repository.private == false &&
       (github.event_name == 'workflow_dispatch' ||
-       (github.event.context == 'CodeRabbit' && github.event.state == 'success'))
+       (github.event.context == 'CodeRabbit' && github.event.state == 'success' &&
+        github.event.sender.login == 'coderabbitai[bot]' && github.event.sender.type == 'Bot'))
     uses: victron-venus/venus-os-ci-toolkit/.github/workflows/coderabbit-autofix-reusable.yml@TOOLKIT_COMMIT_SHA
     with:
       pull-request-number: ${{ inputs.pull-request-number || '' }}
