@@ -23,5 +23,10 @@
     "packageName": "codecov/codecov-action",
     "version": "v7.1.1",
     "digest": "303a32d7a59b442fa8d48b6a1cc6825c09c847a5"
+  },
+  {
+    "packageName": "step-security/harden-runner",
+    "version": "v2.22.0",
+    "digest": "351661ca32ac09a36dc5ee2d536e3128f2a3c8ed"
   }
 ]

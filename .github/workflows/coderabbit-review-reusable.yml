@@ -24,6 +24,11 @@ jobs:
       cancel-in-progress: false
     steps:
       # Metadata only: never check out PR code, download artifacts, or run PR content.
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@351661ca32ac09a36dc5ee2d536e3128f2a3c8ed # v2.22.0
+        with:
+          egress-policy: audit
+
       - name: Request one review as californiantiramisu
         shell: python3 -I {0}
         env:

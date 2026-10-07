@@ -100,7 +100,7 @@ class GeneratedGateExecution(unittest.TestCase):
 
     def setUp(self):
         self.jobs = rendered(installer.quality(policy()))["jobs"]
-        self.command = self.jobs["gate"]["steps"][0]["run"]
+        self.command = next(step["run"] for step in self.jobs["gate"]["steps"] if "run" in step)
 
     def results(self, full=False):
         """Build the complete expected job inventory for full or docs-only CI."""
@@ -512,7 +512,7 @@ class GeneratedReleaseScopeExecution(unittest.TestCase):
             for check_result in ("success", "failure", "cancelled", "skipped"):
                 values["checks"]["result"] = check_result
                 gate = subprocess.run(
-                    ["bash", "-e", "-c", jobs["gate"]["steps"][0]["run"]],
+                    ["bash", "-e", "-c", next(step["run"] for step in jobs["gate"]["steps"] if "run" in step)],
                     env=dict(os.environ, RESULTS=json.dumps(values)),
                     capture_output=True,
                     text=True,
@@ -542,7 +542,7 @@ class GeneratedReleaseScopeExecution(unittest.TestCase):
                     changed[name]["result"] = result
                     self.assertTrue(job_runs(jobs["gate"], changed))
                     gate = subprocess.run(
-                        ["bash", "-e", "-c", jobs["gate"]["steps"][0]["run"]],
+                        ["bash", "-e", "-c", next(step["run"] for step in jobs["gate"]["steps"] if "run" in step)],
                         env=dict(os.environ, RESULTS=json.dumps(changed)),
                         capture_output=True,
                         text=True,
@@ -596,7 +596,7 @@ class ToolkitValidationPolicy(unittest.TestCase):
     def run_gate(self, values):
         """Execute the committed required gate instead of reproducing its policy."""
         return subprocess.run(
-            ["bash", "-e", "-c", self.jobs["gate"]["steps"][0]["run"]],
+            ["bash", "-e", "-c", next(step["run"] for step in self.jobs["gate"]["steps"] if "run" in step)],
             env=dict(os.environ, RESULTS=json.dumps(values)),
             text=True,
             capture_output=True,

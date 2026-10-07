@@ -59,6 +59,10 @@ jobs:
       run: ${{ steps.classify.outputs.run }}
       reason: ${{ steps.classify.outputs.reason }}
     steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: @HARDEN_RUNNER@
+        with:
+          egress-policy: audit
       - name: Checkout consumer history
         if: ${{ !inputs.force-full }}
         uses: @CHECKOUT@
@@ -93,9 +97,12 @@ def render(source: str) -> str:
     pins = json.loads((ROOT / ".github/action-pins.json").read_text())
     checkout = next(pin for pin in pins if pin["packageName"] == "actions/checkout")
     reference = f"actions/checkout@{checkout['digest']} # {checkout['version']}"
+    harden = next(pin for pin in pins if pin["packageName"] == "step-security/harden-runner")
+    harden_reference = f"step-security/harden-runner@{harden['digest']} # {harden['version']}"
     return (
         TEMPLATE.replace("@RUNNER@", runner_labels(explicit_input="runner", scalar=True))
         .replace("@CHECKOUT@", reference)
+        .replace("@HARDEN_RUNNER@", harden_reference)
         .replace("@DIGEST@", hashlib.sha256(source.encode()).hexdigest())
         .replace("@RUN@", indent(command, "          ").rstrip("\n"))
     )

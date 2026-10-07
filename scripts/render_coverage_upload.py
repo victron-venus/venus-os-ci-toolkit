@@ -13,6 +13,7 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from runner_selection import runner_labels  # pylint: disable=wrong-import-position
+from workflow_hardening import harden_step  # pylint: disable=wrong-import-position
 
 ROOT = Path(__file__).resolve().parents[1]
 TARGET = ROOT / ".github/workflows/coverage-upload.yml"
@@ -62,6 +63,7 @@ def render(source):
             },
             "outputs": {"upload-outcome": "${{ steps.upload.outcome }}"},
             "steps": [
+                harden_step(),
                 {
                     "name": "Validate public event and report contract",
                     "id": "contract",

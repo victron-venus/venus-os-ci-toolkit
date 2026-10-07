@@ -75,6 +75,11 @@ jobs:
       group: vendor-update-${{ github.repository }}-${{ inputs.target-repository }}-${{ inputs.destination-prefix }}
       cancel-in-progress: false
     steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@351661ca32ac09a36dc5ee2d536e3128f2a3c8ed # v2.22.0
+        with:
+          egress-policy: audit
+
       - name: Validate immutable toolkit revision and required configuration
         env:
           TOOLKIT_REVISION: ${{ inputs.toolkit-revision }}
