@@ -6,7 +6,7 @@ inputs:
     required: false
     default: '1.26.8'
   golangci-lint-major:
-    description: 'golangci-lint config generation (1 or 2); Go 1.27+ requires 2'
+    description: 'golangci-lint config generation (1 or 2)'
     required: false
     default: '1'
 runs:
@@ -23,11 +23,13 @@ runs:
       shell: bash
       env:
         GOLANGCI_LINT_MAJOR: ${{ inputs.golangci-lint-major }}
+        GITHUB_ACTION_PATH: ${{ github.action_path }}
+        GOWORK: 'off'
       run: |
         case "$GOLANGCI_LINT_MAJOR" in
-          1) lint_package=github.com/golangci/golangci-lint/cmd/golangci-lint@v1.64.8 ;;
-          2) lint_package=github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0 ;;
+          1) lint_module=golangci-v1; lint_package=github.com/golangci/golangci-lint/cmd/golangci-lint ;;
+          2) lint_module=golangci-v2; lint_package=github.com/golangci/golangci-lint/v2/cmd/golangci-lint ;;
           *) echo 'golangci-lint-major must be 1 or 2.' >&2; exit 1 ;;
         esac
-        go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
-        go install "$lint_package"
+        go -C "$GITHUB_ACTION_PATH/tools/govulncheck" install -mod=readonly golang.org/x/vuln/cmd/govulncheck
+        go -C "$GITHUB_ACTION_PATH/tools/$lint_module" install -mod=readonly "$lint_package"
