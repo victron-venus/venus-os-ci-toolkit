@@ -37,6 +37,13 @@ jobs:
           golangci-lint run ./...
           govulncheck ./...
           go test -race ./...
+  terraform-contract:
+    name: Verified TFLint and Terraform validation
+    uses: ./.github/workflows/terraform-ci.yml
+    with:
+      working-directory: tests/fixtures/terraform-minimal
+      terraform-version: '1.15.7'
+      tflint-enabled: true
   scorecard-contracts:
     name: Fail-closed Scorecard adapter contracts
     runs-on: ${{ fromJSON((vars.CI_RUNNER_MODE == 'self-hosted' || vars.CI_RUNNER_MODE == 'k3s') && ((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) || (contains(fromJSON('["push","schedule","workflow_dispatch"]'), github.event_name) && github.ref == format('refs/heads/{0}', github.event.repository.default_branch))) && (vars.CI_RUNNER_LABELS || '[]') || '["ubuntu-latest"]') }}
