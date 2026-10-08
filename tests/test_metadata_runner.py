@@ -1,5 +1,6 @@
 """Metadata automation can use an existing trusted runner without checking out code."""
 
+import json
 import os
 import shlex
 import subprocess
@@ -14,6 +15,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 from runner_selection import runner_labels
 
 ROOT = Path(__file__).resolve().parents[1]
+HARDEN_RUNNER = "step-security/harden-runner@" + next(
+    pin["digest"] for pin in json.loads((ROOT / ".github/action-pins.json").read_text())
+    if pin["packageName"] == "step-security/harden-runner"
+)
 
 
 def metadata_entrypoint(filename, script):
@@ -56,7 +61,7 @@ class MetadataRunnerTests(unittest.TestCase):
                     )
                     for step in job["steps"]:
                         if "uses" in step:
-                            self.assertEqual(step["uses"], "step-security/harden-runner@351661ca32ac09a36dc5ee2d536e3128f2a3c8ed")
+                            self.assertEqual(step["uses"], HARDEN_RUNNER)
                         self.assertNotIn("checkout", step.get("run", ""))
 
     def test_approval_requires_python3_on_selected_runner(self):

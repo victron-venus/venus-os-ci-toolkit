@@ -61,6 +61,46 @@ def validate_codeql(workflows):
         )
 
 
+def yaml_member(node, name):
+    """Locate one parsed YAML value without constructing Python objects."""
+    if isinstance(node, yaml.MappingNode):
+        return next((value for key, value in node.value if key.value == name), None)
+    return None
+
+
+def validate_codeql_update_metadata(sources):
+    """Keep every CodeQL SHA discoverable by Renovate, including SARIF uploads."""
+    versions = set()
+    for filename, source in sources.items():
+        root = yaml.compose(source, Loader=yaml.BaseLoader)
+        jobs = yaml_member(root, "jobs")
+        if not isinstance(jobs, yaml.MappingNode):
+            continue
+        lines = source.splitlines()
+        for _, job in jobs.value:
+            steps = yaml_member(job, "steps")
+            if not isinstance(steps, yaml.SequenceNode):
+                continue
+            for step in steps.value:
+                reference = yaml_member(step, "uses")
+                if not isinstance(reference, yaml.ScalarNode) or not re.fullmatch(
+                    r"github/codeql-action/(init|autobuild|analyze|upload-sarif)@"
+                    + COMMIT_SHA_PATTERN, reference.value
+                ):
+                    continue
+                mark = reference.end_mark
+                tail = lines[mark.line][mark.column:] if mark.line < len(lines) else ""
+                comment = re.match(r"[ \t]*#[ \t]*(v[0-9]+\.[0-9]+\.[0-9]+)(?:[ \t]|$)", tail)
+                if comment is None:
+                    raise ValueError(
+                        f"{filename}:{reference.start_mark.line + 1}: "
+                        "CodeQL SHA needs an inline full release comment for Renovate"
+                    )
+                versions.add(comment[1])
+    if len(versions) > 1:
+        raise ValueError("CodeQL version comments must name the same release")
+
+
 def validate_action_reference(filename, reference, pins):
     """Check one external action against immutable and canonical pins."""
     if not reference or reference.startswith("./"):
@@ -226,12 +266,17 @@ def validate_coverage_callers(policy, workflows, gate):
 def validate(directory: Path, *, actions_only=False) -> None:
     """Reject duplicate validation triggers, missing gate jobs and mixed CodeQL pins."""
     policy = json.loads((directory / ".release-policy.json").read_text())
-    workflows = {
-        # UniqueKeyLoader inherits BaseLoader: no Python object construction.
-        path.name: yaml.load(path.read_text(), Loader=UniqueKeyLoader)  # nosec B506
+    sources = {
+        path.name: path.read_text()
         for path in (directory / ".github/workflows").glob("*.y*ml")
     }
+    workflows = {
+        # UniqueKeyLoader inherits BaseLoader: no Python object construction.
+        name: yaml.load(source, Loader=UniqueKeyLoader)  # nosec B506
+        for name, source in sources.items()
+    }
     validate_codeql(workflows)
+    validate_codeql_update_metadata(sources)
     validate_generator_pins(directory, workflows)
     if actions_only:
         return
