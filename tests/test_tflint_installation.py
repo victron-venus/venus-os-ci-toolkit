@@ -19,6 +19,29 @@ def step_script(name):
 
 
 class TFLintContracts(unittest.TestCase):
+    def test_terraform_setup_matches_upstream_action_inputs(self):
+        # Exact pinned setup-terraform action.yml declares underscored inputs:
+        # https://github.com/hashicorp/setup-terraform/blob/dfe3c3f87815947d99a8997f908cb6525fc44e9e/action.yml
+        setup = next(step for step in STEPS if step['name'] == 'Set up Terraform')
+        self.assertEqual(set(setup['with']), {'terraform_version', 'terraform_wrapper'})
+        self.assertFalse(setup['with']['terraform_wrapper'])
+
+    def test_wrong_runtime_version_fails_before_validation(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            command = root / 'terraform'
+            command.write_text(f'#!{sys.executable}\nprint(\'{{"terraform_version": "1.16.5"}}\')\n')
+            command.chmod(0o755)
+            env = dict(os.environ, PATH=f'{root}{os.pathsep}{os.environ["PATH"]}')
+            for requested, succeeds in [('1.16.5', True), ('1.15.7', False), ('<1.17.0', True)]:
+                with self.subTest(requested=requested):
+                    env['REQUESTED_TERRAFORM_VERSION'] = requested
+                    result = subprocess.run(['bash', '-e', '-c', step_script('Verify selected Terraform version')],
+                                            env=env, text=True, capture_output=True, timeout=10, check=False)
+                    self.assertEqual(result.returncode == 0, succeeds, result.stderr)
+                    if not succeeds:
+                        self.assertIn('does not match', result.stderr)
+
     def test_corrupt_download_is_rejected_before_extraction(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
