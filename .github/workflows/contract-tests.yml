@@ -10,7 +10,7 @@ jobs:
     uses: ./.github/workflows/terraform-ci.yml
     with:
       working-directory: tests/fixtures/terraform-minimal
-      terraform-version: '1.15.7'
+      terraform-version: '1.16.5'
       tflint-enabled: true
   scorecard-contracts:
     name: Fail-closed Scorecard adapter contracts
