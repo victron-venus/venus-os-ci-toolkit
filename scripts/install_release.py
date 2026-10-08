@@ -254,7 +254,7 @@ def coverage_pin_comment(mapping, version):
         mapping.yaml_add_eol_comment(version, key="uses")
         return
     existing = comment.value.removeprefix("#").strip()
-    suffix = re.sub(r"^(?:v[0-9][\w.-]*|main)(?:\s+|$)", "", existing)
+    suffix = re.sub(r"^(?:v(?a:\d)[\w.-]*|main)(?:\s+|$)", "", existing)
     mapping.yaml_add_eol_comment(version + (" " + suffix if suffix else ""), key="uses")
 
 
@@ -1252,7 +1252,7 @@ def validate_build_secrets(directory: Path, policy: dict) -> None:
     text = path.read_text()
     workflow = yaml.load(text, Loader=yaml.BaseLoader)
     declared = workflow.get("on", {}).get("workflow_call", {}).get("secrets", {})
-    used = set(re.findall(r"secrets\.([A-Za-z_][A-Za-z0-9_]*)", text)) - {
+    used = set(re.findall(r"secrets\.([A-Za-z_](?a:\w)*)", text)) - {
         "GITHUB_TOKEN"
     }
     forwarded = set(build_secrets(policy))
