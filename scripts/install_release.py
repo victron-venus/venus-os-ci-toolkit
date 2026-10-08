@@ -42,6 +42,13 @@ CONTRACT_REQUIREMENTS = ".github/requirements-workflow-contracts.txt"
 TEST_ROOT_EXPRESSION = "Path(__file__).parents[1]"
 VENDORED_TEST_ROOT_EXPRESSION = "Path(__file__).parents[2]"
 FULL_SCOPE = "${{ needs.scope.outputs.run == 'true' }}"
+QUALITY_GATE_NAME = "quality-gate.yml"
+RELEASE_BUILD_PATH = ".github/workflows/release-build.yml"
+CHANGE_SCOPE_PATH = "scripts/change_scope.py"
+WORKFLOW_CONTRACTS_PATH = "scripts/workflow_contracts.py"
+RELEASE_CONTROL_PATH = "scripts/release_control.py"
+GITHUB_TOKEN = "${{ github.token }}"
+PUBLISH_CANDIDATE_STEP = "Publish checked candidate"
 
 
 class WorkflowLoader(yaml.SafeLoader):
@@ -392,7 +399,7 @@ def validation_oidc_workflows(policy):
         or any(
             not isinstance(name, str)
             or not re.fullmatch(r"[A-Za-z0-9_-]+\.ya?ml", name)
-            or name in {"quality-gate.yml", "release-pipeline.yml"}
+            or name in {QUALITY_GATE_NAME, "release-pipeline.yml"}
             for name in selected
         )
         or len(selected) != len(set(selected))
@@ -549,7 +556,7 @@ def requires_security_events(directory, filename, chain=()):
 def validation_job(policy, directory, filename, oidc):
     """Build one callable validator with its explicitly required permissions."""
     if not re.fullmatch(r"[A-Za-z0-9_-]+\.ya?ml", filename) or filename in {
-        "quality-gate.yml",
+        QUALITY_GATE_NAME,
         "release-pipeline.yml",
     }:
         raise ValueError(f"Invalid/recursive validation workflow: {filename}")
@@ -787,7 +794,7 @@ PY
                     "run": prepare_script,
                     "env": {
                         "PUBLICATION_ENABLED": "${{ vars.RELEASE_CHANNELS_ENABLED }}",
-                        "GH_TOKEN": "${{ github.token }}",
+                        "GH_TOKEN": GITHUB_TOKEN,
                     },
                 }
             ],
@@ -867,7 +874,7 @@ PY
                     "run": "python3 scripts/release.py collect .release-download .release-assets"
                 },
                 {
-                    "name": "Publish checked candidate",
+                    "name": PUBLISH_CANDIDATE_STEP,
                     "id": "publication",
                     "env": {
                         **publication_env,
@@ -983,7 +990,7 @@ def build_secrets(policy):
 def publication_token_env(policy):
     """Opt only trusted publication steps into an explicitly named classic token."""
     if "publication_token_secret" not in policy:
-        return {"GH_TOKEN": "${{ github.token }}"}
+        return {"GH_TOKEN": GITHUB_TOKEN}
     name = policy["publication_token_secret"]
     if (
         not isinstance(name, str)
@@ -1019,7 +1026,7 @@ def release(policy):
     metadata["run"] = (
         'python3 scripts/release_versioned.py prepare --repo "$GITHUB_REPOSITORY"'
     )
-    metadata["env"]["GH_TOKEN"] = "${{ github.token }}"
+    metadata["env"]["GH_TOKEN"] = GITHUB_TOKEN
     prepare["steps"].append(
         {
             "name": "Store exact version plan before building",
@@ -1058,7 +1065,7 @@ def release(policy):
         },
     )
     for step in candidate["steps"]:
-        if step.get("name") == "Publish checked candidate":
+        if step.get("name") == PUBLISH_CANDIDATE_STEP:
             step["run"] = (
                 'python3 scripts/release_versioned.py publish --repo "$GITHUB_REPOSITORY" '
                 "--assets .release-assets"
@@ -1077,12 +1084,29 @@ def release(policy):
     )
     final["environment"] = "release"
     for step in final["steps"]:
-        if step.get("name") == "Publish checked candidate":
+        if step.get("name") == PUBLISH_CANDIDATE_STEP:
             step["name"] = (
                 "Publish the separately validated final packages after approval"
             )
     jobs["final"] = final
     return workflow
+
+
+def validate_asset_suffixes(suffixes, seen):
+    """Reject ambiguous or repeated suffixes across every asset restriction."""
+    if not isinstance(suffixes, list) or not suffixes:
+        raise ValueError("Asset restrictions require a nonempty suffix array")
+    for suffix in suffixes:
+        if (
+            not isinstance(suffix, str)
+            or len(suffix) > 64
+            or not re.fullmatch(r"\.[a-z0-9]+(?:\.[a-z0-9]+)*", suffix, re.ASCII)
+            or suffix in seen
+        ):
+            raise ValueError(
+                "Asset suffixes must be unique lowercase literal extensions"
+            )
+        seen.add(suffix)
 
 
 def validate_asset_restrictions(policy: dict) -> tuple[dict, ...]:
@@ -1096,19 +1120,7 @@ def validate_asset_restrictions(policy: dict) -> tuple[dict, ...]:
         if not isinstance(item, dict) or set(item) != {"suffixes", "reason"}:
             raise ValueError("Asset restrictions require exactly suffixes and reason")
         suffixes = item["suffixes"]
-        if not isinstance(suffixes, list) or not suffixes:
-            raise ValueError("Asset restrictions require a nonempty suffix array")
-        for suffix in suffixes:
-            if (
-                not isinstance(suffix, str)
-                or len(suffix) > 64
-                or not re.fullmatch(r"\.[a-z0-9]+(?:\.[a-z0-9]+)*", suffix, re.ASCII)
-                or suffix in seen
-            ):
-                raise ValueError(
-                    "Asset suffixes must be unique lowercase literal extensions"
-                )
-            seen.add(suffix)
+        validate_asset_suffixes(suffixes, seen)
         reason = item["reason"]
         if (
             not isinstance(reason, str)
@@ -1217,7 +1229,7 @@ def validate_workflow_adapters(directory: Path, policy: dict) -> None:
     if policy.get("mode", "release") == "release":
         validate_build_secrets(directory, policy)
     if policy.get("versioning"):
-        path = directory / ".github/workflows/release-build.yml"
+        path = directory / RELEASE_BUILD_PATH
         declaration = yaml.load(path.read_text(), Loader=yaml.BaseLoader)
         for key in ("on", "workflow_call", "inputs", "release_plan_artifact"):
             declaration = (
@@ -1236,7 +1248,7 @@ def validate_workflow_adapters(directory: Path, policy: dict) -> None:
 
 def validate_build_secrets(directory: Path, policy: dict) -> None:
     """Reject undeclared, unused or implicit secrets before rendering a caller."""
-    path = directory / ".github/workflows/release-build.yml"
+    path = directory / RELEASE_BUILD_PATH
     text = path.read_text()
     workflow = yaml.load(text, Loader=yaml.BaseLoader)
     declared = workflow.get("on", {}).get("workflow_call", {}).get("secrets", {})
@@ -1330,19 +1342,19 @@ def validate_local_calls(directory, workflow, allowed=None, chain=()):
 
 def release_files(directory: Path, policy: dict) -> dict[str, str]:
     """Assemble release tooling only when a real project packaging adapter exists."""
-    if not (directory / ".github/workflows/release-build.yml").is_file():
+    if not (directory / RELEASE_BUILD_PATH).is_file():
         raise ValueError("A real release-build.yml adapter is required")
     files = {".github/workflows/release-pipeline.yml": dump(release(policy))}
     files["RELEASING.md"] = release_strategy(directory, policy)
-    files["scripts/release_control.py"] = (
-        ROOT / "scripts/release_control.py"
+    files[RELEASE_CONTROL_PATH] = (
+        ROOT / RELEASE_CONTROL_PATH
     ).read_text()
     marker = "ASSET_RESTRICTIONS = ()"
-    if files["scripts/release_control.py"].count(marker) != 1:
+    if files[RELEASE_CONTROL_PATH].count(marker) != 1:
         raise ValueError(
             "Release engine asset restriction marker is missing or ambiguous"
         )
-    files["scripts/release_control.py"] = files["scripts/release_control.py"].replace(
+    files[RELEASE_CONTROL_PATH] = files[RELEASE_CONTROL_PATH].replace(
         marker, f"ASSET_RESTRICTIONS = {validate_asset_restrictions(policy)!r}"
     )
     if policy.get("versioning"):
@@ -1546,7 +1558,7 @@ def render_coverage(directory: Path) -> dict[str, str]:
     validate_policy(directory, policy)
     if coverage_policy(policy) is None or policy.get("single_entry_ci") is not True:
         raise ValueError("Coverage-only adoption requires coverage and single_entry_ci")
-    gate_source = (directory / WORKFLOWS / "quality-gate.yml").read_text()
+    gate_source = (directory / WORKFLOWS / QUALITY_GATE_NAME).read_text()
     if not gate_source.startswith(
         "# Generated by venus-os-ci-toolkit/scripts/install_release.py;"
         " edit .release-policy.json.\n"
@@ -1558,8 +1570,8 @@ def render_coverage(directory: Path) -> dict[str, str]:
     validate_workflow_adapters(directory, policy)
     files = {
         WORKFLOWS + "/quality-gate.yml": dump(quality(policy, directory)),
-        "scripts/change_scope.py": (ROOT / "scripts/change_scope.py").read_text(),
-        "scripts/workflow_contracts.py": (ROOT / "scripts/workflow_contracts.py").read_text(),
+        CHANGE_SCOPE_PATH: (ROOT / CHANGE_SCOPE_PATH).read_text(),
+        WORKFLOW_CONTRACTS_PATH: (ROOT / WORKFLOW_CONTRACTS_PATH).read_text(),
         CONTRACT_REQUIREMENTS: (ROOT / CONTRACT_REQUIREMENTS).read_text(),
     }
     files.update(coverage_adapters(directory, policy))
@@ -1588,16 +1600,16 @@ def render(directory: Path) -> dict[str, str]:
         else {".github/workflows/quality-gate.yml": dump(quality(policy, directory))}
     )
     if not local:
-        files["scripts/change_scope.py"] = (
-            ROOT / "scripts/change_scope.py"
+        files[CHANGE_SCOPE_PATH] = (
+            ROOT / CHANGE_SCOPE_PATH
         ).read_text()
     if not local and (
         policy.get("single_entry_ci") or policy.get("mode", "release") == "release"
     ):
         files[CONTRACT_REQUIREMENTS] = (ROOT / CONTRACT_REQUIREMENTS).read_text()
     if policy.get("single_entry_ci") and not local:
-        files["scripts/workflow_contracts.py"] = (
-            ROOT / "scripts/workflow_contracts.py"
+        files[WORKFLOW_CONTRACTS_PATH] = (
+            ROOT / WORKFLOW_CONTRACTS_PATH
         ).read_text()
         if directory.resolve() != ROOT.resolve():
             files[".github/workflow-tests/test_workflow_yaml_contracts.py"] = (
