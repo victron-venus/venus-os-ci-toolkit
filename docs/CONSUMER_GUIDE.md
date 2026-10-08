@@ -180,8 +180,21 @@ No Codecov secret is forwarded. Opt-in central publication uses GitHub OIDC.
 | Input | Type | Default | Required |
 |---|---|---|---|
 | `working-directory` | string | `'.'` | No |
-| `terraform-version` | string | `'1.5.x'` | No |
+| `terraform-version` | string | `'1.16.5'` | No |
 | `tflint-enabled` | boolean | `true` | No |
+
+The requested version is passed to the upstream action's `terraform_version`
+input, and its CLI wrapper is disabled. The workflow reports the installed
+version and rejects a mismatch when an exact version was requested. Version
+constraints supported by the upstream action remain accepted; use an exact
+version for reproducible CI.
+
+The default was updated after an October 2026 binary audit: Terraform 1.15.7
+on Darwin ARM64 contained 27 reported vulnerable symbol groups. The official
+1.16.5 binaries for Darwin ARM64 and Linux AMD64/ARM64 contained one remaining upstream advisory,
+[GO-2026-5932](https://pkg.go.dev/vuln/GO-2026-5932), for the unmaintained OpenPGP
+package. This is a binary dependency finding, not proof of exploitability in
+this validation workflow. The upgrade does not claim a clean dependency audit.
 
 When enabled, TFLint 0.64.0 is downloaded for Linux x64 or arm64 and its archive
 is checked against a committed SHA-256 before extraction and execution. Other
