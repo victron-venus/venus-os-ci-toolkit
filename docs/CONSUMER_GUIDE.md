@@ -118,6 +118,26 @@ first collect a real report in their existing test job.
 
 These may also be pinned by consumers, though they are primarily consumed internally by the reusable workflows above.
 
+`actions/setup-python` installs the reviewed versions in its own
+`actions/setup-python/requirements.txt`, including transitive dependencies and
+SHA-256 hashes. Its pip cache and requirements path are resolved from the
+composite action directory, independently of a consumer's working directory.
+It uses the interpreter's existing pip and installs wheels only; it does not
+perform an unpinned pip upgrade or install a consumer's dependencies.
+
+Python 3.10 or newer is required. Older Python versions select pytest releases
+affected by [CVE-2025-71176](https://github.com/advisories/GHSA-6w46-j5rx-g56g);
+the fixed pytest series requires Python 3.10+. Upgrade the `python-version`
+input rather than using vulnerable compatibility pins. CI exercises Python
+3.10 and 3.14 on Linux, macOS and Windows, plus 3.11–3.13 on Linux. This describes
+the tested matrix, not every architecture or future interpreter release.
+
+To update the common tools, edit `actions/setup-python/requirements.in` and
+regenerate the hash lock using the exact command in its header with uv 0.12.18.
+Review all version changes and run the action matrix, the offline path/hash
+regressions and a vulnerability audit of every locked version, including
+platform-specific dependencies. Consumer application locks remain independent.
+
 ### Workflow Inputs Reference
 
 #### `python-ci.yml`

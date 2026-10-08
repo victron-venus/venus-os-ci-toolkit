@@ -1,0 +1,42 @@
+# Keep native OS coverage separate from generic Ubuntu runner routing.
+name: Python action compatibility
+on:
+  workflow_call: {}
+permissions:
+  contents: read
+jobs:
+  python-action-contracts:
+    name: Python action (${{ matrix.os }}, ${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        python: ['3.10', '3.14']
+        include:
+          - os: ubuntu-latest
+            python: '3.11'
+          - os: ubuntu-latest
+            python: '3.12'
+          - os: ubuntu-latest
+            python: '3.13'
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@351661ca32ac09a36dc5ee2d536e3128f2a3c8ed # v2.22.0
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Exercise the checked-out composite action
+        uses: ./actions/setup-python
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Verify installed tools and plugins
+        shell: bash
+        working-directory: tests/fixtures/python_action_smoke
+        run: |
+          python -m pip check
+          python -m ruff check .
+          python -m pytest -q --cov=calculator --cov-fail-under=100

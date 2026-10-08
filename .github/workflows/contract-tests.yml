@@ -80,5 +80,7 @@ jobs:
           version: '0.12.18'
       - name: Exercise type checking and PR automation contracts
         run: python -m unittest discover -s tests -p 'test_*.py' -v
+  python-action-contracts:
+    uses: ./.github/workflows/python-action-tests.yml
 'on':
   workflow_call: {}
