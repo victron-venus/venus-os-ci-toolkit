@@ -140,11 +140,12 @@ class ReleaseNotesTests(unittest.TestCase):
                 self.assertRaisesRegex(release.ReleaseError, "ATX"),
             ):
                 render(text)
+            crlf = text.replace("\n", "\r\n")
             with (
                 self.subTest(underline=underline, newline="CRLF"),
                 self.assertRaisesRegex(release.ReleaseError, "ATX"),
             ):
-                render(text.replace("\n", "\r\n"))
+                render(crlf)
 
     def test_setext_heading_inside_guidance_is_rejected(self):
         text = NOTES.replace("### Security", "Underlined appendix\n---\n### Security")
