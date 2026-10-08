@@ -112,6 +112,73 @@ class ReleaseNotesTests(unittest.TestCase):
                 ):
                     render(text)
 
+    def test_empty_markdown_containers_are_not_release_guidance(self):
+        for section in ("Upgrade", "Security"):
+            for content in (
+                "-",
+                "+",
+                "*",
+                "1.",
+                "2)",
+                "123456789.",
+                ">",
+                "> >",
+                ">>",
+                ">>>",
+                ">---",
+                ">#### Details",
+                "> -",
+                "- >",
+                "1. > -",
+                "> - [ ]",
+                "- [x]",
+                "- [X]",
+                "> ---",
+                "> #### Details",
+                "-\n+\n1.",
+                "   >\t- ",
+            ):
+                original = (
+                    "Review optional site settings before enabling the feature."
+                    if section == "Upgrade"
+                    else "Reject malformed requests before issuing hardware commands."
+                )
+                text = NOTES.replace(original, content)
+                with (
+                    self.subTest(section=section, content=content),
+                    self.assertRaisesRegex(release.ReleaseError, section + " guidance"),
+                ):
+                    render(text)
+
+    def test_markdown_containers_preserve_actual_guidance_and_literals(self):
+        for content in (
+            "- Restart the service.",
+            "1. Restart the service.",
+            "> Restart the service.",
+            ">Restart the service.",
+            "> - Restart the service.",
+            "- [ ] Restart the service.",
+            "`-`",
+            "```text\n-\n```",
+            "    -",
+            "\\-",
+            "_",
+            "1234567890.",
+            ">     -",
+            "-     +",
+            ">     ---",
+            "-     ####",
+            "> `-`",
+            "- > Restart the service.",
+            "> [ ]",
+            "- > [ ]",
+        ):
+            text = NOTES.replace(
+                "Review optional site settings before enabling the feature.", content
+            )
+            with self.subTest(content=content):
+                self.assertIn(content.strip(), render(text))
+
     def test_guidance_after_separator_and_subheading_is_preserved(self):
         content = "#### Migration\n\n---\n\n- Restart the worker after upgrading."
         text = NOTES.replace("Review optional site settings before enabling the feature.", content)
