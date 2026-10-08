@@ -22,6 +22,9 @@ actionlint checks workflow syntax and semantics. Hash-locked Ruff checks Python
 source and tests for undefined names, invalid constructs, import mistakes and
 unused variables; its error-focused rules are in `ruff.toml`. Required GitHub checks also run
 CodeQL and Trivy; inspect every check on the current PR revision before merging.
+CodeQL covers Python, GitHub Actions and the Go Scorecard adapter. The Go job
+rebuilds the locked module for extraction and participates in the same required
+quality gate, including changes to documentation.
 
 Add regression tests for bug fixes and tests for major new functionality. Test
 both accepted and rejected inputs at trust boundaries. Preserve old consumer
