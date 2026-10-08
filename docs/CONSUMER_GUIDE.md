@@ -138,6 +138,21 @@ Review all version changes and run the action matrix, the offline path/hash
 regressions and a vulnerability audit of every locked version, including
 platform-specific dependencies. Consumer application locks remain independent.
 
+The Go action defaults to the supported Go 1.26.8 toolchain and installs exact module versions: `govulncheck v1.8.0`, and
+`golangci-lint v1.64.8` by default to preserve v1 consumer configurations.
+Set the composite action input `golangci-lint-major: '2'` to install
+`golangci-lint v2.14.0` for a project with a v2 configuration. Go 1.27 changed
+compiler export data, which the v1 linter cannot read; use generation 2 with
+Go 1.27 and later. Migrate the consumer configuration deliberately using the
+[upstream migration guide](https://golangci-lint.run/docs/product/migration-guide/).
+The contract matrix runs real lint, vulnerability analysis and tests with
+Go 1.26.8/v1 and Go 1.27.1/v2. `govulncheck v1.8.0` requires Go 1.26 or newer
+to build. This action therefore requires a selected Go toolchain of at least
+1.26. The pinned `actions/setup-go` exports `GOTOOLCHAIN=local`, so an older
+requested version fails instead of silently downloading a newer compiler.
+Downloaded public modules are checked
+by Go's module checksum database under its normal default configuration.
+
 ### Workflow Inputs Reference
 
 #### `python-ci.yml`

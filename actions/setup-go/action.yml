@@ -4,7 +4,11 @@ inputs:
   go-version:
     description: 'Go version to install'
     required: false
-    default: '1.23'
+    default: '1.26.8'
+  golangci-lint-major:
+    description: 'golangci-lint config generation (1 or 2); Go 1.27+ requires 2'
+    required: false
+    default: '1'
 runs:
   using: 'composite'
   steps:
@@ -13,9 +17,17 @@ runs:
       with:
         go-version: ${{ inputs.go-version }}
         cache: true
+        cache-dependency-path: '**/go.sum'
 
     - name: Install common tools
       shell: bash
+      env:
+        GOLANGCI_LINT_MAJOR: ${{ inputs.golangci-lint-major }}
       run: |
-        go install golang.org/x/vuln/cmd/govulncheck@latest
-        go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+        case "$GOLANGCI_LINT_MAJOR" in
+          1) lint_package=github.com/golangci/golangci-lint/cmd/golangci-lint@v1.64.8 ;;
+          2) lint_package=github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0 ;;
+          *) echo 'golangci-lint-major must be 1 or 2.' >&2; exit 1 ;;
+        esac
+        go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
+        go install "$lint_package"
