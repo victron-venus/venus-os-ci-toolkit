@@ -76,7 +76,19 @@ Python environment from `uv.lock` with `uv sync --locked --all-extras`. Missing
 or stale locks fail validation. Include enabled tools (`ruff`, `mypy`, `pytest`
 and `pytest-cov`) in the project's locked development dependencies; this mode
 does not install an unpinned MyPy over the locked environment. Dependency
-installation still follows `install-dependencies`, and the default remains pip.
+installation still follows `install-dependencies`. Projects with `pyproject.toml`
+must select this locked mode. The default requirements fallback accepts only hash-locked
+`requirements.txt` (or `requirements-dev.txt` when the former is absent) and
+published wheels via `uv pip install --require-hashes --no-build`; missing hashes,
+source-only dependencies and editable project installs are rejected.
+Commit every transitive dependency and wheel hash, or
+use the locked project mode for packages that require a reviewed native build.
+
+`dependency-extras` defaults to `'*'`, preserving all extras. Set it to a
+comma-separated list such as `'dev,test'` to install only those extras, or `''`
+for none. Names must exist in the project; unlike pip, uv rejects an unknown
+extra. For example, use `'dev'` when a project has no `test` extra. This avoids
+installing optional runtime integrations just to execute the CI checks.
 With `install-dependencies: false`, `use-uv-lock` is ignored: project installation
 is skipped, while the existing shared Python setup and optional MyPy bootstrap
 still prepare check tools.
