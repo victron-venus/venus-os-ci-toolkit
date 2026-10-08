@@ -38,6 +38,7 @@ DOWNLOAD = ACTION_REFS["actions/download-artifact"]
 TOOLKIT = "victron-venus/venus-os-ci-toolkit"
 WORKFLOWS = ".github/workflows"
 POLICY_FILE = ".release-policy.json"
+CONTRACT_REQUIREMENTS = ".github/requirements-workflow-contracts.txt"
 FULL_SCOPE = "${{ needs.scope.outputs.run == 'true' }}"
 
 
@@ -587,7 +588,7 @@ def quality(policy, directory=None):
                 },
                 {
                     "run": "python3 -m pip install --require-hashes --only-binary=:all: "
-                    "-r .github/requirements-workflow-contracts.txt"
+                    f"-r {CONTRACT_REQUIREMENTS}"
                 },
                 {"run": "python3 scripts/workflow_contracts.py"},
                 {"run": workflow_test_command},
@@ -605,6 +606,10 @@ def quality(policy, directory=None):
                 {
                     "uses": ACTION_REFS["actions/setup-python"],
                     "with": {"python-version": "3.12"},
+                },
+                {
+                    "run": "python3 -m pip install --require-hashes --only-binary=:all: "
+                    f"-r {CONTRACT_REQUIREMENTS}"
                 },
                 {
                     "run": "python3 -m unittest discover -s .github/release-tests -p 'test_*.py' -v"
@@ -1544,9 +1549,7 @@ def render_coverage(directory: Path) -> dict[str, str]:
         WORKFLOWS + "/quality-gate.yml": dump(quality(policy, directory)),
         "scripts/change_scope.py": (ROOT / "scripts/change_scope.py").read_text(),
         "scripts/workflow_contracts.py": (ROOT / "scripts/workflow_contracts.py").read_text(),
-        ".github/requirements-workflow-contracts.txt": (
-            ROOT / ".github/requirements-workflow-contracts.txt"
-        ).read_text(),
+        CONTRACT_REQUIREMENTS: (ROOT / CONTRACT_REQUIREMENTS).read_text(),
     }
     files.update(coverage_adapters(directory, policy))
     files.update(coverage_release_caller(directory, policy))
@@ -1577,10 +1580,11 @@ def render(directory: Path) -> dict[str, str]:
         files["scripts/change_scope.py"] = (
             ROOT / "scripts/change_scope.py"
         ).read_text()
+    if not local and (
+        policy.get("single_entry_ci") or policy.get("mode", "release") == "release"
+    ):
+        files[CONTRACT_REQUIREMENTS] = (ROOT / CONTRACT_REQUIREMENTS).read_text()
     if policy.get("single_entry_ci") and not local:
-        files[".github/requirements-workflow-contracts.txt"] = (
-            ROOT / ".github/requirements-workflow-contracts.txt"
-        ).read_text()
         files["scripts/workflow_contracts.py"] = (
             ROOT / "scripts/workflow_contracts.py"
         ).read_text()
