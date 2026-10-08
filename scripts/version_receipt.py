@@ -11,7 +11,8 @@ import os
 import re
 import shutil
 import stat
-import subprocess
+# Subprocess calls below use argument vectors with shell=False.
+import subprocess  # nosec B404
 import sys
 from pathlib import Path
 
@@ -46,7 +47,8 @@ def capture_toolchain() -> dict:
     ):
         executable = shutil.which(name)
         if executable:
-            checked = subprocess.run(
+            # Repository-controlled argv; no shell interpolation or external command text.
+            checked = subprocess.run(  # nosec B603
                 [executable, argument],
                 capture_output=True,
                 text=True,

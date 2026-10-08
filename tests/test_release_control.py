@@ -9,7 +9,8 @@ import importlib.util
 import io
 import json
 import os
-import subprocess
+# Subprocess calls below use argument vectors with shell=False.
+import subprocess  # nosec B404
 import tempfile
 import unittest
 import zipfile
@@ -888,7 +889,8 @@ class PublicationPermissionTests(unittest.TestCase):
                 patch.dict(
                     os.environ,
                     {
-                        "GH_TOKEN": "test-secret",
+                        # Deliberate test credential, never used for authentication.
+                        "GH_TOKEN": "test-secret",  # nosec B105
                         "RELEASE_REQUIRE_WORKFLOW_SCOPE": "true",
                     },
                 ),
@@ -932,7 +934,8 @@ class PublicationPermissionTests(unittest.TestCase):
                 patch.dict(
                     os.environ,
                     {
-                        "GH_TOKEN": "test-secret",
+                        # Deliberate test credential, never used for authentication.
+                        "GH_TOKEN": "test-secret",  # nosec B105
                         "RELEASE_REQUIRE_WORKFLOW_SCOPE": "true",
                     },
                 ),
@@ -947,7 +950,8 @@ class PublicationPermissionTests(unittest.TestCase):
         """An empty selected Actions secret must fail before gh can fall back."""
         with (
             patch.dict(
-                os.environ, {"GH_TOKEN": "", "RELEASE_REQUIRE_WORKFLOW_SCOPE": "true"}
+                # Deliberate test credential, never used for authentication.
+                os.environ, {"GH_TOKEN": "", "RELEASE_REQUIRE_WORKFLOW_SCOPE": "true"}  # nosec B105
             ),
             patch.object(rc.subprocess, "run") as command,
             self.assertRaises(rc.ReleaseError),
@@ -960,7 +964,8 @@ class PublicationPermissionTests(unittest.TestCase):
         with (
             patch.dict(
                 os.environ,
-                {"GH_TOKEN": "test-secret", "RELEASE_REQUIRE_WORKFLOW_SCOPE": "true"},
+                # Deliberate test credential, never used for authentication.
+                {"GH_TOKEN": "test-secret", "RELEASE_REQUIRE_WORKFLOW_SCOPE": "true"},  # nosec B105
             ),
             patch.object(rc.subprocess, "run", return_value=self.probe()) as command,
         ):
@@ -978,7 +983,8 @@ class PublicationPermissionTests(unittest.TestCase):
         with (
             patch.dict(
                 os.environ,
-                {"GH_TOKEN": "test-secret", "RELEASE_REQUIRE_WORKFLOW_SCOPE": "true"},
+                # Deliberate test credential, never used for authentication.
+                {"GH_TOKEN": "test-secret", "RELEASE_REQUIRE_WORKFLOW_SCOPE": "true"},  # nosec B105
             ),
             patch.object(rc.subprocess, "run", return_value=response),
             self.assertRaises(rc.ReleaseError) as error,
@@ -1279,10 +1285,11 @@ class TransportTests(unittest.TestCase):
             asset = Path(temp) / rc.MANIFEST
             asset.write_bytes(b"private package bytes")
             with (
-                patch.dict(os.environ, {"GH_TOKEN": "private-token-fixture"}),
+                # Deliberate test credential, never used for authentication.
+                patch.dict(os.environ, {"GH_TOKEN": "private-token-fixture"}),  # nosec B105
                 patch.object(
                     gh, "upload", side_effect=accepted_upload_then_failed_response
-                ),
+                ) as upload,
                 patch.object(
                     rc.subprocess,
                     "run",
@@ -1302,6 +1309,7 @@ class TransportTests(unittest.TestCase):
             self.assertEqual(len(gh.assets[release_id]), 1)
             self.assertEqual(sum(write[0] == "upload" for write in gh.writes), 1)
             self.assertFalse(any(write[1] == "PATCH" for write in gh.writes))
+            upload.assert_called_once_with(tag, asset)
             command.assert_called_once()
             self.assertNotIn("--clobber", command.call_args.args[0])
             self.assertNotIn(temp, str(error.exception))

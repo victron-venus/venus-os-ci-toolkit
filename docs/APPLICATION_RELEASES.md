@@ -8,6 +8,23 @@ version files, build matrix, blockers and deployment adapters.
 
 ## Prepare the next version
 
+Consumers can require human-readable notes by setting `"release_notes":
+"CHANGELOG.md"` in `.release-policy.json`, then regenerating their installation.
+The release engine reads this file from the exact source commit used for the
+build. Its `## [X.Y.Z]` section must summarize the changes for that base version
+and contain nonempty `### Upgrade` and `### Security` subsections. State upgrade
+steps, compatibility changes, fixed vulnerabilities and advisory identifiers
+where applicable. When there are no security changes, say so based on the actual
+release contents. Do not substitute commit logs or CI provenance for these notes.
+
+Beta, RC, nightly and stable releases select the same base-version section. The
+engine appends the original build provenance. Missing or ambiguous sections,
+invalid content or a mismatched Git blob fail before tag or release creation.
+Changes to a later default-branch changelog cannot relabel an earlier build.
+Existing consumers without this option retain their prior behavior; migrate
+their current version's notes together with the engine and policy. This option
+does not rewrite historical release descriptions.
+
 Update the committed base version and its package/native companions through a
 reviewed PR. Beta and RC share that base and receive separate server-selected
 counters. Once `vX.Y.Z` exists, beta/RC require a new base; nightly may still use the
