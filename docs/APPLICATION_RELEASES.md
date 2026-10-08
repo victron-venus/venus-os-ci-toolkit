@@ -8,6 +8,32 @@ version files, build matrix, blockers and deployment adapters.
 
 ## Prepare the next version
 
+Consumers can require human-readable notes by setting `"release_notes":
+"CHANGELOG.md"` in `.release-policy.json`, then regenerating their installation.
+The release engine reads this file from the exact source commit used for the
+build. Its `## [X.Y.Z]` section must summarize the changes for that base version
+and contain nonempty `### Upgrade` and `### Security` subsections. State upgrade
+steps, compatibility changes, fixed vulnerabilities and advisory identifiers
+where applicable. When there are no security changes, say so based on the actual
+release contents. Do not substitute commit logs or CI provenance for these notes.
+
+Use ATX headings (`#`, `##`, `###`) for the release structure; up to three
+leading spaces are supported. A section ends at the next heading of the same
+or a higher level. Setext-style underlines within the selected release section
+are rejected, including ambiguous text/comment/underline sequences. Use ATX
+headings instead, or put a blank line before a thematic `---` separator.
+Fenced or indented code examples and commented-out text do not define sections.
+
+Beta, RC, nightly and stable releases select the same base-version section. The
+engine appends the original build provenance. Missing or ambiguous sections,
+invalid content or a mismatched Git blob fail before retained evidence, the publication
+floor, a tag or a release is written. Rendered notes are reused by the publication
+transaction without a second remote read after state changes.
+Changes to a later default-branch changelog cannot relabel an earlier build.
+Existing consumers without this option retain their prior behavior; migrate
+their current version's notes together with the engine and policy. This option
+does not rewrite historical release descriptions.
+
 Update the committed base version and its package/native companions through a
 reviewed PR. Beta and RC share that base and receive separate server-selected
 counters. Once `vX.Y.Z` exists, beta/RC require a new base; nightly may still use the

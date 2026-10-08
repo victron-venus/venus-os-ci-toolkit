@@ -1,5 +1,9 @@
 # Venus OS CI Toolkit
 
+For bug reports, proposed changes and local verification, see
+[CONTRIBUTING.md](CONTRIBUTING.md). Security reports use the private process in
+[SECURITY.md](SECURITY.md). The toolkit is distributed under the [MIT license](LICENSE).
+
 [CI dependency updates](docs/DEPENDENCY_UPDATES.md): Renovate updates related
 actions and reusable workflows together, with required consistency checks.
 

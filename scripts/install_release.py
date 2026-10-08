@@ -38,6 +38,8 @@ DOWNLOAD = ACTION_REFS["actions/download-artifact"]
 TOOLKIT = "victron-venus/venus-os-ci-toolkit"
 WORKFLOWS = ".github/workflows"
 POLICY_FILE = ".release-policy.json"
+TEST_ROOT_EXPRESSION = "Path(__file__).parents[1]"
+VENDORED_TEST_ROOT_EXPRESSION = "Path(__file__).parents[2]"
 FULL_SCOPE = "${{ needs.scope.outputs.run == 'true' }}"
 
 
@@ -706,7 +708,8 @@ def _legacy_release(policy):
     steps_checkout = [{"uses": CHECKOUT, "with": {"persist-credentials": False}}]
     prepare_script = """python3 - <<'PY'
 import json, os, subprocess
-event = json.load(open(os.environ['GITHUB_EVENT_PATH']))
+with open(os.environ['GITHUB_EVENT_PATH'], encoding='utf-8') as event_file:
+    event = json.load(event_file)
 default = event['repository']['default_branch']
 if os.environ['GITHUB_REF'] != 'refs/heads/' + default:
     raise SystemExit('Release pipeline must run from the default branch')
@@ -719,7 +722,8 @@ if channel not in {'nightly', 'beta', 'rc', 'stable'}:
     raise SystemExit('Invalid release channel')
 if kind == 'workflow_dispatch' and channel != 'nightly' and os.environ.get('PUBLICATION_ENABLED') != 'true':
     raise SystemExit('Enable RELEASE_CHANNELS_ENABLED only after release protections and deployment hooks are migrated')
-config = json.load(open('.release-policy.json'))
+with open('.release-policy.json', encoding='utf-8') as policy_file:
+    config = json.load(policy_file)
 if config.get('mode', 'release') != 'release':
     raise SystemExit('This repository policy does not permit releases')
 if config.get('release_blockers'):
@@ -1109,6 +1113,8 @@ def validate_asset_restrictions(policy: dict) -> tuple[dict, ...]:
 def validate_policy(directory: Path, policy: dict) -> None:
     """Reject unsupported policy modes, stale publishers and invalid repository names."""
     mode = policy.get("mode", "release")
+    if "release_notes" in policy and policy["release_notes"] != "CHANGELOG.md":
+        raise ValueError("release_notes must name the source-bound CHANGELOG.md")
     validate_asset_restrictions(policy)
     validation_oidc_workflows(policy)
     coverage_policy(policy)
@@ -1357,7 +1363,7 @@ def release_files(directory: Path, policy: dict) -> dict[str, str]:
             files[f".github/release-tests/test_{name}.py"] = (
                 (ROOT / f"tests/test_{name}.py")
                 .read_text()
-                .replace("Path(__file__).parents[1]", "Path(__file__).parents[2]")
+                .replace(TEST_ROOT_EXPRESSION, VENDORED_TEST_ROOT_EXPRESSION)
                 .replace(
                     "Path(__file__).resolve().parents[1]",
                     "Path(__file__).resolve().parents[2]",
@@ -1385,7 +1391,12 @@ def release_files(directory: Path, policy: dict) -> dict[str, str]:
     files[".github/release-tests/test_release_control.py"] = (
         (ROOT / "tests/test_release_control.py")
         .read_text()
-        .replace("Path(__file__).parents[1]", "Path(__file__).parents[2]")
+        .replace(TEST_ROOT_EXPRESSION, VENDORED_TEST_ROOT_EXPRESSION)
+    )
+    files[".github/release-tests/test_release_notes.py"] = (
+        (ROOT / "tests/test_release_notes.py")
+        .read_text()
+        .replace(TEST_ROOT_EXPRESSION, VENDORED_TEST_ROOT_EXPRESSION)
     )
     files[".github/release-tests/test_asset_streaming.py"] = (
         ROOT / "tests/test_asset_streaming.py"

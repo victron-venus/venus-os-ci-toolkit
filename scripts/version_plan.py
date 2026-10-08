@@ -20,7 +20,8 @@ import os
 import plistlib
 import re
 import stat
-import subprocess
+# Subprocess calls below use argument vectors with shell=False.
+import subprocess  # nosec B404
 import sys
 import tarfile
 import tempfile
@@ -1043,7 +1044,8 @@ def verify_checkout(root, policy, plan):
     root = Path(root).resolve(strict=True)
     if not (root / ".git").exists():
         return
-    head = subprocess.check_output(
+    # Developer/CI toolchain selected by the invoking operator via PATH.
+    head = subprocess.check_output(  # nosec B603, B607
         ["git", "-C", str(root), "rev-parse", "HEAD"], text=True
     ).strip()
     require(
@@ -1061,7 +1063,8 @@ def verify_checkout(root, policy, plan):
     }
     for name, declarations in grouped.items():
         _relative(name)
-        original = subprocess.check_output(
+        # Developer/CI toolchain selected by the invoking operator via PATH.
+        original = subprocess.check_output(  # nosec B603, B607
             [
                 "git",
                 "-C",
