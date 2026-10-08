@@ -62,15 +62,15 @@ class LockedPythonDependencies(unittest.TestCase):
             "inputs.install-dependencies && !inputs.use-uv-lock",
         )
 
-    def make_wheel(self, version):
+    def make_wheel(self, version, package="locked_fixture"):
         """Create two real installable releases without network access."""
-        name = f"locked_fixture-{version}"
+        name = f"{package}-{version}"
         with zipfile.ZipFile(self.wheels / f"{name}-py3-none-any.whl", "w") as wheel:
-            wheel.writestr("locked_fixture/__init__.py", f'VERSION = "{version}"\n')
+            wheel.writestr(f"{package}/__init__.py", f'VERSION = "{version}"\n')
             info = f"{name}.dist-info"
             wheel.writestr(
                 f"{info}/METADATA",
-                f"Metadata-Version: 2.1\nName: locked-fixture\nVersion: {version}\n",
+                f"Metadata-Version: 2.1\nName: {package.replace('_', '-')}\nVersion: {version}\n",
             )
             wheel.writestr(
                 f"{info}/WHEEL",
@@ -225,6 +225,40 @@ class LockedPythonDependencies(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(json.loads(result.stdout), ["1.0.0", str(self.project / ".venv")])
         self.assertEqual((self.project / "uv.lock").read_bytes(), original)
+
+    def test_only_requested_extras_are_installed(self):
+        self.make_wheel("1.0.0", "optional_fixture")
+        self.manifest.write_text(
+            '[project]\nname = "ci-lock-consumer"\nversion = "0.1.0"\n'
+            'requires-python = ">=3.11"\ndependencies = []\n'
+            '[project.optional-dependencies]\n'
+            'dev = ["locked-fixture==1.0.0"]\nmonitor = ["optional-fixture==1.0.0"]\n'
+        )
+        original = self.lock()
+        for selection, expected in (("*", [True, True]), ("dev", [True, False]), ("", [False, False])):
+            with self.subTest(selection=selection):
+                self.environment["DEPENDENCY_EXTRAS"] = selection
+                result = self.sync()
+                self.assertEqual(result.returncode, 0, result.stderr)
+                result = self.run_command(
+                    str(self.project / ".venv/bin/python"), "-c",
+                    "import importlib.util,json; print(json.dumps([importlib.util.find_spec(n) is not None for n in ['locked_fixture','optional_fixture']]))",
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(json.loads(result.stdout), expected)
+                self.assertEqual((self.project / "uv.lock").read_bytes(), original)
+
+    def test_invalid_extras_fail_before_installing_or_executing_arguments(self):
+        self.lock()
+        for selection in ("--no-verify", "dev,,test", ",dev", "dev,", "$(touch executed)", "dev;touch executed", "dev\ntest"):
+            with self.subTest(selection=selection):
+                self.environment["DEPENDENCY_EXTRAS"] = selection
+                result = self.sync()
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("dependency-extras", result.stderr)
+                self.assertFalse((self.project / "executed").exists())
+                self.assertFalse((self.project / ".venv").exists())
+                self.assertFalse(self.path_file.exists())
 
     def test_stale_lock_is_rejected_without_rewriting(self):
         """A manifest update without its lock must fail the required job."""

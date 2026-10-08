@@ -5,6 +5,23 @@ permissions:
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 jobs:
+  go-consumer-contract:
+    name: Locked Go consumer workflow
+    uses: ./.github/workflows/go-ci.yml
+    with:
+      working-directory: tests/fixtures/go-minimal
+      coverage-threshold: 100
+      coverage-artifact-name: go-consumer-contract
+  python-consumer-contract:
+    name: Locked Python consumer workflow
+    uses: ./.github/workflows/python-ci.yml
+    with:
+      working-directory: tests/fixtures/python-minimal
+      python-version: '3.12'
+      use-uv-lock: true
+      dependency-extras: 'dev,test'
+      coverage-threshold: 100
+      coverage-artifact-name: python-consumer-contract
   terraform-contract:
     name: Verified TFLint and Terraform validation
     uses: ./.github/workflows/terraform-ci.yml
