@@ -11,6 +11,10 @@ from unittest.mock import patch
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
+HARDEN_RUNNER = "step-security/harden-runner@" + next(
+    pin["digest"] for pin in json.loads((ROOT / ".github/action-pins.json").read_text())
+    if pin["packageName"] == "step-security/harden-runner"
+)
 WORKFLOW = ROOT / ".github/workflows/coderabbit-review-reusable.yml"
 REPOSITORY = "example/project"
 REPO_ENDPOINT = f"repos/{REPOSITORY}"
@@ -284,7 +288,7 @@ class CodeRabbitReviewContract(unittest.TestCase):
         self.assertIn("vars.CI_RUNNER_AUTOMATION_LABELS", self.job["runs-on"])
         self.assertEqual(self.job["timeout-minutes"], "5")
         self.assertEqual(len(self.job["steps"]), 2)
-        self.assertEqual(self.job["steps"][0]["uses"], "step-security/harden-runner@351661ca32ac09a36dc5ee2d536e3128f2a3c8ed")
+        self.assertEqual(self.job["steps"][0]["uses"], HARDEN_RUNNER)
         command = next(step for step in self.job["steps"] if "run" in step)
         self.assertNotIn("uses", command)
         self.assertEqual(command["shell"], "python3 -I {0}")

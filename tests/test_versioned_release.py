@@ -575,13 +575,15 @@ class ReceiptTests(unittest.TestCase):
 
     def test_changed_or_extra_payload_is_rejected(self):
         self.create()
+        original = (self.assets / "app.bin").read_bytes()
         (self.assets / "app.bin").write_bytes(b"different binary")
         staged = self.staged()
         with self.assertRaisesRegex(ValueError, "does not match"):
             receipt.verify_receipts(self.assets, self.plan, staged)
+        (self.assets / "app.bin").write_bytes(original)
         (self.assets / "uncovered.bin").write_bytes(b"missing evidence")
         staged = self.staged()
-        with self.assertRaises(ValueError):
+        with self.assertRaisesRegex(ValueError, "payloads lack version input evidence"):
             receipt.verify_receipts(self.assets, self.plan, staged)
 
     def test_other_plan_or_partial_input_inventory_is_rejected(self):
@@ -1050,6 +1052,84 @@ class LifecycleTests(unittest.TestCase):  # pylint: disable=too-many-public-meth
         self.assertEqual(recorded["version_plan"], plan)
         self.assertEqual(recorded["version"], "1.2.3")
         self.assertEqual(len(recorded["assets"]), 2)
+
+    def enable_beta_validation(self, channel):
+        self.policy.update(
+            {
+                "single_entry_ci": True,
+                "channel_validation_workflows": {"beta": ["beta-checks.yml"]},
+            }
+        )
+        (self.root / ".release-policy.json").write_bytes(rc.json_bytes(self.policy))
+        self.gh.jobs.extend(
+            [
+                {**self.gh.jobs[0], "name": "checks / CI gate"},
+                {**self.gh.jobs[0], "name": f"checks / Validation profile ({channel})"},
+            ]
+        )
+
+    def test_beta_profile_survives_real_prepare_receipt_and_publication(self):
+        self.enable_beta_validation("beta")
+        _, plan, manifest = self.release_run("beta", 100)
+        self.assertEqual(
+            manifest["validation_profile"],
+            {
+                "schema": 1,
+                "channel": "beta",
+                "workflows": ["beta-checks.yml"],
+            },
+        )
+        self.assertEqual(manifest["version_plan"], plan)
+        self.assertEqual(len(manifest["assets"]), 2)
+        with self.assertRaisesRegex(rc.ReleaseError, "Only release candidates"):
+            rc.validate_manifest(rc.json_bytes(manifest), REPO, plan["tag"])
+
+    def test_rc_profile_cannot_claim_fast_beta_evidence(self):
+        self.enable_beta_validation("rc")
+        _, plan, manifest = self.release_run("rc", 100)
+        self.assertEqual(manifest["validation_profile"]["workflows"], ["ci.yml"])
+        rc.validate_manifest(rc.json_bytes(manifest), REPO, plan["tag"])
+        manifest["validation_profile"]["workflows"] = ["beta-checks.yml"]
+        with self.assertRaisesRegex(rc.ReleaseError, "validation profile"):
+            rc.validate_manifest(rc.json_bytes(manifest), REPO, plan["tag"])
+
+    def test_opt_in_rc_promotes_with_unchanged_full_validation_evidence(self):
+        self.policy["versioning"]["promotion"] = "promote-bytes"
+        self.enable_beta_validation("rc")
+        candidate, _, manifest = self.release_run("rc", 100)
+        raw = rc.EVIDENCE.read_bytes()
+        self.gh.jobs_by_run[100] = copy.deepcopy(self.gh.jobs)
+        self.start_run("stable", 101, candidate["tag"])
+        prepared = lifecycle.prepare(self.args)
+        self.assertEqual(prepared["build"], "false")
+        arguments = argparse.Namespace(repo=REPO, rc=candidate["tag"], run_id="101")
+        with patch.object(rc, "GitHub", return_value=self.gh):
+            stable = rc.promote(arguments)
+        release_id = next(
+            key
+            for key, value in self.gh.releases.items()
+            if value["tag_name"] == stable["tag"]
+        )
+        promoted = {
+            asset["name"]: self.gh.files[asset["id"]]
+            for asset in self.gh.assets[release_id]
+        }
+        self.assertEqual(promoted[rc.MANIFEST], raw)
+        self.assertEqual(
+            manifest["validation_profile"],
+            {"schema": 1, "channel": "rc", "workflows": ["ci.yml"]},
+        )
+        for asset in manifest["assets"]:
+            self.assertEqual(rc.digest(promoted[asset["name"]]), asset["sha256"])
+
+    def test_publication_rejects_missing_selected_gate_before_public_writes(self):
+        self.enable_beta_validation("rc")
+        self.start_run("beta", 100)
+        lifecycle.prepare(self.args)
+        self.build_current()
+        with self.assertRaisesRegex(rc.ReleaseError, "profile and CI gate"):
+            lifecycle.publish_versioned(self.args)
+        self.assertEqual(self.gh.writes, [])
 
     def automatic_build(self):
         lifecycle.prepare(self.args)

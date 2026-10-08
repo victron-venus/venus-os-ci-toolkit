@@ -10,6 +10,10 @@ from pathlib import Path
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
+HARDEN_RUNNER = "step-security/harden-runner@" + next(
+    pin["digest"] for pin in json.loads((ROOT / ".github/action-pins.json").read_text())
+    if pin["packageName"] == "step-security/harden-runner"
+)
 sys.path.insert(0, str(ROOT / "scripts"))
 from runner_selection import ACTIVE_WORKFLOWS, render_consumer, render_workflows, runner_labels  # noqa: E402 - Import the source scripts after adding their directory.
 
@@ -34,7 +38,7 @@ class RunnerSelectionTests(unittest.TestCase):
             for job in workflow["jobs"].values():
                 for step in job["steps"]:
                     if "uses" in step:
-                        self.assertEqual(step["uses"], "step-security/harden-runner@351661ca32ac09a36dc5ee2d536e3128f2a3c8ed")
+                        self.assertEqual(step["uses"], HARDEN_RUNNER)
                     self.assertNotIn("checkout", step.get("run", ""))
 
 
