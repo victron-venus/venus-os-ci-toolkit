@@ -127,6 +127,41 @@ class WorkflowPermissionTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "job custom.*inherited permissions"):
             self.validate()
 
+    def test_wrapper_write_scope_cannot_hide_nested_shell_permissions(self):
+        """A workflow grant still requires an explicit nested shell declaration."""
+        self.wrapper["permissions"]["security-events"] = "write"
+        del self.scanner["jobs"]["codeql"]["permissions"]
+        with self.assertRaisesRegex(
+            ValueError, "security-scan.yml: job codeql.*inherited permissions"
+        ):
+            self.validate()
+
+    def test_call_write_scope_cannot_hide_nested_shell_permissions(self):
+        """A calling job's grant cannot skip inspecting the workflow it calls."""
+        del self.wrapper["permissions"]
+        self.wrapper["jobs"]["scan"]["permissions"] = {
+            "security-events": "write", "contents": "read"
+        }
+        del self.scanner["jobs"]["codeql"]["permissions"]
+        with self.assertRaisesRegex(
+            ValueError, "security-scan.yml: job codeql.*inherited permissions"
+        ):
+            self.validate()
+
+    def test_earlier_write_scope_cannot_hide_later_nested_shell_permissions(self):
+        """Every local call is checked even after another job requests writes."""
+        del self.wrapper["permissions"]
+        self.wrapper["jobs"]["aaa-scanner"] = {
+            "runs-on": "ubuntu-latest",
+            "permissions": {"security-events": "write"},
+            "steps": [{"run": "true"}],
+        }
+        del self.scanner["jobs"]["codeql"]["permissions"]
+        with self.assertRaisesRegex(
+            ValueError, "security-scan.yml: job codeql.*inherited permissions"
+        ):
+            self.validate()
+
     def test_nested_scanner_retains_sarif_write_scope(self):
         """A scanner behind a local wrapper retains its required caller cap."""
         del self.wrapper["permissions"]

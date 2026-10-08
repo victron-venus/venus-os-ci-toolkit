@@ -504,19 +504,21 @@ def validate_shell_permissions(workflow, filename):
 def job_requires_security_events(directory, filename, workflow, job, chain):
     """Inspect one validator without guessing an opaque reusable workflow's scope."""
     defaults = workflow.get("permissions", {})
-    if permission_level(job.get("permissions", defaults), "security-events") == "write":
-        return True
+    requires_write = (
+        permission_level(job.get("permissions", defaults), "security-events") == "write"
+    )
     reference = job.get("uses", "")
     if reference.startswith("./"):
         if not re.fullmatch(r"\./\.github/workflows/[A-Za-z0-9_-]+\.ya?ml", reference):
             raise ValueError(f"Invalid local workflow reference: {reference}")
-        if requires_security_events(
+        # Validate the call even when this job already requests write access.
+        nested_requires_write = requires_security_events(
             directory, reference.rsplit("/", 1)[1], (*chain, filename)
-        ):
-            return True
+        )
+        requires_write = requires_write or nested_requires_write
     elif reference and "permissions" not in job and "permissions" not in workflow:
         return True
-    return any(
+    return requires_write or any(
         re.match(r"github/codeql-action/(analyze|upload-sarif)@", step.get("uses", ""))
         for step in job.get("steps", [])
     )
@@ -532,12 +534,16 @@ def requires_security_events(directory, filename, chain=()):
         Loader=yaml.BaseLoader,
     )
     validate_shell_permissions(workflow, filename)
-    if permission_level(workflow.get("permissions", {}), "security-events") == "write":
-        return True
-    return any(
-        job_requires_security_events(directory, filename, workflow, job, chain)
-        for job in workflow.get("jobs", {}).values()
+    requires_write = (
+        permission_level(workflow.get("permissions", {}), "security-events") == "write"
     )
+    # Every local call must be inspected; an earlier grant cannot hide an error.
+    for job in workflow.get("jobs", {}).values():
+        job_requires_write = job_requires_security_events(
+            directory, filename, workflow, job, chain
+        )
+        requires_write = requires_write or job_requires_write
+    return requires_write
 
 
 def validation_job(policy, directory, filename, oidc):
