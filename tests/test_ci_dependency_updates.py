@@ -48,6 +48,7 @@ class RenovateCredentialTests(unittest.TestCase):
                 clear=True,
             ),
             patch.object(credentials.urllib.request, "urlopen") as urlopen,
+            patch.object(credentials, "validate_signing_key") as validate_key,
             redirect_stdout(output),
         ):
             response = urlopen.return_value.__enter__.return_value
@@ -56,6 +57,7 @@ class RenovateCredentialTests(unittest.TestCase):
             )
             credentials.main()
             urlopen.assert_called_once()
+            validate_key.assert_called_once_with("fixture-only")
         return output.getvalue()
 
     def test_missing_scope_header_warns_that_workflow_permissions_are_unverified(self):
@@ -200,7 +202,12 @@ class CoupledWorkflowTests(unittest.TestCase):
             self.assertIn(name + "@" + pin["digest"] + " # " + pin["version"], workflow)
         parsed = yaml.safe_load(workflow)
         self.assertEqual(
-            next(step["uses"] for step in parsed["jobs"]["build"]["steps"] if step["uses"].startswith("actions/checkout@")), installer.CHECKOUT
+            next(
+                step["uses"]
+                for step in parsed["jobs"]["build"]["steps"]
+                if step["uses"].startswith("actions/checkout@")
+            ),
+            installer.CHECKOUT,
         )
 
     def test_workflow_update_without_generator_update_fails(self):
