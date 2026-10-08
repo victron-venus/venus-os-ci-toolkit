@@ -1095,7 +1095,7 @@ def _release_headings(text: str) -> list[tuple[int, str, int, int]]:
         indentation = len(line) - len(line.lstrip(" "))
         heading = line[indentation:] if indentation <= 3 else line
         level = len(heading) - len(heading.lstrip("#"))
-        if heading_allowed and 1 <= level <= 6 and heading[level : level + 1] in (" ", "\t"):
+        if heading_allowed and 1 <= level <= 6 and heading[level : level + 1] in ("", " ", "\t", "\r", "\n"):
             headings.append(
                 (level, heading[level:].strip(" \t\r\n"), offset, offset + len(line))
             )

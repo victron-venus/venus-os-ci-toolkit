@@ -101,6 +101,17 @@ class ReleaseNotesTests(unittest.TestCase):
         self.assertEqual(github.calls, [("GET", f"contents/CHANGELOG.md?ref={SOURCE}", None)])
         self.assertEqual(github.writes, [])
 
+    def test_empty_higher_level_atx_headings_end_sections(self):
+        for heading in ("#", "##"):
+            for ending in ("", "\n", "\r\n"):
+                text = "### Upgrade\nBefore.\n" + heading + ending
+                with self.subTest(heading=heading, ending=ending):
+                    [(title, raw, visible)] = list(release._release_sections(text, 3))
+                    self.assertEqual((title, raw, visible.strip()), ("Upgrade", "Before.", "Before."))
+        text = "## [1.2.3]\n#\n### Upgrade\nRead migration.\n### Security\nNo changes.\n"
+        with self.assertRaises(release.ReleaseError):
+            render(text)
+
     def test_higher_level_appendix_cannot_supply_version_guidance(self):
         for indent in ("", " ", "  ", "   "):
             text = (
@@ -138,6 +149,7 @@ class ReleaseNotesTests(unittest.TestCase):
             "    # Appendix",
             "#### Nested details",
             "####### Not an ATX heading",
+            "#not-an-atx-heading",
         ):
             text = NOTES.replace("### Upgrade", example + "\n### Upgrade")
             with self.subTest(example=example):
