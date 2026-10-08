@@ -105,31 +105,5 @@ class SetupPythonActionTests(unittest.TestCase):
                 if not succeeds:
                     self.assertIn("CVE-2025-71176", result.stderr)
 
-    def test_cache_path_resolves_local_action_dot_segment(self):
-        step = next(s for s in self.steps if s.get("id") == "action-directory")
-        output = self.root / "github-output"
-        environment = {
-            **self.env,
-            "GITHUB_ACTION_PATH": str(self.root) + "/./toolkit action",
-            "GITHUB_OUTPUT": str(output),
-            "RUNNER_OS": "Windows" if os.name == "nt" else "Linux",
-        }
-        result = subprocess.run(
-            [shutil.which("bash"), "-eo", "pipefail", "-c", step["run"]],
-            cwd=self.consumer, env=environment, text=True, capture_output=True,
-            check=False,
-        )
-        self.assertEqual(result.returncode, 0, result.stderr)
-        actual = output.read_text().strip().removeprefix("path=")
-        self.assertEqual(Path(actual).resolve(), self.action.resolve())
-        self.assertNotIn("/./", actual)
-        setup = next(s for s in self.steps if s.get("name") == "Setup Python")
-        self.assertLess(self.steps.index(step), self.steps.index(setup))
-        self.assertEqual(
-            setup["with"]["cache-dependency-path"],
-            "${{ steps.action-directory.outputs.path }}/requirements.txt",
-        )
-
-
 if __name__ == "__main__":
     unittest.main()

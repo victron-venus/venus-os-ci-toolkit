@@ -112,7 +112,7 @@ first collect a real report in their existing test job.
 
 | Action | Description |
 |---|---|
-| `actions/setup-python` | Python + pip cache + ruff/pytest |
+| `actions/setup-python` | Python + hash-locked ruff/pytest |
 | `actions/setup-go` | Go + module cache + golangci-lint/govulncheck |
 | `actions/setup-docker` | Docker Buildx + GHCR login |
 
@@ -120,8 +120,11 @@ These may also be pinned by consumers, though they are primarily consumed intern
 
 `actions/setup-python` installs the reviewed versions in its own
 `actions/setup-python/requirements.txt`, including transitive dependencies and
-SHA-256 hashes. Its pip cache and requirements path are resolved from the
-composite action directory, independently of a consumer's working directory.
+SHA-256 hashes. The requirements path is resolved from the composite action
+directory, independently of a consumer's working directory. The action does
+not enable setup-python's workspace-based pip cache: a downloaded composite
+action lives outside that workspace, so hashing its lock file for that cache
+would fail in a consumer with no Python project files.
 It uses the interpreter's existing pip and installs wheels only; it does not
 perform an unpinned pip upgrade or install a consumer's dependencies.
 
