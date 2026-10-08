@@ -1,6 +1,7 @@
 """Exercise the reusable workflow's type-check steps in isolated environments."""
 
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -23,7 +24,10 @@ class PythonTypeCheckContract(unittest.TestCase):
         environment = self.directory / "venv"
         venv.create(environment, with_pip=True)
         self.environment = dict(
-            os.environ, PATH=f"{environment / 'bin'}:{os.environ['PATH']}"
+            os.environ, PATH=f"{environment / 'bin'}:{os.environ['PATH']}",
+            # This also covers install-dependencies=false/use-uv-lock=true:
+            # the opt-in is ignored and the legacy tool bootstrap still applies.
+            LOCKED_DEPENDENCIES="false",
         )
         self.python = environment / "bin" / "python"
         workflow = yaml.safe_load(
@@ -87,3 +91,27 @@ class PythonTypeCheckContract(unittest.TestCase):
         )
         self.assertEqual(self.run_steps(False), [])
         self.assertNotEqual(self.run_python("-m", "mypy", "--version").returncode, 0)
+
+    def test_existing_consumer_tool_is_preserved_without_network_install(self):
+        """An installed consumer checker must not be replaced by the fallback."""
+        checker = self.project / "mypy.py"
+        checker.write_text('print("consumer-selected-checker")\n')
+        self.environment["PIP_NO_INDEX"] = "1"
+        results = self.run_steps(True)
+        self.assertEqual(len(results), 2)
+        for result in results:
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("consumer-selected-checker", result.stdout)
+        self.assertEqual(checker.read_text(), 'print("consumer-selected-checker")\n')
+
+    def test_fallback_rejects_tampered_wheel_hashes(self):
+        """Pip must enforce the committed checksums during the real bootstrap."""
+        self.steps[0]["run"] = re.sub(
+            r"sha256:[0-9a-f]{64}", "sha256:" + "0" * 64,
+            self.steps[0]["run"],
+        )
+        self.environment["PIP_NO_CACHE_DIR"] = "1"
+        results = self.run_steps(True)
+        self.assertEqual(len(results), 1)
+        self.assertNotEqual(results[0].returncode, 0)
+        self.assertIn("DO NOT MATCH THE HASHES", results[0].stderr)
