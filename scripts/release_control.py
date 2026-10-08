@@ -61,6 +61,7 @@ API_PATHS = {
     "PATCH": (r"releases/[1-9]\d*",),
     "PUT": (r"contents/release-version-state\.json",),
 }
+SHA256_PATTERN = r"[0-9a-f]{64}"
 SHA_RE = re.compile(r"[0-9a-f]{40}\Z")
 NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+-]{0,199}\Z")
 REPO_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9][A-Za-z0-9_.-]*\Z")
@@ -521,7 +522,7 @@ def validate_policy_snapshot(snapshot: object, repo: str) -> None:
         isinstance(snapshot.get("git_blob_sha"), str)
         and SHA_RE.fullmatch(snapshot["git_blob_sha"])
         and isinstance(snapshot.get("sha256"), str)
-        and re.fullmatch(r"[0-9a-f]{64}", snapshot["sha256"]),
+        and re.fullmatch(SHA256_PATTERN, snapshot["sha256"]),
         "Invalid source policy snapshot hashes",
     )
     require_release_policy(snapshot.get("data"), repo, qualified=True)
@@ -1087,6 +1088,15 @@ def _release_lines(text: str):
             yield visible, True, True
 
 
+def _release_heading_title(content: str) -> str:
+    """Remove an optional whitespace-separated ATX closing hash sequence."""
+    title = content.strip(" \t\r\n")
+    before_hashes = title.rstrip("#")
+    if not before_hashes or before_hashes.endswith((" ", "\t")):
+        return before_hashes.rstrip(" \t")
+    return title
+
+
 def _release_headings(text: str) -> list[tuple[int, str, int, int]]:
     """Locate release headings outside comments and fenced code examples."""
     headings = []
@@ -1097,7 +1107,7 @@ def _release_headings(text: str) -> list[tuple[int, str, int, int]]:
         level = len(heading) - len(heading.lstrip("#"))
         if heading_allowed and 1 <= level <= 6 and heading[level : level + 1] in ("", " ", "\t", "\r", "\n"):
             headings.append(
-                (level, heading[level:].strip(" \t\r\n"), offset, offset + len(line))
+                (level, _release_heading_title(heading[level:]), offset, offset + len(line))
             )
         offset += len(line)
     return headings
@@ -1425,6 +1435,34 @@ def candidate(args) -> dict:
     }
 
 
+def _validate_manifest_assets(manifest):
+    assets = manifest.get("assets")
+    require(isinstance(assets, list) and assets, "Manifest contains no assets")
+    names = set()
+    for item in assets:
+        require(isinstance(item, dict), "Invalid manifest asset")
+        name = item.get("name")
+        require(
+            isinstance(name, str)
+            and NAME_RE.fullmatch(name)
+            and name.casefold() != MANIFEST.casefold(),
+            "Unsafe manifest asset name",
+        )
+        require(name.casefold() not in names, "Duplicate manifest asset name")
+        names.add(name.casefold())
+        require(
+            # Reject JSON booleans, which isinstance(value, int) would accept.
+            type(item.get("size")) is int  # pylint: disable=unidiomatic-typecheck
+            and item["size"] >= 0,
+            "Invalid manifest asset size",
+        )
+        require(
+            isinstance(item.get("sha256"), str)
+            and re.fullmatch(SHA256_PATTERN, item["sha256"]),
+            "Invalid asset checksum",
+        )
+
+
 # pylint: disable-next=too-many-locals
 def validate_manifest(
     raw: bytes, repo: str, rc_tag: str, allow_final: bool = False
@@ -1509,38 +1547,14 @@ def validate_manifest(
             and re.fullmatch(rf"v{re.escape(base_version)}-rc\.[1-9]\d*", parent["tag"])
             and parent["source_sha"] == manifest["source_sha"]
             and isinstance(parent["manifest_sha256"], str)
-            and re.fullmatch(r"[0-9a-f]{64}", parent["manifest_sha256"]),
+            and re.fullmatch(SHA256_PATTERN, parent["manifest_sha256"]),
             "Invalid final RC provenance",
         )
         require(
             positive(parent["run_id"], "parent RC run ID") != manifest["run_id"],
             "Final build must use a new run",
         )
-    assets = manifest.get("assets")
-    require(isinstance(assets, list) and assets, "Manifest contains no assets")
-    names = set()
-    for item in assets:
-        require(isinstance(item, dict), "Invalid manifest asset")
-        name = item.get("name")
-        require(
-            isinstance(name, str)
-            and NAME_RE.fullmatch(name)
-            and name.casefold() != MANIFEST.casefold(),
-            "Unsafe manifest asset name",
-        )
-        require(name.casefold() not in names, "Duplicate manifest asset name")
-        names.add(name.casefold())
-        require(
-            # Reject JSON booleans, which isinstance(value, int) would accept.
-            type(item.get("size")) is int  # pylint: disable=unidiomatic-typecheck
-            and item["size"] >= 0,
-            "Invalid manifest asset size",
-        )
-        require(
-            isinstance(item.get("sha256"), str)
-            and re.fullmatch(r"[0-9a-f]{64}", item["sha256"]),
-            "Invalid asset checksum",
-        )
+    _validate_manifest_assets(manifest)
     return manifest
 
 

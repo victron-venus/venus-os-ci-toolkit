@@ -35,6 +35,32 @@ def diagnostic_label(value):
     return "redacted-sha256-" + rc.digest(value.encode("utf-8", "surrogatepass"))
 
 
+def _queue_toolchain_mapping(pending, path, before, after, missing):
+    """Push mapping fields in reverse order for stable depth-first diagnostics."""
+    for key in sorted(before.keys() | after.keys(), reverse=True):
+        pending.append(
+            (
+                diagnostic_label(
+                    path + "/" + key.replace("~", "~0").replace("/", "~1")
+                ),
+                before.get(key, missing),
+                after.get(key, missing),
+            )
+        )
+
+
+def _queue_toolchain_list(pending, path, before, after, missing):
+    """Push list positions without exposing the compared toolchain values."""
+    for index in reversed(range(max(len(before), len(after)))):
+        pending.append(
+            (
+                diagnostic_label(f"{path}/{index}"),
+                before[index] if index < len(before) else missing,
+                after[index] if index < len(after) else missing,
+            )
+        )
+
+
 def toolchain_changes(original, current):
     """Describe unequal JSON fields deterministically without logging values."""
     missing = object()
@@ -53,25 +79,9 @@ def toolchain_changes(original, current):
                 f"type changed ({type(before).__name__} -> {type(after).__name__})",
             )
         elif isinstance(before, dict):
-            for key in sorted(before.keys() | after.keys(), reverse=True):
-                pending.append(
-                    (
-                        diagnostic_label(
-                            path + "/" + key.replace("~", "~0").replace("/", "~1")
-                        ),
-                        before.get(key, missing),
-                        after.get(key, missing),
-                    )
-                )
+            _queue_toolchain_mapping(pending, path, before, after, missing)
         elif isinstance(before, list):
-            for index in reversed(range(max(len(before), len(after)))):
-                pending.append(
-                    (
-                        diagnostic_label(f"{path}/{index}"),
-                        before[index] if index < len(before) else missing,
-                        after[index] if index < len(after) else missing,
-                    )
-                )
+            _queue_toolchain_list(pending, path, before, after, missing)
         else:
             yield path, "value changed"
 
@@ -381,11 +391,12 @@ def prepare(args):
     """Freeze one durable plan before any platform build consumes version files."""
     inputs = event_inputs()
     kind = os.environ.get("GITHUB_EVENT_NAME")
-    channel = (
-        "nightly"
-        if kind == "schedule"
-        else ("beta" if kind == "push" else inputs.get("channel"))
-    )
+    if kind == "schedule":
+        channel = "nightly"
+    elif kind == "push":
+        channel = "beta"
+    else:
+        channel = inputs.get("channel")
     rc.require(
         channel in {"nightly", "beta", "rc", "stable"}, "Invalid release channel"
     )
