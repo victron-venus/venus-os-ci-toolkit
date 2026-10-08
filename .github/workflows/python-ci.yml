@@ -181,7 +181,9 @@ jobs:
         with:
           version: '0.12.18'
           enable-cache: true
-          cache-dependency-glob: ${{ inputs.working-directory }}/uv.lock
+          cache-dependency-glob: |
+            ${{ inputs.working-directory }}/uv.lock
+            ${{ inputs.working-directory }}/requirements*.txt
 
       - name: Install locked dependencies
         if: inputs.install-dependencies && inputs.use-uv-lock
