@@ -100,7 +100,7 @@ uses a universal, version-pinned, hash-verified wheel lock (including Python
 3.8/3.9 compatibility branches) embedded in the reusable workflow, so it never
 reads bootstrap requirements from the caller's checkout.
 
-Local contract tests require uv 0.12.7, also pinned in the hosted test workflow.
+Local contract tests require uv 0.12.18, also pinned in the hosted test workflow.
 
 ```bash
 python3 -m pip install --require-hashes --only-binary=:all: -r .github/requirements-generator.txt
