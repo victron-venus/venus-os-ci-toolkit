@@ -618,13 +618,14 @@ class ToolkitValidationPolicy(unittest.TestCase):
             self.assertEqual(len(jobs), 1)
             self.assertFalse(job_runs(jobs[0], values))
         workflow = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
-        self.assertEqual(set(workflow["jobs"]), {"analyze"})
-        self.assertTrue(
-            any(
-                step.get("uses", "").startswith("github/codeql-action/analyze@")
-                for step in workflow["jobs"]["analyze"]["steps"]
+        self.assertEqual(set(workflow["jobs"]), {"analyze", "analyze-go"})
+        for job in workflow["jobs"].values():
+            self.assertTrue(
+                any(
+                    step.get("uses", "").startswith("github/codeql-action/analyze@")
+                    for step in job["steps"]
+                )
             )
-        )
         result = self.run_gate(values)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
