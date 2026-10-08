@@ -8,12 +8,25 @@ inputs:
 runs:
   using: 'composite'
   steps:
+    - name: Resolve action directory
+      id: action-directory
+      shell: bash
+      env:
+        GITHUB_ACTION_PATH: ${{ github.action_path }}
+      run: |
+        cd -- "$GITHUB_ACTION_PATH"
+        action_directory=$(pwd -P)
+        if [[ "$RUNNER_OS" == 'Windows' ]]; then
+          action_directory=$(cygpath -m "$action_directory")
+        fi
+        printf 'path=%s\n' "$action_directory" >> "$GITHUB_OUTPUT"
+
     - name: Setup Python
       uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
       with:
         python-version: ${{ inputs.python-version }}
         cache: 'pip'
-        cache-dependency-path: ${{ github.action_path }}/requirements.txt
+        cache-dependency-path: ${{ steps.action-directory.outputs.path }}/requirements.txt
 
     - name: Verify supported Python version
       shell: bash
