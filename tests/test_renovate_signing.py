@@ -3,6 +3,7 @@
 import base64
 import importlib.util
 import os
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -24,6 +25,21 @@ class RenovateSigningTests(unittest.TestCase):
         cls.temporary = tempfile.TemporaryDirectory(prefix="renovate-test-", dir="/tmp")
         cls.addClassCleanup(cls.temporary.cleanup)
         cls.root = Path(cls.temporary.name)
+        for tool in ("gpg", "gpgconf", "openssl", "ssh-keygen"):
+            if not shutil.which(tool):
+                raise AssertionError(
+                    f"Required signing inspection tool missing: {tool}"
+                )
+        for args in (
+            ["gpg", "--version"],
+            ["gpgconf", "--version"],
+            ["openssl", "version"],
+        ):
+            result = subprocess.run(
+                args, capture_output=True, text=True, check=True, timeout=15
+            )
+            print("Signing test runtime: " + result.stdout.splitlines()[0], flush=True)
+        print("Signing test runtime: " + str(shutil.which("ssh-keygen")), flush=True)
         cls.ssh = {}
         for label, algorithm, bits, passphrase in (
             ("ed25519", "ed25519", 256, ""),
@@ -56,7 +72,7 @@ class RenovateSigningTests(unittest.TestCase):
             )
             cls.ssh[label] = path.read_text()
         cls.pgp = {}
-        for algorithm in ("rsa1024", "rsa2048", "ed25519", "nistp256"):
+        for algorithm in ("rsa1024", "rsa2048", "ed25519", "ed448", "nistp256"):
             home = cls.root / (algorithm + "-pgp")
             home.mkdir(mode=0o700)
             args = [
@@ -171,7 +187,7 @@ class RenovateSigningTests(unittest.TestCase):
             credentials.validate_signing_key(self.ssh["rsa1024"])
 
     def test_accepts_supported_real_pgp_keys(self):
-        for name in ("rsa2048", "ed25519", "nistp256"):
+        for name in ("rsa2048", "ed25519", "ed448", "nistp256"):
             with self.subTest(name=name):
                 credentials.validate_signing_key(self.pgp[name])
 

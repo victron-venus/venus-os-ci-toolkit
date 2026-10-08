@@ -62,7 +62,10 @@ or RSA with at least 2048 bits. OpenPGP must contain one primary identity; every
 private primary key and subkey must use RSA with at least 2048 bits, the same
 NIST curves, or Ed25519/Ed448 and their Curve25519/Curve448 encryption counterparts.
 At least one key must support signing. DSA, smaller keys, unknown algorithms and
-malformed material fail before the dependency sweep starts.
+malformed material fail before the dependency sweep starts. These are GnuPG-compatible
+OpenPGP packets: GnuPG represents Ed25519/Ed448 with algorithm ID 22 and its curve
+field. This does not claim support for RFC 9580 version-6 keys or algorithm IDs
+27/28, which the Renovate runner's GnuPG import must support before they can be used.
 
 The runner needs OpenSSH, GnuPG and OpenSSL. Inspection uses temporary storage,
 does not import into the operator's keyring, and removes temporary material on
