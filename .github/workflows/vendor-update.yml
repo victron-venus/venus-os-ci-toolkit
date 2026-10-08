@@ -149,17 +149,46 @@ jobs:
           COMMITTER_EMAIL: ${{ inputs.committer-email }}
         run: |
           python3 -I - <<'PY'
-          import os, pathlib, subprocess
+          import os, pathlib, re, subprocess
+
+          def validate_public_key(public, metadata):
+              """Accept only SSH signing algorithms with the required strength."""
+              fields = public.split()
+              details = metadata.split()
+              try:
+                  bits = int(details[0])
+                  fingerprint = details[1]
+              except (IndexError, ValueError):
+                  raise SystemExit('Invalid signing key metadata') from None
+              curves = {'ecdsa-sha2-nistp256': 256, 'ecdsa-sha2-nistp384': 384,
+                        'ecdsa-sha2-nistp521': 521}
+              kind = fields[0] if fields else ''
+              accepted = ((kind == 'ssh-ed25519' and bits == 256)
+                          or (kind == 'ssh-rsa' and bits >= 2048)
+                          or (kind in curves and bits == curves[kind]))
+              if (not accepted or len(fields) < 2 or '\n' in public or '\r' in public
+                      or not re.fullmatch(r'SHA256:[A-Za-z0-9+/]{43}', fingerprint)):
+                  raise SystemExit('Signing key must use Ed25519, ECDSA >=256, or RSA >=2048')
+              return fingerprint
+
           directory = pathlib.Path(os.environ['RUNNER_TEMP']) / 'vendor-delivery-signing'
           directory.mkdir(mode=0o700)
           key = directory / 'key'
           key.write_text(os.environ['DELIVERY_SIGNING_KEY'].strip() + '\n')
           key.chmod(0o600)
-          public = subprocess.check_output(['ssh-keygen', '-y', '-P', '', '-f', str(key)], text=True).strip()
+          try:
+              public = subprocess.check_output(
+                  ['ssh-keygen', '-y', '-P', '', '-f', str(key)],
+                  text=True, stderr=subprocess.PIPE, timeout=15).strip()
+              metadata = subprocess.check_output(
+                  ['ssh-keygen', '-lf', str(key), '-E', 'sha256'],
+                  text=True, stderr=subprocess.PIPE, timeout=15)
+          except (OSError, subprocess.SubprocessError):
+              raise SystemExit('Dedicated signing key is invalid or unsupported') from None
+          fingerprint = validate_public_key(public, metadata)
           allowed = directory / 'allowed-signers'
           allowed.write_text(os.environ['COMMITTER_EMAIL'] + ' ' + public + '\n')
           allowed.chmod(0o600)
-          fingerprint = subprocess.check_output(['ssh-keygen', '-lf', str(key), '-E', 'sha256'], text=True).split()[1]
           for name, value in {
               'user.name': os.environ['COMMITTER_NAME'],
               'user.email': os.environ['COMMITTER_EMAIL'],
