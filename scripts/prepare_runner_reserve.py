@@ -11,7 +11,7 @@ from pathlib import Path
 from runner_selection import ConsumerRunnerAdapter, adapt_jobs, yaml_editor
 
 TOOLKIT = "victron-venus/venus-os-ci-toolkit/.github/workflows/"
-AUTOMATION = {"auto-approve.yml", "auto-merge.yml", "coderabbit-review.yml"}
+AUTOMATION = {"auto-approve.yml", "auto-merge.yml", "coderabbit-review.yml", "coderabbit-autofix.yml"}
 
 
 def select_profile(name, workflow, profiles):

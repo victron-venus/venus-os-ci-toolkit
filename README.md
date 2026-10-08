@@ -82,6 +82,12 @@ JSON manifests and Actions evidence ZIPs use the existing metadata reader.
 
 ## Updating consumers
 
+The optional [CodeRabbit Autofix caller](docs/CODERABBIT.md#request-autofix-after-a-completed-review)
+asks `californiantiramisu` to post `@coderabbitai autofix` after a completed review
+with unresolved findings. It uses the existing `BOT_PAT`, checks the current head,
+deduplicates requests and limits automatic fix/review cycles to three per PR.
+Install it only in public repositories alongside the review-request caller.
+
 The [optional runner switch](docs/RUNNERS.md) keeps GitHub-hosted runners by
 default and routes eligible jobs to explicitly configured self-hosted pools.
 `install_release.py --runners-only` adapts existing CI jobs without upgrading

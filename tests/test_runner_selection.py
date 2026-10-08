@@ -29,7 +29,7 @@ class RunnerSelectionTests(unittest.TestCase):
         self.assertNotIn("deploy", ACTIVE_WORKFLOWS)
 
     def test_no_checkout_in_metadata_jobs(self):
-        for name in ("auto-merge.yml", "auto-approve-reusable.yml", "coderabbit-review-reusable.yml"):
+        for name in ("auto-merge.yml", "auto-approve-reusable.yml", "coderabbit-review-reusable.yml", "coderabbit-autofix-reusable.yml"):
             workflow = yaml.load((ROOT / ".github/workflows" / name).read_text(), Loader=yaml.BaseLoader)
             for job in workflow["jobs"].values():
                 for step in job["steps"]:

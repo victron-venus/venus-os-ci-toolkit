@@ -1,7 +1,7 @@
 # CodeRabbit review requests
 
 CodeRabbit reviews are advisory: this integration adds no required check, approval,
-autofix, or merge rule. The repository configuration selects `quiet` reviews,
+or merge rule. The repository configuration selects `quiet` reviews,
 enables automatic reviews where the service permits them, and includes drafts.
 
 Public repositories with fewer than 10 stars require a manual review request under
@@ -95,3 +95,56 @@ comments before any new write and does not blindly retry a failed POST. If the
 request already exists but CodeRabbit did not review, fix the app configuration
 or service issue and request a new review manually. Do not delete the marker or
 add a per-push workflow to bypass review-request deduplication.
+
+## Request Autofix after a completed review
+
+Copy [the Autofix caller](examples/coderabbit-autofix.yml) to
+`.github/workflows/coderabbit-autofix.yml` and replace `TOOLKIT_COMMIT_SHA` with
+the reviewed, merged 40-character toolkit commit. Forward the existing `BOT_PAT`.
+The token must belong to `californiantiramisu`; a fine-grained token needs
+**Pull requests: write** and **Commit statuses: read** on each selected repository.
+The caller must be merged onto the default branch before status events reach it.
+
+The [status event](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#status)
+runs the default-branch workflow when CodeRabbit reports success. It works for
+fork PRs without checking out their code or exposing secrets to a PR workflow.
+The caller authenticates the event sender as `coderabbitai[bot]` with type `Bot`;
+the reusable job also verifies the live status creator, including for manual dispatch.
+It verifies an actual submitted CodeRabbit review on the current
+head; a successful status alone, including a skipped review, is insufficient.
+It then finds unresolved, non-outdated CodeRabbit review threads containing
+`Prompt for AI Agents` instructions and posts this command as the verified bot:
+
+```text
+@coderabbitai autofix
+```
+
+A hidden marker records the head and a hash of the finding IDs. The job allows
+one automatic request per head, does not retry the same finding set after another
+push, and caps automatic requests at three per PR. This bounds the feedback loop
+when Autofix pushes a commit that produces another review. Requests beyond this
+limit need a maintainer's explicit manual command. Do not delete the markers.
+Closed, draft, private, archived, deleted-head and superseded PRs are skipped.
+Open fork PRs are eligible; CodeRabbit's ability to write the fork still depends
+on its permissions. PR authors are not used as an identity signal for CodeRabbit.
+
+The job paginates reviews, threads and comments, verifies the bot's login and
+account ID for deduplication, and rechecks the head and findings before writing.
+Concurrent events for the same head are serialized. An API failure stops the job;
+it never blindly retries a comment POST. As with review requests, external changes
+between the last API read and the comment write cannot be locked by Actions.
+
+For an existing reviewed PR, validate eligibility without a comment:
+
+```bash
+gh workflow run coderabbit-autofix.yml --repo OWNER/REPO --ref DEFAULT_BRANCH \
+  --field pull-request-number=123 --field expected-head=FULL_HEAD_SHA \
+  --field dry-run=true
+```
+
+Use `dry-run=false` to deliver an eligible request. Manual dispatch retains all
+deduplication, review and three-round checks. It cannot force an unreviewed head.
+Inspect the resulting CodeRabbit commit and normal CI before merging.
+This workflow requests changes; it does not approve or merge the resulting code.
+[Autofix availability and limits](https://docs.coderabbit.ai/finishing-touches/autofix)
+are controlled by CodeRabbit. A delivered command is not proof of a completed fix.

@@ -36,6 +36,7 @@ ACTIVE_WORKFLOWS = {
     "ci.yml": "ci", "contract-tests.yml": "ci",
     "auto-approve-reusable.yml": "automation", "auto-merge.yml": "automation",
     "coderabbit-review-reusable.yml": "automation", "renovate.yml": "automation",
+    "coderabbit-autofix-reusable.yml": "automation",
     "vendor-update.yml": "release",
 }
 

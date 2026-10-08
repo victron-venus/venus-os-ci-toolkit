@@ -1,0 +1,220 @@
+name: Request CodeRabbit Autofix
+
+on:
+  workflow_call:
+    inputs:
+      pull-request-number:
+        description: Explicit PR number for workflow_dispatch only
+        type: string
+        default: ''
+      expected-head:
+        description: Exact PR head SHA for workflow_dispatch only
+        type: string
+        default: ''
+      dry-run:
+        description: Check eligibility without posting a comment
+        type: boolean
+        default: false
+    secrets:
+      BOT_PAT:
+        description: californiantiramisu token with PR write and commit status read access
+        required: true
+
+permissions: {}
+
+jobs:
+  request-autofix:
+    name: Request CodeRabbit Autofix
+    runs-on: ${{ fromJSON((vars.CI_RUNNER_MODE == 'self-hosted' || vars.CI_RUNNER_MODE == 'k3s') && ((contains(fromJSON('["pull_request","pull_request_target","pull_request_review"]'), github.event_name) && github.event.pull_request.head.repo.full_name == github.repository) || (contains(fromJSON('["push","schedule","workflow_dispatch"]'), github.event_name) && github.ref == format('refs/heads/{0}', github.event.repository.default_branch))) && (vars.CI_RUNNER_AUTOMATION_LABELS || '[]') || '["ubuntu-latest"]') }}
+    timeout-minutes: 5
+    concurrency:
+      group: toolkit-coderabbit-autofix-${{ github.repository }}-${{ inputs.expected-head || github.event.sha }}
+      cancel-in-progress: false
+    steps:
+      # Trusted metadata only. Never execute code or download artifacts from a PR.
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@351661ca32ac09a36dc5ee2d536e3128f2a3c8ed # v2.22.0
+        with:
+          egress-policy: audit
+      - name: Request bounded autofix as californiantiramisu
+        shell: python3 -I {0}
+        env:
+          BOT_PAT: ${{ secrets.BOT_PAT }}
+          PR_NUMBER: ${{ inputs.pull-request-number }}
+          EXPECTED_HEAD: ${{ inputs.expected-head }}
+          STATUS_HEAD: ${{ github.event.sha }}
+          STATUS_CONTEXT: ${{ github.event.context }}
+          STATUS_STATE: ${{ github.event.state }}
+          STATUS_SENDER: ${{ github.event.sender.login }}
+          STATUS_SENDER_TYPE: ${{ github.event.sender.type }}
+          DRY_RUN: ${{ inputs.dry-run }}
+        run: |
+          import hashlib
+          import json
+          import os
+          import re
+          import subprocess
+
+          BOT = "californiantiramisu"
+          REVIEWER = "coderabbitai[bot]"
+          MAX_ROUNDS = 3
+          MARKER = re.compile(r"<!-- toolkit-coderabbit-autofix:v1 head=([0-9a-f]{40}) findings=([0-9a-f]{64}) -->")
+          THREADS = """query($owner:String!,$name:String!,$number:Int!,$cursor:String){
+            repository(owner:$owner,name:$name){pullRequest(number:$number){
+              reviewThreads(first:100,after:$cursor){pageInfo{hasNextPage endCursor}
+                nodes{id isResolved isOutdated comments(first:1){nodes{
+                  author{login __typename} body
+                }}}
+              }
+            }}
+          }"""
+
+          def api(path, token, *, payload=None, paginate=False):
+              command = ["gh", "api", path]
+              if paginate:
+                  command.extend(["--paginate", "--slurp"])
+              if payload is not None:
+                  command.extend(["--method", "POST", "--input", "-"])
+              try:
+                  result = subprocess.run(
+                      command, input=json.dumps(payload) if payload is not None else None,
+                      text=True, capture_output=True, check=True,
+                      env={**os.environ, "GH_TOKEN": token, "GH_HOST": "github.com"},
+                  )
+              except subprocess.CalledProcessError as error:
+                  detail = (error.stderr or "GitHub API request failed").strip().replace(token, "***")
+                  raise RuntimeError(detail) from None
+              result = json.loads(result.stdout)
+              if isinstance(result, dict) and result.get("errors"):
+                  raise RuntimeError("GitHub GraphQL query failed")
+              return result
+
+          def items(path, token):
+              return [item for page in api(path, token, paginate=True) for item in page]
+
+          def active_repository(metadata, repository):
+              return (metadata.get("full_name") == repository
+                      and metadata.get("private") is False
+                      and metadata.get("visibility") == "public"
+                      and metadata.get("archived") is False)
+
+          def eligible_pr(pr, repository, number, head):
+              return (pr.get("number") == number and pr.get("state") == "open"
+                      and pr.get("draft") is False
+                      and pr.get("head", {}).get("sha") == head
+                      and (pr.get("head", {}).get("repo") or {}).get("full_name")
+                      and (pr.get("base", {}).get("repo") or {}).get("full_name") == repository)
+
+          def completed_review(repository, number, head, token):
+              # GitHub lists statuses newest first. An older success cannot override a rerun.
+              statuses = items(f"repos/{repository}/commits/{head}/statuses?per_page=100", token)
+              status = next((s for s in statuses if s.get("context") == "CodeRabbit"), {})
+              creator = status.get("creator") or {}
+              if (status.get("state") != "success"
+                      or creator.get("login") != REVIEWER or creator.get("type") != "Bot"):
+                  return False
+              reviews = items(f"repos/{repository}/pulls/{number}/reviews?per_page=100", token)
+              return any(r.get("user", {}).get("login") == REVIEWER
+                         and r.get("user", {}).get("type") == "Bot"
+                         and r.get("commit_id") == head
+                         and r.get("state") in {"COMMENTED", "CHANGES_REQUESTED", "APPROVED"}
+                         for r in reviews)
+
+          def findings(repository, number, token):
+              owner, name = repository.split("/", 1)
+              variables = {"owner": owner, "name": name, "number": number, "cursor": None}
+              found = []
+              while True:
+                  data = api("graphql", token, payload={"query": THREADS, "variables": variables})
+                  threads = data["data"]["repository"]["pullRequest"]["reviewThreads"]
+                  for thread in threads["nodes"]:
+                      comments = thread["comments"]["nodes"]
+                      first = comments[0] if comments else {}
+                      author = first.get("author") or {}
+                      # GraphQL Bot.login omits the REST [bot] suffix.
+                      if (thread["isResolved"] is False and thread["isOutdated"] is False
+                              and author.get("login") in {"coderabbitai", REVIEWER}
+                              and author.get("__typename") == "Bot"
+                              and "Prompt for AI Agents" in first.get("body", "")):
+                          found.append(thread["id"])
+                  if not threads["pageInfo"]["hasNextPage"]:
+                      return sorted(found)
+                  cursor = threads["pageInfo"]["endCursor"]
+                  if not cursor or cursor == variables["cursor"]:
+                      raise RuntimeError("Invalid review thread pagination")
+                  variables["cursor"] = cursor
+
+          def already_requested(comments, identity, head, fingerprint):
+              rounds = []
+              for comment in comments:
+                  author = comment.get("user") or {}
+                  if author.get("id") == identity["id"] and author.get("login") == BOT:
+                      marker = MARKER.fullmatch((comment.get("body") or "").removeprefix("@coderabbitai autofix\n\n"))
+                      if marker:
+                          rounds.append(marker.groups())
+              return (len(rounds) >= MAX_ROUNDS
+                      or any(old_head == head or old_findings == fingerprint
+                             for old_head, old_findings in rounds))
+
+          def process(repository, number, head, token, identity):
+              root = f"repos/{repository}"
+              endpoint = f"{root}/pulls/{number}"
+              comments = f"{root}/issues/{number}/comments"
+              if not eligible_pr(api(endpoint, token), repository, number, head):
+                  print(f"Skip #{number}: closed, draft, deleted head or superseded commit")
+                  return
+              if not completed_review(repository, number, head, token):
+                  print(f"Skip #{number}: no completed CodeRabbit review for this head")
+                  return
+              pending = findings(repository, number, token)
+              if not pending:
+                  print(f"Skip #{number}: no current actionable CodeRabbit findings")
+                  return
+              fingerprint = hashlib.sha256("\n".join(pending).encode()).hexdigest()
+              if already_requested(items(f"{comments}?per_page=100", token), identity, head, fingerprint):
+                  print(f"Skip #{number}: already requested or three-round limit reached")
+                  return
+              # Re-read after pagination. Never retry a POST with an ambiguous outcome.
+              if (not active_repository(api(root, token), repository)
+                      or not eligible_pr(api(endpoint, token), repository, number, head)
+                      or not completed_review(repository, number, head, token)
+                      or findings(repository, number, token) != pending):
+                  print(f"Skip #{number}: repository, head or review changed")
+                  return
+              if os.environ.get("DRY_RUN") == "true":
+                  print(f"Would request autofix on #{number} at {head} for {len(pending)} findings")
+                  return
+              body = f"@coderabbitai autofix\n\n<!-- toolkit-coderabbit-autofix:v1 head={head} findings={fingerprint} -->"
+              api(comments, token, payload={"body": body})
+              print(f"Requested autofix on #{number} at {head} as {BOT}")
+
+          def main():
+              event = os.environ.get("GITHUB_EVENT_NAME")
+              number = os.environ.get("PR_NUMBER", "")
+              expected = os.environ.get("EXPECTED_HEAD", "")
+              automatic = (event == "status" and not number and not expected
+                           and os.environ.get("STATUS_CONTEXT") == "CodeRabbit"
+                           and os.environ.get("STATUS_STATE") == "success"
+                           and os.environ.get("STATUS_SENDER") == REVIEWER
+                           and os.environ.get("STATUS_SENDER_TYPE") == "Bot")
+              manual = event == "workflow_dispatch" and re.fullmatch(r"[1-9][0-9]*", number)
+              head = os.environ.get("STATUS_HEAD", "") if automatic else expected
+              if not (automatic or manual) or re.fullmatch(r"[0-9a-f]{40}", head) is None:
+                  raise RuntimeError("Use a successful CodeRabbit status or explicit PR number and exact head")
+              token = os.environ.get("BOT_PAT")
+              if not token:
+                  raise RuntimeError("Configure BOT_PAT for californiantiramisu")
+              repository = os.environ["GITHUB_REPOSITORY"]
+              if not active_repository(api(f"repos/{repository}", token), repository):
+                  print("Skip: repository is not active and public")
+                  return
+              identity = api("user", token)
+              if identity.get("login") != BOT or type(identity.get("id")) is not int or identity["id"] <= 0:
+                  raise RuntimeError("BOT_PAT must belong to californiantiramisu")
+              numbers = ([int(number)] if manual else
+                         sorted({p["number"] for p in items(f"repos/{repository}/commits/{head}/pulls?per_page=100", token)}))
+              for pr_number in numbers:
+                  process(repository, pr_number, head, token, identity)
+
+          if __name__ == "__main__":
+              main()
