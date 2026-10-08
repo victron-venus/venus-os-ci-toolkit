@@ -24,3 +24,9 @@ be fixed within 60 days of becoming public; do not restart that clock when a
 report is confirmed. Release notes identify affected versions, mitigation and
 any assigned CVE or advisory. Early mitigation guidance may be published when
 waiting for coordinated disclosure would put users at risk.
+
+## Release helper transport
+
+The release helpers use GitHub CLI for authenticated HTTPS operations. See the
+[per-command TLS profile](docs/RELEASE_TLS_PROFILE.md) for the verified toolchain,
+certificate key restrictions and a read-only verification command.
