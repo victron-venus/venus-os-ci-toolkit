@@ -1607,6 +1607,11 @@ def render(directory: Path) -> dict[str, str]:
     files.update(coverage_adapters(directory, policy))
     # Consumers use different format/type policies. These copies are verified by
     # the toolkit's tests and the mandatory Release tooling contracts job.
+    return prepare_consumer_files(directory, files)
+
+
+def prepare_consumer_files(directory: Path, files: dict[str, str]) -> dict[str, str]:
+    """Apply the Python compatibility conversion to copied consumer sources."""
     if directory.resolve() != ROOT.resolve():
         for name, source in files.items():
             if name.endswith(".py"):
