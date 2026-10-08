@@ -1,5 +1,7 @@
 name: 'Reusable Terraform CI'
 # description: 'Reusable CI workflow for Terraform projects'
+permissions:
+  contents: read
 on:
   workflow_call:
     inputs:
@@ -38,6 +40,7 @@ jobs:
     needs: change-scope
     if: ${{ needs.change-scope.outputs.run != 'false' || needs.change-scope.outputs.reason != 'documentation-only' }}
     name: Terraform CI
+    timeout-minutes: 15
     runs-on: ${{ fromJSON((vars.CI_RUNNER_MODE == 'self-hosted' || vars.CI_RUNNER_MODE == 'k3s') && ((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) || (contains(fromJSON('["push","schedule","workflow_dispatch"]'), github.event_name) && github.ref == format('refs/heads/{0}', github.event.repository.default_branch))) && (vars.CI_RUNNER_LABELS || '[]') || '["ubuntu-latest"]') }}
     defaults:
       run:
@@ -57,10 +60,33 @@ jobs:
           terraform-version: ${{ inputs.terraform-version }}
           terraform-wrapper: false
 
-      - name: Install tflint
+      - name: Install checksum-verified TFLint
         if: inputs.tflint-enabled
+        shell: bash
         run: |
-          curl -s https://raw.githubusercontent.com/terraform-linters/tflint/master/install_linux.sh | bash
+          set -euo pipefail
+          case "$RUNNER_ARCH" in
+            X64)
+              arch=amd64
+              checksum=cca9d13e2e1d7a2c627af60ff899a3c9b74212899416aeb96ec764d2ef954537
+              ;;
+            ARM64)
+              arch=arm64
+              checksum=560da89aacf59389d4eb029730dd5b109b7288096c32f2726a0d9e783a5ea8eb
+              ;;
+            *) echo 'Unsupported TFLint runner architecture.' >&2; exit 1 ;;
+          esac
+          install_dir="$(mktemp -d "$RUNNER_TEMP/tflint.XXXXXX")"
+          archive="$install_dir/tflint.zip"
+          trap 'rm -f "$archive"' EXIT
+          curl --proto '=https' --proto-redir '=https' --fail --silent --show-error --location \
+            "https://github.com/terraform-linters/tflint/releases/download/v0.64.0/tflint_linux_${arch}.zip" \
+            --output "$archive"
+          printf '%s  %s\n' "$checksum" "$archive" | sha256sum --check --strict
+          unzip -q "$archive" tflint -d "$install_dir"
+          chmod 0755 "$install_dir/tflint"
+          "$install_dir/tflint" --version
+          printf '%s\n' "$install_dir" >> "$GITHUB_PATH"
 
       - name: Terraform fmt
         run: terraform fmt -check -recursive
@@ -75,4 +101,6 @@ jobs:
 
       - name: TFLint
         if: inputs.tflint-enabled
-        run: tflint --init --enable-plugin=terraform
+        run: |
+          tflint --init --enable-plugin=terraform
+          tflint --enable-plugin=terraform

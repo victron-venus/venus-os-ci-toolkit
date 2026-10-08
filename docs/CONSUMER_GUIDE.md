@@ -183,6 +183,13 @@ No Codecov secret is forwarded. Opt-in central publication uses GitHub OIDC.
 | `terraform-version` | string | `'1.5.x'` | No |
 | `tflint-enabled` | boolean | `true` | No |
 
+When enabled, TFLint 0.64.0 is downloaded for Linux x64 or arm64 and its archive
+is checked against a committed SHA-256 before extraction and execution. Other
+architectures fail explicitly. The workflow initializes configured plugins, then
+runs the linter; initialization alone does not inspect the Terraform source.
+Existing lint warnings can therefore fail validation after adopting this update.
+Plugin versions and signing policy remain the consuming project's responsibility.
+
 #### `security-scan.yml`
 
 | Input | Type | Default | Required |
