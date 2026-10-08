@@ -73,15 +73,21 @@ assert.equal(actions.length, 7);
 assert.equal(actions.filter((dep) => dep.depName === 'github/codeql-action').length, 3);
 assert.ok(actions.every((dep) => !dep.skipReason));
 assert.equal(actions.filter((dep) => dep.depType === 'workflow').length, 2);
+function actionUpdate(dep) {
+  let updateType = 'patch';
+  let newValue = 'v4.2.1';
+  if (dep.depName === 'github/codeql-action') {
+    updateType = 'major';
+    newValue = 'v4.38.2';
+  } else if (dep.depName === 'victron-venus/venus-os-ci-toolkit') {
+    updateType = 'digest';
+    newValue = 'main';
+  }
+  if (!dep.currentDigest) updateType = 'pinDigest';
+  return { updateType, newValue, newDigest: next, newMajor: 4 };
+}
 for (const dep of actions) {
-  const codeql = dep.depName === 'github/codeql-action';
-  const toolkit = dep.depName === 'victron-venus/venus-os-ci-toolkit';
-  dep.updates = [{
-    updateType: !dep.currentDigest ? 'pinDigest' : codeql ? 'major' : toolkit ? 'digest' : 'patch',
-    newValue: codeql ? 'v4.38.2' : toolkit ? 'main' : 'v4.2.1',
-    newDigest: next,
-    newMajor: 4,
-  }];
+  dep.updates = [actionUpdate(dep)];
 }
 const manifest = await readFile('.github/action-pins.json', 'utf8');
 const pins = extractPins(manifest, '.github/action-pins.json', preset.customManagers[0]);
