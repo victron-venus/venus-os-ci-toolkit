@@ -40,3 +40,30 @@ jobs:
           python -m pip check
           python -m ruff check .
           python -m pytest -q --cov=calculator --cov-fail-under=100
+
+  python-remote-action:
+    name: Downloaded Python action (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@351661ca32ac09a36dc5ee2d536e3128f2a3c8ed # v2.22.0
+        with:
+          egress-policy: audit
+      # Deliberately no checkout: the consumer has no Python dependency files.
+      # Update this source pin when changing the composite action under test.
+      - name: Exercise the downloaded composite action
+        uses: victron-venus/venus-os-ci-toolkit/actions/setup-python@7d05880366fe02d77dd7c40cb88c16e01f1d5382
+        with:
+          python-version: '3.12'
+      - name: Verify tools in an empty consumer
+        shell: bash
+        run: |
+          python -c 'from pathlib import Path; import pytest_asyncio, pytest_cov; assert not Path("pyproject.toml").exists(); assert not Path("requirements.txt").exists()'
+          python -m pip check
+          python -m ruff --version
+          python -m pytest --version
