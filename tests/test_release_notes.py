@@ -2,11 +2,10 @@
 
 import base64
 import importlib.util
-from pathlib import Path
-from unittest.mock import Mock, patch
-
 import tempfile
 import unittest
+from pathlib import Path
+from unittest.mock import Mock, patch
 
 _SPEC = importlib.util.spec_from_file_location(
     "notes_release_control", Path(__file__).parents[1] / "scripts/release_control.py"
