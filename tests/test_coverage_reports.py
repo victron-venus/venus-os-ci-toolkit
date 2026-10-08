@@ -13,8 +13,8 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
-import coverage_reports as reports
-import render_coverage_upload as renderer
+import coverage_reports as reports  # noqa: E402 - Import the source scripts after adding their directory.
+import render_coverage_upload as renderer  # noqa: E402 - Import the source scripts after adding their directory.
 
 XML = '<coverage><packages><package><classes><class filename="src/main.py"><lines><line number="1" hits="0"/><line number="2" hits="3"/></lines></class></classes></package></packages></coverage>'
 GO = "mode: atomic\nexample.org/app/main.go:1.1,3.2 2 0\nexample.org/app/main.go:4.1,6.2 1 3\n"

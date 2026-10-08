@@ -11,7 +11,7 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
-from runner_selection import ACTIVE_WORKFLOWS, render_consumer, render_workflows, runner_labels
+from runner_selection import ACTIVE_WORKFLOWS, render_consumer, render_workflows, runner_labels  # noqa: E402 - Import the source scripts after adding their directory.
 
 
 class RunnerSelectionTests(unittest.TestCase):

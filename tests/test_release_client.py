@@ -204,6 +204,57 @@ class GeneratorTest(unittest.TestCase):
             "validation_workflows": ["ci.yml", "codeql.yml"],
         }
 
+    def test_rendered_contract_jobs_install_shipped_hash_locked_dependencies(self):
+        """Legacy and single-entry release jobs install dependencies before tests."""
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            workflows = root / ".github/workflows"
+            workflows.mkdir(parents=True)
+            for name in (*self.policy["validation_workflows"], "release-build.yml"):
+                (workflows / name).write_text("on: {workflow_call: {}}\njobs: {}\n")
+            for mode in (None, "release", "validation-only"):
+                for single_entry in (False, True):
+                    with self.subTest(mode=mode, single_entry=single_entry):
+                        policy = dict(self.policy, single_entry_ci=single_entry)
+                        if mode is not None:
+                            policy["mode"] = mode
+                        (root / installer.POLICY_FILE).write_text(json.dumps(policy))
+                        files = installer.render(root)
+                        needs_dependencies = single_entry or mode != "validation-only"
+                        self.assertEqual(
+                            installer.CONTRACT_REQUIREMENTS in files, needs_dependencies
+                        )
+                        if needs_dependencies:
+                            self.assertEqual(
+                                files[installer.CONTRACT_REQUIREMENTS],
+                                (installer.ROOT / installer.CONTRACT_REQUIREMENTS).read_text(),
+                            )
+                        workflow = installer.yaml.load(
+                            files[".github/workflows/quality-gate.yml"],
+                            Loader=installer.WorkflowLoader,
+                        )
+                        self.assertEqual(
+                            "release-contracts" in workflow["jobs"],
+                            mode != "validation-only",
+                        )
+                        for name in ("release-contracts", "workflow-contracts"):
+                            if name not in workflow["jobs"]:
+                                continue
+                            commands = [
+                                step["run"]
+                                for step in workflow["jobs"][name]["steps"]
+                                if "run" in step
+                            ]
+                            self.assertEqual(
+                                commands[0],
+                                "python3 -m pip install --require-hashes "
+                                "--only-binary=:all: "
+                                f"-r {installer.CONTRACT_REQUIREMENTS}",
+                            )
+                            self.assertTrue(
+                                any("unittest discover" in command for command in commands[1:])
+                            )
+
     def test_runner_preflight_is_vendored_without_rewriting_build_adapter(self):
         """Consumers get the helper/tests; owned packaging integration stays explicit."""
         with tempfile.TemporaryDirectory() as temp:

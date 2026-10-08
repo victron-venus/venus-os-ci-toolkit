@@ -7,8 +7,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'scripts'))
-from prepare_runner_reserve import render
-from runner_selection import yaml_editor
+from prepare_runner_reserve import render  # noqa: E402 - Import the source scripts after adding their directory.
+from runner_selection import yaml_editor  # noqa: E402 - Import the source scripts after adding their directory.
 
 
 class ReserveAdoptionTests(unittest.TestCase):
