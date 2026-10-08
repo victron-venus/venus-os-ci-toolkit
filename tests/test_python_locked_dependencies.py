@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import textwrap
 import unittest
 import zipfile
 
@@ -43,6 +44,7 @@ class LockedPythonDependencies(unittest.TestCase):
             "UV_OFFLINE": "true",
             "UV_PYTHON_DOWNLOADS": "never",
             "GITHUB_PATH": str(self.path_file),
+            "BUILD_DEPENDENCY_GROUP": "",
         }
         workflow = yaml.safe_load((ROOT / ".github/workflows/python-ci.yml").read_text())
         self.steps = {s["name"]: s for s in workflow["jobs"]["ci"]["steps"]}
@@ -51,6 +53,10 @@ class LockedPythonDependencies(unittest.TestCase):
             self.install["if"], "inputs.install-dependencies && inputs.use-uv-lock"
         )
         self.assertFalse(workflow[True]["workflow_call"]["inputs"]["use-uv-lock"]["default"])
+        self.assertEqual(
+            workflow[True]["workflow_call"]["inputs"]["build-dependency-group"]["default"],
+            "",
+        )
         self.assertEqual(
             self.steps["Install dependencies"]["if"],
             "inputs.install-dependencies && !inputs.use-uv-lock",
@@ -78,6 +84,122 @@ class LockedPythonDependencies(unittest.TestCase):
             command, cwd=self.project, env=self.environment,
             capture_output=True, text=True, check=False,
         )
+
+    def configure_locked_backend(self):
+        """Build the real consumer with one of two available backend versions."""
+        for version in ("1.0.0", "2.0.0"):
+            filename = self.wheels / f"locked_backend-{version}-py3-none-any.whl"
+            source = textwrap.dedent('''\
+                import pathlib
+                import zipfile
+
+                def build_editable(wheel_directory, config_settings=None, metadata_directory=None):
+                    pathlib.Path("used-build-backend").write_text(VERSION)
+                    name = "ci_lock_consumer-0.1.0"
+                    filename = name + "-py3-none-any.whl"
+                    with zipfile.ZipFile(pathlib.Path(wheel_directory) / filename, "w") as wheel:
+                        wheel.writestr("ci_lock_consumer/__init__.py", "BACKEND = " + repr(VERSION))
+                        info = name + ".dist-info"
+                        wheel.writestr(info + "/METADATA", "Metadata-Version: 2.1\\nName: ci-lock-consumer\\nVersion: 0.1.0\\nRequires-Dist: locked-fixture==1.0.0\\n")
+                        wheel.writestr(info + "/WHEEL", "Wheel-Version: 1.0\\nRoot-Is-Purelib: true\\nTag: py3-none-any\\n")
+                        wheel.writestr(info + "/RECORD", "")
+                    return filename
+
+                build_wheel = build_editable
+                ''')
+            with zipfile.ZipFile(filename, "w") as wheel:
+                wheel.writestr("locked_backend.py", f"VERSION = {version!r}\n" + source)
+                info = f"locked_backend-{version}.dist-info"
+                wheel.writestr(
+                    info + "/METADATA",
+                    f"Metadata-Version: 2.1\nName: locked-backend\nVersion: {version}\n",
+                )
+                wheel.writestr(info + "/WHEEL", "Wheel-Version: 1.0\nRoot-Is-Purelib: true\nTag: py3-none-any\n")
+                wheel.writestr(info + "/RECORD", "")
+        self.manifest.write_text(
+            self.manifest.read_text()
+            + '\n[build-system]\nrequires = ["locked-backend>=1"]\nbuild-backend = "locked_backend"\n'
+            + '\n[dependency-groups]\nbuild = ["locked-backend==1.0.0"]\n'
+        )
+        self.environment["BUILD_DEPENDENCY_GROUP"] = "build"
+
+    def test_build_group_uses_locked_backend_without_isolated_resolution(self):
+        """The unlocked backend requirement cannot select the newer available version."""
+        self.configure_locked_backend()
+        original = self.lock()
+        result = self.sync()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((self.project / "used-build-backend").read_text(), "1.0.0")
+        self.assertEqual((self.project / "uv.lock").read_bytes(), original)
+        result = self.run_command(
+            str(self.project / ".venv/bin/python"), "-c",
+            "import ci_lock_consumer,locked_fixture; assert ci_lock_consumer.BACKEND == '1.0.0'; assert locked_fixture.VERSION == '1.0.0'",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_local_builds_only_run_after_locked_backend_bootstrap(self):
+        """Local builds wait until the published locked backend is installed."""
+        manifest_before = self.manifest.read_text()
+        for source in ('workspace = true', 'path = "local-backend", editable = true', 'path = "local-backend"'):
+            with self.subTest(source=source):
+                self.manifest.write_text(manifest_before)
+                self.configure_locked_backend()
+                local = self.project / "local-backend"
+                local.mkdir(exist_ok=True)
+                (local / "local-build-backend").unlink(missing_ok=True)
+                shutil.rmtree(self.project / ".venv", ignore_errors=True)
+                (local / "pyproject.toml").write_text(
+                    '[project]\nname = "local-backend"\nversion = "1.0.0"\n'
+                    '[build-system]\nrequires = []\nbuild-backend = "local_build"\nbackend-path = ["."]\n'
+                )
+                (local / "local_build.py").write_text(
+                    'from pathlib import Path\n'
+                    'def build_wheel(*args, **kwargs):\n'
+                    '    try:\n'
+                    '        from locked_backend import VERSION\n'
+                    '    except ImportError:\n'
+                    '        VERSION = "missing"\n'
+                    '    Path("local-build-backend").write_text(VERSION)\n'
+                    '    raise RuntimeError("stop after observing the local build environment")\n'
+                    'build_editable = build_wheel\n'
+                )
+                original_manifest = self.manifest.read_text()
+                manifest = original_manifest.replace(
+                    'build = ["locked-backend==1.0.0"]',
+                    'build = ["locked-backend==1.0.0", "local-backend"]',
+                )
+                if source == 'workspace = true':
+                    manifest += '\n[tool.uv.workspace]\nmembers = ["local-backend"]\n'
+                manifest += f'\n[tool.uv.sources]\nlocal-backend = {{{source}}}\n'
+                self.manifest.write_text(manifest)
+                original_lock = self.lock()
+                result = self.sync()
+                self.assertNotEqual(result.returncode, 0)
+                self.assertTrue((local / "local-build-backend").exists(), result.stderr)
+                self.assertEqual((local / "local-build-backend").read_text(), "1.0.0")
+                self.assertFalse(self.path_file.exists())
+                self.assertEqual((self.project / "uv.lock").read_bytes(), original_lock)
+
+    def test_missing_build_group_fails_before_project_build(self):
+        """A misspelled group cannot fall back to isolated build downloads."""
+        self.configure_locked_backend()
+        self.lock()
+        self.environment["BUILD_DEPENDENCY_GROUP"] = "missing"
+        result = self.sync()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse((self.project / "used-build-backend").exists())
+        self.assertFalse(self.path_file.exists())
+
+    def test_stale_build_group_fails_before_project_build(self):
+        """Backend changes require a reviewed lock update just like runtime changes."""
+        self.configure_locked_backend()
+        original = self.lock()
+        self.manifest.write_text(self.manifest.read_text().replace('"locked-backend==1.0.0"', '"locked-backend==2.0.0"'))
+        result = self.sync()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse((self.project / "used-build-backend").exists())
+        self.assertEqual((self.project / "uv.lock").read_bytes(), original)
+        self.assertFalse(self.path_file.exists())
 
     def lock(self):
         """Prepare a lock as a developer would before handing it to CI."""

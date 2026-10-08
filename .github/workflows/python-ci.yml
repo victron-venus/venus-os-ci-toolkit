@@ -31,6 +31,10 @@ on:
         description: 'When install-dependencies is enabled, use uv.lock for all extras and check tools; reject missing or stale locks'
         type: boolean
         default: false
+      build-dependency-group:
+        description: 'Optional uv.lock group of wheel-only build backends; requires install-dependencies and use-uv-lock'
+        type: string
+        default: ''
       run-lint:
         description: 'Whether to run linting (ruff)'
         type: boolean
@@ -157,11 +161,18 @@ jobs:
           echo "$GI_MOD CFLAGS: $(pkg-config --cflags "$GI_MOD")"
           echo "$GI_MOD LIBS: $(pkg-config --libs "$GI_MOD")"
 
+      - name: Validate locked build configuration
+        if: inputs.build-dependency-group != '' && !(inputs.install-dependencies && inputs.use-uv-lock)
+        shell: bash
+        run: |
+          echo 'build-dependency-group requires install-dependencies and use-uv-lock.' >&2
+          exit 1
+
       - name: Setup uv for locked dependencies
         if: inputs.install-dependencies && inputs.use-uv-lock
         uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
-          version: '0.12.7'
+          version: '0.12.18'
           enable-cache: true
           cache-dependency-glob: ${{ inputs.working-directory }}/uv.lock
 
@@ -170,11 +181,17 @@ jobs:
         shell: bash
         env:
           UV_PYTHON_DOWNLOADS: never
+          BUILD_DEPENDENCY_GROUP: ${{ inputs.build-dependency-group }}
         run: |
           test -f pyproject.toml
           test -f uv.lock
           export UV_PROJECT_ENVIRONMENT="$PWD/.venv"
-          uv sync --locked --all-extras --python "$(command -v python)"
+          if [[ -n "$BUILD_DEPENDENCY_GROUP" ]]; then
+            uv sync --locked --only-group "$BUILD_DEPENDENCY_GROUP" --no-install-workspace --no-install-local --no-build --python "$(command -v python)"
+            uv sync --locked --all-extras --group "$BUILD_DEPENDENCY_GROUP" --no-build-isolation --python "$(command -v python)"
+          else
+            uv sync --locked --all-extras --python "$(command -v python)"
+          fi
           echo "$UV_PROJECT_ENVIRONMENT/bin" >> "$GITHUB_PATH"
 
       - name: Install dependencies
