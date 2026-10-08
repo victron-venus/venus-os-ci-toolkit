@@ -17,6 +17,13 @@ steps, compatibility changes, fixed vulnerabilities and advisory identifiers
 where applicable. When there are no security changes, say so based on the actual
 release contents. Do not substitute commit logs or CI provenance for these notes.
 
+Use ATX headings (`#`, `##`, `###`) for the release structure; up to three
+leading spaces are supported. A section ends at the next heading of the same
+or a higher level. Setext-style underlines within the selected release section
+are rejected, including ambiguous text/comment/underline sequences. Use ATX
+headings instead, or put a blank line before a thematic `---` separator.
+Fenced or indented code examples and commented-out text do not define sections.
+
 Beta, RC, nightly and stable releases select the same base-version section. The
 engine appends the original build provenance. Missing or ambiguous sections,
 invalid content or a mismatched Git blob fail before retained evidence, the publication

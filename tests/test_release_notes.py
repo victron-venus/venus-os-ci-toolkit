@@ -101,6 +101,60 @@ class ReleaseNotesTests(unittest.TestCase):
         self.assertEqual(github.calls, [("GET", f"contents/CHANGELOG.md?ref={SOURCE}", None)])
         self.assertEqual(github.writes, [])
 
+    def test_indented_version_and_guidance_headings_are_supported(self):
+        for indentation in (" ", "  ", "   "):
+            text = "\n".join(
+                indentation + line if line.startswith(("## ", "### ")) else line
+                for line in NOTES.split("\n")
+            )
+            with self.subTest(indentation=indentation):
+                body = render(text)
+                self.assertIn("## Changes in 1.2.3", body)
+                self.assertIn("Preserve unavailable telemetry instead of reporting zero.", body)
+                self.assertNotIn("Do not copy older notes either.", body)
+
+    def test_comments_between_text_and_setext_underlines_do_not_hide_ambiguity(self):
+        text = (
+            "## [1.2.3]\nAppendix\n<!-- comment -->\n===\n"
+            "### Upgrade\nRead migration.\n### Security\nNo changes.\n"
+        )
+        with self.assertRaisesRegex(release.ReleaseError, "ATX"):
+            render(text)
+
+    def test_setext_appendices_cannot_supply_release_guidance(self):
+        for underline in ("=", "===", "-", "---", "   ===", "   ---"):
+            text = (
+                "## [1.2.3]\nAppendix\n" + underline + "\n"
+                "### Upgrade\nRead migration.\n### Security\nNo changes.\n"
+            )
+            with self.subTest(underline=underline), self.assertRaisesRegex(release.ReleaseError, "ATX"):
+                render(text)
+            with self.subTest(underline=underline, newline="CRLF"), self.assertRaisesRegex(release.ReleaseError, "ATX"):
+                render(text.replace("\n", "\r\n"))
+
+    def test_setext_heading_inside_guidance_is_rejected(self):
+        text = NOTES.replace("### Security", "Underlined appendix\n---\n### Security")
+        with self.assertRaisesRegex(release.ReleaseError, "ATX"):
+            render(text)
+
+    def test_thematic_breaks_and_literal_setext_examples_remain_supported(self):
+        for example in (
+            "\n---\n",
+            "\n===\n",
+            "```markdown\nAppendix\n===\n```",
+            "~~~markdown\nAppendix\n---\n~~~",
+            "    Appendix\n    ===",
+            "<!--\nAppendix\n===\n-->",
+        ):
+            text = NOTES.replace("### Upgrade", example + "\n### Upgrade")
+            with self.subTest(example=example):
+                self.assertIn(example.strip(), render(text))
+        text = NOTES.replace("### Upgrade\n", "### Upgrade\n---\n")
+        self.assertIn("### Upgrade\n---\n", render(text))
+
+    def test_setext_outside_selected_release_does_not_change_body(self):
+        self.assertEqual(render("Changelog\n===\n" + NOTES), render(NOTES))
+
     def test_empty_higher_level_atx_headings_end_sections(self):
         for heading in ("#", "##"):
             for ending in ("", "\n", "\r\n"):
