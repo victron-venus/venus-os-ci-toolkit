@@ -67,6 +67,18 @@ Private repositories run ordinary OSS checks locally. Unavailable GitHub-hosted 
 
 ## Validation
 
+The reusable `python-ci.yml` accepts `use-uv-lock: true` to install the selected
+Python environment from `uv.lock` with `uv sync --locked --all-extras`. Missing
+or stale locks fail validation. Include enabled tools (`ruff`, `mypy`, `pytest`
+and `pytest-cov`) in the project's locked development dependencies; this mode
+does not install an unpinned MyPy over the locked environment. Dependency
+installation still follows `install-dependencies`, and the default remains pip.
+With `install-dependencies: false`, `use-uv-lock` is ignored: project installation
+is skipped, while the existing shared Python setup and optional MyPy bootstrap
+still prepare check tools.
+
+Local contract tests require uv 0.12.7, also pinned in the hosted test workflow.
+
 ```bash
 python3 -m pip install --require-hashes --only-binary=:all: -r .github/requirements-generator.txt
 bash scripts/ci.sh

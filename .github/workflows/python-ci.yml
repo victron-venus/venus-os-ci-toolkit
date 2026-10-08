@@ -27,6 +27,10 @@ on:
         description: 'Whether to install dependencies from pyproject.toml/requirements.txt'
         type: boolean
         default: true
+      use-uv-lock:
+        description: 'When install-dependencies is enabled, use uv.lock for all extras and check tools; reject missing or stale locks'
+        type: boolean
+        default: false
       run-lint:
         description: 'Whether to run linting (ruff)'
         type: boolean
@@ -153,8 +157,28 @@ jobs:
           echo "$GI_MOD CFLAGS: $(pkg-config --cflags "$GI_MOD")"
           echo "$GI_MOD LIBS: $(pkg-config --libs "$GI_MOD")"
 
+      - name: Setup uv for locked dependencies
+        if: inputs.install-dependencies && inputs.use-uv-lock
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: '0.12.7'
+          enable-cache: true
+          cache-dependency-glob: ${{ inputs.working-directory }}/uv.lock
+
+      - name: Install locked dependencies
+        if: inputs.install-dependencies && inputs.use-uv-lock
+        shell: bash
+        env:
+          UV_PYTHON_DOWNLOADS: never
+        run: |
+          test -f pyproject.toml
+          test -f uv.lock
+          export UV_PROJECT_ENVIRONMENT="$PWD/.venv"
+          uv sync --locked --all-extras --python "$(command -v python)"
+          echo "$UV_PROJECT_ENVIRONMENT/bin" >> "$GITHUB_PATH"
+
       - name: Install dependencies
-        if: inputs.install-dependencies
+        if: inputs.install-dependencies && !inputs.use-uv-lock
         shell: bash
         run: |
           # Prefer binary wheels to avoid compilation issues when possible
@@ -169,17 +193,24 @@ jobs:
       - name: Run Ruff lint
         if: inputs.run-lint
         shell: bash
-        run: ruff check .
+        run: python -m ruff check .
 
       - name: Run Ruff format check
         if: inputs.run-lint
         shell: bash
-        run: ruff format --check .
+        run: python -m ruff format --check .
 
       - name: Install MyPy
         if: inputs.run-type-check
         shell: bash
-        run: python -m pip install mypy
+        env:
+          LOCKED_DEPENDENCIES: ${{ inputs.install-dependencies && inputs.use-uv-lock }}
+        run: |
+          if [[ "$LOCKED_DEPENDENCIES" == true ]]; then
+            python -m mypy --version
+          else
+            python -m pip install mypy
+          fi
 
       - name: Run MyPy type check
         if: inputs.run-type-check
@@ -190,7 +221,7 @@ jobs:
         if: inputs.run-tests
         shell: bash
         run: |
-          pytest ${{ inputs.test-args }} --cov=. --cov-report=xml --cov-report=term-missing --cov-fail-under=${{ inputs.coverage-threshold }}
+          python -m pytest ${{ inputs.test-args }} --cov=. --cov-report=xml --cov-report=term-missing --cov-fail-under=${{ inputs.coverage-threshold }}
 
       - name: Upload coverage
         if: ${{ inputs.run-tests && inputs.coverage-artifact-name == '' }}

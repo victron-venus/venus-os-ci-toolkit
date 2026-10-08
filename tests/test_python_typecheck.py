@@ -23,7 +23,10 @@ class PythonTypeCheckContract(unittest.TestCase):
         environment = self.directory / "venv"
         venv.create(environment, with_pip=True)
         self.environment = dict(
-            os.environ, PATH=f"{environment / 'bin'}:{os.environ['PATH']}"
+            os.environ, PATH=f"{environment / 'bin'}:{os.environ['PATH']}",
+            # This also covers install-dependencies=false/use-uv-lock=true:
+            # the opt-in is ignored and the legacy tool bootstrap still applies.
+            LOCKED_DEPENDENCIES="false",
         )
         self.python = environment / "bin" / "python"
         workflow = yaml.safe_load(
