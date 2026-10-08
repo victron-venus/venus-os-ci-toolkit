@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import textwrap
 import unittest
 import zipfile
 
@@ -43,6 +44,7 @@ class LockedPythonDependencies(unittest.TestCase):
             "UV_OFFLINE": "true",
             "UV_PYTHON_DOWNLOADS": "never",
             "GITHUB_PATH": str(self.path_file),
+            "BUILD_DEPENDENCY_GROUP": "",
         }
         workflow = yaml.safe_load((ROOT / ".github/workflows/python-ci.yml").read_text())
         self.steps = {s["name"]: s for s in workflow["jobs"]["ci"]["steps"]}
@@ -51,6 +53,10 @@ class LockedPythonDependencies(unittest.TestCase):
             self.install["if"], "inputs.install-dependencies && inputs.use-uv-lock"
         )
         self.assertFalse(workflow[True]["workflow_call"]["inputs"]["use-uv-lock"]["default"])
+        self.assertEqual(
+            workflow[True]["workflow_call"]["inputs"]["build-dependency-group"]["default"],
+            "",
+        )
         self.assertEqual(
             self.steps["Install dependencies"]["if"],
             "inputs.install-dependencies && !inputs.use-uv-lock",
@@ -78,6 +84,79 @@ class LockedPythonDependencies(unittest.TestCase):
             command, cwd=self.project, env=self.environment,
             capture_output=True, text=True, check=False,
         )
+
+    def configure_locked_backend(self):
+        """Build the real consumer with one of two available backend versions."""
+        for version in ("1.0.0", "2.0.0"):
+            filename = self.wheels / f"locked_backend-{version}-py3-none-any.whl"
+            source = textwrap.dedent('''\
+                import pathlib
+                import zipfile
+
+                def build_editable(wheel_directory, config_settings=None, metadata_directory=None):
+                    pathlib.Path("used-build-backend").write_text(VERSION)
+                    name = "ci_lock_consumer-0.1.0"
+                    filename = name + "-py3-none-any.whl"
+                    with zipfile.ZipFile(pathlib.Path(wheel_directory) / filename, "w") as wheel:
+                        wheel.writestr("ci_lock_consumer/__init__.py", "BACKEND = " + repr(VERSION))
+                        info = name + ".dist-info"
+                        wheel.writestr(info + "/METADATA", "Metadata-Version: 2.1\\nName: ci-lock-consumer\\nVersion: 0.1.0\\nRequires-Dist: locked-fixture==1.0.0\\n")
+                        wheel.writestr(info + "/WHEEL", "Wheel-Version: 1.0\\nRoot-Is-Purelib: true\\nTag: py3-none-any\\n")
+                        wheel.writestr(info + "/RECORD", "")
+                    return filename
+
+                build_wheel = build_editable
+                ''')
+            with zipfile.ZipFile(filename, "w") as wheel:
+                wheel.writestr("locked_backend.py", f"VERSION = {version!r}\n" + source)
+                info = f"locked_backend-{version}.dist-info"
+                wheel.writestr(
+                    info + "/METADATA",
+                    f"Metadata-Version: 2.1\nName: locked-backend\nVersion: {version}\n",
+                )
+                wheel.writestr(info + "/WHEEL", "Wheel-Version: 1.0\nRoot-Is-Purelib: true\nTag: py3-none-any\n")
+                wheel.writestr(info + "/RECORD", "")
+        self.manifest.write_text(
+            self.manifest.read_text()
+            + '\n[build-system]\nrequires = ["locked-backend>=1"]\nbuild-backend = "locked_backend"\n'
+            + '\n[dependency-groups]\nbuild = ["locked-backend==1.0.0"]\n'
+        )
+        self.environment["BUILD_DEPENDENCY_GROUP"] = "build"
+
+    def test_build_group_uses_locked_backend_without_isolated_resolution(self):
+        """The unlocked backend requirement cannot select the newer available version."""
+        self.configure_locked_backend()
+        original = self.lock()
+        result = self.sync()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((self.project / "used-build-backend").read_text(), "1.0.0")
+        self.assertEqual((self.project / "uv.lock").read_bytes(), original)
+        result = self.run_command(
+            str(self.project / ".venv/bin/python"), "-c",
+            "import ci_lock_consumer,locked_fixture; assert ci_lock_consumer.BACKEND == '1.0.0'; assert locked_fixture.VERSION == '1.0.0'",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_missing_build_group_fails_before_project_build(self):
+        """A misspelled group cannot fall back to isolated build downloads."""
+        self.configure_locked_backend()
+        self.lock()
+        self.environment["BUILD_DEPENDENCY_GROUP"] = "missing"
+        result = self.sync()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse((self.project / "used-build-backend").exists())
+        self.assertFalse(self.path_file.exists())
+
+    def test_stale_build_group_fails_before_project_build(self):
+        """Backend changes require a reviewed lock update just like runtime changes."""
+        self.configure_locked_backend()
+        original = self.lock()
+        self.manifest.write_text(self.manifest.read_text().replace('"locked-backend==1.0.0"', '"locked-backend==2.0.0"'))
+        result = self.sync()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse((self.project / "used-build-backend").exists())
+        self.assertEqual((self.project / "uv.lock").read_bytes(), original)
+        self.assertFalse(self.path_file.exists())
 
     def lock(self):
         """Prepare a lock as a developer would before handing it to CI."""

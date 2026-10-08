@@ -80,6 +80,18 @@ installation still follows `install-dependencies`, and the default remains pip.
 With `install-dependencies: false`, `use-uv-lock` is ignored: project installation
 is skipped, while the existing shared Python setup and optional MyPy bootstrap
 still prepare check tools.
+
+Projects that also need reproducible local builds can set
+`build-dependency-group: build` alongside `use-uv-lock: true`. Define that
+dependency group in `pyproject.toml`, include the required build backend and
+its dependencies in `uv.lock`, and provide wheels for the selected CI platform.
+The workflow first installs only that locked group with source builds disabled,
+then installs the project and all extras without build isolation while retaining
+the build group. This prevents a separate, unlocked backend download. A missing
+group, stale lock or unavailable backend wheel fails the job. An empty input
+preserves the existing install behavior; a nonempty input requires both locked
+mode and dependency installation to be enabled.
+
 An already installed consumer MyPy is preserved. Otherwise the legacy bootstrap
 uses a universal, version-pinned, hash-verified wheel lock (including Python
 3.8/3.9 compatibility branches) embedded in the reusable workflow, so it never
