@@ -141,7 +141,7 @@ Review all version changes and run the action matrix, the offline path/hash
 regressions and a vulnerability audit of every locked version, including
 platform-specific dependencies. Consumer application locks remain independent.
 
-The Go action defaults to Go 1.26.8. It builds `govulncheck v1.8.0` and
+The Go action defaults to Go 1.26.9. It builds `govulncheck v1.8.0` and
 `golangci-lint v1.64.8` from separate committed `go.mod`/`go.sum` files using
 `go install -mod=readonly`. The v1 linter preserves existing consumer configs;
 its locked transitive dependencies include fixes for known mapstructure,
@@ -152,7 +152,7 @@ lock files for a project with a v2 configuration. Consult the
 before changing the configuration generation.
 
 The contract matrix runs real lint, vulnerability analysis and tests with
-Go 1.26.8/v1 and Go 1.27.1/v2. A selected Go toolchain of at least 1.26 is
+Go 1.26.9/v1 and Go 1.27.2/v2. A selected Go toolchain of at least 1.26 is
 required. The pinned `actions/setup-go` exports `GOTOOLCHAIN=local`, so an older
 requested version fails instead of silently downloading a newer compiler.
 Tool installation disables workspace discovery (`GOWORK=off`); consumer
@@ -200,13 +200,13 @@ No Codecov secret is forwarded. Opt-in central publication uses GitHub OIDC;
 
 #### `go-ci.yml`
 
-The workflow uses Go 1.26.8 by default and installs its tools from the action's
+The workflow uses Go 1.26.9 by default and installs its tools from the action's
 isolated, checked-in Go module graphs. Select `golangci-lint-major: '2'` for a
 version 2 configuration; the default preserves version 1 configurations.
 
 | Input | Type | Default | Required |
 |---|---|---|---|
-| `go-version` | string | `'1.26.8'` | No |
+| `go-version` | string | `'1.26.9'` | No |
 | `golangci-lint-major` | string | `'1'` | No |
 | `working-directory` | string | `'.'` | No |
 | `run-lint` | boolean | `true` | No |

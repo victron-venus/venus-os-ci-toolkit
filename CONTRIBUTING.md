@@ -26,6 +26,15 @@ CodeQL covers Python, GitHub Actions and the Go Scorecard adapter. The Go job
 rebuilds the locked module for extraction and participates in the same required
 quality gate, including changes to documentation.
 
+Sonar's automatic analysis includes the release helpers in `scripts/`. Keep
+whole-file exclusions out of the first-party executable source. Investigate
+individual findings and record any demonstrated false positive with its
+reason; do not hide the rest of a file to suppress one finding. The supported
+automatic-analysis settings are documented by
+[SonarSource](https://docs.sonarsource.com/sonarqube-cloud/analyzing-source-code/automatic-analysis#additional-analysis-configuration).
+Keep reproducible false-positive assessments in
+[the static-analysis review notes](docs/STATIC_ANALYSIS.md).
+
 Add regression tests for bug fixes and tests for major new functionality. Test
 both accepted and rejected inputs at trust boundaries. Preserve old consumer
 behavior unless a migration is documented. Fix reported warnings; explain any
