@@ -37,6 +37,30 @@ VERSION = {"version": "v5.5.0", "commit": "c395761df6afe1a69e476bc60a013a94bcbc1
 PACKAGING_ABSENT = "packaging workflow not detected"
 
 
+def validate_check_score(check: dict, name: str) -> None:
+    """Reject runtime failures while preserving the pinned not-applicable result."""
+    score = check.get("score")
+    # Pinned evaluation/packaging.go emits this normal not-applicable result;
+    # checks/packaging.go wraps runtime failures as prefixed internal errors.
+    # JSON2 omits Error, but preserves the exact reason and score.
+    if (
+        name == "Packaging"
+        and isinstance(score, int)
+        and score == -1
+        and check.get("reason") == PACKAGING_ABSENT
+        and check.get("error") is None
+    ):
+        return
+    # In pinned v5.5.0 every runtime-error constructor sets score=-1;
+    # JSON2 retains that score even though it omits CheckResult.Error.
+    if name not in DISABLED and (
+        not isinstance(score, int)
+        or isinstance(score, bool)
+        or not 0 <= score <= 10
+    ):
+        raise ValueError(f"Incomplete Scorecard check: {name}")
+
+
 def validate(result: object, repository: str, commit: str) -> None:
     """Validate JSON emitted from the same Result as the action's SARIF."""
     if not repository or not re.fullmatch(r"[0-9a-f]{40}", commit):
@@ -60,26 +84,7 @@ def validate(result: object, repository: str, commit: str) -> None:
         if not isinstance(name, str) or name not in CHECKS or name in seen:
             raise ValueError("Unexpected or duplicate Scorecard check")
         seen.add(name)
-        score = check.get("score")
-        # Pinned evaluation/packaging.go emits this normal not-applicable result;
-        # checks/packaging.go wraps runtime failures as prefixed internal errors.
-        # JSON2 omits Error, but preserves the exact reason and score.
-        if (
-            name == "Packaging"
-            and isinstance(score, int)
-            and score == -1
-            and check.get("reason") == PACKAGING_ABSENT
-            and check.get("error") is None
-        ):
-            continue
-        # In pinned v5.5.0 every runtime-error constructor sets score=-1;
-        # JSON2 retains that score even though it omits CheckResult.Error.
-        if name not in DISABLED and (
-            not isinstance(score, int)
-            or isinstance(score, bool)
-            or not 0 <= score <= 10
-        ):
-            raise ValueError(f"Incomplete Scorecard check: {name}")
+        validate_check_score(check, name)
     if seen != CHECKS:
         raise ValueError("Scorecard did not run every expected check")
 

@@ -484,15 +484,8 @@ def scope_validation_jobs(jobs, always, single_entry):
             job["if"] = FULL_SCOPE
 
 
-def requires_security_events(directory, filename, chain=()):
-    """Keep SARIF writes only for validators that request or inherit that scope."""
-    if filename in chain:
-        raise ValueError(f"Recursive local workflow call: {chain} -> {filename}")
-    # BaseLoader constructs strings/containers and cannot instantiate Python objects.
-    workflow = yaml.load(  # nosec B506
-        (directory / WORKFLOWS / filename).read_text(),
-        Loader=yaml.BaseLoader,
-    )
+def validate_shell_permissions(workflow, filename):
+    """Require explicit permissions before narrowing any shell job's inherited cap."""
     # Shell commands may upload SARIF directly or through an arbitrary script.
     # Require their author to declare scopes before narrowing an inherited cap.
     for name, job in workflow.get("jobs", {}).items():
@@ -506,36 +499,89 @@ def requires_security_events(directory, filename, chain=()):
                 "declare job or workflow permissions explicitly, including "
                 "security-events: write when uploading SARIF"
             )
+
+
+def job_requires_security_events(directory, filename, workflow, job, chain):
+    """Inspect one validator without guessing an opaque reusable workflow's scope."""
     defaults = workflow.get("permissions", {})
-    if permission_level(defaults, "security-events") == "write":
+    if permission_level(job.get("permissions", defaults), "security-events") == "write":
         return True
-    for job in workflow.get("jobs", {}).values():
-        if (
-            permission_level(job.get("permissions", defaults), "security-events")
-            == "write"
+    reference = job.get("uses", "")
+    if reference.startswith("./"):
+        if not re.fullmatch(r"\./\.github/workflows/[A-Za-z0-9_-]+\.ya?ml", reference):
+            raise ValueError(f"Invalid local workflow reference: {reference}")
+        if requires_security_events(
+            directory, reference.rsplit("/", 1)[1], (*chain, filename)
         ):
             return True
-        reference = job.get("uses", "")
-        if reference.startswith("./"):
-            if not re.fullmatch(
-                r"\./\.github/workflows/[A-Za-z0-9_-]+\.ya?ml", reference
-            ):
-                raise ValueError(f"Invalid local workflow reference: {reference}")
-            if requires_security_events(
-                directory, reference.rsplit("/", 1)[1], (*chain, filename)
-            ):
-                return True
-        elif reference and "permissions" not in job and "permissions" not in workflow:
-            # Do not guess the permissions of an opaque external reusable workflow.
-            return True
-        if any(
-            re.match(
-                r"github/codeql-action/(analyze|upload-sarif)@", step.get("uses", "")
-            )
-            for step in job.get("steps", [])
-        ):
-            return True
-    return False
+    elif reference and "permissions" not in job and "permissions" not in workflow:
+        return True
+    return any(
+        re.match(r"github/codeql-action/(analyze|upload-sarif)@", step.get("uses", ""))
+        for step in job.get("steps", [])
+    )
+
+
+def requires_security_events(directory, filename, chain=()):
+    """Keep SARIF writes only for validators that request or inherit that scope."""
+    if filename in chain:
+        raise ValueError(f"Recursive local workflow call: {chain} -> {filename}")
+    # BaseLoader constructs strings/containers and cannot instantiate Python objects.
+    workflow = yaml.load(  # nosec B506
+        (directory / WORKFLOWS / filename).read_text(),
+        Loader=yaml.BaseLoader,
+    )
+    validate_shell_permissions(workflow, filename)
+    if permission_level(workflow.get("permissions", {}), "security-events") == "write":
+        return True
+    return any(
+        job_requires_security_events(directory, filename, workflow, job, chain)
+        for job in workflow.get("jobs", {}).values()
+    )
+
+
+def validation_job(policy, directory, filename, oidc):
+    """Build one callable validator with its explicitly required permissions."""
+    if not re.fullmatch(r"[A-Za-z0-9_-]+\.ya?ml", filename) or filename in {
+        "quality-gate.yml",
+        "release-pipeline.yml",
+    }:
+        raise ValueError(f"Invalid/recursive validation workflow: {filename}")
+    permissions = {"contents": "read", "actions": "read"}
+    if filename in oidc:
+        permissions["id-token"] = "write"
+    if policy.get("visibility") != "private" and (
+        directory is None or requires_security_events(directory, filename)
+    ):
+        permissions["security-events"] = "write"
+    return {"uses": f"./.github/workflows/{filename}", "permissions": permissions}
+
+
+def workflow_contract_job(directory):
+    """Run the toolkit's own contracts or the consumer's vendored contract suite."""
+    workflow_test_command = (
+        "python3 -m unittest discover -s tests -p 'test_workflow_yaml_contracts.py'"
+        if directory is not None and directory.resolve() == ROOT.resolve()
+        else "python3 -m unittest discover -s .github/workflow-tests -p 'test_*.py'"
+    )
+    return {
+        "name": "CI configuration contracts",
+        "runs-on": runner_labels(),
+        "timeout-minutes": 5,
+        "steps": [
+            {"uses": CHECKOUT, "with": {"persist-credentials": False}},
+            {
+                "uses": ACTION_REFS["actions/setup-python"],
+                "with": {"python-version": "3.12"},
+            },
+            {
+                "run": "python3 -m pip install --require-hashes --only-binary=:all: "
+                f"-r {CONTRACT_REQUIREMENTS}"
+            },
+            {"run": "python3 scripts/workflow_contracts.py"},
+            {"run": workflow_test_command},
+        ],
+    }
 
 
 def quality(policy, directory=None):
@@ -548,54 +594,11 @@ def quality(policy, directory=None):
     jobs = {"scope": scope_job(policy, force_input=True)}
     always = {"scope"}
     for i, filename in enumerate(validators):
-        if not re.fullmatch(r"[A-Za-z0-9_-]+\.ya?ml", filename) or filename in {
-            "quality-gate.yml",
-            "release-pipeline.yml",
-        }:
-            raise ValueError(f"Invalid/recursive validation workflow: {filename}")
-        jobs[f"check-{i}"] = {
-            "uses": f"./.github/workflows/{filename}",
-            "permissions": {
-                "contents": "read",
-                "actions": "read",
-                **({"id-token": "write"} if filename in oidc else {}),
-                **(
-                    {"security-events": "write"}
-                    if policy.get("visibility") != "private"
-                    and (
-                        directory is None
-                        or requires_security_events(directory, filename)
-                    )
-                    else {}
-                ),
-            },
-        }
+        jobs[f"check-{i}"] = validation_job(policy, directory, filename, oidc)
         if filename in config["always_validate_workflows"]:
             always.add(f"check-{i}")
     if policy.get("single_entry_ci"):
-        workflow_test_command = (
-            "python3 -m unittest discover -s tests -p 'test_workflow_yaml_contracts.py'"
-            if directory is not None and directory.resolve() == ROOT.resolve()
-            else "python3 -m unittest discover -s .github/workflow-tests -p 'test_*.py'"
-        )
-        jobs["workflow-contracts"] = {
-            "name": "CI configuration contracts",
-            "runs-on": runner_labels(),
-            "timeout-minutes": 5,
-            "steps": [
-                {"uses": CHECKOUT, "with": {"persist-credentials": False}},
-                {
-                    "uses": ACTION_REFS["actions/setup-python"],
-                    "with": {"python-version": "3.12"},
-                },
-                {
-                    "run": "python3 -m pip install --require-hashes --only-binary=:all: "
-                    f"-r {CONTRACT_REQUIREMENTS}"
-                },
-                {"run": "python3 scripts/workflow_contracts.py"},
-                {"run": workflow_test_command},
-            ],
-        }
+        jobs["workflow-contracts"] = workflow_contract_job(directory)
         if len(always) > 1:
             always.add("workflow-contracts")
     if policy.get("mode", "release") == "release":
