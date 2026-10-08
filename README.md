@@ -76,6 +76,10 @@ installation still follows `install-dependencies`, and the default remains pip.
 With `install-dependencies: false`, `use-uv-lock` is ignored: project installation
 is skipped, while the existing shared Python setup and optional MyPy bootstrap
 still prepare check tools.
+An already installed consumer MyPy is preserved. Otherwise the legacy bootstrap
+uses a universal, version-pinned, hash-verified wheel lock (including Python
+3.8/3.9 compatibility branches) embedded in the reusable workflow, so it never
+reads bootstrap requirements from the caller's checkout.
 
 Local contract tests require uv 0.12.7, also pinned in the hosted test workflow.
 
