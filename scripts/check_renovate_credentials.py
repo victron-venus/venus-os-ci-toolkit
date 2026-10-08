@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import base64
-import binascii
 import os
 import re
 import subprocess
@@ -133,7 +132,7 @@ def validate_signing_key(value: str) -> None:
         decoded = base64.b64decode(value, validate=True)
         if base64.b64encode(decoded).decode("ascii") == value:
             value = decoded.decode("utf-8")
-    except (ValueError, binascii.Error, UnicodeError):
+    except ValueError:
         pass
     value = value.strip()
     with tempfile.TemporaryDirectory(prefix="renovate-key-") as temporary:

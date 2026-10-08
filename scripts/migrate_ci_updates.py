@@ -47,7 +47,7 @@ def migrate(directory: Path) -> None:
             for entry in data["updates"]
             if entry["package-ecosystem"] != "github-actions"
         ]
-        chunks = re.split(r"(?m)(?=^  - package-ecosystem:)", original)
+        chunks = re.split(r"(?m)(?=^ {2}- package-ecosystem:)", original)
         if len(chunks) != len(data["updates"]) + 1:
             raise ValueError("Unrecognized Dependabot formatting; review manually")
         retained = [chunks[0]]
