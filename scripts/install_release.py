@@ -38,6 +38,9 @@ DOWNLOAD = ACTION_REFS["actions/download-artifact"]
 TOOLKIT = "victron-venus/venus-os-ci-toolkit"
 WORKFLOWS = ".github/workflows"
 POLICY_FILE = ".release-policy.json"
+CONTRACT_REQUIREMENTS = ".github/requirements-workflow-contracts.txt"
+TEST_ROOT_EXPRESSION = "Path(__file__).parents[1]"
+VENDORED_TEST_ROOT_EXPRESSION = "Path(__file__).parents[2]"
 FULL_SCOPE = "${{ needs.scope.outputs.run == 'true' }}"
 
 
@@ -587,7 +590,7 @@ def quality(policy, directory=None):
                 },
                 {
                     "run": "python3 -m pip install --require-hashes --only-binary=:all: "
-                    "-r .github/requirements-workflow-contracts.txt"
+                    f"-r {CONTRACT_REQUIREMENTS}"
                 },
                 {"run": "python3 scripts/workflow_contracts.py"},
                 {"run": workflow_test_command},
@@ -605,6 +608,10 @@ def quality(policy, directory=None):
                 {
                     "uses": ACTION_REFS["actions/setup-python"],
                     "with": {"python-version": "3.12"},
+                },
+                {
+                    "run": "python3 -m pip install --require-hashes --only-binary=:all: "
+                    f"-r {CONTRACT_REQUIREMENTS}"
                 },
                 {
                     "run": "python3 -m unittest discover -s .github/release-tests -p 'test_*.py' -v"
@@ -706,7 +713,8 @@ def _legacy_release(policy):
     steps_checkout = [{"uses": CHECKOUT, "with": {"persist-credentials": False}}]
     prepare_script = """python3 - <<'PY'
 import json, os, subprocess
-event = json.load(open(os.environ['GITHUB_EVENT_PATH']))
+with open(os.environ['GITHUB_EVENT_PATH'], encoding='utf-8') as event_file:
+    event = json.load(event_file)
 default = event['repository']['default_branch']
 if os.environ['GITHUB_REF'] != 'refs/heads/' + default:
     raise SystemExit('Release pipeline must run from the default branch')
@@ -719,7 +727,8 @@ if channel not in {'nightly', 'beta', 'rc', 'stable'}:
     raise SystemExit('Invalid release channel')
 if kind == 'workflow_dispatch' and channel != 'nightly' and os.environ.get('PUBLICATION_ENABLED') != 'true':
     raise SystemExit('Enable RELEASE_CHANNELS_ENABLED only after release protections and deployment hooks are migrated')
-config = json.load(open('.release-policy.json'))
+with open('.release-policy.json', encoding='utf-8') as policy_file:
+    config = json.load(policy_file)
 if config.get('mode', 'release') != 'release':
     raise SystemExit('This repository policy does not permit releases')
 if config.get('release_blockers'):
@@ -1109,6 +1118,8 @@ def validate_asset_restrictions(policy: dict) -> tuple[dict, ...]:
 def validate_policy(directory: Path, policy: dict) -> None:
     """Reject unsupported policy modes, stale publishers and invalid repository names."""
     mode = policy.get("mode", "release")
+    if "release_notes" in policy and policy["release_notes"] != "CHANGELOG.md":
+        raise ValueError("release_notes must name the source-bound CHANGELOG.md")
     validate_asset_restrictions(policy)
     validation_oidc_workflows(policy)
     coverage_policy(policy)
@@ -1357,7 +1368,7 @@ def release_files(directory: Path, policy: dict) -> dict[str, str]:
             files[f".github/release-tests/test_{name}.py"] = (
                 (ROOT / f"tests/test_{name}.py")
                 .read_text()
-                .replace("Path(__file__).parents[1]", "Path(__file__).parents[2]")
+                .replace(TEST_ROOT_EXPRESSION, VENDORED_TEST_ROOT_EXPRESSION)
                 .replace(
                     "Path(__file__).resolve().parents[1]",
                     "Path(__file__).resolve().parents[2]",
@@ -1385,7 +1396,12 @@ def release_files(directory: Path, policy: dict) -> dict[str, str]:
     files[".github/release-tests/test_release_control.py"] = (
         (ROOT / "tests/test_release_control.py")
         .read_text()
-        .replace("Path(__file__).parents[1]", "Path(__file__).parents[2]")
+        .replace(TEST_ROOT_EXPRESSION, VENDORED_TEST_ROOT_EXPRESSION)
+    )
+    files[".github/release-tests/test_release_notes.py"] = (
+        (ROOT / "tests/test_release_notes.py")
+        .read_text()
+        .replace(TEST_ROOT_EXPRESSION, VENDORED_TEST_ROOT_EXPRESSION)
     )
     files[".github/release-tests/test_asset_streaming.py"] = (
         ROOT / "tests/test_asset_streaming.py"
@@ -1535,9 +1551,7 @@ def render_coverage(directory: Path) -> dict[str, str]:
         WORKFLOWS + "/quality-gate.yml": dump(quality(policy, directory)),
         "scripts/change_scope.py": (ROOT / "scripts/change_scope.py").read_text(),
         "scripts/workflow_contracts.py": (ROOT / "scripts/workflow_contracts.py").read_text(),
-        ".github/requirements-workflow-contracts.txt": (
-            ROOT / ".github/requirements-workflow-contracts.txt"
-        ).read_text(),
+        CONTRACT_REQUIREMENTS: (ROOT / CONTRACT_REQUIREMENTS).read_text(),
     }
     files.update(coverage_adapters(directory, policy))
     files.update(coverage_release_caller(directory, policy))
@@ -1568,10 +1582,11 @@ def render(directory: Path) -> dict[str, str]:
         files["scripts/change_scope.py"] = (
             ROOT / "scripts/change_scope.py"
         ).read_text()
+    if not local and (
+        policy.get("single_entry_ci") or policy.get("mode", "release") == "release"
+    ):
+        files[CONTRACT_REQUIREMENTS] = (ROOT / CONTRACT_REQUIREMENTS).read_text()
     if policy.get("single_entry_ci") and not local:
-        files[".github/requirements-workflow-contracts.txt"] = (
-            ROOT / ".github/requirements-workflow-contracts.txt"
-        ).read_text()
         files["scripts/workflow_contracts.py"] = (
             ROOT / "scripts/workflow_contracts.py"
         ).read_text()
@@ -1592,6 +1607,11 @@ def render(directory: Path) -> dict[str, str]:
     files.update(coverage_adapters(directory, policy))
     # Consumers use different format/type policies. These copies are verified by
     # the toolkit's tests and the mandatory Release tooling contracts job.
+    return prepare_consumer_files(directory, files)
+
+
+def prepare_consumer_files(directory: Path, files: dict[str, str]) -> dict[str, str]:
+    """Apply the Python compatibility conversion to copied consumer sources."""
     if directory.resolve() != ROOT.resolve():
         for name, source in files.items():
             if name.endswith(".py"):

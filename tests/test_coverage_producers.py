@@ -94,7 +94,7 @@ class CoverageProducerTests(unittest.TestCase):
         job = python["jobs"]["ci"]
         self.assertEqual(
             step(job, "Run Tests")["run"].strip(),
-            "pytest ${{ inputs.test-args }} --cov=. --cov-report=xml "
+            "python -m pytest ${{ inputs.test-args }} --cov=. --cov-report=xml "
             "--cov-report=term-missing --cov-fail-under=${{ inputs.coverage-threshold }}",
         )
         self.assertEqual(

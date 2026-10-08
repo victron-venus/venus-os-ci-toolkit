@@ -1,5 +1,9 @@
 # Venus OS CI Toolkit
 
+For bug reports, proposed changes and local verification, see
+[CONTRIBUTING.md](CONTRIBUTING.md). Security reports use the private process in
+[SECURITY.md](SECURITY.md). The toolkit is distributed under the [MIT license](LICENSE).
+
 [CI dependency updates](docs/DEPENDENCY_UPDATES.md): Renovate updates related
 actions and reusable workflows together, with required consistency checks.
 
@@ -66,6 +70,22 @@ See the [fleet rollout guide](docs/FLEET_ROLLOUT.md), [local nightly runner](doc
 Private repositories run ordinary OSS checks locally. Unavailable GitHub-hosted workflows are archived outside workflow discovery; only an existing manual deployment on a working self-hosted runner is retained. No paid GitHub security or governance feature is required. The reviewed inventory and visibility are recorded in [fleet.json](fleet.json).
 
 ## Validation
+
+The reusable `python-ci.yml` accepts `use-uv-lock: true` to install the selected
+Python environment from `uv.lock` with `uv sync --locked --all-extras`. Missing
+or stale locks fail validation. Include enabled tools (`ruff`, `mypy`, `pytest`
+and `pytest-cov`) in the project's locked development dependencies; this mode
+does not install an unpinned MyPy over the locked environment. Dependency
+installation still follows `install-dependencies`, and the default remains pip.
+With `install-dependencies: false`, `use-uv-lock` is ignored: project installation
+is skipped, while the existing shared Python setup and optional MyPy bootstrap
+still prepare check tools.
+An already installed consumer MyPy is preserved. Otherwise the legacy bootstrap
+uses a universal, version-pinned, hash-verified wheel lock (including Python
+3.8/3.9 compatibility branches) embedded in the reusable workflow, so it never
+reads bootstrap requirements from the caller's checkout.
+
+Local contract tests require uv 0.12.7, also pinned in the hosted test workflow.
 
 ```bash
 python3 -m pip install --require-hashes --only-binary=:all: -r .github/requirements-generator.txt

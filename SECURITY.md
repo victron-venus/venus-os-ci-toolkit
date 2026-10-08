@@ -13,6 +13,18 @@ behavior, and potential impact. Remove access tokens, credentials and personal
 data from examples. Do not disclose exploit details in public issues before
 coordinating with the maintainers.
 
+The maintained default branch is the supported toolkit version. Consumers pin
+older commits, so a toolkit fix must be reviewed and installed in each affected
+consumer. Include both revisions in a report.
+
+Maintainers aim to acknowledge reports within 14 days, assess impact, and agree
+on a fix and coordinated disclosure. Confirmed critical issues and active
+exploitation take priority. Publicly known medium-or-higher vulnerabilities must
+be fixed within 60 days of becoming public; do not restart that clock when a
+report is confirmed. Release notes identify affected versions, mitigation and
+any assigned CVE or advisory. Early mitigation guidance may be published when
+waiting for coordinated disclosure would put users at risk.
+
 ## Release helper transport
 
 The release helpers use GitHub CLI for authenticated HTTPS operations. See the
