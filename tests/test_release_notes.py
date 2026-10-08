@@ -86,6 +86,21 @@ def render(text=NOTES, tag="v1.2.3-beta.8", response_change=None):
 
 
 class ReleaseNotesTests(unittest.TestCase):
+    def _assert_notes_rejected_before_publication(self, text):
+        github = StrictGitHub(contents(text))
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch.object(
+                release,
+                "source_policy_snapshot",
+                return_value={"data": {"release_notes": "CHANGELOG.md"}},
+            ),
+            self.assertRaisesRegex(release.ReleaseError, "Upgrade guidance"),
+        ):
+            release.publish(github, "v1.2.3", SOURCE, Path(directory), False, "provenance")
+        self.assertEqual(github.calls, [("GET", f"contents/CHANGELOG.md?ref={SOURCE}", None)])
+        self.assertEqual(github.writes, [])
+
     def test_comment_only_guidance_is_rejected(self):
         for heading in ("Upgrade", "Security"):
             for comment in (
@@ -184,19 +199,7 @@ class ReleaseNotesTests(unittest.TestCase):
 
     def test_comment_only_notes_fail_before_any_remote_mutation(self):
         text = "## [1.2.3]\n### Upgrade\n<!-- todo -->\n### Security\nNo security change.\n"
-        github = StrictGitHub(contents(text))
-        with (
-            tempfile.TemporaryDirectory() as directory,
-            patch.object(
-                release,
-                "source_policy_snapshot",
-                return_value={"data": {"release_notes": "CHANGELOG.md"}},
-            ),
-            self.assertRaisesRegex(release.ReleaseError, "Upgrade guidance"),
-        ):
-            release.publish(github, "v1.2.3", SOURCE, Path(directory), False, "provenance")
-        self.assertEqual(github.calls, [("GET", f"contents/CHANGELOG.md?ref={SOURCE}", None)])
-        self.assertEqual(github.writes, [])
+        self._assert_notes_rejected_before_publication(text)
 
     def test_fenced_guidance_cannot_satisfy_real_sections(self):
         for marker in ("```", "````", "~~~", "~~~~~"):
@@ -285,19 +288,7 @@ class ReleaseNotesTests(unittest.TestCase):
 
     def test_fenced_only_notes_fail_before_any_remote_mutation(self):
         text = "## [1.2.3]\n```\n### Upgrade\nExample.\n### Security\nExample.\n```\n"
-        github = StrictGitHub(contents(text))
-        with (
-            tempfile.TemporaryDirectory() as directory,
-            patch.object(
-                release,
-                "source_policy_snapshot",
-                return_value={"data": {"release_notes": "CHANGELOG.md"}},
-            ),
-            self.assertRaisesRegex(release.ReleaseError, "Upgrade guidance"),
-        ):
-            release.publish(github, "v1.2.3", SOURCE, Path(directory), False, "provenance")
-        self.assertEqual(github.calls, [("GET", f"contents/CHANGELOG.md?ref={SOURCE}", None)])
-        self.assertEqual(github.writes, [])
+        self._assert_notes_rejected_before_publication(text)
 
     def test_exact_base_and_provenance(self):
         for tag in ("v1.2.3", "v1.2.3-rc.1", "v1.2.3-beta.8"):
