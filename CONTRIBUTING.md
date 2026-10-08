@@ -18,7 +18,9 @@ bash scripts/ci.sh
 
 The unittest suite exercises the Python generators, vendored release engine,
 rejected authorization/provenance inputs and generated workflow contracts.
-actionlint checks workflow syntax and semantics. Required GitHub checks also run
+actionlint checks workflow syntax and semantics. Hash-locked Ruff checks Python
+source and tests for undefined names, invalid constructs, import mistakes and
+unused variables; its error-focused rules are in `ruff.toml`. Required GitHub checks also run
 CodeQL and Trivy; inspect every check on the current PR revision before merging.
 
 Add regression tests for bug fixes and tests for major new functionality. Test

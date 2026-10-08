@@ -72,6 +72,8 @@ jobs:
           python-version: '3.12'
       - name: Install generator and contract test dependencies
         run: 'python3 -m pip install --require-hashes --only-binary=:all: -r .github/requirements-generator.txt'
+      - name: Analyze Python source and tests
+        run: python3 -m ruff check --config ruff.toml .
       - name: Exercise type checking and PR automation contracts
         run: python -m unittest discover -s tests -p 'test_*.py' -v
 'on':
