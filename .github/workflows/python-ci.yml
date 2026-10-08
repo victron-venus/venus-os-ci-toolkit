@@ -187,7 +187,7 @@ jobs:
           test -f uv.lock
           export UV_PROJECT_ENVIRONMENT="$PWD/.venv"
           if [[ -n "$BUILD_DEPENDENCY_GROUP" ]]; then
-            uv sync --locked --only-group "$BUILD_DEPENDENCY_GROUP" --no-install-project --no-build --python "$(command -v python)"
+            uv sync --locked --only-group "$BUILD_DEPENDENCY_GROUP" --no-install-workspace --no-install-local --no-build --python "$(command -v python)"
             uv sync --locked --all-extras --group "$BUILD_DEPENDENCY_GROUP" --no-build-isolation --python "$(command -v python)"
           else
             uv sync --locked --all-extras --python "$(command -v python)"

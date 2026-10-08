@@ -85,9 +85,12 @@ Projects that also need reproducible local builds can set
 `build-dependency-group: build` alongside `use-uv-lock: true`. Define that
 dependency group in `pyproject.toml`, include the required build backend and
 its dependencies in `uv.lock`, and provide wheels for the selected CI platform.
-The workflow first installs only that locked group with source builds disabled,
-then installs the project and all extras without build isolation while retaining
-the build group. This prevents a separate, unlocked backend download. A missing
+The workflow first installs the group's published wheels with source builds
+disabled, skipping all local paths and workspace packages during this bootstrap.
+It then installs the project, extras and local packages without build isolation,
+retaining the locked build group. Build backends must be available from the
+published-wheel bootstrap; local packages cannot bootstrap their own isolated
+backend. This prevents a separate, unlocked backend download. A missing
 group, stale lock or unavailable backend wheel fails the job. An empty input
 preserves the existing install behavior; a nonempty input requires both locked
 mode and dependency installation to be enabled.

@@ -137,6 +137,49 @@ class LockedPythonDependencies(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_local_builds_only_run_after_locked_backend_bootstrap(self):
+        """Local builds wait until the published locked backend is installed."""
+        manifest_before = self.manifest.read_text()
+        for source in ('workspace = true', 'path = "local-backend", editable = true', 'path = "local-backend"'):
+            with self.subTest(source=source):
+                self.manifest.write_text(manifest_before)
+                self.configure_locked_backend()
+                local = self.project / "local-backend"
+                local.mkdir(exist_ok=True)
+                (local / "local-build-backend").unlink(missing_ok=True)
+                shutil.rmtree(self.project / ".venv", ignore_errors=True)
+                (local / "pyproject.toml").write_text(
+                    '[project]\nname = "local-backend"\nversion = "1.0.0"\n'
+                    '[build-system]\nrequires = []\nbuild-backend = "local_build"\nbackend-path = ["."]\n'
+                )
+                (local / "local_build.py").write_text(
+                    'from pathlib import Path\n'
+                    'def build_wheel(*args, **kwargs):\n'
+                    '    try:\n'
+                    '        from locked_backend import VERSION\n'
+                    '    except ImportError:\n'
+                    '        VERSION = "missing"\n'
+                    '    Path("local-build-backend").write_text(VERSION)\n'
+                    '    raise RuntimeError("stop after observing the local build environment")\n'
+                    'build_editable = build_wheel\n'
+                )
+                original_manifest = self.manifest.read_text()
+                manifest = original_manifest.replace(
+                    'build = ["locked-backend==1.0.0"]',
+                    'build = ["locked-backend==1.0.0", "local-backend"]',
+                )
+                if source == 'workspace = true':
+                    manifest += '\n[tool.uv.workspace]\nmembers = ["local-backend"]\n'
+                manifest += f'\n[tool.uv.sources]\nlocal-backend = {{{source}}}\n'
+                self.manifest.write_text(manifest)
+                original_lock = self.lock()
+                result = self.sync()
+                self.assertNotEqual(result.returncode, 0)
+                self.assertTrue((local / "local-build-backend").exists(), result.stderr)
+                self.assertEqual((local / "local-build-backend").read_text(), "1.0.0")
+                self.assertFalse(self.path_file.exists())
+                self.assertEqual((self.project / "uv.lock").read_bytes(), original_lock)
+
     def test_missing_build_group_fails_before_project_build(self):
         """A misspelled group cannot fall back to isolated build downloads."""
         self.configure_locked_backend()
