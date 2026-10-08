@@ -8,6 +8,8 @@ import io
 import re
 from pathlib import Path
 
+import release_validation
+
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOWS = ".github/workflows"
 PROFILES = {
@@ -84,6 +86,10 @@ class ConsumerRunnerAdapter:
         self.editor = yaml_editor()
         self.roots = dict.fromkeys(policy["validation_workflows"], "ci")
         self.roots["quality-gate.yml"] = "ci"
+        beta = release_validation.channel_workflows(policy)
+        if beta is not None:
+            self.roots.update(dict.fromkeys(beta, "ci"))
+            self.roots[release_validation.WORKFLOW] = "ci"
         if policy.get("mode", "release") == "release":
             self.roots.update({"release-pipeline.yml": "release", "release-build.yml": "release"})
         self.files = {}

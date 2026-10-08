@@ -158,7 +158,7 @@ def validate_generator_pins(directory, workflows):
     """Validate generated consumers and the toolkit's canonical pin manifest."""
     pins = generator_pins(directory)
     for filename, workflow in workflows.items():
-        if filename not in {QUALITY_GATE, "release-pipeline.yml"}:
+        if filename not in {QUALITY_GATE, "release-pipeline.yml", "release-quality-gate.yml"}:
             validate_workflow_pins(filename, workflow, None)
             continue
         source = (directory / ".github/workflows" / filename).read_text()
@@ -263,6 +263,102 @@ def validate_coverage_callers(policy, workflows, gate):
     return {reference}
 
 
+def validate_release_channels(policy, workflows):
+    """A channel-specific release gate cannot alter or bypass the required PR gate."""
+    name = "release-quality-gate.yml"
+    if "channel_validation_workflows" not in policy:
+        if name in workflows:
+            raise ValueError("Release validation workflow has no channel policy")
+        return
+    from release_validation import channel_workflows, expected_results
+
+    beta = channel_workflows(policy)
+    validate_graph(workflows, beta)
+    wrapper = workflows.get(name, {})
+    if wrapper.get("on") != {
+        "workflow_call": {
+            "inputs": {
+                "channel": {"type": "string", "required": "true"},
+            }
+        }
+    }:
+        raise ValueError("Release validation requires only its explicit channel input")
+    jobs = wrapper.get("jobs", {})
+    expected = set(expected_results(policy, "beta"))
+    if (
+        set(jobs) != expected | {"gate"}
+        or set(jobs["gate"].get("needs", [])) != expected
+    ):
+        raise ValueError(
+            "Release validation gate inventory differs from channel policy"
+        )
+    baseline = workflows[QUALITY_GATE]["jobs"]
+    for job_name, original in baseline.items():
+        if job_name in {"scope", "gate"}:
+            continue
+        actual = jobs[job_name]
+        wanted = dict(original)
+        if job_name.startswith(("check-", "coverage-")):
+            condition = original.get("if", "${{ success() }}")[3:-3].strip()
+            wanted["if"] = "${{ inputs.channel != 'beta' && (" + condition + ") }}"
+        if actual != wanted:
+            raise ValueError(
+                "Release validation must retain the complete default checks"
+            )
+    for index, filename in enumerate(beta):
+        job = jobs[f"beta-check-{index}"]
+        if (
+            job.get("uses") != "./.github/workflows/" + filename
+            or job.get("needs") != ["scope", "workflow-contracts"]
+            or job.get("if")
+            != "${{ inputs.channel == 'beta' && needs.scope.outputs.run == 'true' }}"
+        ):
+            raise ValueError("Beta validation caller differs from channel policy")
+    scope = jobs["scope"]
+    selector = [
+        step
+        for step in scope.get("steps", [])
+        if step.get("name") == "Validate release channel"
+    ]
+    if (
+        scope.get("name") != "Validation profile (${{ inputs.channel }})"
+        or "if" in scope
+        or len(selector) != 1
+        or selector[0].get("run")
+        != 'python3 scripts/release_validation.py select --channel "$RELEASE_CHANNEL"'
+        or selector[0].get("env") != {"RELEASE_CHANNEL": "${{ inputs.channel }}"}
+        or not any(
+            step.get("env", {}).get("FORCE_FULL") == "true"
+            for step in scope.get("steps", [])
+        )
+    ):
+        raise ValueError(
+            "Release validation must prove its channel and force real checks"
+        )
+    gate = jobs["gate"]
+    commands = [step for step in gate.get("steps", []) if "run" in step]
+    if (
+        gate.get("name") != "CI gate"
+        or gate.get("if") != "${{ always() }}"
+        or len(commands) != 1
+        or commands[0].get("run")
+        != 'python3 scripts/release_validation.py gate --channel "$RELEASE_CHANNEL"'
+        or commands[0].get("env")
+        != {
+            "RESULTS": "${{ toJSON(needs) }}",
+            "RELEASE_CHANNEL": "${{ inputs.channel }}",
+        }
+    ):
+        raise ValueError("Release validation must use the fail-closed profile gate")
+    caller = workflows.get("release-pipeline.yml", {}).get("jobs", {}).get("checks", {})
+    if (
+        caller.get("uses") != "./.github/workflows/" + name
+        or caller.get("needs") != "prepare"
+        or caller.get("with") != {"channel": "${{ needs.prepare.outputs.channel }}"}
+    ):
+        raise ValueError("Release validation must consume the prepared channel")
+
+
 def validate(directory: Path, *, actions_only=False) -> None:
     """Reject duplicate validation triggers, missing gate jobs and mixed CodeQL pins."""
     policy = json.loads((directory / ".release-policy.json").read_text())
@@ -300,6 +396,7 @@ def validate(directory: Path, *, actions_only=False) -> None:
         )
     if "workflow-contracts" not in gate:
         raise ValueError("CI gate must include its configuration contracts")
+    validate_release_channels(policy, workflows)
 
 
 if __name__ == "__main__":
