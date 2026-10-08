@@ -43,7 +43,7 @@ checks required by that operation.
 
 For the verified Go runtime, this setting filters every verified certificate
 chain to RSA keys of at least 2048 bits, NIST P-256/P-384/P-521, Ed25519 and the
-runtime's supported ML-DSA keys. The TLS cipher and key-exchange filters also
+native Go module's supported ML-DSA keys. The TLS cipher and key-exchange filters also
 apply. The runtime can consequently reject an endpoint that works with its
 ordinary defaults. Fix or review the endpoint configuration rather than
 disabling certificate verification.
