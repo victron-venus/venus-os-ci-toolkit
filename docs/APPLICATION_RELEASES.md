@@ -19,7 +19,9 @@ release contents. Do not substitute commit logs or CI provenance for these notes
 
 Beta, RC, nightly and stable releases select the same base-version section. The
 engine appends the original build provenance. Missing or ambiguous sections,
-invalid content or a mismatched Git blob fail before tag or release creation.
+invalid content or a mismatched Git blob fail before retained evidence, the publication
+floor, a tag or a release is written. Rendered notes are reused by the publication
+transaction without a second remote read after state changes.
 Changes to a later default-branch changelog cannot relabel an earlier build.
 Existing consumers without this option retain their prior behavior; migrate
 their current version's notes together with the engine and policy. This option
