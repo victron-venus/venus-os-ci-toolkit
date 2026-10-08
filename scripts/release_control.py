@@ -1119,6 +1119,27 @@ def _release_has_guidance(text: str) -> bool:
     return any(line.strip() for line, _, guidance in _release_lines(text) if guidance)
 
 
+def _release_has_setext_heading(text: str) -> bool:
+    """Reject unsupported underlined headings within the selected ATX section."""
+    paragraph = False
+    for raw, (line, heading_allowed, _) in zip(io.StringIO(text), _release_lines(text)):
+        if not heading_allowed:
+            paragraph = False
+            continue
+        if not line.strip() and raw.strip():
+            # Hidden comment lines cannot make an ambiguous underline harmless.
+            continue
+        if re.fullmatch(r" {0,3}(?:=+|-+)[ \t]*(?:\r?\n)?", line):
+            if paragraph:
+                return True
+            paragraph = False
+        else:
+            paragraph = bool(line.strip()) and not re.match(
+                r" {0,3}#{1,6}(?:[ \t\r\n]|$)", line
+            )
+    return False
+
+
 # pylint: disable-next=too-many-arguments
 def release_notes(gh: GitHub, tag: str, sha: str, provenance: str) -> str:
     """Use reviewed notes at the package source commit, retaining build evidence."""
@@ -1167,6 +1188,10 @@ def release_notes(gh: GitHub, tag: str, sha: str, provenance: str) -> str:
         len(matches) == 1 and matches[0][0], "Release needs one nonempty changelog section"
     )
     notes, visible_notes = matches[0]
+    require(
+        not _release_has_setext_heading(notes),
+        "Release note sections must use ATX headings, not Setext underlines",
+    )
     sections = list(_release_sections(visible_notes, 3))
     for heading in ("Upgrade", "Security"):
         section = next((body for title, _, body in sections if title == heading), None)
