@@ -112,11 +112,55 @@ first collect a real report in their existing test job.
 
 | Action | Description |
 |---|---|
-| `actions/setup-python` | Python + pip cache + ruff/pytest |
+| `actions/setup-python` | Python + hash-locked ruff/pytest |
 | `actions/setup-go` | Go + module cache + golangci-lint/govulncheck |
 | `actions/setup-docker` | Docker Buildx + GHCR login |
 
 These may also be pinned by consumers, though they are primarily consumed internally by the reusable workflows above.
+
+`actions/setup-python` installs the reviewed versions in its own
+`actions/setup-python/requirements.txt`, including transitive dependencies and
+SHA-256 hashes. The requirements path is resolved from the composite action
+directory, independently of a consumer's working directory. The action does
+not enable setup-python's workspace-based pip cache: a downloaded composite
+action lives outside that workspace, so hashing its lock file for that cache
+would fail in a consumer with no Python project files.
+It uses the interpreter's existing pip and installs wheels only; it does not
+perform an unpinned pip upgrade or install a consumer's dependencies.
+
+Python 3.10 or newer is required. Older Python versions select pytest releases
+affected by [CVE-2025-71176](https://github.com/advisories/GHSA-6w46-j5rx-g56g);
+the fixed pytest series requires Python 3.10+. Upgrade the `python-version`
+input rather than using vulnerable compatibility pins. CI exercises Python
+3.10 and 3.14 on Linux, macOS and Windows, plus 3.11–3.13 on Linux. This describes
+the tested matrix, not every architecture or future interpreter release.
+
+To update the common tools, edit `actions/setup-python/requirements.in` and
+regenerate the hash lock using the exact command in its header with uv 0.12.18.
+Review all version changes and run the action matrix, the offline path/hash
+regressions and a vulnerability audit of every locked version, including
+platform-specific dependencies. Consumer application locks remain independent.
+
+The Go action defaults to Go 1.26.8. It builds `govulncheck v1.8.0` and
+`golangci-lint v1.64.8` from separate committed `go.mod`/`go.sum` files using
+`go install -mod=readonly`. The v1 linter preserves existing consumer configs;
+its locked transitive dependencies include fixes for known mapstructure,
+x/text and x/mod vulnerabilities. Set the composite action input
+`golangci-lint-major: '2'` to build `golangci-lint v2.14.0` from its separate
+lock files for a project with a v2 configuration. Consult the
+[upstream migration guide](https://golangci-lint.run/docs/product/migration-guide/)
+before changing the configuration generation.
+
+The contract matrix runs real lint, vulnerability analysis and tests with
+Go 1.26.8/v1 and Go 1.27.1/v2. A selected Go toolchain of at least 1.26 is
+required. The pinned `actions/setup-go` exports `GOTOOLCHAIN=local`, so an older
+requested version fails instead of silently downloading a newer compiler.
+Tool installation disables workspace discovery (`GOWORK=off`); consumer
+`go.work` replacements cannot alter the reviewed tool graphs. Go checks
+fetched modules against the committed sums. Update a tool in its directory
+under `actions/setup-go/tools`, run `go mod tidy`, review the complete graph
+change and run both the action matrix and a vulnerability scan of the built
+binaries. Consumer module files remain independent.
 
 ### Workflow Inputs Reference
 
