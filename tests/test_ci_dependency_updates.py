@@ -140,6 +140,46 @@ class DependencyMigrationTests(unittest.TestCase):
 
 
 class CoupledWorkflowTests(unittest.TestCase):
+    @staticmethod
+    def codeql_source(action, comment, quote=""):
+        reference = quote + f"github/codeql-action/{action}@" + "a" * 40 + quote
+        return f"jobs:\n  scan:\n    steps:\n      - uses: {reference}{comment}\n"
+
+    def test_codeql_update_metadata_covers_every_component_and_quoted_uses(self):
+        for quote in ("", "'", '"'):
+            sources = {
+                f"{action}.yml": self.codeql_source(action, " # v4.38.3", quote)
+                for action in ("init", "autobuild", "analyze", "upload-sarif")
+            }
+            with self.subTest(quote=quote):
+                contracts.validate_codeql_update_metadata(sources)
+                for filename in sources:
+                    with self.subTest(filename=filename), self.assertRaisesRegex(
+                        ValueError, "inline full release comment"
+                    ):
+                        contracts.validate_codeql_update_metadata({
+                            **sources, filename: sources[filename].replace(" # v4.38.3", "")
+                        })
+
+    def test_codeql_partial_and_disagreeing_version_comments_are_rejected(self):
+        for comment in (" # v4", " # maintained manually", "\n      # v4.38.3"):
+            with self.subTest(comment=comment), self.assertRaisesRegex(
+                ValueError, "inline full release comment"
+            ):
+                contracts.validate_codeql_update_metadata({
+                    "upload.yml": self.codeql_source("upload-sarif", comment)
+                })
+        with self.assertRaisesRegex(ValueError, "same release"):
+            contracts.validate_codeql_update_metadata({
+                "ci.yml": self.codeql_source("init", " # v4.38.3"),
+                "upload.yml": self.codeql_source("upload-sarif", " # v4.38.2"),
+            })
+
+    def test_codeql_metadata_check_ignores_shell_literals_and_accepts_notes(self):
+        source = self.codeql_source("init", " # v4.38.3 keep upstream release")
+        source += "      - run: |\n          echo 'uses: github/codeql-action/init@" + "b" * 40 + "'\n"
+        contracts.validate_codeql_update_metadata({"ci.yml": source})
+
     def test_upload_and_init_in_different_workflows_cannot_diverge(self):
         workflows = {
             name: {

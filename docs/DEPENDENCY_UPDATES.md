@@ -19,6 +19,13 @@ workflows that disagree with it. Regeneration preserves version comments, so
 Renovate can continue resolving pinned actions. The SHA remains the executable
 reference; the comment identifies the upstream release or branch to track.
 
+Every CodeQL `uses` line needs an inline full release comment such as
+`# v4.38.3`, including separate workflow-analysis jobs and SARIF uploads. Bare
+SHAs can be skipped by Renovate while annotated steps move to a new release.
+The workflow contract now rejects missing or inconsistent CodeQL version
+comments as well as mixed SHAs. Consumers receive this guard when their
+vendored `scripts/workflow_contracts.py` is refreshed from the toolkit.
+
 Runner images and action tool-version inputs are excluded from this migration.
 Existing Dependabot policies for application packages and containers, including
 version exclusions, remain in place. Dependabot's Actions entry has a zero version

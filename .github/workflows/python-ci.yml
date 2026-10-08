@@ -85,7 +85,7 @@ jobs:
         working-directory: ${{ inputs.working-directory }}
     steps:
       - name: Harden the runner (Audit all outbound calls)
-        uses: step-security/harden-runner@351661ca32ac09a36dc5ee2d536e3128f2a3c8ed # v2.22.0
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
         with:
           egress-policy: audit
 
@@ -93,7 +93,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup Python
-        uses: victron-venus/venus-os-ci-toolkit/actions/setup-python@737112cd6fa446ee097572817c124b3c95ec27a3 # main
+        uses: victron-venus/venus-os-ci-toolkit/actions/setup-python@dc1cc0b02ecdec3e121934975655ca02fceea763 # main
         with:
           python-version: ${{ inputs.python-version }}
 

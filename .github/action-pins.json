@@ -26,7 +26,7 @@
   },
   {
     "packageName": "step-security/harden-runner",
-    "version": "v2.22.0",
-    "digest": "351661ca32ac09a36dc5ee2d536e3128f2a3c8ed"
+    "version": "v2.22.1",
+    "digest": "ccd8616d44fd3846e67624a50d5aad6d37bf2d25"
   }
 ]
