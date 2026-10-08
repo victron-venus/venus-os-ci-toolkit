@@ -11,6 +11,10 @@ from pathlib import Path
 import yaml
 
 
+COMMIT_SHA_PATTERN = r"[0-9a-f]{40}"
+QUALITY_GATE = "quality-gate.yml"
+
+
 class UniqueKeyLoader(yaml.BaseLoader):
     """Keep YAML scalars as strings and reject ambiguous mappings."""
 
@@ -38,7 +42,7 @@ def validate_codeql(workflows):
                 )
             }
             if len(pins) > 1 or any(
-                not re.fullmatch(r"[0-9a-f]{40}", pin) for pin in pins
+                not re.fullmatch(COMMIT_SHA_PATTERN, pin) for pin in pins
             ):
                 raise ValueError(
                     f"{filename}/{name}: CodeQL actions must share one full commit SHA"
@@ -60,14 +64,14 @@ def validate_workflow_pins(filename, workflow, pins):
             if not reference or reference.startswith("./"):
                 continue
             action, _, revision = reference.partition("@")
-            if not re.fullmatch(r"[0-9a-f]{40}", revision):
+            if not re.fullmatch(COMMIT_SHA_PATTERN, revision):
                 raise ValueError(f"{filename}: {action} must use a full commit SHA")
             if pins is not None and (action not in pins or revision != pins[action]):
                 raise ValueError(f"{filename}: {action} differs from generator pins")
 
 
-def validate_generator_pins(directory, workflows):
-    """Validate generated consumers and the toolkit's canonical pin manifest."""
+def generator_pins(directory):
+    """Load the canonical pin set, including an opt-in coverage workflow."""
     manifest = directory / ".github/action-pins.json"
     # Consumers vendor the generated scripts, not the generator or its manifest.
     # The canonical toolkit must retain the manifest consumed by its generator.
@@ -76,14 +80,20 @@ def validate_generator_pins(directory, workflows):
     pins = None if not manifest.exists() else {
         pin["packageName"]: pin["digest"] for pin in json.loads(manifest.read_text())
     }
-    if pins is not None and any(not re.fullmatch(r"[0-9a-f]{40}", pin) for pin in pins.values()):
+    if pins is not None and any(not re.fullmatch(COMMIT_SHA_PATTERN, pin) for pin in pins.values()):
         raise ValueError("Generator pins must be full commit SHAs")
     policy_path = directory / ".release-policy.json"
     coverage = json.loads(policy_path.read_text()).get("coverage") if policy_path.exists() else None
     if pins is not None and coverage:
         pins["victron-venus/venus-os-ci-toolkit/.github/workflows/coverage-upload.yml"] = coverage["toolkit_ref"]
+    return pins
+
+
+def validate_generator_pins(directory, workflows):
+    """Validate generated consumers and the toolkit's canonical pin manifest."""
+    pins = generator_pins(directory)
     for filename, workflow in workflows.items():
-        if filename not in {"quality-gate.yml", "release-pipeline.yml"}:
+        if filename not in {QUALITY_GATE, "release-pipeline.yml"}:
             validate_workflow_pins(filename, workflow, None)
             continue
         source = (directory / ".github/workflows" / filename).read_text()
@@ -148,7 +158,7 @@ def validate_coverage_callers(policy, workflows, gate):
     if not coverage:
         return set()
     ref = coverage["toolkit_ref"]
-    if not isinstance(ref, str) or not re.fullmatch(r"[0-9a-f]{40}", ref):
+    if not isinstance(ref, str) or not re.fullmatch(COMMIT_SHA_PATTERN, ref):
         raise ValueError("Coverage toolkit_ref must be a full commit SHA")
     reference = "victron-venus/venus-os-ci-toolkit/.github/workflows/coverage-upload.yml@" + ref
     for report in coverage["reports"]:
@@ -191,10 +201,10 @@ def validate(directory: Path, *, actions_only=False) -> None:
             "pull_request" in workflow.get("on", {})
             and filename not in visited
             and filename
-            not in {"quality-gate.yml", "auto-approve.yml", "auto-merge.yml"}
+            not in {QUALITY_GATE, "auto-approve.yml", "auto-merge.yml"}
         ):
             raise ValueError(f"{filename}: PR validator is outside the required gate")
-    gate = workflows["quality-gate.yml"]["jobs"]
+    gate = workflows[QUALITY_GATE]["jobs"]
     expected = {
         f"./.github/workflows/{filename}" for filename in policy["validation_workflows"]
     }

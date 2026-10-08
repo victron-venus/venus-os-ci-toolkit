@@ -694,7 +694,9 @@ def _toml_edit(raw, declaration, value):  # pylint: disable=too-many-locals,too-
         if continuation:
             offset += len(line)
             continue
-        header = re.fullmatch(r"\s*(\[\[?)(.+?)(\]\]?)\s*(?:#.*)?(?:\r?\n)?", line)
+        header = re.fullmatch(
+            r"\s*+(\[\[?)(.+?)(\]\]?)\s*+(?:#[^\r\n]*+)?(?:\r?\n)?", line
+        )
         if header:
             opening, key, closing = header.groups()
             require(len(opening) == len(closing), "Malformed TOML table header")
@@ -703,11 +705,13 @@ def _toml_edit(raw, declaration, value):  # pylint: disable=too-many-locals,too-
                 arrays[current] = arrays.get(current, -1) + 1
                 current += (arrays[current],)
         else:
-            assignment = re.match(r"\s*([^#=\n]+?)\s*=\s*", line)
-            if assignment:
-                key = _toml_key(assignment.group(1))
+            key_text, separator, _ = line.partition("=")
+            if separator and key_text.strip() and "#" not in key_text and "\n" not in key_text:
+                key = _toml_key(key_text.strip())
                 if current + key == target:
-                    start = assignment.end()
+                    start = len(key_text) + 1
+                    while start < len(line) and line[start].isspace():
+                        start += 1
                     scalar = re.match(
                         r'"(?:[^"\\\r\n]|\\.)*"|\x27[^\x27\r\n]*\x27|[+-]?\d[\d_]*',
                         line[start:],
@@ -955,7 +959,13 @@ def sync_versions(root, policy, plan, check=False):  # pylint: disable=too-many-
         require(
             not drift, "Version inputs do not match release plan: " + ", ".join(drift)
         )
-        return evidence
+    else:
+        _apply_version_edits(root, originals, edited, paths, drift)
+    return evidence
+
+
+def _apply_version_edits(root, originals, edited, paths, drift):
+    """Recheck, stage, and replace only the prepared version changes."""
     # Recheck confinement and file content before committing any prepared edit.
     for name, original in originals.items():
         require(
@@ -983,7 +993,6 @@ def sync_versions(root, policy, plan, check=False):  # pylint: disable=too-many-
     finally:
         for path in staged.values():
             path.unlink(missing_ok=True)
-    return evidence
 
 
 def read_base_version(root, policy):
