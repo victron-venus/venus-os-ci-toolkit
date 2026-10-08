@@ -161,8 +161,11 @@ def validate_coverage_producer(producer, report, ref):
     """Keep a producer's exported artifact and shared pin aligned with policy."""
     name = "coverage-" + report["name"]
     if "uses" in producer:
+        workflow = {"cobertura": "python-ci.yml", "go": "go-ci.yml"}.get(report["format"])
+        expected = f"victron-venus/venus-os-ci-toolkit/.github/workflows/{workflow}@{ref}"
         if (
-            producer["uses"].rsplit("@", 1)[-1] != ref
+            workflow is None
+            or producer["uses"] != expected
             or producer.get("with", {}).get("coverage-artifact-name") != name
         ):
             raise ValueError("Coverage producer pin or artifact differs from policy")
@@ -171,6 +174,10 @@ def validate_coverage_producer(producer, report, ref):
     exports = [step for step in producer.get("steps", []) if step.get("id") == step_id]
     if (
         len(exports) != 1
+        or not re.fullmatch(
+            r"actions/upload-artifact@" + COMMIT_SHA_PATTERN,
+            exports[0].get("uses", ""),
+        )
         or exports[0].get("with", {}).get("name") != name + "-${{ github.run_attempt }}"
         or exports[0].get("with", {}).get("path") != report["path"]
     ):
