@@ -25,6 +25,7 @@ import yaml
 # Absolute sibling source is shared by the generators and their import-based tests.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from runner_selection import render_consumer, runner_labels  # pylint: disable=wrong-import-position
+import release_validation  # pylint: disable=wrong-import-position
 from workflow_hardening import harden_jobs  # pylint: disable=wrong-import-position
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -705,6 +706,58 @@ def quality(policy, directory=None):
     }
 
 
+def release_quality(policy, directory=None):
+    """Keep PR validation unchanged; select only beta's explicit release checks."""
+    beta = release_validation.channel_workflows(policy)
+    if beta is None:
+        raise ValueError("Release validation requires a channel policy")
+    workflow = quality(policy, directory)
+    workflow.pop("concurrency")
+    workflow["name"] = "Release validation"
+    workflow["on"] = {
+        "workflow_call": {
+            "inputs": {
+                "channel": {"type": "string", "required": True},
+            }
+        }
+    }
+    jobs = workflow["jobs"]
+    scope = jobs["scope"]
+    scope["name"] = "Validation profile (${{ inputs.channel }})"
+    scope["steps"][-1]["env"]["FORCE_FULL"] = "true"
+    scope["steps"].insert(
+        1,
+        {
+            "name": "Validate release channel",
+            "env": {"RELEASE_CHANNEL": "${{ inputs.channel }}"},
+            "run": 'python3 scripts/release_validation.py select --channel "$RELEASE_CHANNEL"',
+        },
+    )
+    for name, job in jobs.items():
+        if name.startswith(("check-", "coverage-")):
+            previous = job.get("if", "${{ success() }}")[3:-3].strip()
+            job["if"] = "${{ inputs.channel != 'beta' && (" + previous + ") }}"
+    for index, filename in enumerate(beta):
+        jobs[f"beta-check-{index}"] = {
+            **validation_job(policy, directory, filename, set()),
+            "needs": ["scope", "workflow-contracts"],
+            "if": "${{ inputs.channel == 'beta' && needs.scope.outputs.run == 'true' }}",
+        }
+    jobs["gate"]["needs"] = [name for name in jobs if name != "gate"]
+    jobs["gate"]["steps"] = [
+        {"uses": CHECKOUT, "with": {"persist-credentials": False}},
+        {
+            "name": "Require the exact selected validation profile",
+            "env": {
+                "RESULTS": "${{ toJSON(needs) }}",
+                "RELEASE_CHANNEL": "${{ inputs.channel }}",
+            },
+            "run": 'python3 scripts/release_validation.py gate --channel "$RELEASE_CHANNEL"',
+        },
+    ]
+    return workflow
+
+
 def schedule(policy):
     # Stagger fleet jobs away from minute zero and each other; schedule uses UTC.
     """Choose a deterministic daily UTC schedule staggered across repositories."""
@@ -1013,6 +1066,9 @@ def release(policy):
     if not policy.get("versioning"):
         return workflow
     jobs = workflow["jobs"]
+    if release_validation.channel_workflows(policy) is not None:
+        jobs["checks"]["uses"] = "./.github/workflows/" + release_validation.WORKFLOW
+        jobs["checks"]["with"] = {"channel": "${{ needs.prepare.outputs.channel }}"}
     prepare = jobs["prepare"]
     prepare["timeout-minutes"] = 30
     prepare["permissions"] = {"contents": "write", "actions": "read"}
@@ -1139,6 +1195,7 @@ def validate_asset_restrictions(policy: dict) -> tuple[dict, ...]:
 def validate_policy(directory: Path, policy: dict) -> None:
     """Reject unsupported policy modes, stale publishers and invalid repository names."""
     mode = policy.get("mode", "release")
+    release_validation.channel_workflows(policy)
     if "release_notes" in policy and policy["release_notes"] != "CHANGELOG.md":
         raise ValueError("release_notes must name the source-bound CHANGELOG.md")
     validate_asset_restrictions(policy)
@@ -1226,6 +1283,8 @@ def validate_local_workflows(directory: Path) -> None:
 def validate_workflow_adapters(directory: Path, policy: dict) -> None:
     """Check callable validators and permission caps throughout their local graph."""
     validate_local_calls(directory, quality(policy, directory))
+    if release_validation.channel_workflows(policy) is not None:
+        validate_local_calls(directory, release_quality(policy, directory))
     if policy.get("mode", "release") == "release":
         validate_build_secrets(directory, policy)
     if policy.get("versioning"):
@@ -1345,6 +1404,9 @@ def release_files(directory: Path, policy: dict) -> dict[str, str]:
     if not (directory / RELEASE_BUILD_PATH).is_file():
         raise ValueError("A real release-build.yml adapter is required")
     files = {".github/workflows/release-pipeline.yml": dump(release(policy))}
+    files["scripts/release_validation.py"] = (ROOT / "scripts/release_validation.py").read_text()
+    if release_validation.channel_workflows(policy) is not None:
+        files[WORKFLOWS + "/" + release_validation.WORKFLOW] = dump(release_quality(policy, directory))
     files["RELEASING.md"] = release_strategy(directory, policy)
     files[RELEASE_CONTROL_PATH] = (
         ROOT / RELEASE_CONTROL_PATH
@@ -1427,6 +1489,9 @@ def release_files(directory: Path, policy: dict) -> dict[str, str]:
     files[".github/release-tests/test_asset_streaming.py"] = (
         ROOT / "tests/test_asset_streaming.py"
     ).read_text()
+    files[".github/release-tests/test_release_validation.py"] = (
+        ROOT / "tests/test_release_validation.py"
+    ).read_text().replace("Path(__file__).resolve().parents[1]", "Path(__file__).resolve().parents[2]")
     return files
 
 
@@ -1453,6 +1518,14 @@ def release_strategy(directory: Path, policy: dict) -> str:
         )
         + "`",
         "QUALIFICATION": qualification,
+        "CHANNEL_VALIDATION": (
+            "This repository opts beta releases into these validators: "
+            + ", ".join("`" + name + "`" for name in release_validation.channel_workflows(policy))
+            + ". PR, nightly and RC validation remains complete. All platform packages, "
+            "version checks, signatures and immutable publication evidence remain required. "
+            "A fast beta is not RC acceptance evidence and cannot be promoted to stable."
+            if release_validation.channel_workflows(policy) is not None else ""
+        ),
         "PROJECT_LIMITS": "\n".join("- " + note for note in limits)
         or "The complete declared gate and target acceptance remain required.",
         "VERSION_AUTOMATION": (
@@ -1529,8 +1602,10 @@ def coverage_release_caller(directory, policy):
     if not isinstance(checks, dict):
         raise ValueError("Coverage-only adoption needs an existing release checks job")
     permissions = checks.get("permissions")
+    channel_validation = release_validation.channel_workflows(policy) is not None
+    gate_name = release_validation.WORKFLOW if channel_validation else QUALITY_GATE_NAME
     if (
-        checks.get("uses") != "./.github/workflows/quality-gate.yml"
+        checks.get("uses") != "./.github/workflows/" + gate_name
         or not isinstance(permissions, dict)
         or any(
             getattr(getattr(item, "anchor", None), "value", None)
@@ -1540,11 +1615,12 @@ def coverage_release_caller(directory, policy):
     ):
         raise ValueError(
             "Coverage-only adoption needs an unaliased release checks caller "
-            "with explicit permissions and the local quality-gate.yml"
+            "with explicit permissions and the local " + gate_name
         )
     already_permitted = permissions.get("id-token") == "write"
     permissions["id-token"] = "write"
-    validate_local_calls(directory, quality(policy, directory), allowed=permissions)
+    gate = release_quality(policy, directory) if channel_validation else quality(policy, directory)
+    validate_local_calls(directory, gate, allowed=permissions)
     if already_permitted:
         return {name: source}
     output = io.StringIO()
@@ -1558,13 +1634,18 @@ def render_coverage(directory: Path) -> dict[str, str]:
     validate_policy(directory, policy)
     if coverage_policy(policy) is None or policy.get("single_entry_ci") is not True:
         raise ValueError("Coverage-only adoption requires coverage and single_entry_ci")
-    gate_source = (directory / WORKFLOWS / QUALITY_GATE_NAME).read_text()
-    if not gate_source.startswith(
-        "# Generated by venus-os-ci-toolkit/scripts/install_release.py;"
-        " edit .release-policy.json.\n"
-    ):
-        raise ValueError("Coverage-only adoption needs an existing generated quality-gate.yml")
-    yaml.load(gate_source, Loader=WorkflowLoader)
+    gate_names = [QUALITY_GATE_NAME]
+    channel_validation = release_validation.channel_workflows(policy) is not None
+    if channel_validation:
+        gate_names.append(release_validation.WORKFLOW)
+    for gate_name in gate_names:
+        gate_source = (directory / WORKFLOWS / gate_name).read_text()
+        if not gate_source.startswith(
+            "# Generated by venus-os-ci-toolkit/scripts/install_release.py;"
+            " edit .release-policy.json.\n"
+        ):
+            raise ValueError("Coverage-only adoption needs an existing generated " + gate_name)
+        yaml.load(gate_source, Loader=WorkflowLoader)
     if policy.get("versioning") and not (directory / "scripts/version_plan.py").is_file():
         raise ValueError("Existing versioned CI requires scripts/version_plan.py")
     validate_workflow_adapters(directory, policy)
@@ -1574,6 +1655,9 @@ def render_coverage(directory: Path) -> dict[str, str]:
         WORKFLOW_CONTRACTS_PATH: (ROOT / WORKFLOW_CONTRACTS_PATH).read_text(),
         CONTRACT_REQUIREMENTS: (ROOT / CONTRACT_REQUIREMENTS).read_text(),
     }
+    if channel_validation:
+        files[WORKFLOWS + "/" + release_validation.WORKFLOW] = dump(release_quality(policy, directory))
+        files["scripts/release_validation.py"] = (ROOT / "scripts/release_validation.py").read_text()
     files.update(coverage_adapters(directory, policy))
     files.update(coverage_release_caller(directory, policy))
     if directory.resolve() != ROOT.resolve():
@@ -1611,6 +1695,8 @@ def render(directory: Path) -> dict[str, str]:
         files[WORKFLOW_CONTRACTS_PATH] = (
             ROOT / WORKFLOW_CONTRACTS_PATH
         ).read_text()
+        if release_validation.channel_workflows(policy) is not None:
+            files["scripts/release_validation.py"] = (ROOT / "scripts/release_validation.py").read_text()
         if directory.resolve() != ROOT.resolve():
             files[".github/workflow-tests/test_workflow_yaml_contracts.py"] = (
                 ROOT / "tests/test_workflow_yaml_contracts.py"
@@ -1691,6 +1777,21 @@ Callable validation workflows:
     text += "".join(
         f"- `.github/workflows/{name}`\n" for name in policy["validation_workflows"]
     )
+    beta = release_validation.channel_workflows(policy)
+    if beta is not None:
+        text = text.replace(
+            "Manual dispatch, scheduled runs and release qualification remain full.",
+            "Manual dispatch, scheduled runs and release qualification never use "
+            "documentation-only skipping.",
+        )
+        text += (
+            "\nBeta releases explicitly select "
+            + ", ".join("`" + name + "`" for name in beta)
+            + " through `release-quality-gate.yml`. PRs, merge queues, nightlies, "
+            "RCs and final builds keep the complete default validation set. "
+            "All platform packages and artifact checks remain required. "
+            "A beta cannot be promoted to stable; it needs a fully validated RC.\n"
+        )
     if policy.get("mode", "release") == "release":
         text += """
 The [release strategy](../RELEASING.md) defines versioning, channels, acceptance,

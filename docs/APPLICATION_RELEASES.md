@@ -163,3 +163,41 @@ through existing hard links; final symlinks and non-file destinations are reject
 Directory descriptors keep a replaced parent pathname from redirecting the write.
 Platforms without no-follow directory descriptor support fail explicitly. The
 root is trusted operator configuration, not a sandbox against its owner.
+
+## Optional fast beta validation
+
+Versioned applications using hosted single-entry CI may declare:
+
+```json
+"channel_validation_workflows": {
+  "beta": ["beta-checks.yml"]
+}
+```
+
+The listed local workflows must be callable and have no independent PR trigger.
+Only beta can override the default `validation_workflows`. Omit the option to
+retain the existing release pipeline. Empty lists, duplicate or recursive names,
+unknown channels, local-only CI and unversioned releases are rejected.
+
+The generated `release-quality-gate.yml` uses the channel from the frozen release
+preparation and checks it against the original event. Beta runs its explicit
+validators and the workflow/release tooling contracts. PR and merge-queue checks
+remain unchanged; nightly, RC and final-build validation use the complete default
+set. Its aggregate gate requires every selected job to succeed and accepts only
+the exact unselected skips. Do not edit generated workflows to skip failures.
+
+This option changes validation before packaging, not the platform build matrix or
+artifact checks. Keep version, signature, native-runtime, packaging and integrity
+checks in the build adapter. A fast beta still produces the full declared set of
+packages and immutable source, policy, plan, receipt and asset evidence.
+
+New opt-in manifests record `validation_profile` with its channel and selected
+workflow list. Publication, retained-release reuse and RC promotion verify that
+profile against the source policy and successful CI/profile jobs from the exact
+run attempt. Existing manifests from policies without this option remain valid.
+Beta never qualifies for stable promotion; a new RC must pass the full matrix.
+Scheduled nightly reuse still happens only after its own full checks and builds.
+
+The bounded `--coverage-only` and `--runners-only` installers also maintain the
+release validation wrapper: coverage refreshes both gates, while all validation
+workflows retain the CI runner profile separately from release build jobs.
