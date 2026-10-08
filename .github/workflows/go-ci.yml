@@ -1,5 +1,7 @@
 name: 'Reusable Go CI'
 # description: 'Reusable CI workflow for Go projects'
+permissions:
+  contents: read
 on:
   workflow_call:
     inputs:
@@ -18,7 +20,11 @@ on:
       go-version:
         description: 'Go version'
         type: string
-        default: '1.23'
+        default: '1.26.8'
+      golangci-lint-major:
+        description: 'golangci-lint configuration major version (1 or 2)'
+        type: string
+        default: '1'
       working-directory:
         description: 'Working directory for the project'
         type: string
@@ -58,6 +64,7 @@ jobs:
     needs: change-scope
     if: ${{ needs.change-scope.outputs.run != 'false' || needs.change-scope.outputs.reason != 'documentation-only' }}
     name: CI
+    timeout-minutes: 30
     runs-on: ${{ fromJSON((vars.CI_RUNNER_MODE == 'self-hosted' || vars.CI_RUNNER_MODE == 'k3s') && ((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) || (contains(fromJSON('["push","schedule","workflow_dispatch"]'), github.event_name) && github.ref == format('refs/heads/{0}', github.event.repository.default_branch))) && (vars.CI_RUNNER_LABELS || '[]') || '["ubuntu-latest"]') }}
     permissions:
       contents: read
@@ -74,9 +81,10 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup Go
-        uses: victron-venus/venus-os-ci-toolkit/actions/setup-go@062d60e8892d4a97e11f5985d0914d5b19fcd24e # main
+        uses: victron-venus/venus-os-ci-toolkit/actions/setup-go@737112cd6fa446ee097572817c124b3c95ec27a3 # main
         with:
           go-version: ${{ inputs.go-version }}
+          golangci-lint-major: ${{ inputs.golangci-lint-major }}
 
       - name: Download dependencies
         shell: bash

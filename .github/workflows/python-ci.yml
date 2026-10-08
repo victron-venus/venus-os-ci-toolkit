@@ -1,5 +1,7 @@
 name: 'Reusable Python CI'
 # description: 'Reusable CI workflow for Python projects'
+permissions:
+  contents: read
 on:
   workflow_call:
     inputs:
@@ -28,9 +30,13 @@ on:
         type: boolean
         default: true
       use-uv-lock:
-        description: 'When install-dependencies is enabled, use uv.lock for all extras and check tools; reject missing or stale locks'
+        description: 'When install-dependencies is enabled, use uv.lock for selected extras and check tools; reject missing or stale locks'
         type: boolean
         default: false
+      dependency-extras:
+        description: 'Extras from uv.lock: * for all, comma-separated names, or empty for none'
+        type: string
+        default: '*'
       build-dependency-group:
         description: 'Optional uv.lock group of wheel-only build backends; requires install-dependencies and use-uv-lock'
         type: string
@@ -70,6 +76,7 @@ jobs:
     needs: change-scope
     if: ${{ needs.change-scope.outputs.run != 'false' || needs.change-scope.outputs.reason != 'documentation-only' }}
     name: CI
+    timeout-minutes: 30
     runs-on: ${{ fromJSON((vars.CI_RUNNER_MODE == 'self-hosted' || vars.CI_RUNNER_MODE == 'k3s') && ((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) || (contains(fromJSON('["push","schedule","workflow_dispatch"]'), github.event_name) && github.ref == format('refs/heads/{0}', github.event.repository.default_branch))) && (vars.CI_RUNNER_LABELS || '[]') || '["ubuntu-latest"]') }}
     permissions:
       contents: read
@@ -86,7 +93,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup Python
-        uses: victron-venus/venus-os-ci-toolkit/actions/setup-python@062d60e8892d4a97e11f5985d0914d5b19fcd24e # main
+        uses: victron-venus/venus-os-ci-toolkit/actions/setup-python@737112cd6fa446ee097572817c124b3c95ec27a3 # main
         with:
           python-version: ${{ inputs.python-version }}
 
@@ -169,12 +176,14 @@ jobs:
           exit 1
 
       - name: Setup uv for locked dependencies
-        if: inputs.install-dependencies && inputs.use-uv-lock
+        if: inputs.install-dependencies
         uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
           version: '0.12.18'
           enable-cache: true
-          cache-dependency-glob: ${{ inputs.working-directory }}/uv.lock
+          cache-dependency-glob: |
+            ${{ inputs.working-directory }}/uv.lock
+            ${{ inputs.working-directory }}/requirements*.txt
 
       - name: Install locked dependencies
         if: inputs.install-dependencies && inputs.use-uv-lock
@@ -182,15 +191,34 @@ jobs:
         env:
           UV_PYTHON_DOWNLOADS: never
           BUILD_DEPENDENCY_GROUP: ${{ inputs.build-dependency-group }}
+          DEPENDENCY_EXTRAS: ${{ inputs.dependency-extras }}
         run: |
           test -f pyproject.toml
           test -f uv.lock
           export UV_PROJECT_ENVIRONMENT="$PWD/.venv"
+          selection=${DEPENDENCY_EXTRAS-*}
+          extra_args=()
+          if [[ "$selection" == '*' ]]; then
+            extra_args=(--all-extras)
+          elif [[ -n "$selection" ]]; then
+            if [[ ! "$selection" =~ ^[a-zA-Z0-9,._-]+$ || "$selection" == ,* || "$selection" == *, || "$selection" == *,,* ]]; then
+              echo 'dependency-extras must contain comma-separated extra names.' >&2
+              exit 1
+            fi
+            IFS=, read -r -a selected_extras <<< "$selection"
+            for extra in "${selected_extras[@]}"; do
+              if [[ ! "$extra" =~ ^[a-zA-Z0-9]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$ ]]; then
+                echo 'dependency-extras contains an invalid extra name.' >&2
+                exit 1
+              fi
+              extra_args+=(--extra "$extra")
+            done
+          fi
           if [[ -n "$BUILD_DEPENDENCY_GROUP" ]]; then
             uv sync --locked --only-group "$BUILD_DEPENDENCY_GROUP" --no-install-workspace --no-install-local --no-build --python "$(command -v python)"
-            uv sync --locked --all-extras --group "$BUILD_DEPENDENCY_GROUP" --no-build-isolation --python "$(command -v python)"
+            uv sync --locked "${extra_args[@]}" --group "$BUILD_DEPENDENCY_GROUP" --no-build-isolation --python "$(command -v python)"
           else
-            uv sync --locked --all-extras --python "$(command -v python)"
+            uv sync --locked "${extra_args[@]}" --python "$(command -v python)"
           fi
           echo "$UV_PROJECT_ENVIRONMENT/bin" >> "$GITHUB_PATH"
 
@@ -198,13 +226,13 @@ jobs:
         if: inputs.install-dependencies && !inputs.use-uv-lock
         shell: bash
         run: |
-          # Prefer binary wheels to avoid compilation issues when possible
           if [ -f pyproject.toml ]; then
-            pip install --prefer-binary -e '.[dev,test]'
+            echo 'Projects with pyproject.toml must set use-uv-lock: true and commit uv.lock.' >&2
+            exit 1
           elif [ -f requirements.txt ]; then
-            pip install --prefer-binary -r requirements.txt
+            uv pip install --python "$(command -v python)" --require-hashes --no-build -r requirements.txt
           elif [ -f requirements-dev.txt ]; then
-            pip install --prefer-binary -r requirements-dev.txt
+            uv pip install --python "$(command -v python)" --require-hashes --no-build -r requirements-dev.txt
           fi
 
       - name: Run Ruff lint

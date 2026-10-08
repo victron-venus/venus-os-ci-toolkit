@@ -166,6 +166,13 @@ binaries. Consumer module files remain independent.
 
 #### `python-ci.yml`
 
+Packaged projects must select `use-uv-lock: true` and commit a current `uv.lock`.
+The requirements fallback is for scripts with fully hash-locked wheel requirements; it
+rejects packaged projects and source distributions. `dependency-extras: '*'`
+keeps the existing all-extras behavior. Use a comma-separated list of existing
+extra names to limit optional integrations, or an empty string for none. See
+[locked dependency and build-backend setup](../README.md#validation).
+
 Pytest and its minimum coverage threshold remain mandatory. Codecov publication
 is optional at the upload step only. The uploader itself uses
 `fail_ci_if_error: true` so failed signature or checksum validation stops it
@@ -178,6 +185,9 @@ prove that the report reached Codecov; inspect the upload step outcome.
 | `python-version` | string | `'3.12'` | No |
 | `working-directory` | string | `'.'` | No |
 | `install-dependencies` | boolean | `true` | No |
+| `use-uv-lock` | boolean | `false` | Required for packaged projects |
+| `dependency-extras` | string | `'*'` (all extras) | No |
+| `build-dependency-group` | string | `''` | Required when the project needs a locked native-build environment |
 | `run-lint` | boolean | `true` | No |
 | `run-type-check` | boolean | `true` | No |
 | `run-tests` | boolean | `true` | No |
@@ -190,9 +200,14 @@ No Codecov secret is forwarded. Opt-in central publication uses GitHub OIDC;
 
 #### `go-ci.yml`
 
+The workflow uses Go 1.26.8 by default and installs its tools from the action's
+isolated, checked-in Go module graphs. Select `golangci-lint-major: '2'` for a
+version 2 configuration; the default preserves version 1 configurations.
+
 | Input | Type | Default | Required |
 |---|---|---|---|
-| `go-version` | string | `'1.23'` | No |
+| `go-version` | string | `'1.26.8'` | No |
+| `golangci-lint-major` | string | `'1'` | No |
 | `working-directory` | string | `'.'` | No |
 | `run-lint` | boolean | `true` | No |
 | `run-tests` | boolean | `true` | No |
