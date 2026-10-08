@@ -126,11 +126,12 @@ class AutoMergeTests(unittest.TestCase):
     def test_failed_check_blocks_mutation(self):
         """Failed or cancelled checks stop the workflow before a merge request."""
         for state in ["FAILURE", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED", "ERROR"]:
+            pull_request = pr(state=state)
             with (
                 self.subTest(state=state),
                 self.assertRaisesRegex(RuntimeError, "check failed"),
             ):
-                self.run_workflow([pr(state=state)])
+                self.run_workflow([pull_request])
 
     def test_changed_head_is_revalidated(self):
         """A concurrent push requires fresh validation and binds merge to the new head."""
@@ -276,8 +277,9 @@ class AutoMergeTests(unittest.TestCase):
 
     def test_api_failure_is_not_silently_accepted(self):
         """API failures propagate instead of reporting successful automation."""
+        failure = RuntimeError("API unavailable")
         with self.assertRaisesRegex(RuntimeError, "API unavailable"):
-            self.run_workflow([RuntimeError("API unavailable")])
+            self.run_workflow([failure])
 
 
 class CheckAttemptOrderingTests(unittest.TestCase):

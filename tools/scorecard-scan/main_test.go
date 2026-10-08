@@ -109,24 +109,79 @@ func TestIncompleteScanNeverPublishesOrKeepsStaleOutput(t *testing.T) {
 	}
 }
 
+func officialSARIFResult(t *testing.T, failing bool) scorecard.Result {
+	t.Helper()
+	result := completeResult()
+	for i := range result.Checks {
+		if result.Checks[i].Name == "Packaging" {
+			result.Checks[i] = upstreamPackagingAbsent(t)
+		}
+	}
+	if failing {
+		for i := range result.Checks {
+			if result.Checks[i].Name == "Pinned-Dependencies" {
+				result.Checks[i].Score = 0
+				result.Checks[i].Details = []checker.CheckDetail{{Type: checker.DetailWarn, Msg: checker.LogMessage{
+					Text: "dependency is not pinned", Path: ".github/workflows/build.yml", Type: finding.FileTypeSource, Offset: 7,
+				}}}
+			}
+		}
+	}
+	return result
+}
+
+func assertOfficialSARIFRun(t *testing.T, run map[string]interface{}, categories map[string]bool) bool {
+	t.Helper()
+	found := false
+	driver := run["tool"].(map[string]interface{})["driver"].(map[string]interface{})
+	if driver["name"] != "Scorecard" || driver["semanticVersion"] != "v5.5.0" {
+		t.Fatalf("changed tool identity: %v", driver)
+	}
+	id := run["automationDetails"].(map[string]interface{})["id"].(string)
+	parts := strings.SplitN(id, "/", 3)
+	if len(parts) != 3 {
+		t.Fatalf("invalid automation identity %q", id)
+	}
+	category := strings.Join(parts[:2], "/")
+	if present, ok := categories[category]; !ok || present {
+		t.Fatalf("unexpected or duplicate category %q", category)
+	}
+	categories[category] = true
+	for _, rawFinding := range run["results"].([]interface{}) {
+		f := rawFinding.(map[string]interface{})
+		if f["ruleId"] != "PinnedDependenciesID" {
+			t.Fatalf("unexpected finding %v", f)
+		}
+		location := f["locations"].([]interface{})[0].(map[string]interface{})["physicalLocation"].(map[string]interface{})
+		if location["artifactLocation"].(map[string]interface{})["uri"] != ".github/workflows/build.yml" || location["region"].(map[string]interface{})["startLine"] != float64(7) {
+			t.Fatalf("lost finding location: %v", location)
+		}
+		found = true
+	}
+	return found
+}
+
+func assertOfficialSARIFFindings(t *testing.T, sarif map[string]interface{}, failing bool) {
+	t.Helper()
+	found := false
+	categories := map[string]bool{"supply-chain/local": false, "supply-chain/online-scm": false, "supply-chain/branch-protection": false}
+	for _, raw := range sarif["runs"].([]interface{}) {
+		runFound := assertOfficialSARIFRun(t, raw.(map[string]interface{}), categories)
+		found = found || runFound
+	}
+	for category, present := range categories {
+		if !present {
+			t.Errorf("lost historical category %s", category)
+		}
+	}
+	if found != failing {
+		t.Fatalf("lost finding: found=%v want=%v", found, failing)
+	}
+}
+
 func TestOfficialSARIFPreservesFindingsAndHistoricalIdentity(t *testing.T) {
 	for _, failing := range []bool{false, true} {
-		result := completeResult()
-		for i := range result.Checks {
-			if result.Checks[i].Name == "Packaging" {
-				result.Checks[i] = upstreamPackagingAbsent(t)
-			}
-		}
-		if failing {
-			for i := range result.Checks {
-				if result.Checks[i].Name == "Pinned-Dependencies" {
-					result.Checks[i].Score = 0
-					result.Checks[i].Details = []checker.CheckDetail{{Type: checker.DetailWarn, Msg: checker.LogMessage{
-						Text: "dependency is not pinned", Path: ".github/workflows/build.yml", Type: finding.FileTypeSource, Offset: 7,
-					}}}
-				}
-			}
-		}
+		result := officialSARIFResult(t, failing)
 		output := filepath.Join(t.TempDir(), "results.sarif")
 		calls := 0
 		if err := scanAndWrite(context.Background(), output, strings.Repeat("a", 40), func(context.Context) (scorecard.Result, error) {
@@ -146,44 +201,7 @@ func TestOfficialSARIFPreservesFindingsAndHistoricalIdentity(t *testing.T) {
 		if err := json.Unmarshal(data, &sarif); err != nil {
 			t.Fatal(err)
 		}
-		found := false
-		categories := map[string]bool{"supply-chain/local": false, "supply-chain/online-scm": false, "supply-chain/branch-protection": false}
-		for _, raw := range sarif["runs"].([]interface{}) {
-			run := raw.(map[string]interface{})
-			driver := run["tool"].(map[string]interface{})["driver"].(map[string]interface{})
-			if driver["name"] != "Scorecard" || driver["semanticVersion"] != "v5.5.0" {
-				t.Fatalf("changed tool identity: %v", driver)
-			}
-			id := run["automationDetails"].(map[string]interface{})["id"].(string)
-			parts := strings.SplitN(id, "/", 3)
-			if len(parts) != 3 {
-				t.Fatalf("invalid automation identity %q", id)
-			}
-			category := strings.Join(parts[:2], "/")
-			if present, ok := categories[category]; !ok || present {
-				t.Fatalf("unexpected or duplicate category %q", category)
-			}
-			categories[category] = true
-			for _, rawFinding := range run["results"].([]interface{}) {
-				f := rawFinding.(map[string]interface{})
-				if f["ruleId"] != "PinnedDependenciesID" {
-					t.Fatalf("unexpected finding %v", f)
-				}
-				location := f["locations"].([]interface{})[0].(map[string]interface{})["physicalLocation"].(map[string]interface{})
-				if location["artifactLocation"].(map[string]interface{})["uri"] != ".github/workflows/build.yml" || location["region"].(map[string]interface{})["startLine"] != float64(7) {
-					t.Fatalf("lost finding location: %v", location)
-				}
-				found = true
-			}
-		}
-		for category, present := range categories {
-			if !present {
-				t.Errorf("lost historical category %s", category)
-			}
-		}
-		if found != failing {
-			t.Fatalf("lost finding: found=%v want=%v", found, failing)
-		}
+		assertOfficialSARIFFindings(t, sarif, failing)
 	}
 }
 

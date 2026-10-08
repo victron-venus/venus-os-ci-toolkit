@@ -318,8 +318,9 @@ class RunnerModeTests(unittest.TestCase):
             "CONSOLE",
         ):
             with self.subTest(selection=selection), patch.object(mode, "api") as api:
+                args = SimpleNamespace(repo=selection)
                 with self.assertRaises(KeyError):
-                    mode.run_switch(SimpleNamespace(repo=selection))
+                    mode.run_switch(args)
                 api.assert_not_called()
 
     def test_dry_run_does_not_mutate(self):

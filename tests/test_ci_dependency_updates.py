@@ -225,10 +225,9 @@ class CoupledWorkflowTests(unittest.TestCase):
                 }
             )
             (directory / ".github/workflows/quality-gate.yml").write_text(workflow)
+            parsed_workflows = {"quality-gate.yml": yaml.safe_load(workflow)}
             with self.assertRaisesRegex(ValueError, "differs from generator"):
-                contracts.validate_generator_pins(
-                    directory, {"quality-gate.yml": yaml.safe_load(workflow)}
-                )
+                contracts.validate_generator_pins(directory, parsed_workflows)
 
     def test_matching_mutable_generator_and_workflow_refs_are_rejected(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -253,10 +252,9 @@ class CoupledWorkflowTests(unittest.TestCase):
                     (directory / ".github/workflows/quality-gate.yml").write_text(
                         workflow
                     )
+                    parsed_workflows = {"quality-gate.yml": yaml.safe_load(workflow)}
                     with self.assertRaisesRegex(ValueError, "full commit SHAs"):
-                        contracts.validate_generator_pins(
-                            directory, {"quality-gate.yml": yaml.safe_load(workflow)}
-                        )
+                        contracts.validate_generator_pins(directory, parsed_workflows)
 
 
 if __name__ == "__main__":
