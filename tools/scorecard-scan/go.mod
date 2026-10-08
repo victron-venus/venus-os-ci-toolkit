@@ -1,6 +1,6 @@
 module github.com/victron-venus/venus-os-ci-toolkit/tools/scorecard-scan
 
-go 1.27.1
+go 1.27.2
 
 require github.com/ossf/scorecard/v5 v5.5.0
 

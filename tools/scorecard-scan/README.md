@@ -1,6 +1,6 @@
 # Fail-closed Scorecard scanner
 
-Build with Go 1.27.1 and run with Git available on PATH:
+Build with Go 1.27.2 and run with Git available on PATH:
 
 ```sh
 go build -mod=readonly -o scorecard-scan .
