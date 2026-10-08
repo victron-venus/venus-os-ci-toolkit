@@ -382,6 +382,21 @@ class AdapterTest(unittest.TestCase):  # pylint: disable=too-many-public-methods
             'release.version = "2.5.42-beta.2"', (self.root / "config.toml").read_text()
         )
 
+    def test_toml_table_delimiters_inside_quoted_keys_are_literal(self):
+        for quoted, key in (
+            ('"bracket]#key"', "bracket]#key"),
+            ("'bracket]#key'", "bracket]#key"),
+            ('"escaped\\\"quote]key"', 'escaped"quote]key'),
+        ):
+            with self.subTest(quoted=quoted):
+                before = f"[tool.{quoted}] # trailing [comment]\nversion = '2.5.42'\n"
+                path = self.write("config.toml", before)
+                self.sync([{
+                    "path": "config.toml", "format": "toml",
+                    "field": ["tool", key, "version"],
+                }])
+                self.assertEqual(path.read_text(), before.replace("2.5.42", "2.5.42-beta.2"))
+
     def test_toml_long_whitespace_and_header_comment_preserve_layout(self):
         padding = " " * 4000
         before = (

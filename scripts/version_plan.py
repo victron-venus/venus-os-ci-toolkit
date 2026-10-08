@@ -741,6 +741,34 @@ def _toml_assignment(line, current, target, replacement):
     return start, end, _toml_token(replacement, scalar.group())
 
 
+def _toml_header_end(line, opening, index):
+    closing = 2 if line.startswith("]]", index) else 1
+    suffix = line[index + closing :].strip()
+    if suffix and not suffix.startswith("#"):
+        return None
+    require(opening == closing, "Malformed TOML table header")
+    return "[" * opening, line[opening:index]
+
+
+def _toml_header(line):
+    """Locate a table's closing brackets without backtracking through key text."""
+    line = line.lstrip()
+    if not line.startswith("["):
+        return None
+    opening = 2 if line.startswith("[[") else 1
+    index, quote = opening, None
+    while index < len(line):
+        if quote:
+            index, quote = _toml_quote_step(line, index, quote)
+            continue
+        if line[index] in "\"'":
+            quote = line[index]
+        elif line[index] == "]":
+            return _toml_header_end(line, opening, index)
+        index += 1
+    return None
+
+
 def _toml_assignments(text, target, replacement):
     """Track tables and continuations without treating string contents as keys."""
     current = ()
@@ -754,12 +782,9 @@ def _toml_assignments(text, target, replacement):
         if continuation:
             offset += len(line)
             continue
-        header = re.fullmatch(
-            r"\s*+(\[\[?)(.+?)(\]\]?)\s*+(?:#[^\r\n]*+)?(?:\r?\n)?", line
-        )
+        header = _toml_header(line)
         if header:
-            opening, key, closing = header.groups()
-            require(len(opening) == len(closing), "Malformed TOML table header")
+            opening, key = header
             current = _toml_key(key)
             if opening == "[[":
                 arrays[current] = arrays.get(current, -1) + 1
