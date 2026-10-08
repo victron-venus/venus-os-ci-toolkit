@@ -28,6 +28,13 @@ to runner temporary storage with restrictive permissions and removed even after
 failure. Every pushed commit is created by Git, locally verified against that
 key's fingerprint, and required to be verified by GitHub before opening the PR.
 
+The signing step accepts Ed25519, NIST ECDSA curves with at least 256 bits, or
+RSA keys with at least 2048 bits. It rejects DSA, smaller RSA keys, unknown key
+types and malformed keys before configuring Git or publishing a fingerprint.
+Key inspection has a bounded timeout and reports generic errors without
+including private key material. Configure a supported dedicated key before
+using this workflow; the workflow does not generate or rotate credentials.
+
 ## Publication contract
 
 The helper checks the source repository, workflow, commit, run attempt and every
