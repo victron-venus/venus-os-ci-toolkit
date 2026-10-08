@@ -12,3 +12,9 @@ Include the affected version or commit, steps to reproduce, expected and actual
 behavior, and potential impact. Remove access tokens, credentials and personal
 data from examples. Do not disclose exploit details in public issues before
 coordinating with the maintainers.
+
+## Release helper transport
+
+The release helpers use GitHub CLI for authenticated HTTPS operations. See the
+[per-command TLS profile](docs/RELEASE_TLS_PROFILE.md) for the verified toolchain,
+certificate key restrictions and a read-only verification command.
