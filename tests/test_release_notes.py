@@ -102,10 +102,11 @@ class ReleaseNotesTests(unittest.TestCase):
     def test_crlf_notes_preserve_source_byte_verification(self):
         crlf = NOTES.replace("\n", "\r\n")
         self.assertEqual(render(crlf), render(NOTES))
+        lf_contents = contents(NOTES)
         with self.assertRaisesRegex(release.ReleaseError, "size mismatch"):
-            render(crlf, response_change={"size": len(NOTES.encode())})
+            render(crlf, response_change={"size": lf_contents["size"]})
         with self.assertRaisesRegex(release.ReleaseError, "blob identity"):
-            render(crlf, response_change={"sha": contents(NOTES)["sha"]})
+            render(crlf, response_change={"sha": lf_contents["sha"]})
 
     def test_missing_or_incomplete_sections(self):
         for text in (

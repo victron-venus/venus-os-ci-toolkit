@@ -23,9 +23,23 @@ class UniqueKeyLoader(yaml.BaseLoader):
         for key_node, value_node in node.value:
             key = self.construct_object(key_node, deep=deep)
             if not isinstance(key, str) or key in mapping:
-                raise ValueError(f"Duplicate or non-string YAML key at {key_node.start_mark}")
+                raise ValueError(
+                    f"Duplicate or non-string YAML key at {key_node.start_mark}"
+                )
             mapping[key] = self.construct_object(value_node, deep=deep)
         return mapping
+
+
+def codeql_pins(job):
+    """Read just the analyzer action references from one job."""
+    return {
+        step["uses"].rsplit("@", 1)[-1]
+        for step in job.get("steps", [])
+        if re.match(
+            r"github/codeql-action/(init|autobuild|analyze|upload-sarif)@",
+            step.get("uses", ""),
+        )
+    }
 
 
 def validate_codeql(workflows):
@@ -33,14 +47,7 @@ def validate_codeql(workflows):
     repository_pins = set()
     for filename, workflow in workflows.items():
         for name, job in workflow.get("jobs", {}).items():
-            pins = {
-                step["uses"].rsplit("@", 1)[-1]
-                for step in job.get("steps", [])
-                if re.match(
-                    r"github/codeql-action/(init|autobuild|analyze|upload-sarif)@",
-                    step.get("uses", ""),
-                )
-            }
+            pins = codeql_pins(job)
             if len(pins) > 1 or any(
                 not re.fullmatch(COMMIT_SHA_PATTERN, pin) for pin in pins
             ):
@@ -54,6 +61,17 @@ def validate_codeql(workflows):
         )
 
 
+def validate_action_reference(filename, reference, pins):
+    """Check one external action against immutable and canonical pins."""
+    if not reference or reference.startswith("./"):
+        return
+    action, _, revision = reference.partition("@")
+    if not re.fullmatch(COMMIT_SHA_PATTERN, revision):
+        raise ValueError(f"{filename}: {action} must use a full commit SHA")
+    if pins is not None and (action not in pins or revision != pins[action]):
+        raise ValueError(f"{filename}: {action} differs from generator pins")
+
+
 def validate_workflow_pins(filename, workflow, pins):
     """Require immutable actions and compare canonical generator pins when present."""
     for job in workflow.get("jobs", {}).values():
@@ -61,13 +79,7 @@ def validate_workflow_pins(filename, workflow, pins):
             step.get("uses", "") for step in job.get("steps", [])
         ]
         for reference in references:
-            if not reference or reference.startswith("./"):
-                continue
-            action, _, revision = reference.partition("@")
-            if not re.fullmatch(COMMIT_SHA_PATTERN, revision):
-                raise ValueError(f"{filename}: {action} must use a full commit SHA")
-            if pins is not None and (action not in pins or revision != pins[action]):
-                raise ValueError(f"{filename}: {action} differs from generator pins")
+            validate_action_reference(filename, reference, pins)
 
 
 def generator_pins(directory):
@@ -77,15 +89,28 @@ def generator_pins(directory):
     # The canonical toolkit must retain the manifest consumed by its generator.
     if not manifest.exists() and (directory / "scripts/install_release.py").exists():
         raise ValueError("Missing generator action-pin manifest")
-    pins = None if not manifest.exists() else {
-        pin["packageName"]: pin["digest"] for pin in json.loads(manifest.read_text())
-    }
-    if pins is not None and any(not re.fullmatch(COMMIT_SHA_PATTERN, pin) for pin in pins.values()):
+    pins = (
+        None
+        if not manifest.exists()
+        else {
+            pin["packageName"]: pin["digest"]
+            for pin in json.loads(manifest.read_text())
+        }
+    )
+    if pins is not None and any(
+        not re.fullmatch(COMMIT_SHA_PATTERN, pin) for pin in pins.values()
+    ):
         raise ValueError("Generator pins must be full commit SHAs")
     policy_path = directory / ".release-policy.json"
-    coverage = json.loads(policy_path.read_text()).get("coverage") if policy_path.exists() else None
+    coverage = (
+        json.loads(policy_path.read_text()).get("coverage")
+        if policy_path.exists()
+        else None
+    )
     if pins is not None and coverage:
-        pins["victron-venus/venus-os-ci-toolkit/.github/workflows/coverage-upload.yml"] = coverage["toolkit_ref"]
+        pins[
+            "victron-venus/venus-os-ci-toolkit/.github/workflows/coverage-upload.yml"
+        ] = coverage["toolkit_ref"]
     return pins
 
 
@@ -160,7 +185,9 @@ def validate_coverage_callers(policy, workflows, gate):
     ref = coverage["toolkit_ref"]
     if not isinstance(ref, str) or not re.fullmatch(COMMIT_SHA_PATTERN, ref):
         raise ValueError("Coverage toolkit_ref must be a full commit SHA")
-    reference = "victron-venus/venus-os-ci-toolkit/.github/workflows/coverage-upload.yml@" + ref
+    reference = (
+        "victron-venus/venus-os-ci-toolkit/.github/workflows/coverage-upload.yml@" + ref
+    )
     for report in coverage["reports"]:
         name = "coverage-" + report["name"]
         upload = gate.get(name, {})
@@ -168,8 +195,10 @@ def validate_coverage_callers(policy, workflows, gate):
         if (
             upload.get("uses") != reference
             or upload.get("needs") != ["scope", f"check-{producer_index}"]
-            or upload.get("permissions") != {"contents": "read", "actions": "read", "id-token": "write"}
-            or upload.get("with") != {
+            or upload.get("permissions")
+            != {"contents": "read", "actions": "read", "id-token": "write"}
+            or upload.get("with")
+            != {
                 "artifact-name": name,
                 "report-file": report["path"].rsplit("/", 1)[-1],
                 "format": report["format"],
@@ -177,7 +206,9 @@ def validate_coverage_callers(policy, workflows, gate):
                 "required": str(report["required"]).lower(),
             }
         ):
-            raise ValueError("Coverage upload caller differs from its policy or producer dependency")
+            raise ValueError(
+                "Coverage upload caller differs from its policy or producer dependency"
+            )
         producer = workflows[report["workflow"]]["jobs"][report["job"]]
         validate_coverage_producer(producer, report, ref)
     return {reference}
@@ -200,8 +231,7 @@ def validate(directory: Path, *, actions_only=False) -> None:
         if (
             "pull_request" in workflow.get("on", {})
             and filename not in visited
-            and filename
-            not in {QUALITY_GATE, "auto-approve.yml", "auto-merge.yml"}
+            and filename not in {QUALITY_GATE, "auto-approve.yml", "auto-merge.yml"}
         ):
             raise ValueError(f"{filename}: PR validator is outside the required gate")
     gate = workflows[QUALITY_GATE]["jobs"]
