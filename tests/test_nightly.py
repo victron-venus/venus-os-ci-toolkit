@@ -135,7 +135,7 @@ class LocalNightlyTests(unittest.TestCase):
         self.assertEqual([row["returncode"] for row in rows], [7, 0])
         self.assertEqual([row["head"] for row in rows], heads)
         self.assertLessEqual(rows[0]["finished_at"], rows[1]["started_at"])
-        self.assertEqual(rows[1]["local_origin_sha"], None)
+        self.assertIsNone(rows[1]["local_origin_sha"])
         self.assertIn("no fetch", rows[1]["remote_freshness"])
         self.assertIn(
             "local check ran", Path(rows[1]["log"]).read_text(encoding="utf-8")
@@ -242,6 +242,7 @@ class LocalNightlyTests(unittest.TestCase):
         process = mock.MagicMock(pid=12345)
         process.__enter__.return_value = process
         process.wait.side_effect = [subprocess.TimeoutExpired("local check", 2), 0, 0]
+        output = io.StringIO()
         with (
             mock.patch.object(
                 nightly.subprocess, "Popen", return_value=process
@@ -249,7 +250,7 @@ class LocalNightlyTests(unittest.TestCase):
             mock.patch.object(nightly.os, "killpg") as kill,
             self.assertRaises(subprocess.TimeoutExpired),
         ):
-            nightly.run_check(self.root, io.StringIO(), 2)
+            nightly.run_check(self.root, output, 2)
         self.assertEqual(
             spawn.call_args.args[0], [sys.executable, "scripts/release.py", "check"]
         )

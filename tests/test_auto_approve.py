@@ -535,6 +535,7 @@ class AutoApproveContract(unittest.TestCase):
 
     def test_api_failure_propagates_without_mutation(self):
         """A failed GitHub API command must stop approval with a clear error."""
+        compiled = compile(self.code, str(WORKFLOW), "exec")
         with (
             patch.dict(os.environ, self.environment, clear=True),
             patch("subprocess.run", side_effect=subprocess.CalledProcessError(1, "gh")),
@@ -542,7 +543,7 @@ class AutoApproveContract(unittest.TestCase):
         ):
             # Execute the real entrypoint while every attempted API call fails locally.
             # pylint: disable-next=exec-used
-            exec(compile(self.code, str(WORKFLOW), "exec"), {"__name__": "__main__"})  # noqa: S102
+            exec(compiled, {"__name__": "__main__"})  # noqa: S102
         self.assert_posts(0)
 
     def test_stale_same_head_approval_is_refreshed(self):

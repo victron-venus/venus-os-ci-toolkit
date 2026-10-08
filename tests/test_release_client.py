@@ -418,15 +418,16 @@ class GeneratorTest(unittest.TestCase):
                 mock.patch.object(controller, "GitHub", return_value=gh),
                 mock.patch.object(subprocess, "check_output", return_value="1.2.3\n"),
             ):
+                compiled = compile(source, "generated-prepare", "exec")
                 with self.assertRaises(SystemExit) as stopped:
-                    exec(compile(source, "generated-prepare", "exec"), {})  # noqa: S102 - trusted generator under test
+                    exec(compiled, {})  # noqa: S102 - trusted generator under test
                 self.assertEqual(stopped.exception.code, 0)
                 self.assertIn("status=version-required", output.read_text())
                 self.assertIn("build=false", output.read_text())
                 output.unlink()
                 gh.api.side_effect = controller.GitHubError("HTTP 403")
                 with self.assertRaisesRegex(controller.GitHubError, "HTTP 403"):
-                    exec(compile(source, "generated-prepare", "exec"), {})  # noqa: S102 - trusted generator under test
+                    exec(compiled, {})  # noqa: S102 - trusted generator under test
                 self.assertFalse(output.exists())
 
     def test_release_publication_depends_on_build_and_checks(self):
