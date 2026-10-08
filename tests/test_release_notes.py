@@ -101,6 +101,48 @@ class ReleaseNotesTests(unittest.TestCase):
         self.assertEqual(github.calls, [("GET", f"contents/CHANGELOG.md?ref={SOURCE}", None)])
         self.assertEqual(github.writes, [])
 
+    def test_higher_level_appendix_cannot_supply_version_guidance(self):
+        for indent in ("", " ", "  ", "   "):
+            text = (
+                "## [1.2.3]\n" + indent + "# Appendix\n"
+                "### Upgrade\nRead unrelated migration.\n"
+                "### Security\nUnrelated security guidance.\n"
+            )
+            with self.subTest(indent=indent), self.assertRaises(release.ReleaseError):
+                render(text)
+
+    def test_valid_notes_stop_before_higher_level_appendix(self):
+        text = NOTES.replace("## [1.2.2]", "# Appendix\nUnrelated text.\n## [1.2.2]")
+        self.assertEqual(render(text), render(NOTES))
+
+    def test_higher_level_headings_end_raw_and_visible_guidance_sections(self):
+        for heading in ("# Appendix", "## [1.2.4]"):
+            text = "### Upgrade\nBefore <!-- hidden --> after.\n" + heading + "\nUnrelated.\n"
+            [(title, raw, visible)] = list(release._release_sections(text, 3))
+            self.assertEqual(title, "Upgrade")
+            self.assertEqual(raw, "Before <!-- hidden --> after.")
+            self.assertNotIn("hidden", visible)
+            self.assertNotIn("Unrelated", visible)
+            self.assertNotIn(heading, visible)
+
+    def test_higher_level_heading_does_not_hide_later_version_selection(self):
+        text = "# Introduction\nUnrelated.\n" + NOTES
+        self.assertEqual(render(text), render(NOTES))
+
+    def test_literal_and_commented_higher_level_headings_do_not_end_sections(self):
+        for example in (
+            "```markdown\n# Appendix\n```",
+            "~~~markdown\n# Appendix\n~~~",
+            "<!--\n# Appendix\n-->",
+            "<!-- comment --># Appendix",
+            "    # Appendix",
+            "#### Nested details",
+            "####### Not an ATX heading",
+        ):
+            text = NOTES.replace("### Upgrade", example + "\n### Upgrade")
+            with self.subTest(example=example):
+                self.assertIn(example, render(text))
+
     def test_comment_only_guidance_is_rejected(self):
         for heading in ("Upgrade", "Security"):
             for comment in (

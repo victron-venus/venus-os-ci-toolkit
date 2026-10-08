@@ -1092,10 +1092,12 @@ def _release_headings(text: str) -> list[tuple[int, str, int, int]]:
     headings = []
     offset = 0
     for line, heading_allowed, _ in _release_lines(text):
-        level = len(line) - len(line.lstrip("#"))
-        if heading_allowed and level in (2, 3) and line[level : level + 1] in (" ", "\t"):
+        indentation = len(line) - len(line.lstrip(" "))
+        heading = line[indentation:] if indentation <= 3 else line
+        level = len(heading) - len(heading.lstrip("#"))
+        if heading_allowed and 1 <= level <= 6 and heading[level : level + 1] in (" ", "\t"):
             headings.append(
-                (level, line[level:].strip(" \t\r\n"), offset, offset + len(line))
+                (level, heading[level:].strip(" \t\r\n"), offset, offset + len(line))
             )
         offset += len(line)
     return headings
@@ -1104,8 +1106,10 @@ def _release_headings(text: str) -> list[tuple[int, str, int, int]]:
 def _release_sections(text: str, level: int):
     """Keep original bodies plus comment-masked bodies for validation."""
     visible = "".join(line for line, _, _ in _release_lines(text))
-    headings = [heading for heading in _release_headings(text) if heading[0] == level]
-    for index, (_, title, _, start) in enumerate(headings):
+    headings = [heading for heading in _release_headings(text) if heading[0] <= level]
+    for index, (heading_level, title, _, start) in enumerate(headings):
+        if heading_level != level:
+            continue
         end = headings[index + 1][2] if index + 1 < len(headings) else len(text)
         yield title, text[start:end].strip(), visible[start:end]
 
