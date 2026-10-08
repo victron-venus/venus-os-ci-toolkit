@@ -116,6 +116,33 @@ class PreparationTest(unittest.TestCase):  # pylint: disable=too-many-instance-a
         self.assertEqual(self.git("branch", "--list", "release/*"), "")
         self.assertEqual(self.pushes, [])
 
+    def test_untrusted_requested_version_is_rejected_before_preparation_writes(self):
+        versions = (
+            "../outside",
+            "1.2.4/../../outside",
+            "/tmp/outside",
+            "C:\\outside",
+            "--output=outside",
+            "1.2.4\n",
+            "1.2.\u0664",
+            "1.2.4\x00",
+        )
+        before_refs = self.git("show-ref")
+        before_worktrees = self.git("worktree", "list", "--porcelain")
+        with patch.object(preparation, "_preparation_topic") as topic:
+            with patch.object(preparation.version_plan, "sync_versions") as sync:
+                for requested in versions:
+                    with self.subTest(requested=requested):
+                        with self.assertRaisesRegex(ValueError, "Requested version must"):
+                            preparation.prepare(self.root, requested=requested, pull_request=True)
+                topic.assert_not_called()
+                sync.assert_not_called()
+        self.assertEqual(self.git("show-ref"), before_refs)
+        self.assertEqual(self.git("worktree", "list", "--porcelain"), before_worktrees)
+        self.assertEqual(self.git("status", "--porcelain"), "")
+        self.assertEqual(self.pushes, [])
+        self.assertEqual(self.creates, [])
+
     def test_repeated_preparation_uses_same_pr_and_preserves_local_main(self):
         first = preparation.prepare(self.root, pull_request=True)
         old = self.topic()

@@ -32,6 +32,8 @@ individual findings and record any demonstrated false positive with its
 reason; do not hide the rest of a file to suppress one finding. The supported
 automatic-analysis settings are documented by
 [SonarSource](https://docs.sonarsource.com/sonarqube-cloud/analyzing-source-code/automatic-analysis#additional-analysis-configuration).
+Keep reproducible false-positive assessments in
+[the static-analysis review notes](docs/STATIC_ANALYSIS.md).
 
 Add regression tests for bug fixes and tests for major new functionality. Test
 both accepted and rejected inputs at trust boundaries. Preserve old consumer
