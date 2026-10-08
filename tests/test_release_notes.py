@@ -117,8 +117,9 @@ class ClosingReleaseHeadingsTests(unittest.TestCase):
             "Upgrade ### trailing",
             "Upgrade\u00a0###",
         ):
+            text = NOTES.replace("### Upgrade", "### " + title)
             with self.subTest(title=title), self.assertRaises(release.ReleaseError):
-                render(NOTES.replace("### Upgrade", "### " + title))
+                render(text)
 
 
 class ReleaseNotesTests(unittest.TestCase):
