@@ -288,6 +288,51 @@ class RegistryPublicationTests(unittest.TestCase):
                         )
                     self.assertEqual(issued, plan["commands"] if execute else [])
 
+    def test_missing_registry_accepts_skopeo_rendered_diagnostic(self):
+        """A new GHCR image can be published with current Skopeo diagnostics."""
+        for error in (
+            'time="2026-10-10T14:18:00-07:00" level=fatal msg="Error listing '
+            'repository tags: fetching tags list: name unknown"\n',
+            "NAME_UNKNOWN: repository name not known to registry\n",
+            "NAME_UNKNOWN\n",
+            "repository does not exist\n",
+        ):
+            with (
+                self.subTest(error=error),
+                mock.patch.object(
+                    publisher.subprocess,
+                    "run",
+                    return_value=subprocess.CompletedProcess([], 1, "", error),
+                ),
+            ):
+                publisher.require_unpublished_version("ghcr.io/owner/new", "1.2.3")
+
+    def test_registry_failures_do_not_authorize_publication(self):
+        """Access, transport and ambiguous absence errors still fail closed."""
+        for error in (
+            "unauthorized: authentication required",
+            "denied: permission denied",
+            "repository does not exist or may require docker login",
+            "NAME_UNKNOWN: authentication required",
+            "name unknown: access denied",
+            "certificate signed by unknown authority",
+            "dial tcp: connection refused",
+            "MANIFEST_UNKNOWN: manifest unknown",
+            "unexpected EOF",
+        ):
+            with (
+                self.subTest(error=error),
+                mock.patch.object(
+                    publisher.subprocess,
+                    "run",
+                    return_value=subprocess.CompletedProcess([], 1, "", error),
+                ),
+                self.assertRaisesRegex(
+                    ReleaseError, "Cannot establish registry tag inventory"
+                ),
+            ):
+                publisher.require_unpublished_version("ghcr.io/owner/new", "1.2.3")
+
     def test_all_versions_precede_latest_from_the_same_approved_archives(self):
         """Multiple images are preflighted before any version or latest write."""
         with tempfile.TemporaryDirectory() as temp:
