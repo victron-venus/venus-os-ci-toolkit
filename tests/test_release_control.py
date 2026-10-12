@@ -18,6 +18,7 @@ import zipfile
 from contextlib import contextmanager
 from copy import deepcopy
 from datetime import datetime, timezone
+from itertools import product
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -30,6 +31,135 @@ SPEC.loader.exec_module(rc)
 REPO = "example/project"
 SHA = "a" * 40
 RC_TAG = "v1.2.3-rc.2"
+
+
+class MetadataReadRetryTests(unittest.TestCase):
+    """Transient metadata failures cannot replay publication or change policy."""
+
+    ERROR_FORMATS = (
+        "gh: Server Error (HTTP {status})",
+        "gh: HTTP {status}",
+        "gh: HTTP {status}: Gateway response",
+        "gh: HTTP {status} \t\r\n",
+        "gh: HTTP {status}: Gateway response\r\n",
+    )
+
+    @staticmethod
+    def response(status=0, stdout=b"{}", error_format=ERROR_FORMATS[0]):
+        return subprocess.CompletedProcess(
+            [], bool(status), stdout,
+            error_format.format(status=status).encode() if status else b"",
+        )
+
+    def test_transient_read_retries_and_discards_partial_pages(self):
+        for status, error_format in product((500, 502, 503, 504), self.ERROR_FORMATS):
+            with (
+                self.subTest(status=status, error_format=error_format),
+                patch.object(rc.subprocess, "run", side_effect=[
+                    self.response(status, b'[{"partial": true}]', error_format),
+                    self.response(stdout=b'[[{"id": 42}]]'),
+                ]) as run,
+                patch.object(rc.time, "sleep") as sleep,
+                patch.object(rc.random, "uniform", return_value=1.5),
+            ):
+                self.assertEqual(rc.GitHub(REPO).pages("releases"), [{"id": 42}])
+                self.assertEqual(run.call_count, 2)
+                self.assertEqual(run.call_args_list[0], run.call_args_list[1])
+                self.assertEqual(run.call_args.kwargs["timeout"], 30)
+                sleep.assert_called_once_with(1.5)
+
+    def test_exhausted_reads_fail_without_becoming_missing(self):
+        gh = rc.GitHub(REPO)
+        with (
+            patch.object(rc.subprocess, "run", return_value=self.response(502)) as run,
+            patch.object(rc.time, "sleep") as sleep,
+            self.assertRaises(rc.GitHubError) as error,
+        ):
+            gh.optional("actions/runs/42")
+        self.assertEqual(run.call_count, 3)
+        self.assertEqual(sleep.call_count, 2)
+        self.assertFalse(error.exception.not_found)
+        self.assertIn("HTTP 502", str(error.exception))
+
+    def test_timeouts_are_bounded_and_do_not_expose_partial_output(self):
+        gh = rc.GitHub(REPO)
+        with (
+            patch.object(rc.subprocess, "run", side_effect=subprocess.TimeoutExpired(
+                ["gh"], 30, output=b"private payload", stderr=b"private diagnostics"
+            )) as run,
+            patch.object(rc.time, "sleep") as sleep,
+            patch.object(rc.random, "uniform", side_effect=lambda low, high: high),
+            self.assertRaises(rc.GitHubError) as error,
+        ):
+            gh.api("actions/runs/42")
+        self.assertEqual(run.call_count, 3)
+        self.assertEqual(sum(call.args[0] for call in sleep.call_args_list), 6)
+        self.assertNotIn("private", str(error.exception))
+        self.assertIn("timed out after 3 attempts", str(error.exception))
+
+    def test_policy_and_rate_limit_errors_are_not_retried(self):
+        gh = rc.GitHub(REPO)
+        for status, error_format in product(
+            (400, 401, 403, 404, 409, 422, 429, 501), self.ERROR_FORMATS
+        ):
+            with (
+                self.subTest(status=status, error_format=error_format),
+                patch.object(rc.subprocess, "run", return_value=self.response(
+                    status, error_format=error_format
+                )) as run,
+                patch.object(rc.time, "sleep") as sleep,
+                self.assertRaises(rc.GitHubError),
+            ):
+                gh.api("actions/runs/42")
+            run.assert_called_once()
+            sleep.assert_not_called()
+
+    def test_unrelated_details_and_longer_status_numbers_do_not_trigger_retry(self):
+        gh = rc.GitHub(REPO)
+        for message in (
+            b"gh: HTTP 403: Gateway reported (HTTP 502)",
+            b"gh: HTTP 502: Gateway reported (HTTP 403)",
+            b"gh: HTTP 502: Gateway reported (HTTP 503)",
+            b"gh: HTTP 502-not-status",
+            b"gh: HTTP 502.5",
+            b"gh: HTTP 5020: invalid status",
+            b"gh: HTTP 502suffix",
+            b"other tool: HTTP 502",
+        ):
+            with (
+                self.subTest(message=message),
+                patch.object(rc.subprocess, "run", return_value=subprocess.CompletedProcess(
+                    [], 1, b"", message,
+                )) as run,
+                patch.object(rc.time, "sleep") as sleep,
+                self.assertRaises(rc.GitHubError),
+            ):
+                gh.api("actions/runs/42")
+            run.assert_called_once()
+            sleep.assert_not_called()
+
+    def test_writes_and_binary_transfers_are_not_replayed(self):
+        gh = rc.GitHub(REPO)
+        cases = [
+            ("releases", "POST", {"tag_name": RC_TAG}, "json"),
+            ("releases/42", "PATCH", {"draft": False}, "json"),
+            ("contents/release-version-state.json", "PUT", {"branch": "release-version-state"}, "json"),
+            ("releases/assets/42", "GET", None, "asset"),
+            ("actions/artifacts/42/zip", "GET", None, "json"),
+        ]
+        for (path, method, body, mode), error_format in product(cases, self.ERROR_FORMATS):
+            with (
+                self.subTest(method=method, path=path, error_format=error_format),
+                patch.object(rc.subprocess, "run", return_value=self.response(
+                    502, error_format=error_format
+                )) as run,
+                patch.object(rc.time, "sleep") as sleep,
+                self.assertRaises(rc.GitHubError),
+            ):
+                gh.request(path, method, body, mode)
+            run.assert_called_once()
+            sleep.assert_not_called()
+            self.assertNotIn("timeout", run.call_args.kwargs)
 
 
 class AutomaticBetaPreparationTests(unittest.TestCase):
