@@ -377,8 +377,17 @@ class GitHub:
                         f"{API_READ_ATTEMPTS} attempts"
                     ) from error
             else:
-                transient = result.returncode and re.search(
-                    rb"\(HTTP (?:500|502|503|504)\)", result.stderr or b""
+                # JSON errors end with (HTTP NNN); non-JSON errors use HTTP NNN.
+                # Conflicting codes in an error message must fail closed.
+                stderr = result.stderr or b""
+                statuses = re.findall(
+                    rb"(?m)^gh: HTTP ([0-9]{3})(?=:|[ \t]*\r?$)", stderr
+                ) + re.findall(
+                    rb"(?m)^gh: [^\r\n]* \(HTTP ([0-9]{3})\)\r?$", stderr
+                )
+                transient = (
+                    result.returncode and len(set(statuses)) == 1
+                    and statuses[0] in {b"500", b"502", b"503", b"504"}
                 )
                 if not result.returncode or not transient or attempt == API_READ_ATTEMPTS - 1:
                     return self.response(result, f"GET {endpoint}")

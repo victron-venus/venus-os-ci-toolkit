@@ -18,6 +18,7 @@ import zipfile
 from contextlib import contextmanager
 from copy import deepcopy
 from datetime import datetime, timezone
+from itertools import product
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -35,19 +36,25 @@ RC_TAG = "v1.2.3-rc.2"
 class MetadataReadRetryTests(unittest.TestCase):
     """Transient metadata failures cannot replay publication or change policy."""
 
+    ERROR_FORMATS = (
+        "gh: Server Error (HTTP {status})",
+        "gh: HTTP {status}",
+        "gh: HTTP {status}: Gateway response",
+    )
+
     @staticmethod
-    def response(status=0, stdout=b"{}"):
+    def response(status=0, stdout=b"{}", error_format=ERROR_FORMATS[0]):
         return subprocess.CompletedProcess(
             [], bool(status), stdout,
-            f"gh: Server Error (HTTP {status})".encode() if status else b"",
+            error_format.format(status=status).encode() if status else b"",
         )
 
     def test_transient_read_retries_and_discards_partial_pages(self):
-        for status in (500, 502, 503, 504):
+        for status, error_format in product((500, 502, 503, 504), self.ERROR_FORMATS):
             with (
-                self.subTest(status=status),
+                self.subTest(status=status, error_format=error_format),
                 patch.object(rc.subprocess, "run", side_effect=[
-                    self.response(status, b'[{"partial": true}]'),
+                    self.response(status, b'[{"partial": true}]', error_format),
                     self.response(stdout=b'[[{"id": 42}]]'),
                 ]) as run,
                 patch.object(rc.time, "sleep") as sleep,
@@ -87,10 +94,37 @@ class MetadataReadRetryTests(unittest.TestCase):
         self.assertIn("timed out after 3 attempts", str(error.exception))
 
     def test_policy_and_rate_limit_errors_are_not_retried(self):
-        for status in (400, 401, 403, 404, 409, 422, 429, 501):
+        for status, error_format in product(
+            (400, 401, 403, 404, 409, 422, 429, 501), self.ERROR_FORMATS
+        ):
             with (
-                self.subTest(status=status),
-                patch.object(rc.subprocess, "run", return_value=self.response(status)) as run,
+                self.subTest(status=status, error_format=error_format),
+                patch.object(rc.subprocess, "run", return_value=self.response(
+                    status, error_format=error_format
+                )) as run,
+                patch.object(rc.time, "sleep") as sleep,
+                self.assertRaises(rc.GitHubError),
+            ):
+                rc.GitHub(REPO).api("actions/runs/42")
+            run.assert_called_once()
+            sleep.assert_not_called()
+
+    def test_unrelated_details_and_longer_status_numbers_do_not_trigger_retry(self):
+        for message in (
+            b"gh: HTTP 403: Gateway reported (HTTP 502)",
+            b"gh: HTTP 502: Gateway reported (HTTP 403)",
+            b"gh: HTTP 502: Gateway reported (HTTP 503)",
+            b"gh: HTTP 502-not-status",
+            b"gh: HTTP 502.5",
+            b"gh: HTTP 5020: invalid status",
+            b"gh: HTTP 502suffix",
+            b"other tool: HTTP 502",
+        ):
+            with (
+                self.subTest(message=message),
+                patch.object(rc.subprocess, "run", return_value=subprocess.CompletedProcess(
+                    [], 1, b"", message,
+                )) as run,
                 patch.object(rc.time, "sleep") as sleep,
                 self.assertRaises(rc.GitHubError),
             ):
@@ -106,10 +140,12 @@ class MetadataReadRetryTests(unittest.TestCase):
             ("releases/assets/42", "GET", None, "asset"),
             ("actions/artifacts/42/zip", "GET", None, "json"),
         ]
-        for path, method, body, mode in cases:
+        for (path, method, body, mode), error_format in product(cases, self.ERROR_FORMATS):
             with (
-                self.subTest(method=method, path=path),
-                patch.object(rc.subprocess, "run", return_value=self.response(502)) as run,
+                self.subTest(method=method, path=path, error_format=error_format),
+                patch.object(rc.subprocess, "run", return_value=self.response(
+                    502, error_format=error_format
+                )) as run,
                 patch.object(rc.time, "sleep") as sleep,
                 self.assertRaises(rc.GitHubError),
             ):
