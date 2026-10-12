@@ -28,6 +28,7 @@ from release_control import (  # pylint: disable=wrong-import-position
     GitHubError,
     ReleaseError,
     digest,
+    github_http_response,
     json_bytes,
     parse_json,
     require,
@@ -160,6 +161,7 @@ class GitHub:
             "api",
             "--hostname",
             "github.com",
+            "--include",
             "--method",
             "POST" if body else "GET",
         ]
@@ -175,14 +177,17 @@ class GitHub:
             check=False,
             timeout=120,
         )
+        status, response_body = github_http_response(result.stdout)
+        if (result.returncode == 0) != (200 <= status < 300):
+            raise GitHubError("GitHub HTTP status and CLI result disagree")
         if result.returncode:
-            raise GitHubError("GitHub request failed", b"HTTP 404" in result.stderr)
+            raise GitHubError("GitHub request failed", status == 404)
         require(
-            len(result.stdout) <= (MAX_ARCHIVE if archive else MAX_FILE),
+            len(response_body) <= (MAX_ARCHIVE if archive else MAX_FILE),
             "Oversized GitHub response",
         )
         return (
-            result.stdout if archive else parse_json(result.stdout, "GitHub response")
+            response_body if archive else parse_json(response_body, "GitHub response")
         )
 
     def pages(self, path, field=None):

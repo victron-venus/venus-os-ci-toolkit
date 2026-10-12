@@ -208,16 +208,59 @@ def parse_json(data: bytes, label: str) -> object:
         raise ReleaseError(f"Invalid JSON in {label}") from exc
 
 
-def github_http_status(stderr: bytes) -> bytes | None:
-    """Read an unambiguous CLI status, never a number embedded in its message."""
-    # JSON errors end with (HTTP NNN); non-JSON errors start with HTTP NNN.
-    # Conflicting diagnostics cannot prove either absence or retryability.
-    statuses = set(re.findall(
-        rb"(?m)^gh: HTTP (\d{3})(?::[^\r\n]*|[ \t]*)\r?$", stderr
-    ) + re.findall(
-        rb"(?m)^gh: [^\r\n]* \(HTTP (\d{3})\)\r?$", stderr
-    ))
-    return next(iter(statuses)) if len(statuses) == 1 else None
+def github_http_response(stdout: bytes, paginated: bool = False) -> tuple[int, bytes]:
+    """Decode protocol headers emitted by gh --include, never its error prose.
+
+    Paginated API metadata uses --jq tojson to frame each successful JSON page.
+    gh normalizes those server-generated objects (including duplicate keys);
+    nonpaginated bodies retain their exact bytes and strict JSON validation.
+    """
+    def read_head(data: bytes) -> tuple[int, bytes]:
+        separator = re.search(rb"\r?\n\r?\n", data)
+        if separator is None:
+            raise GitHubError("GitHub response headers are missing or truncated")
+        lines = data[:separator.start()].splitlines()
+        status = re.fullmatch(
+            rb"HTTP/(?:1\.[01]|2(?:\.0)?) ([1-5]\d{2})(?: [^\r\n]*)?", lines[0]
+        ) if lines else None
+        if status is None or any(
+            not re.fullmatch(rb"[!#$%&'*+.^_`|~0-9A-Za-z-]+:[^\r\n]*", line)
+            for line in lines[1:]
+        ):
+            raise GitHubError("GitHub response headers are invalid")
+        return int(status.group(1)), data[separator.end():]
+
+    status, body = read_head(stdout)
+    if not paginated:
+        return status, body
+    pages: list[object] = []
+    # Decode once: page boundaries are character offsets, including non-ASCII
+    # JSON. Surrogate escapes preserve a later arbitrary error body unchanged.
+    text = body.decode("utf-8", errors="surrogateescape")
+    position = 0
+    decoder = json.JSONDecoder()
+    while 200 <= status < 300:
+        while position < len(text) and text[position] in " \t\r\n":
+            position += 1
+        try:
+            _, end = decoder.raw_decode(text, position)
+            page_bytes = text[position:end].encode("utf-8", errors="surrogateescape")
+            pages.append(parse_json(page_bytes, "GitHub response page"))
+        except (ValueError, ReleaseError) as error:
+            raise GitHubError("GitHub response page is invalid or truncated") from error
+        position = end
+        while position < len(text) and text[position] in " \t\r\n":
+            position += 1
+        if position == len(text):
+            return status, json_bytes(pages)
+        separator = re.compile(r"\r?\n\r?\n").search(text, position)
+        if separator is None:
+            raise GitHubError("GitHub response headers are missing or truncated")
+        header = text[position:separator.end()].encode("utf-8", errors="surrogateescape")
+        status, _ = read_head(header)
+        position = separator.end()
+    # A failed page invalidates every preceding page from the same attempt.
+    return status, b""
 
 
 class GitHub:
@@ -293,15 +336,19 @@ class GitHub:
 
     @staticmethod
     def response(
-        result: subprocess.CompletedProcess[bytes], operation: str = ""
+        result: subprocess.CompletedProcess[bytes], operation: str = "",
+        http: tuple[int, bytes] | None = None,
     ) -> bytes:
         """Translate a completed fixed-form command without retrying failed writes."""
+        status, body = http if http is not None else (None, result.stdout or b"")
+        context = f"{operation}: " if operation else ""
+        if status is not None and (result.returncode == 0) != (200 <= status < 300):
+            raise GitHubError(context + "GitHub HTTP status and CLI result disagree")
         if result.returncode:
             stderr = result.stderr or b""
             message = stderr.decode(errors="replace").strip()
-            context = f"{operation}: " if operation else ""
-            raise GitHubError(context + message, github_http_status(stderr) == b"404")
-        return result.stdout
+            raise GitHubError(context + message, status == 404)
+        return body
 
     def request(
         self,
@@ -334,7 +381,9 @@ class GitHub:
             )
         modes = {
             "json": [],
-            "pages": ["--paginate", "--slurp"],
+            # Canonical JSON framing prevents a malformed page body from spoofing
+            # the next --include HTTP header when a later request fails.
+            "pages": ["--paginate", "--jq", "tojson"],
             "asset": ["-H", "Accept: application/octet-stream"],
         }
         require(
@@ -350,7 +399,7 @@ class GitHub:
             "PUT": ["--method", "PUT"],
         }[method]
         command = [
-            "gh", "api", "--hostname", GITHUB_HOSTNAME,
+            "gh", "api", "--hostname", GITHUB_HOSTNAME, "--include",
             *method_args, *modes[mode],
             *(["--input", "-"] if body is not None else []),
             "--", endpoint,
@@ -358,19 +407,17 @@ class GitHub:
         # Metadata is small and replayable. Binary transfers retain their own
         # timeout/cleanup policy; publication writes must never be replayed.
         if method == "GET" and mode != "asset" and not path.endswith("/zip"):
-            return self._metadata_read(command, endpoint)
-        return self.response(
-            # Developer/CI toolchain selected by the invoking operator via PATH.
-            subprocess.run(  # nosec B603
-                command,
-                input=json_bytes(body) if body is not None else None,
-                capture_output=True,
-                check=False,
-            ),
-            f"{method} {endpoint}",
+            return self._metadata_read(command, endpoint, mode == "pages")
+        # Developer/CI toolchain selected by the invoking operator via PATH.
+        result = subprocess.run(  # nosec B603
+            command,
+            input=json_bytes(body) if body is not None else None,
+            capture_output=True,
+            check=False,
         )
+        return self.response(result, f"{method} {endpoint}", github_http_response(result.stdout))
 
-    def _metadata_read(self, command: list[str], endpoint: str) -> bytes:
+    def _metadata_read(self, command: list[str], endpoint: str, paginated: bool = False) -> bytes:
         """Retry transient GET failures for at most three 30-second attempts.
 
         Jitter adds at most six seconds total. Authentication, authorization,
@@ -390,12 +437,12 @@ class GitHub:
                         f"{API_READ_ATTEMPTS} attempts"
                     ) from error
             else:
+                http = github_http_response(result.stdout, paginated)
                 transient = (
-                    result.returncode and github_http_status(result.stderr or b"")
-                    in {b"500", b"502", b"503", b"504"}
+                    result.returncode and http[0] in {500, 502, 503, 504}
                 )
                 if not result.returncode or not transient or attempt == API_READ_ATTEMPTS - 1:
-                    return self.response(result, f"GET {endpoint}")
+                    return self.response(result, f"GET {endpoint}", http)
             # Scheduling jitter is not used for security decisions.
             time.sleep(random.uniform(1, 2 ** (attempt + 1)))  # nosec B311
         raise AssertionError("Metadata retry loop must return or raise")
