@@ -210,6 +210,12 @@ def parse_json(data: bytes, label: str) -> object:
 
 def github_http_status(stderr: bytes) -> bytes | None:
     """Read an unambiguous CLI status, never a number embedded in its message."""
+    # A JSON message can contain newlines before gh appends the real status.
+    # Partial lines cannot establish absence or justify retrying a request.
+    lines = stderr.splitlines()
+    if len(lines) != 1:
+        return None
+    stderr = lines[0]
     # JSON errors end with (HTTP NNN); non-JSON errors start with HTTP NNN.
     # Conflicting diagnostics cannot prove either absence or retryability.
     statuses = set(re.findall(
@@ -217,6 +223,9 @@ def github_http_status(stderr: bytes) -> bytes | None:
     ) + re.findall(
         rb"(?m)^gh: [^\r\n]* \(HTTP (\d{3})\)\r?$", stderr
     ))
+    if not statuses:
+        return None
+    statuses.update(re.findall(rb"\(HTTP (\d{3})\)", stderr))
     return next(iter(statuses)) if len(statuses) == 1 else None
 
 
