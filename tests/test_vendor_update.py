@@ -421,6 +421,49 @@ class QualificationTests(unittest.TestCase):
 class TransportTests(unittest.TestCase):
     """Exercise CLI/API boundaries hidden by in-memory GitHub response fixtures."""
 
+    @staticmethod
+    def http_body(status, body):
+        return (
+            f"HTTP/2.0 {status} Response\nContent-Type: application/json\r\n\r\n".encode()
+            + body
+        )
+
+    def test_only_actual_404_can_skip_existing_vendor_branch_verification(self):
+        path = "git/ref/heads/codex/vendor-" + "a" * 64
+        for status in (401, 403, 404, 429, 503):
+            result = subprocess.CompletedProcess(
+                [],
+                1,
+                self.http_body(status, b'{"errors":"HTTP 404: denied"}'),
+                b"gh: HTTP 404: denied\n",
+            )
+            with (
+                self.subTest(status=status),
+                patch.object(vu.subprocess, "run", return_value=result) as command,
+            ):
+                if status == 404:
+                    self.assertIsNone(vu.GitHub("example/core", "dummy").optional(path))
+                else:
+                    with self.assertRaises(vu.GitHubError) as error:
+                        vu.GitHub("example/core", "dummy").optional(path)
+                    self.assertFalse(error.exception.not_found)
+                    self.assertEqual(str(error.exception), "GitHub request failed")
+                command.assert_called_once()
+                self.assertIn("--include", command.call_args.args[0])
+                self.assertEqual(
+                    command.call_args.args[0][-2:], ["--", "repos/example/core/" + path]
+                )
+
+    def test_missing_headers_do_not_establish_absent_vendor_branch(self):
+        result = subprocess.CompletedProcess([], 1, b"", b"gh: Not Found (HTTP 404)")
+        with patch.object(vu.subprocess, "run", return_value=result) as command:
+            with self.assertRaises(vu.GitHubError) as error:
+                vu.GitHub("example/core", "dummy").optional(
+                    "git/ref/heads/codex/vendor-" + "a" * 64
+                )
+        self.assertFalse(error.exception.not_found)
+        command.assert_called_once()
+
     def test_repository_endpoint_and_separate_token_environment(self):
         environment = {
             "SOURCE_TOKEN": "source-secret",
@@ -429,7 +472,9 @@ class TransportTests(unittest.TestCase):
             "GH_TOKEN": "ambient-secret",
             "GH_DEBUG": "api",
         }
-        result = subprocess.CompletedProcess([], 0, b'{"default_branch":"main"}', b"")
+        result = subprocess.CompletedProcess(
+            [], 0, self.http_body(200, b'{"default_branch":"main"}'), b""
+        )
         with (
             patch.dict(os.environ, environment),
             patch.object(vu.subprocess, "run", return_value=result) as command,
@@ -466,7 +511,9 @@ class TransportTests(unittest.TestCase):
             self.assertFalse(marker.exists())
 
     def test_actions_zip_keeps_normal_rest_accept_header(self):
-        result = subprocess.CompletedProcess([], 0, b"ZIP bytes", b"")
+        result = subprocess.CompletedProcess(
+            [], 0, self.http_body(200, b"ZIP bytes"), b""
+        )
         with patch.object(vu.subprocess, "run", return_value=result) as command:
             body = vu.GitHub("example/core", "source-secret").request(
                 "actions/artifacts/29/zip", archive=True

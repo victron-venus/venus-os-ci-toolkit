@@ -480,7 +480,22 @@ class MetadataPathTests(unittest.TestCase):
 
 
 class BoundedDownloadTests(unittest.TestCase):
-    def fetch(self, program, path="releases/assets/1", mode="binary"):
+    @staticmethod
+    def http_bytes(payload, status=200):
+        return (
+            f"HTTP/2.0 {status}\r\nContent-Type: application/octet-stream\r\n\r\n".encode()
+            + payload
+        )
+
+    @staticmethod
+    def program(stdout, stderr=b"", exit_code=0):
+        return (
+            "import sys; "
+            f"sys.stdout.buffer.write({stdout!r}); "
+            f"sys.stderr.buffer.write({stderr!r}); sys.exit({exit_code})"
+        )
+
+    def fetch(self, program, path="releases/assets/1", mode="binary", *, timeout=2.0):
         self.calls = []
         real_popen = subprocess.Popen
 
@@ -493,7 +508,7 @@ class BoundedDownloadTests(unittest.TestCase):
             patch.object(preflight, "MAX_BINARY", 64),
             patch.object(preflight, "MAX_API_BYTES", 64),
             patch.object(preflight, "MAX_ERROR_BYTES", 64),
-            patch.object(preflight, "DOWNLOAD_TIMEOUT", 0.2),
+            patch.object(preflight, "DOWNLOAD_TIMEOUT", timeout),
         ):
             client = preflight.PreflightGitHub("owner/repo")
             return (
@@ -503,7 +518,43 @@ class BoundedDownloadTests(unittest.TestCase):
             )
 
     def test_bounded_small_payload(self):
-        self.assertEqual(self.fetch("print('ok', end='')"), b"ok")
+        self.assertEqual(self.fetch(self.program(self.http_bytes(b"ok"))), b"ok")
+        self.assertIn("--include", self.calls[0])
+
+    def test_headers_do_not_reduce_or_bypass_the_payload_limit(self):
+        payload = b"x" * 64
+        self.assertEqual(self.fetch(self.program(self.http_bytes(payload))), payload)
+        with self.assertRaisesRegex(rc.ReleaseError, "exceeds limit"):
+            self.fetch(self.program(self.http_bytes(payload + b"x")))
+
+    def test_protocol_overhead_is_bounded(self):
+        wire = b"HTTP/2.0 200\r\nX-Pad: " + b"x" * (
+            preflight.MAX_HTTP_HEADER_BYTES + 64
+        )
+        with self.assertRaisesRegex(rc.ReleaseError, "exceeds limit"):
+            self.fetch(self.program(wire + b"\r\n\r\n"))
+
+    def test_binary_payload_is_not_parsed_as_another_response(self):
+        payload = b"\x00\xffHTTP/2.0 404\r\n\r\nbody\n"
+        self.assertEqual(self.fetch(self.program(self.http_bytes(payload))), payload)
+
+    def test_paginated_responses_keep_every_page_without_slurp(self):
+        wire = self.http_bytes(b"[1]") + b"\n" + self.http_bytes(b"[2]")
+        result = self.fetch(self.program(wire), "releases", "pages")
+        self.assertEqual(json.loads(result), [[1], [2]])
+        self.assertIn("--include", self.calls[0])
+        self.assertIn("--paginate", self.calls[0])
+        self.assertEqual(self.calls[0][self.calls[0].index("--jq") + 1], "tojson")
+        self.assertNotIn("--slurp", self.calls[0])
+        self.assertEqual(len(self.calls), 1)
+
+    def test_failed_page_discards_the_partial_result(self):
+        wire = self.http_bytes(b"[1]") + b"\n" + self.http_bytes(b"secret", 502)
+        with self.assertRaises(rc.GitHubError) as error:
+            self.fetch(self.program(wire, b"gh: HTTP 404", 1), "releases", "pages")
+        self.assertFalse(error.exception.not_found)
+        self.assertNotIn("secret", str(error.exception))
+        self.assertEqual(len(self.calls), 1)
 
     def test_oversize_stops_process_without_unbounded_read(self):
         with self.assertRaisesRegex(rc.ReleaseError, "exceeds limit"):
@@ -511,7 +562,7 @@ class BoundedDownloadTests(unittest.TestCase):
 
     def test_stalled_download_times_out_without_retry(self):
         with self.assertRaisesRegex(rc.ReleaseError, "timed out"):
-            self.fetch("import time; time.sleep(10)")
+            self.fetch("import time; time.sleep(10)", timeout=0.2)
 
     def test_nonzero_transport_fails(self):
         with self.assertRaisesRegex(rc.ReleaseError, "download failed"):
@@ -536,7 +587,7 @@ class BoundedDownloadTests(unittest.TestCase):
 
     def test_metadata_timeout_is_bounded(self):
         with self.assertRaisesRegex(rc.ReleaseError, "timed out"):
-            self.fetch("import time; time.sleep(10)", preflight.state.READ_PATH, "json")
+            self.fetch("import time; time.sleep(10)", preflight.state.READ_PATH, "json", timeout=0.2)
         self.assertEqual(len(self.calls), 1)
 
     def test_stderr_is_bounded_and_never_echoed(self):
@@ -548,12 +599,39 @@ class BoundedDownloadTests(unittest.TestCase):
     def test_404_remains_distinguishable_without_raw_error(self):
         with self.assertRaises(rc.GitHubError) as error:
             self.fetch(
-                "import sys; sys.stderr.write('secret HTTP 404'); sys.exit(1)",
+                self.program(self.http_bytes(b"secret", 404), b"secret HTTP 403", 1),
                 preflight.state.READ_PATH,
                 "json",
             )
         self.assertTrue(error.exception.not_found)
         self.assertNotIn("secret", str(error.exception))
+
+    def test_error_prose_without_an_authoritative_404_never_means_missing(self):
+        for stdout, stderr in (
+            (b"", b"gh: HTTP 404"),
+            (b"", b"gh: HTTP 404: upstream\nfailure (HTTP 502)\n"),
+            (self.http_bytes(b"HTTP 404", 502), b"gh: HTTP 404"),
+            (b"HTTP/2.0 404\r\n", b"gh: HTTP 404"),
+        ):
+            with self.subTest(stdout=stdout, stderr=stderr):
+                with self.assertRaises(rc.GitHubError) as error:
+                    self.fetch(self.program(stdout, stderr, 1), "releases", "json")
+                self.assertFalse(error.exception.not_found)
+                self.assertEqual(len(self.calls), 1)
+
+    def test_http_status_and_cli_exit_must_agree(self):
+        for status, exit_code in ((200, 1), (404, 0)):
+            with self.subTest(status=status, exit_code=exit_code):
+                with self.assertRaisesRegex(rc.GitHubError, "disagree") as error:
+                    self.fetch(
+                        self.program(
+                            self.http_bytes(b"secret", status), b"secret", exit_code
+                        ),
+                        "releases",
+                        "json",
+                    )
+                self.assertFalse(error.exception.not_found)
+                self.assertNotIn("secret", str(error.exception))
 
     def test_constructor_does_not_run_publication_scope_probe(self):
         with (
