@@ -81,6 +81,57 @@ class MetadataReadRetryTests(unittest.TestCase):
         self.assertFalse(error.exception.not_found)
         self.assertIn("HTTP 502", str(error.exception))
 
+    def test_only_exact_missing_status_allows_an_optional_resource(self):
+        gh = rc.GitHub(REPO)
+        for error_format in self.ERROR_FORMATS:
+            with (
+                self.subTest(error_format=error_format),
+                patch.object(rc.subprocess, "run", return_value=self.response(
+                    404, error_format=error_format
+                )) as run,
+                patch.object(rc.time, "sleep") as sleep,
+            ):
+                self.assertIsNone(gh.optional("git/ref/tags/v1.2.3"))
+            run.assert_called_once()
+            sleep.assert_not_called()
+
+    def test_embedded_missing_status_cannot_authorize_an_absent_release(self):
+        gh = rc.GitHub(REPO)
+        cases = (
+            (b"gh: Request failed: HTTP 404 from upstream (HTTP 403)", 1),
+            (b"gh: HTTP 4040: invalid status", 1),
+            (b"gh: HTTP 404suffix", 1),
+            (b"other tool: HTTP 404", 1),
+            (b"gh: HTTP 404: Gateway reported (HTTP 502)", 1),
+            (b"gh: HTTP 502: Gateway reported (HTTP 404)", 1),
+            (b"gh: HTTP 404\ngh: HTTP 403", 1),
+            (b"gh: HTTP 502: upstream returned HTTP 404", 3),
+        )
+        for message, attempts in cases:
+            with (
+                self.subTest(message=message),
+                patch.object(rc.subprocess, "run", return_value=subprocess.CompletedProcess(
+                    [], 1, b"", message,
+                )) as run,
+                patch.object(rc.time, "sleep"),
+                self.assertRaises(rc.GitHubError) as error,
+            ):
+                rc.ensure_absent(gh, "v1.2.3")
+            self.assertFalse(error.exception.not_found)
+            self.assertEqual(run.call_count, attempts)
+
+    def test_failed_write_uses_the_same_exact_missing_status(self):
+        gh = rc.GitHub(REPO)
+        with (
+            patch.object(rc.subprocess, "run", return_value=subprocess.CompletedProcess(
+                [], 1, b"", b"gh: Authorization error mentions HTTP 404 (HTTP 403)",
+            )) as run,
+            self.assertRaises(rc.GitHubError) as error,
+        ):
+            gh.api("releases", "POST", {"tag_name": RC_TAG})
+        self.assertFalse(error.exception.not_found)
+        run.assert_called_once()
+
     def test_timeouts_are_bounded_and_do_not_expose_partial_output(self):
         gh = rc.GitHub(REPO)
         with (
