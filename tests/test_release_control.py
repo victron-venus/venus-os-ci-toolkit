@@ -32,6 +32,93 @@ SHA = "a" * 40
 RC_TAG = "v1.2.3-rc.2"
 
 
+class MetadataReadRetryTests(unittest.TestCase):
+    """Transient metadata failures cannot replay publication or change policy."""
+
+    @staticmethod
+    def response(status=0, stdout=b"{}"):
+        return subprocess.CompletedProcess(
+            [], bool(status), stdout,
+            f"gh: Server Error (HTTP {status})".encode() if status else b"",
+        )
+
+    def test_transient_read_retries_and_discards_partial_pages(self):
+        for status in (500, 502, 503, 504):
+            with (
+                self.subTest(status=status),
+                patch.object(rc.subprocess, "run", side_effect=[
+                    self.response(status, b'[{"partial": true}]'),
+                    self.response(stdout=b'[[{"id": 42}]]'),
+                ]) as run,
+                patch.object(rc.time, "sleep") as sleep,
+                patch.object(rc.random, "uniform", return_value=1.5),
+            ):
+                self.assertEqual(rc.GitHub(REPO).pages("releases"), [{"id": 42}])
+                self.assertEqual(run.call_count, 2)
+                self.assertEqual(run.call_args_list[0], run.call_args_list[1])
+                self.assertEqual(run.call_args.kwargs["timeout"], 30)
+                sleep.assert_called_once_with(1.5)
+
+    def test_exhausted_reads_fail_without_becoming_missing(self):
+        with (
+            patch.object(rc.subprocess, "run", return_value=self.response(502)) as run,
+            patch.object(rc.time, "sleep") as sleep,
+            self.assertRaises(rc.GitHubError) as error,
+        ):
+            rc.GitHub(REPO).optional("actions/runs/42")
+        self.assertEqual(run.call_count, 3)
+        self.assertEqual(sleep.call_count, 2)
+        self.assertFalse(error.exception.not_found)
+        self.assertIn("HTTP 502", str(error.exception))
+
+    def test_timeouts_are_bounded_and_do_not_expose_partial_output(self):
+        with (
+            patch.object(rc.subprocess, "run", side_effect=subprocess.TimeoutExpired(
+                ["gh"], 30, output=b"private payload", stderr=b"private diagnostics"
+            )) as run,
+            patch.object(rc.time, "sleep") as sleep,
+            patch.object(rc.random, "uniform", side_effect=lambda low, high: high),
+            self.assertRaises(rc.GitHubError) as error,
+        ):
+            rc.GitHub(REPO).api("actions/runs/42")
+        self.assertEqual(run.call_count, 3)
+        self.assertEqual(sum(call.args[0] for call in sleep.call_args_list), 6)
+        self.assertNotIn("private", str(error.exception))
+        self.assertIn("timed out after 3 attempts", str(error.exception))
+
+    def test_policy_and_rate_limit_errors_are_not_retried(self):
+        for status in (400, 401, 403, 404, 409, 422, 429, 501):
+            with (
+                self.subTest(status=status),
+                patch.object(rc.subprocess, "run", return_value=self.response(status)) as run,
+                patch.object(rc.time, "sleep") as sleep,
+                self.assertRaises(rc.GitHubError),
+            ):
+                rc.GitHub(REPO).api("actions/runs/42")
+            run.assert_called_once()
+            sleep.assert_not_called()
+
+    def test_writes_and_binary_transfers_are_not_replayed(self):
+        cases = [
+            ("releases", "POST", {"tag_name": RC_TAG}, "json"),
+            ("releases/42", "PATCH", {"draft": False}, "json"),
+            ("contents/release-version-state.json", "PUT", {"branch": "release-version-state"}, "json"),
+            ("releases/assets/42", "GET", None, "asset"),
+            ("actions/artifacts/42/zip", "GET", None, "json"),
+        ]
+        for path, method, body, mode in cases:
+            with (
+                self.subTest(method=method, path=path),
+                patch.object(rc.subprocess, "run", return_value=self.response(502)) as run,
+                patch.object(rc.time, "sleep") as sleep,
+                self.assertRaises(rc.GitHubError),
+            ):
+                rc.GitHub(REPO).request(path, method, body, mode)
+            run.assert_called_once()
+            sleep.assert_not_called()
+            self.assertNotIn("timeout", run.call_args.kwargs)
+
+
 class AutomaticBetaPreparationTests(unittest.TestCase):
     """An occupied base skips only automatic builds, never explicit requests."""
 

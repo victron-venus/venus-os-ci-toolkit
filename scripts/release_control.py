@@ -13,6 +13,7 @@ import hashlib
 import io
 import json
 import os
+import random
 import re
 import stat
 
@@ -84,6 +85,8 @@ NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+-]{0,199}\Z")
 REPO_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9][A-Za-z0-9_.-]*\Z")
 ASSET_CHUNK_SIZE = 1024 * 1024
 ASSET_DOWNLOAD_TIMEOUT = 900
+API_READ_TIMEOUT = 30
+API_READ_ATTEMPTS = 3
 
 
 class ReleaseError(RuntimeError):
@@ -333,26 +336,55 @@ class GitHub:
             "PATCH": ["--method", "PATCH"],
             "PUT": ["--method", "PUT"],
         }[method]
+        command = [
+            "gh", "api", "--hostname", GITHUB_HOSTNAME,
+            *method_args, *modes[mode],
+            *(["--input", "-"] if body is not None else []),
+            "--", endpoint,
+        ]
+        # Metadata is small and replayable. Binary transfers retain their own
+        # timeout/cleanup policy; publication writes must never be replayed.
+        if method == "GET" and mode != "asset" and not path.endswith("/zip"):
+            return self._metadata_read(command, endpoint)
         return self.response(
             # Developer/CI toolchain selected by the invoking operator via PATH.
-            subprocess.run(  # nosec B603, B607
-                [
-                    "gh",
-                    "api",
-                    "--hostname",
-                    GITHUB_HOSTNAME,
-                    *method_args,
-                    *modes[mode],
-                    *(["--input", "-"] if body is not None else []),
-                    "--",
-                    endpoint,
-                ],
+            subprocess.run(  # nosec B603
+                command,
                 input=json_bytes(body) if body is not None else None,
                 capture_output=True,
                 check=False,
             ),
             f"{method} {endpoint}",
         )
+
+    def _metadata_read(self, command: list[str], endpoint: str) -> bytes:
+        """Retry transient GET failures for at most three 30-second attempts.
+
+        Jitter adds at most six seconds total. Authentication, authorization,
+        rate limits and missing resources keep their original fail-closed result.
+        A failed paginated response is discarded before replaying the whole read.
+        """
+        for attempt in range(API_READ_ATTEMPTS):
+            try:
+                result = subprocess.run(  # nosec B603
+                    command, input=None, capture_output=True, check=False,
+                    timeout=API_READ_TIMEOUT,
+                )
+            except subprocess.TimeoutExpired as error:
+                if attempt == API_READ_ATTEMPTS - 1:
+                    raise GitHubError(
+                        f"GET {endpoint}: metadata read timed out after "
+                        f"{API_READ_ATTEMPTS} attempts"
+                    ) from error
+            else:
+                transient = result.returncode and re.search(
+                    rb"\(HTTP (?:500|502|503|504)\)", result.stderr or b""
+                )
+                if not result.returncode or not transient or attempt == API_READ_ATTEMPTS - 1:
+                    return self.response(result, f"GET {endpoint}")
+            # Scheduling jitter is not used for security decisions.
+            time.sleep(random.uniform(1, 2 ** (attempt + 1)))  # nosec B311
+        raise AssertionError("Metadata retry loop must return or raise")
 
     def api(
         self, path: str, method: str = "GET", body: JSONObject | None = None
