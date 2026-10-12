@@ -19,5 +19,6 @@
   "victron-venus/inverter-dashboard-vue",
   "victron-venus/inverter-desktop",
   "victron-venus/inverter-monitoring",
-  "victron-venus/venus-os-ci-toolkit"
+  "victron-venus/venus-os-ci-toolkit",
+  "victron-venus/venus-os-integration-patterns"
 ]
