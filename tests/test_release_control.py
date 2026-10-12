@@ -33,6 +33,14 @@ SHA = "a" * 40
 RC_TAG = "v1.2.3-rc.2"
 
 
+def http_response(status=0, stdout=b"{}", error_format="gh: API failed (HTTP {status})"):
+    """Return a complete gh --include fixture independent of retry support."""
+    return subprocess.CompletedProcess(
+        [], bool(status), f"HTTP/2.0 {status or 200} Test\nContent-Type: application/json\r\n\r\n".encode() + stdout,
+        error_format.format(status=status).encode() if status else b"",
+    )
+
+
 class MetadataReadRetryTests(unittest.TestCase):
     """Transient metadata failures cannot replay publication or change policy."""
 
@@ -46,29 +54,27 @@ class MetadataReadRetryTests(unittest.TestCase):
         "gh: HTTP {status}: Gateway response\r\n",
     )
 
-    @staticmethod
-    def response(status=0, stdout=b"{}", error_format=ERROR_FORMATS[0]):
-        return subprocess.CompletedProcess(
-            [], bool(status), stdout,
-            error_format.format(status=status).encode() if status else b"",
-        )
+    response = staticmethod(http_response)
 
-    def failed_request(self, message, method="GET", path="git/ref/tags/v1.2.3"):
+    def failed_request(self, message, method="GET", path="git/ref/tags/v1.2.3", status=403):
         """A lookup or write failure must come from the expected API request."""
         def run(command, **_kwargs):
             self.assertEqual(command[:2], ["gh", "api"])
             self.assertEqual(command[command.index("--method") + 1], method)
             self.assertEqual(command[-2:], ["--", f"repos/{REPO}/{path}"])
-            return subprocess.CompletedProcess(command, 1, b"", message)
+            return subprocess.CompletedProcess(command, 1, self.response(status).stdout, message)
         return run
 
     def test_transient_read_retries_and_discards_partial_pages(self):
         for status, error_format in product((500, 502, 503, 504), self.ERROR_FORMATS):
+            partial = self.response(stdout=b'[{"partial": true}]').stdout
+            failed = self.response(status, b'{"errors":"HTTP 404"}', error_format)
+            failed.stdout = partial + b"\n" + failed.stdout
             with (
                 self.subTest(status=status, error_format=error_format),
                 patch.object(rc.subprocess, "run", side_effect=[
-                    self.response(status, b'[{"partial": true}]', error_format),
-                    self.response(stdout=b'[[{"id": 42}]]'),
+                    failed,
+                    self.response(stdout=b'[{"id": 42}]'),
                 ]) as run,
                 patch.object(rc.time, "sleep") as sleep,
                 patch.object(rc.random, "uniform", return_value=1.5),
@@ -98,7 +104,7 @@ class MetadataReadRetryTests(unittest.TestCase):
             with (
                 self.subTest(error_format=error_format),
                 patch.object(rc.subprocess, "run", side_effect=self.failed_request(
-                    self.response(404, error_format=error_format).stderr
+                    self.response(404, error_format=error_format).stderr, status=404,
                 )) as run,
                 patch.object(rc.time, "sleep") as sleep,
             ):
@@ -125,7 +131,9 @@ class MetadataReadRetryTests(unittest.TestCase):
         for message, attempts in cases:
             with (
                 self.subTest(message=message),
-                patch.object(rc.subprocess, "run", side_effect=self.failed_request(message)) as run,
+                patch.object(rc.subprocess, "run", side_effect=self.failed_request(
+                    message, status=502 if attempts == 3 else 403,
+                )) as run,
                 patch.object(rc.time, "sleep"),
                 self.assertRaises(rc.GitHubError) as error,
             ):
@@ -146,7 +154,7 @@ class MetadataReadRetryTests(unittest.TestCase):
         self.assertFalse(error.exception.not_found)
         run.assert_called_once()
 
-    def test_multiline_diagnostics_cannot_prove_absence_or_allow_retry(self):
+    def test_multiline_diagnostics_cannot_override_forbidden_http_status(self):
         gh = rc.GitHub(REPO)
         for message in (
             b"gh: HTTP 404: upstream\nfailure (HTTP 502)\n",
@@ -225,7 +233,7 @@ class MetadataReadRetryTests(unittest.TestCase):
             with (
                 self.subTest(message=message),
                 patch.object(rc.subprocess, "run", return_value=subprocess.CompletedProcess(
-                    [], 1, b"", message,
+                    [], 1, self.response(403).stdout, message,
                 )) as run,
                 patch.object(rc.time, "sleep") as sleep,
                 self.assertRaises(rc.GitHubError),
@@ -1260,11 +1268,9 @@ class PublicationPermissionTests(unittest.TestCase):
             patch.object(
                 rc.subprocess,
                 "run",
-                return_value=subprocess.CompletedProcess(
-                    [],
-                    1,
-                    b"private body",
-                    b"gh: Resource not accessible by integration (HTTP 403)",
+                return_value=http_response(
+                    403, b"private body",
+                    "gh: Resource not accessible by integration (HTTP {status})",
                 ),
             ),
             self.assertRaises(rc.GitHubError) as error,
@@ -1408,7 +1414,7 @@ class TransportTests(unittest.TestCase):
         gh = rc.GitHub(REPO)
         body = {"body": "--hostname evil.com --clobber #label"}
         with patch.object(
-            rc.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, b"{}")
+            rc.subprocess, "run", return_value=http_response()
         ) as command:
             gh.api("")
             gh.api("releases", "POST", body)
@@ -1420,6 +1426,7 @@ class TransportTests(unittest.TestCase):
                 "api",
                 "--hostname",
                 "github.com",
+                "--include",
                 "--method",
                 "GET",
                 "--",
@@ -1454,7 +1461,7 @@ class TransportTests(unittest.TestCase):
             f"compare/{SHA}...feature%2Fbranch",
         ]
         with patch.object(
-            rc.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, b"{}")
+            rc.subprocess, "run", return_value=http_response()
         ) as command:
             for path in paths:
                 gh.api(path)
@@ -1693,7 +1700,7 @@ class OfflineValidationTests(unittest.TestCase):
             else:
                 self.assertIn("Accept: application/octet-stream", command)
                 data = b"release asset"
-            return subprocess.CompletedProcess(command, 0, data)
+            return http_response(stdout=data)
 
         with patch.object(rc.subprocess, "run", side_effect=service):
             self.assertEqual(gh.binary("actions/artifacts/40/zip"), b"zip archive")
@@ -1819,18 +1826,16 @@ class OfflineValidationTests(unittest.TestCase):
             return_value=subprocess.CompletedProcess(
                 [],
                 0,
-                json.dumps(
-                    [
-                        {"jobs": [{"name": "build"}]},
-                        {"jobs": [{"name": "Release gate"}]},
-                    ]
-                ).encode(),
+                http_response(stdout=b'{"jobs":[{"name":"build"}]}').stdout
+                + b"\n"
+                + http_response(stdout=b'{"jobs":[{"name":"Release gate"}]}').stdout,
             ),
         ) as command:
             jobs = gh.pages("actions/runs/17/attempts/1/jobs", "jobs")
         self.assertEqual([job["name"] for job in jobs], ["build", "Release gate"])
         self.assertIn("--paginate", command.call_args.args[0])
-        self.assertIn("--slurp", command.call_args.args[0])
+        self.assertNotIn("--slurp", command.call_args.args[0])
+        self.assertIn("--include", command.call_args.args[0])
 
     def test_permission_errors_do_not_masquerade_as_absent_tags(self):
         """Permission errors do not masquerade as absent tags."""
@@ -2174,9 +2179,7 @@ class SupersededCandidateTests(unittest.TestCase):
             "actions/workflows/release-pipeline.yml/runs"
             f"?branch=main&event=push&head_sha={self.head}&per_page=100"
         )
-        result = subprocess.CompletedProcess(
-            [], 0, b'{"total_count":0,"workflow_runs":[]}', b""
-        )
+        result = http_response(stdout=b'{"total_count":0,"workflow_runs":[]}')
         with patch.object(rc.subprocess, "run", return_value=result) as command:
             client.api(path)
             self.assertEqual(command.call_args.args[0][-1], f"repos/{REPO}/{path}")

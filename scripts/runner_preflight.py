@@ -26,6 +26,7 @@ import version_plan
 MAX_METADATA = 2_000_000
 MAX_BINARY = 4_000_000
 MAX_API_BYTES = 8_000_000
+MAX_HTTP_HEADER_BYTES = 65_536
 MAX_ERROR_BYTES = 8_192
 DOWNLOAD_TIMEOUT = 45
 RUNNER_FIELDS = ("platform", "ImageOS", "ImageVersion", "RUNNER_OS", "RUNNER_ARCH")
@@ -52,7 +53,7 @@ class PreflightGitHub(state.StateGitHub):
         with subprocess.Popen(
             command, stdout=subprocess.PIPE, stderr=subprocess.PIPE
         ) as process:
-            return read_process(process, limit)
+            return read_process(process, limit, paginated=mode == "pages")
 
     def read_command(self, path, mode):
         """Construct one fixed-host GET after validating the route and mode."""
@@ -64,12 +65,20 @@ class PreflightGitHub(state.StateGitHub):
             "Unsupported preflight endpoint",
         )
         rc.require(mode in {"json", "pages", "asset"}, "Unsupported preflight mode")
-        command = ["gh", "api", "--hostname", "github.com", "--method", "GET"]
+        command = [
+            "gh",
+            "api",
+            "--hostname",
+            "github.com",
+            "--method",
+            "GET",
+            "--include",
+        ]
         endpoint = f"{self.base}/{path}".rstrip("/")
         if mode == "asset":
             command += ["-H", "Accept: application/octet-stream"]
         elif mode == "pages":
-            command += ["--paginate", "--slurp"]
+            command += ["--paginate", "--jq", "tojson"]
             endpoint += ("&" if "?" in endpoint else "?") + "per_page=100"
         command += ["--", endpoint]
         return command
@@ -85,12 +94,15 @@ class PreflightGitHub(state.StateGitHub):
         return self.request(path, mode="asset")
 
 
-def read_process(process, limit):
+def read_process(process, limit, paginated=False):
     """Drain bounded stdout/stderr under one deadline, then check exit status."""
+    # Keep the existing payload limit while allowing bounded protocol overhead.
+    wire_limit = limit + MAX_HTTP_HEADER_BYTES
     output, errors = [], []
     readers = [
         threading.Thread(
-            target=lambda: output.append(process.stdout.read(limit + 1)), daemon=True
+            target=lambda: output.append(process.stdout.read(wire_limit + 1)),
+            daemon=True,
         ),
         threading.Thread(
             target=lambda: errors.append(process.stderr.read(MAX_ERROR_BYTES + 1)),
@@ -103,7 +115,7 @@ def read_process(process, limit):
     for reader in readers:
         reader.join(max(0, deadline - time.monotonic()))
     stalled = any(reader.is_alive() for reader in readers)
-    oversized = bool(output and len(output[0]) > limit) or bool(
+    oversized = bool(output and len(output[0]) > wire_limit) or bool(
         errors and len(errors[0]) > MAX_ERROR_BYTES
     )
     if stalled or oversized:
@@ -114,11 +126,16 @@ def read_process(process, limit):
         reason = "exceeds limit" if oversized else "timed out"
         raise rc.ReleaseError(f"Preflight metadata download {reason}")
     status = wait_process(process, deadline)
+    try:
+        http_status, payload = rc.github_http_response(output[0], paginated=paginated)
+    except rc.GitHubError:
+        raise rc.GitHubError("Preflight metadata download failed") from None
+    if (status == 0) != (200 <= http_status < 300):
+        raise rc.GitHubError("Preflight HTTP status and CLI result disagree")
     if status:
-        raise rc.GitHubError(
-            "Preflight metadata download failed", b"HTTP 404" in errors[0]
-        )
-    return output[0]
+        raise rc.GitHubError("Preflight metadata download failed", http_status == 404)
+    rc.require(len(payload) <= limit, "Preflight metadata download exceeds limit")
+    return payload
 
 
 def wait_process(process, deadline):
