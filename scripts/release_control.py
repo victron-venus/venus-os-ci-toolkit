@@ -381,9 +381,9 @@ class GitHub:
                 # Conflicting codes in an error message must fail closed.
                 stderr = result.stderr or b""
                 statuses = re.findall(
-                    rb"(?m)^gh: HTTP ([0-9]{3})(?=:|[ \t]*\r?$)", stderr
+                    rb"(?m)^gh: HTTP (\d{3})(?::[^\r\n]*|[ \t]*)\r?$", stderr
                 ) + re.findall(
-                    rb"(?m)^gh: [^\r\n]* \(HTTP ([0-9]{3})\)\r?$", stderr
+                    rb"(?m)^gh: [^\r\n]* \(HTTP (\d{3})\)\r?$", stderr
                 )
                 transient = (
                     result.returncode and len(set(statuses)) == 1
