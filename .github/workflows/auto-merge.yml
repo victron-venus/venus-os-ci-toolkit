@@ -23,6 +23,18 @@ on:
         description: Wait for successful named checks and an independent trusted current-head approval, then merge that head
         type: boolean
         default: false
+      reviewed-single-pass:
+        description: Evaluate once without holding a runner; caller must provide completion wakeups and a recovery schedule
+        type: boolean
+        default: false
+      allow-dependabot-actions-review:
+        description: Trust same-repository GitHub Actions approvals of genuine Dependabot PRs in reviewed mode
+        type: boolean
+        default: false
+      allow-owned-bot-actions-review:
+        description: Trust the existing GitHub Actions fallback for same-repository californiantiramisu PRs
+        type: boolean
+        default: false
       required-status-checks:
         description: Additional exact check names; native mode requires branch protection for each, legacy mode waits for all observed checks
         type: string
@@ -39,7 +51,7 @@ jobs:
   auto-merge:
     name: Auto Merge
     runs-on: ${{ fromJSON((github.event.repository.private || ((contains(fromJSON('["pull_request","pull_request_target","pull_request_review"]'), github.event_name) && github.event.pull_request.head.repo.full_name == github.repository) || (contains(fromJSON('["push","schedule","workflow_dispatch"]'), github.event_name) && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)))) && inputs.runner-labels != '["ubuntu-latest"]' && inputs.runner-labels || ((vars.CI_RUNNER_MODE == 'self-hosted' || vars.CI_RUNNER_MODE == 'k3s') && ((contains(fromJSON('["pull_request","pull_request_target","pull_request_review"]'), github.event_name) && github.event.pull_request.head.repo.full_name == github.repository) || (contains(fromJSON('["push","schedule","workflow_dispatch"]'), github.event_name) && github.ref == format('refs/heads/{0}', github.event.repository.default_branch))) && (vars.CI_RUNNER_AUTOMATION_LABELS || '[]') || '["ubuntu-latest"]')) }}
-    timeout-minutes: ${{ inputs.native-auto-merge && 5 || 125 }}
+    timeout-minutes: ${{ (inputs.native-auto-merge || inputs.reviewed-single-pass) && 5 || 125 }}
     permissions:
       contents: read
       pull-requests: write
@@ -58,6 +70,9 @@ jobs:
           NATIVE_AUTO_MERGE: ${{ inputs.native-auto-merge }}
           REQUIRED_CHECKS: ${{ inputs.required-status-checks }}
           REVIEWED_MERGE: ${{ inputs.reviewed-merge }}
+          REVIEWED_SINGLE_PASS: ${{ inputs.reviewed-single-pass }}
+          ALLOW_DEPENDABOT_ACTIONS_REVIEW: ${{ inputs.allow-dependabot-actions-review }}
+          ALLOW_OWNED_BOT_ACTIONS_REVIEW: ${{ inputs.allow-owned-bot-actions-review }}
         run: |
           python3 -I - <<'PY'
           import json
@@ -65,10 +80,14 @@ jobs:
           import re
           import subprocess
           import time
-          from urllib.parse import quote
+          from urllib.parse import quote, urlparse
 
 
           TRUSTED_AUTHORS = {'4alvit', 'californiantiramisu', 'dependabot[bot]', 'renovate[bot]'}
+
+
+          class CheckFailure(RuntimeError):
+              """Observed validation failure, not an API or authentication error."""
 
 
           def gh(*args):
@@ -77,7 +96,7 @@ jobs:
 
           def snapshot(repo, number, reviewed=False):
               pr = json.loads(gh('pr', 'view', number, '--repo', repo, '--json',
-                                   'author,labels,isDraft,isCrossRepository,baseRefName,headRefOid,state,statusCheckRollup,autoMergeRequest'))
+                                   'author,labels,isDraft,isCrossRepository,baseRefName,baseRefOid,headRefOid,state,statusCheckRollup,autoMergeRequest'))
               if reviewed:
                   pages = json.loads(gh('api', '--paginate', '--slurp',
                                         f'repos/{repo}/pulls/{number}/reviews?per_page=100'))
@@ -141,7 +160,7 @@ jobs:
                         for identity, state in checks
                         if state in {'FAILURE', 'ERROR', 'CANCELLED', 'TIMED_OUT', 'ACTION_REQUIRED', 'STALE', 'STARTUP_FAILURE'}]
               if failed:
-                  raise RuntimeError('PR check failed: ' + '; '.join(failed)
+                  raise CheckFailure('PR check failed: ' + '; '.join(failed)
                                      + '. Fix or rerun the failed check before auto-merge.')
               names = {identity[1] for identity, _ in checks}
               ready = (bool(checks) and required <= names
@@ -149,7 +168,7 @@ jobs:
               return ready, tuple(sorted(checks))
 
 
-          def review_state(pr):
+          def review_state(pr, actions_authors=frozenset()):
               # Read every review page. COMMENTED does not retract a prior decision;
               # DISMISSED does. Never accept the author's own or an old-head approval.
               latest = {}
@@ -157,20 +176,26 @@ jobs:
                   login = (review.get('user') or {}).get('login') or f"unknown-reviewer-{review['id']}"
                   state = review['state']
                   if login and state in {'APPROVED', 'CHANGES_REQUESTED', 'DISMISSED'}:
-                      latest[login] = (state, review.get('commit_id'), review['id'])
+                      latest[login] = (state, review.get('commit_id'), review['id'], (review.get('user') or {}).get('type'))
               blocked = any(item[0] == 'CHANGES_REQUESTED' for item in latest.values())
-              approved = any(login in {'4alvit', 'californiantiramisu'}
+              author = canonical_author(pr['author'])
+              actions_allowed = (pr.get('isCrossRepository') is False
+                                 and author in actions_authors
+                                 and (author == 'californiantiramisu'
+                                      or (author == 'dependabot[bot]' and pr['author'].get('is_bot') is True)))
+              approved = any((login in {'4alvit', 'californiantiramisu'}
+                              or (actions_allowed and login == 'github-actions[bot]' and kind == 'Bot'))
                              and login != canonical_author(pr['author'])
                              and state == 'APPROVED' and commit == pr['headRefOid']
-                             for login, (state, commit, _) in latest.items())
+                             for login, (state, commit, _, kind) in latest.items())
               return approved and not blocked, tuple(sorted(latest.items()))
 
 
-          def checked_snapshot(pr, required, run_id, reviewed):
+          def checked_snapshot(pr, required, run_id, reviewed, actions_authors=frozenset()):
               ready, checks = check_state(pr, required, run_id)
               if not reviewed:
                   return ready, checks
-              approved, reviews = review_state(pr)
+              approved, reviews = review_state(pr, actions_authors)
               # Required checks must succeed, not merely finish or skip. Existing
               # check_state still rejects failures and pending optional checks.
               successful = {identity[1] for identity, state in checks if state == 'SUCCESS'}
@@ -215,11 +240,127 @@ jobs:
               print('Requested native auto-merge; GitHub waits for the protected CI gate and reviews.')
 
 
+          def reviewed_single_pass(repo, default_branch, authors, method, required, actions_authors):
+              # Event payloads only wake this evaluator. Every candidate comes from
+              # GitHub's authoritative, paginated open-PR list, never an artifact.
+              allowed_events = {'pull_request', 'pull_request_target', 'pull_request_review',
+                                'workflow_run', 'status', 'check_run', 'check_suite',
+                                'schedule', 'workflow_dispatch'}
+              if os.environ.get('GITHUB_EVENT_NAME') not in allowed_events:
+                  raise RuntimeError('Unsupported single-pass wakeup event')
+              with open(os.environ['GITHUB_EVENT_PATH'], encoding='utf-8') as stream:
+                  event = json.load(stream)
+              if (event.get('repository') or {}).get('full_name') != repo:
+                  raise RuntimeError('Wakeup repository does not match the current repository')
+              run_id = os.environ.get('GITHUB_RUN_ID', '')
+              if re.fullmatch(r'[1-9][0-9]*', run_id) is None:
+                  raise RuntimeError('A verified current workflow run is required')
+              current_run = json.loads(gh('api', f'repos/{repo}/actions/runs/{run_id}'))
+              workflow_id = current_run.get('workflow_id')
+              if ((current_run.get('repository') or {}).get('full_name') != repo
+                      or current_run.get('id') != int(run_id)
+                      or not isinstance(workflow_id, int) or isinstance(workflow_id, bool)
+                      or workflow_id < 1):
+                  raise RuntimeError('Could not verify the current orchestration workflow')
+              run_cache = {run_id: current_run}
+              check_cache = {}
+              job_cache = {}
+              server = urlparse(os.environ.get('GITHUB_SERVER_URL', 'https://github.com'))
+
+              def own_check(check, head):
+                  name = check.get('name', '')
+                  url = urlparse(check.get('detailsUrl', ''))
+                  match = re.fullmatch('/' + re.escape(repo) + r'/actions/runs/([1-9][0-9]*)/job/([1-9][0-9]*)', url.path)
+                  if (check.get('__typename') != 'CheckRun'
+                          or not (name == 'Auto Merge' or name.endswith(' / Auto Merge'))
+                          or not match or url.query or url.fragment
+                          or (url.scheme, url.netloc) != (server.scheme, server.netloc)):
+                      return False
+                  candidate_id, job_id = match.groups()
+                  if candidate_id not in run_cache:
+                      run_cache[candidate_id] = json.loads(gh('api', f'repos/{repo}/actions/runs/{candidate_id}'))
+                  candidate = run_cache[candidate_id]
+                  if ((candidate.get('repository') or {}).get('full_name') != repo
+                          or candidate.get('id') != int(candidate_id)
+                          or candidate.get('workflow_id') != workflow_id):
+                      return False
+                  # A check URL alone is not provenance: another app can copy it.
+                  # Resolve the actual Actions job and require exactly one matching
+                  # GitHub Actions check on this head, with that job's check ID.
+                  if job_id not in job_cache:
+                      job_cache[job_id] = json.loads(gh('api', f'repos/{repo}/actions/jobs/{job_id}'))
+                  job = job_cache[job_id]
+                  if (job.get('id') != int(job_id) or job.get('run_id') != int(candidate_id)
+                          or job.get('name') != name):
+                      return False
+                  if head not in check_cache:
+                      pages = json.loads(gh('api', '--paginate', '--slurp',
+                                           f'repos/{repo}/commits/{head}/check-runs?filter=all&per_page=100'))
+                      check_cache[head] = [item for page in pages for item in page['check_runs']]
+                  matching = [item for item in check_cache[head]
+                              if item.get('name') == name and item.get('details_url') == check.get('detailsUrl')]
+                  return (len(matching) == 1
+                          and bool(job.get('check_run_url'))
+                          and matching[0].get('url') == job.get('check_run_url')
+                          and matching[0].get('head_sha') == head
+                          and (matching[0].get('app') or {}).get('slug') == 'github-actions')
+
+              def observed(number):
+                  value = snapshot(repo, str(number), reviewed=True)
+                  for key in ('baseRefOid', 'headRefOid'):
+                      if re.fullmatch(r'[0-9a-f]{40}', value.get(key, '')) is None:
+                          raise RuntimeError('Missing current base or head identity')
+                  base, head = value['baseRefOid'], value['headRefOid']
+                  current_base_in_head = gh('api', f'repos/{repo}/compare/{base}...{head}',
+                                             '--jq', '.merge_base_commit.sha') == base
+                  if not current_base_in_head:
+                      print(f'PR #{number} must include the current default branch before merge.', flush=True)
+                  check_cache.clear()
+                  value['statusCheckRollup'] = [check for check in value['statusCheckRollup'] or []
+                                               if not own_check(check, head)]
+                  ready, state = checked_snapshot(value, required, '', True, actions_authors)
+                  return value, ready and current_base_in_head, (base, head, state)
+
+              pages = json.loads(gh('api', '--paginate', '--slurp',
+                                   f'repos/{repo}/pulls?state=open&per_page=100'))
+              for row in (row for page in pages for row in page):
+                  # This inexpensive REST prefilter cannot authorize a merge.
+                  # Each actual decision uses three fresh complete snapshots.
+                  if (row.get('draft') or (row.get('base') or {}).get('ref') != default_branch
+                          or (row.get('user') or {}).get('login') not in authors
+                          or 'automerge' not in {label.get('name') for label in row.get('labels', [])}
+                          or ((row.get('head') or {}).get('repo') or {}).get('full_name') != repo):
+                      continue
+                  number = row.get('number')
+                  if not isinstance(number, int) or isinstance(number, bool) or number < 1:
+                      raise RuntimeError('Malformed candidate pull request identity')
+                  previous = None
+                  stable = True
+                  for _ in range(3):
+                      try:
+                          value, ready, fingerprint = observed(number)
+                      except CheckFailure as error:
+                          print(f'PR #{number} is waiting: {error}', flush=True)
+                          stable = False
+                          break
+                      if (not eligible(value, default_branch, authors) or not ready
+                              or (previous is not None and previous != fingerprint)):
+                          print(f'PR #{number} is not ready or changed; a later wakeup will retry.', flush=True)
+                          stable = False
+                          break
+                      previous = fingerprint
+                  if stable:
+                      gh('pr', 'merge', str(number), '--repo', repo, f'--{method}',
+                         '--match-head-commit', value['headRefOid'])
+                      print(f'Merged reviewed PR #{number} at its verified head.', flush=True)
+
+
           def main():
               if not os.environ.get('GH_TOKEN', '').strip():
                   raise RuntimeError('BOT_PAT is missing. Configure it and explicitly forward it from the caller.')
               repo, number = os.environ['GITHUB_REPOSITORY'], os.environ['PR_NUMBER']
-              if not number.isdecimal():
+              single_pass = os.environ.get('REVIEWED_SINGLE_PASS') == 'true'
+              if not single_pass and not number.isdecimal():
                   raise RuntimeError('A pull-request metadata event with a numeric PR number is required.')
               authors = {item.strip() for item in os.environ['PR_AUTHORS'].split(',') if item.strip()}
               if not authors or not authors <= TRUSTED_AUTHORS:
@@ -231,8 +372,18 @@ jobs:
               default_branch = gh('api', f'repos/{repo}', '--jq', '.default_branch')
               reviewed = os.environ.get('REVIEWED_MERGE') == 'true'
               native = os.environ.get('NATIVE_AUTO_MERGE') == 'true'
+              actions_authors = set()
+              if os.environ.get('ALLOW_DEPENDABOT_ACTIONS_REVIEW') == 'true':
+                  actions_authors.add('dependabot[bot]')
+              if os.environ.get('ALLOW_OWNED_BOT_ACTIONS_REVIEW') == 'true':
+                  actions_authors.add('californiantiramisu')
+              if (single_pass or actions_authors) and not reviewed:
+                  raise RuntimeError('Single-pass and Actions approval options require reviewed merge')
               if reviewed and (native or not required):
                   raise RuntimeError('Reviewed merge requires explicit checks and cannot use native mode.')
+              if single_pass:
+                  reviewed_single_pass(repo, default_branch, authors, method, required, actions_authors)
+                  return
               if native:
                   request_protected_merge(repo, number, default_branch, authors, method, required)
                   return
@@ -246,11 +397,11 @@ jobs:
                   if not eligible(pr, default_branch, authors):
                       print('PR is not eligible: author, label, draft, target branch, or open state does not match.')
                       return
-                  ready, checks = checked_snapshot(pr, required, os.environ.get('GITHUB_RUN_ID', ''), reviewed)
+                  ready, checks = checked_snapshot(pr, required, os.environ.get('GITHUB_RUN_ID', ''), reviewed, actions_authors)
                   fingerprint = (pr['headRefOid'], checks)
                   if ready and fingerprint == previous_green:
                       fresh = snapshot(repo, number, reviewed=True) if reviewed else snapshot(repo, number)
-                      fresh_ready, fresh_checks = checked_snapshot(fresh, required, os.environ.get('GITHUB_RUN_ID', ''), reviewed)
+                      fresh_ready, fresh_checks = checked_snapshot(fresh, required, os.environ.get('GITHUB_RUN_ID', ''), reviewed, actions_authors)
                       if (eligible(fresh, default_branch, authors) and fresh_ready
                               and (fresh['headRefOid'], fresh_checks) == fingerprint):
                           options = [] if reviewed else ['--auto']

@@ -80,14 +80,16 @@ def _check_pgp_metadata(metadata: str) -> None:
     ]
     if sum(fields[0] == "sec" for fields in keys) != 1:
         raise ValueError(KEY_ERROR)
+    # GnuPG 2.4 reports the byte-rounded Ed448 encoding as 456 bits;
+    # newer releases report the nominal 448. Neither permits another curve.
     curves = {
-        "nistp256": 256,
-        "nistp384": 384,
-        "nistp521": 521,
-        "ed25519": 255,
-        "cv25519": 255,
-        "ed448": 448,
-        "cv448": 448,
+        "nistp256": ({18, 19}, {256}),
+        "nistp384": ({18, 19}, {384}),
+        "nistp521": ({18, 19}, {521}),
+        "ed25519": ({22}, {255}),
+        "cv25519": ({18}, {255}),
+        "ed448": ({22}, {448, 456}),
+        "cv448": ({18}, {448}),
     }
     has_signer = False
     for fields in keys:
@@ -98,7 +100,9 @@ def _check_pgp_metadata(metadata: str) -> None:
         except (IndexError, ValueError):
             raise ValueError(KEY_ERROR) from None
         accepted = (algorithm in (1, 2, 3) and bits >= 2048) or (
-            algorithm in (18, 19, 22) and curve in curves and bits == curves[curve]
+            curve in curves
+            and algorithm in curves[curve][0]
+            and bits in curves[curve][1]
         )
         if not accepted:
             raise ValueError(KEY_ERROR)
