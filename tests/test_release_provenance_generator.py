@@ -53,7 +53,7 @@ class ProvenanceGeneratorTests(unittest.TestCase):
             self.assertIn("test_semantics_reject_replacement_after_inventory_hashing", checked.stderr)
             self.assertIn("test_policy_cannot_remove_or_change_embedded_requirement", checked.stderr)
             self.assertNotIn("NO TESTS RAN", checked.stderr)
-            for suite in ("test_release_signing.py", "test_version_receipt.py", "test_versioned_release.py"):
+            for suite in ("test_release_signing.py", "test_version_receipt.py", "test_versioned_release.py", "test_consumer_versioning.py"):
                 checked = subprocess.run([sys.executable, "-m", "unittest", "discover", "-s", ".github/release-tests",
                                           "-p", suite, "-q"], cwd=root, capture_output=True, text=True)
                 self.assertEqual(checked.returncode, 0, checked.stdout + checked.stderr)
