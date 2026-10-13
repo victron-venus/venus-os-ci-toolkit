@@ -44,6 +44,19 @@ class WorkflowYAMLTests(unittest.TestCase):
             with self.subTest(reference=reference), self.assertRaises(ValueError):
                 CONTRACTS.validate_workflow_pins("quality-gate.yml", workflow, pins)
 
+    def test_docker_actions_require_full_content_digest_and_preserve_manifest_checks(self):
+        pinned = "docker://alpine@sha256:" + "a" * 64
+        CONTRACTS.validate_action_reference("consumer.yml", pinned, None)
+        for reference in ("docker://alpine:latest", "docker://alpine@" + SHA,
+                          "docker://@sha256:" + "a" * 64,
+                          "docker://alpine@sha256:" + "a" * 63,
+                          "docker://alpine@sha256:" + "A" * 64,
+                          "docker://alpine@sha512:" + "a" * 64):
+            with self.subTest(reference=reference), self.assertRaises(ValueError):
+                CONTRACTS.validate_action_reference("consumer.yml", reference, None)
+        with self.assertRaisesRegex(ValueError, "differs from generator pins"):
+            CONTRACTS.validate_action_reference("generated.yml", pinned, {})
+
     def test_local_steps_and_matching_manifest_are_supported(self):
         workflow = {
             "jobs": {
