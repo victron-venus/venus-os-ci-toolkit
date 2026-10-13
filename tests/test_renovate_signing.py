@@ -78,6 +78,9 @@ class RenovateSigningTests(unittest.TestCase):
             args = [
                 "gpg",
                 "--no-options",
+                # Explicitly select GnuPG's legacy Ed448 fixture format;
+                # this does not modify global settings or skip real key tests.
+                "--compliance=gnupg",
                 "--homedir",
                 str(home),
                 "--batch",
@@ -89,7 +92,7 @@ class RenovateSigningTests(unittest.TestCase):
                 capture_output=True,
                 timeout=15,
             )
-            subprocess.run(
+            generated = subprocess.run(
                 args
                 + [
                     "--pinentry-mode",
@@ -102,16 +105,26 @@ class RenovateSigningTests(unittest.TestCase):
                     "sign",
                     "0",
                 ],
-                check=True,
+                check=False,
                 capture_output=True,
                 timeout=30,
             )
+            if generated.returncode:
+                raise AssertionError(
+                    f"Cannot generate synthetic {algorithm} fixture: "
+                    + generated.stderr.decode("utf-8", errors="replace")
+                )
             cls.pgp[algorithm] = subprocess.check_output(
                 args + ["--armor", "--export-secret-keys"],
                 stderr=subprocess.PIPE,
                 timeout=15,
             ).decode()
-            if algorithm == "rsa2048":
+            if algorithm in {"rsa2048", "ed25519", "nistp256"}:
+                subkey, usage, label = {
+                    "rsa2048": ("rsa1024", "sign", "weak-subkey"),
+                    "ed25519": ("cv25519", "encr", "ed25519-ecdh"),
+                    "nistp256": ("nistp384", "encr", "nist-ecdh"),
+                }[algorithm]
                 metadata = subprocess.check_output(
                     args + ["--with-colons", "--list-keys"],
                     stderr=subprocess.PIPE,
@@ -131,15 +144,15 @@ class RenovateSigningTests(unittest.TestCase):
                         "",
                         "--quick-add-key",
                         fingerprint,
-                        "rsa1024",
-                        "sign",
+                        subkey,
+                        usage,
                         "0",
                     ],
                     check=True,
                     capture_output=True,
                     timeout=30,
                 )
-                cls.pgp["weak-subkey"] = subprocess.check_output(
+                cls.pgp[label] = subprocess.check_output(
                     args + ["--armor", "--export-secret-keys"],
                     stderr=subprocess.PIPE,
                     timeout=15,
@@ -187,9 +200,54 @@ class RenovateSigningTests(unittest.TestCase):
             credentials.validate_signing_key(self.ssh["rsa1024"])
 
     def test_accepts_supported_real_pgp_keys(self):
-        for name in ("rsa2048", "ed25519", "ed448", "nistp256"):
+        for name in (
+            "rsa2048",
+            "ed25519",
+            "ed448",
+            "nistp256",
+            "ed25519-ecdh",
+            "nist-ecdh",
+        ):
             with self.subTest(name=name):
                 credentials.validate_signing_key(self.pgp[name])
+
+    def test_ed448_representations_and_encryption_subkey_metadata(self):
+        """Accept known GnuPG representations without mixing curves and algorithms."""
+
+        def metadata(curve, bits, algorithm, kind="sec", capabilities="sc"):
+            fields = [""] * 18
+            fields[0], fields[1] = kind, "u"
+            fields[2], fields[3] = str(bits), str(algorithm)
+            fields[11], fields[16] = capabilities, curve
+            return ":".join(fields) + "\n"
+
+        for bits in (448, 456):
+            credentials._check_pgp_metadata(metadata("ed448", bits, 22))
+        for primary, subkey in (
+            (("ed25519", 255, 22), ("cv25519", 255, 18)),
+            (("ed448", 456, 22), ("cv448", 448, 18)),
+            (("nistp256", 256, 19), ("nistp384", 384, 18)),
+        ):
+            credentials._check_pgp_metadata(
+                metadata(*primary) + metadata(*subkey, kind="ssb", capabilities="e")
+            )
+        for curve, bits, algorithm in (
+            ("ed448", 447, 22),
+            ("ed448", 449, 22),
+            ("ed448", 455, 22),
+            ("ed448", 457, 22),
+            ("ed448", 448, 18),
+            ("ed448", 456, 19),
+            ("ed25519", 255, 19),
+            ("cv25519", 255, 22),
+            ("cv448", 456, 18),
+            ("nistp256", 256, 22),
+        ):
+            with (
+                self.subTest(curve=curve, bits=bits, algorithm=algorithm),
+                self.assertRaises(ValueError),
+            ):
+                credentials._check_pgp_metadata(metadata(curve, bits, algorithm))
 
     def test_accepts_base64_pgp_as_pinned_renovate_does(self):
         value = base64.b64encode(self.pgp["ed25519"].encode()).decode()

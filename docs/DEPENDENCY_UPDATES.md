@@ -72,7 +72,11 @@ At least one key must support signing. DSA, smaller keys, unknown algorithms and
 malformed material fail before the dependency sweep starts. These are GnuPG-compatible
 OpenPGP packets: GnuPG represents Ed25519/Ed448 with algorithm ID 22 and its curve
 field. This does not claim support for RFC 9580 version-6 keys or algorithm IDs
-27/28, which the Renovate runner's GnuPG import must support before they can be used.
+27/28, which the Renovate runner's GnuPG import must support before they can be used. The inspector
+accepts GnuPG Ed448 sizes of 448 bits and the
+[legacy rounded 456-bit encoding](https://github.com/gpg/gnupg/blob/gnupg-2.4.4/common/openpgp-oid.c#L54) only with the Ed448 curve and algorithm 22; other curve/algorithm
+mismatches remain rejected. Signing tests explicitly select GnuPG compatibility
+when generating synthetic Ed448 fixtures on distributions that require it.
 
 The runner needs OpenSSH, GnuPG and OpenSSL. Inspection uses temporary storage,
 does not import into the operator's keyring, and removes temporary material on
