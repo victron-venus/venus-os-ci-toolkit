@@ -28,21 +28,34 @@ class WorkflowYAMLTests(unittest.TestCase):
     def test_duplicate_top_level_and_nested_keys_are_rejected(self):
         for source in ("jobs: {}\njobs: {}", "jobs:\n  test:\n    uses: one\n    uses: two"):
             with self.subTest(source=source), self.assertRaises(ValueError):
-                yaml.load(source, Loader=CONTRACTS.UniqueKeyLoader)
+                yaml.load(source, Loader=CONTRACTS.UniqueKeyLoader)  # nosec B506 - BaseLoader subclass, no object construction
 
     def test_yaml_trigger_keys_and_scalars_remain_strings(self):
-        result = yaml.load("on: push\nvalue: true\n", Loader=CONTRACTS.UniqueKeyLoader)
+        result = yaml.load("on: push\nvalue: true\n", Loader=CONTRACTS.UniqueKeyLoader)  # nosec B506 - BaseLoader subclass, no object construction
         self.assertEqual(result, {"on": "push", "value": "true"})
 
     def test_non_string_mapping_keys_are_rejected(self):
         with self.assertRaises(ValueError):
-            yaml.load("? [one, two]\n: value", Loader=CONTRACTS.UniqueKeyLoader)
+            yaml.load("? [one, two]\n: value", Loader=CONTRACTS.UniqueKeyLoader)  # nosec B506 - BaseLoader subclass, no object construction
 
     def test_mutable_or_unknown_generated_actions_are_rejected(self):
         for reference, pins in (("actions/checkout@main", None), ("actions/checkout@" + SHA, {})):
             workflow = {"jobs": {"build": {"steps": [{"uses": reference}]}}}
             with self.subTest(reference=reference), self.assertRaises(ValueError):
                 CONTRACTS.validate_workflow_pins("quality-gate.yml", workflow, pins)
+
+    def test_docker_actions_require_full_content_digest_and_preserve_manifest_checks(self):
+        pinned = "docker://alpine@sha256:" + "a" * 64
+        CONTRACTS.validate_action_reference("consumer.yml", pinned, None)
+        for reference in ("docker://alpine:latest", "docker://alpine@" + SHA,
+                          "docker://@sha256:" + "a" * 64,
+                          "docker://alpine@sha256:" + "a" * 63,
+                          "docker://alpine@sha256:" + "A" * 64,
+                          "docker://alpine@sha512:" + "a" * 64):
+            with self.subTest(reference=reference), self.assertRaises(ValueError):
+                CONTRACTS.validate_action_reference("consumer.yml", reference, None)
+        with self.assertRaisesRegex(ValueError, "differs from generator pins"):
+            CONTRACTS.validate_action_reference("generated.yml", pinned, {})
 
     def test_local_steps_and_matching_manifest_are_supported(self):
         workflow = {

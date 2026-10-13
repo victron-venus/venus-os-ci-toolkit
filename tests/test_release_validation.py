@@ -3,7 +3,8 @@
 import copy
 import json
 import os
-import subprocess
+# Subprocesses use explicit argv and never a shell.
+import subprocess  # nosec B404
 import sys
 import tempfile
 import unittest
@@ -174,7 +175,7 @@ class ReleaseValidationTests(unittest.TestCase):
                 ("workflow_dispatch", "beta", 1),
                 ("pull_request", "beta", 1),
             ):
-                result = subprocess.run(
+                result = subprocess.run(  # nosec B603 - reviewed local CLI with explicit fixture argv
                     [
                         sys.executable,
                         str(ROOT / "scripts/release_validation.py"),

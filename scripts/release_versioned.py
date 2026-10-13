@@ -594,6 +594,7 @@ def publish_versioned(args: argparse.Namespace) -> dict[str, object]:
         stage = Path(temp)
         assets = rc.stage_assets(Path(args.assets), stage)
         receipts = verify_receipts(stage, plan, assets, policy)
+        rc.verify_required_signatures(stage, gh.repo, cast(str, plan["source_sha"]))
         if parent:
             verify_final_toolchains(gh, candidate, receipts)
         package_versions = verify_declared_artifacts(stage, policy, plan)

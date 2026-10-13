@@ -106,7 +106,12 @@ def validate_action_reference(filename, reference, pins):
     if not reference or reference.startswith("./"):
         return
     action, _, revision = reference.partition("@")
-    if not re.fullmatch(COMMIT_SHA_PATTERN, revision):
+    if reference.startswith("docker://"):
+        if not re.fullmatch(
+            r"docker://[A-Za-z0-9][A-Za-z0-9._:/-]*@sha256:[0-9a-f]{64}", reference
+        ):
+            raise ValueError(f"{filename}: Docker actions must use an immutable SHA-256 digest")
+    elif not re.fullmatch(COMMIT_SHA_PATTERN, revision):
         raise ValueError(f"{filename}: {action} must use a full commit SHA")
     if pins is not None and (action not in pins or revision != pins[action]):
         raise ValueError(f"{filename}: {action} differs from generator pins")

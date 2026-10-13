@@ -3,7 +3,8 @@
 import importlib.util
 import json
 import os
-import subprocess
+# Subprocesses use explicit argv and never a shell.
+import subprocess  # nosec B404
 import sys
 import tempfile
 import unittest
@@ -38,7 +39,7 @@ class ChangeScopeTests(unittest.TestCase):
 
     def git(self, *arguments):
         """Never invoke the workstation's signing key or repository hooks."""
-        return subprocess.check_output(
+        return subprocess.check_output(  # nosec B603, B607 - fixed Git executable, isolated fixture
             [
                 "git",
                 "-c",
@@ -403,7 +404,7 @@ class ChangeScopeTests(unittest.TestCase):
         self.write("README.md")
         head = self.commit()
         shallow = self.directory / "shallow"
-        subprocess.run(
+        subprocess.run(  # nosec B603, B607 - fixed local Git clone fixture
             ["git", "clone", "--depth=1", self.repo.as_uri(), str(shallow)],
             check=True,
             capture_output=True,
@@ -500,7 +501,7 @@ class ChangeScopeTests(unittest.TestCase):
             GITHUB_OUTPUT=str(output_file),
         )
         environment.update(env_overrides or {})
-        result = subprocess.run(
+        result = subprocess.run(  # nosec B603 - reviewed local script and explicit test argv
             [sys.executable, str(SCRIPT), "--repo", str(self.repo), *arguments],
             capture_output=True,
             text=True,

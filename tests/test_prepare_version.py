@@ -120,7 +120,7 @@ class PreparationTest(unittest.TestCase):  # pylint: disable=too-many-instance-a
         versions = (
             "../outside",
             "1.2.4/../../outside",
-            "/tmp/outside",
+            "/tmp/outside",  # nosec B108 - invalid input; never created or opened
             "C:\\outside",
             "--output=outside",
             "1.2.4\n",

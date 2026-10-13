@@ -149,6 +149,13 @@ Consumers continue to build from their committed files without a producer checko
 3. Verify generated drift with `--check`, inspect diffs, and submit PRs.
 4. Merge workflows before enabling their required status checks. Keep existing security and review requirements active.
 
+## Signed source and release artifacts
+
+Public versioned release consumers can enable `sign_releases: true` in their
+reviewed policy. A separate hosted job authenticates the source archive and
+complete artifact inventory; publication verifies the signature before writes.
+See [adoption and recipient verification](docs/release-signatures.md).
+
 ## Publishing a source after workflow changes
 
 Automatic push betas and scheduled nightlies publish the current default HEAD.
