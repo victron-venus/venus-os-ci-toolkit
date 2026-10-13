@@ -195,9 +195,12 @@ The root-owned JSON configuration optionally sets `identity_check_interval_secon
 `firewall_check_interval_seconds` (default 10, range 1–60). Intervals are seconds
 between completed checks, plus scheduler delays on an overloaded node. Readiness
 expires after twice the identity interval plus one second if the checking thread
-stalls. Discovery, identity, firewall-read or firewall-write failures clear
-admission; recovery requires fresh CRI discovery. NetworkPolicy provides another
-boundary; it does not replace the node fence.
+stalls. A healthy but slow reconciliation can also temporarily return 503;
+startup retries until fresh checks succeed. This short lease deliberately
+prefers delayed registration to stale admission. Already running workers do not
+poll this startup endpoint. Discovery, identity, firewall-read or firewall-write
+failures clear admission; recovery requires fresh CRI discovery. NetworkPolicy
+provides another boundary; it does not replace the node fence.
 
 Generate the node guard TLS key and certificate on the node, with the node IP in
 the certificate SAN. Keep the private key root-readable on that node; configure
