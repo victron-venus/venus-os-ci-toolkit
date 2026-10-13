@@ -71,3 +71,14 @@ execution's original sidecar and verify it separately; matching layers alone do
 not prove matching archives. Report actual hashes, environment and limitations
 before claiming repeatable builds. A changed packaging recipe needs a new
 candidate and its applicable acceptance checks.
+
+## Native builds
+
+For a declared detached pair, `assemble_native_container.py` checks the complete
+native receipt inventory and its frozen version fields before detaching. It
+then compares the held archive's full hash, size and runnable config digest to
+the exact successful native smoke result. The runnable OCI, original provenance
+sidecar and native build evidence are validated in private staging and published
+with no-clobber links. Failed publication never replaces existing files; cleanup
+only removes outputs still owned by that attempt. Without an opt-in pair, native
+assembly retains the existing inline-attestation format.
