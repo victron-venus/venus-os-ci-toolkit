@@ -5,6 +5,7 @@ import copy
 import hashlib
 import importlib.util
 import json
+import subprocess  # nosec B404
 import sys
 import unittest
 from contextlib import ExitStack
@@ -251,6 +252,68 @@ class DetachedProvenanceTests(unittest.TestCase):
             signing.verify(self.root, self.policy, fixture.REVISION)
         self.assertEqual(len(seen), 1)
         self.assertFalse(seen[0].exists())
+
+    def test_snapshot_rejects_fifo_without_waiting(self):
+        fifo = self.root / "control-fifo"
+        provenance.os.mkfifo(fifo)
+        code = "from pathlib import Path; from release_provenance import read_snapshot; read_snapshot(Path(__import__('sys').argv[1]), 1024)"
+        # Fixed interpreter/source and a temporary pathname; no shell execution.
+        result = subprocess.run(  # nosec B603
+            [sys.executable, "-c", code, str(fifo)], cwd=ROOT / "scripts",
+            capture_output=True, text=True, timeout=5, check=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("regular unaliased", result.stderr)
+
+    def test_signature_control_swap_rejected_before_cosign(self):
+        signing, _ = self.signed_inventory()
+        original_files = signing.files
+        manifest = self.root / signing.MANIFEST
+        alias = self.root / "outside"
+        alias.write_bytes(manifest.read_bytes())
+        def race(directory):
+            entries = original_files(directory)
+            manifest.unlink()
+            manifest.symlink_to(alias)
+            return entries
+        with patch.object(signing, "files", side_effect=race), patch.object(signing.subprocess, "run") as run:
+            with self.assertRaises((ValueError, OSError)):
+                signing.verify(self.root, self.policy, fixture.REVISION)
+            run.assert_not_called()
+
+    def test_snapshot_rejects_hardlinks_and_oversized_data(self):
+        control = self.root / "control"
+        control.write_bytes(b"control")
+        with self.assertRaisesRegex(ValueError, "Oversized"):
+            provenance.read_snapshot(control, 3)
+        provenance.os.link(control, self.root / "alias")
+        with self.assertRaisesRegex(ValueError, "unaliased"):
+            provenance.read_snapshot(control, 1024)
+
+    def test_staging_unrelated_target_allowed_but_aggregate_requires_pair(self):
+        import stage_release_assets as stage
+        target = self.root / "signature"
+        target.mkdir()
+        source = self.root / "release-signatures.json"
+        source.write_text("signature fixture")
+        def receipt(*_args, **_kwargs):
+            (target / "release-inputs-signature.json").write_text("{}")
+        with patch.object(stage, "inspect_staged_artifacts", return_value=[]), patch.object(stage.subprocess, "run", side_effect=receipt):
+            stage.write_staged_files(self.root, target, {source.name: source}, self.policy, self.plan,
+                                     self.root / ".release-plan.json")
+        self.assertTrue((target / source.name).is_file())
+        with self.assertRaises(FileNotFoundError):
+            provenance.verify_all(target, self.policy, self.plan)
+
+    def test_staging_requires_complete_owned_pair(self):
+        self.detach()
+        self.assertEqual(len(provenance.verify_staged(self.root, self.policy, self.plan)), 1)
+        self.sidecar.unlink()
+        with self.assertRaisesRegex(ValueError, "partial provenance pair"):
+            provenance.verify_staged(self.root, self.policy, self.plan)
+        self.output.unlink()
+        self.sidecar.write_text("orphan")
+        with self.assertRaisesRegex(ValueError, "partial provenance pair"):
+            provenance.verify_staged(self.root, self.policy, self.plan)
 
     @staticmethod
     def change_invocation(entries, invocation, subject=None):

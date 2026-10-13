@@ -78,20 +78,27 @@ def document(raw):
     return value
 
 
-def read_sidecar(path, expected=None):
-    """Bound reads before allocation and reject aliases and concurrent mutation."""
-    require(not path.is_symlink(), "Provenance sidecar must not be a symlink")
+def read_snapshot(path, limit):
+    """Read a bounded, regular, unaliased FD without following or waiting on swaps."""
+    path = Path(path)
+    require(not path.is_symlink(), "Snapshot must not be a symlink")
     descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
     with os.fdopen(descriptor, "rb") as stream:
         before = os.fstat(stream.fileno())
         require(stat.S_ISREG(before.st_mode) and before.st_nlink == 1,
-                "Provenance sidecar must be a regular unaliased file")
-        require(0 < before.st_size <= MAX_SIDECAR, "Oversized provenance sidecar")
-        raw = stream.read(MAX_SIDECAR + 1)
+                "Snapshot must be a regular unaliased file")
+        require(0 < before.st_size <= limit, "Oversized or empty snapshot")
+        raw = stream.read(limit + 1)
         after = os.fstat(stream.fileno())
-        require((before.st_size, before.st_mtime_ns, before.st_ctime_ns) ==
-                (after.st_size, after.st_mtime_ns, after.st_ctime_ns) and len(raw) == before.st_size,
-                "Provenance sidecar changed while reading")
+        require((before.st_size, before.st_mtime_ns, before.st_ctime_ns, before.st_nlink) ==
+                (after.st_size, after.st_mtime_ns, after.st_ctime_ns, after.st_nlink) and
+                len(raw) == before.st_size, "Snapshot changed while reading")
+    return raw
+
+
+def read_sidecar(path, expected=None):
+    """Compare the exact captured bytes with their authenticated identity."""
+    raw = read_snapshot(path, MAX_SIDECAR)
     if expected is not None:
         require(expected == {"name": path.name, "size": len(raw), "sha256": hashlib.sha256(raw).hexdigest()},
                 "Provenance sidecar differs from authenticated inventory")
@@ -252,6 +259,24 @@ def verify_all(directory, policy, plan, payloads=None):
         expected = {item["name"]: item for item in payloads}
         require(len(expected) == len(payloads), "Duplicate authenticated payload")
     return [verify_pair(Path(directory), pair, plan, policy, expected) for pair in pairs]
+
+
+def verify_staged(directory, policy, plan):
+    """A build target may own no pair, but may never stage half of one."""
+    pairs = policy_pairs(policy)
+    if not pairs:
+        return []
+    directory = Path(directory)
+    version_plan.validate_plan(plan, policy, plan.get("source_sha"))
+    present = {path.name for path in directory.iterdir()}
+    checked = []
+    for pair in pairs:
+        names = {pair["image"], pair["sidecar"]}
+        selected = names & present
+        require(not selected or selected == names, "Staged target contains a partial provenance pair")
+        if selected:
+            checked.append(verify_pair(directory, pair, plan, policy))
+    return checked
 
 
 def read_raw(archive, name):

@@ -117,9 +117,9 @@ def write_staged_files(
     for path in files.values():
         shutil.copy2(path, output / path.name)
     if DETACHED_PROVENANCE_REQUIRED or policy.get("detached_provenance"):
-        from release_provenance import verify_all  # pylint: disable=import-outside-toplevel
+        from release_provenance import verify_staged  # pylint: disable=import-outside-toplevel
 
-        verify_all(output, policy, identity)
+        verify_staged(output, policy, identity)
     metadata = inspect_staged_artifacts(output, files, policy, identity)
     receipt = output / f"release-inputs-{output.name}.json"
     # Repository-controlled argv; no shell interpolation or external command text.

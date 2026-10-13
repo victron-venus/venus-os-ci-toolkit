@@ -52,6 +52,9 @@ independently reproduce every dependency or validate every predicate-specific
 claim. Do not describe this as a complete SLSA certification.
 
 Staging and aggregate receipt checks use the independently validated frozen plan.
+Each independent build target may stage neither file or the complete pair; a
+partial pair is rejected. Aggregate receipt and recipient checks require every
+declared pair, including when other targets contain only wheels or signatures.
 The signer authenticates both files and includes that plan in its signed release
 inventory. Recipient verification authenticates a private snapshot of the
 inventory and bundle, validates its plan against the reviewed local policy and

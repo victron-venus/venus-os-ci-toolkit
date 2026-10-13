@@ -21,12 +21,12 @@ UNSIGNED_METADATA = {MANIFEST, BUNDLE, RECEIPT, "release-manifest.json"}
 
 def read_json(path: Path) -> dict:
     """Bound control data before parsing, refusing nonregular file aliases."""
-    if path.is_symlink() or not path.is_file():
-        raise ValueError("Control document must be a regular file")
-    with path.open("rb") as stream:
-        raw = stream.read(MAX_MANIFEST_BYTES + 1)
-    if len(raw) > MAX_MANIFEST_BYTES:
-        raise ValueError("Control document exceeds size limit")
+    from release_provenance import read_snapshot  # pylint: disable=import-outside-toplevel
+
+    try:
+        raw = read_snapshot(path, MAX_MANIFEST_BYTES)
+    except OSError as error:
+        raise ValueError("Control document must be a regular file") from error
     value = json.loads(raw)
     if not isinstance(value, dict):
         raise ValueError("Control document must be an object")
@@ -149,17 +149,12 @@ def verify(directory: Path, policy: dict, source_sha: str) -> None:
     entries = files(directory)
     if MANIFEST not in entries or BUNDLE not in entries:
         raise ValueError("Release signature and manifest are required")
-    if entries[MANIFEST].stat().st_size > MAX_MANIFEST_BYTES:
-        raise ValueError("Release inventory exceeds size limit")
-    # Authenticate private bounded copies, then parse those exact bytes. Reading
-    # the original pathname again after cosign would allow swap-back attacks.
-    snapshots = {}
-    for name, limit in ((MANIFEST, MAX_MANIFEST_BYTES), (BUNDLE, 8 * MAX_MANIFEST_BYTES)):
-        with entries[name].open("rb") as stream:
-            raw = stream.read(limit + 1)
-        if not raw or len(raw) > limit:
-            raise ValueError("Oversized or empty release signature control file")
-        snapshots[name] = raw
+    # Authenticate private bounded copies, then parse those exact bytes. Safe
+    # FD acquisition also rejects FIFO/symlink swaps after the initial inventory.
+    from release_provenance import read_snapshot  # pylint: disable=import-outside-toplevel
+
+    snapshots = {name: read_snapshot(entries[name], limit) for name, limit in
+                 ((MANIFEST, MAX_MANIFEST_BYTES), (BUNDLE, 8 * MAX_MANIFEST_BYTES))}
     with tempfile.TemporaryDirectory(prefix="release-signature-") as temporary:
         private = Path(temporary)
         for name, raw in snapshots.items():
