@@ -2,7 +2,8 @@
 
 import json
 from contextlib import chdir
-import subprocess
+# Subprocesses use explicit argv and never a shell.
+import subprocess  # nosec B404
 import sys
 import tempfile
 import unittest

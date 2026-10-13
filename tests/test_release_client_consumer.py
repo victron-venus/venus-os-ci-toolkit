@@ -1,7 +1,8 @@
 """Exercise local release commands and generated workflow safety contracts offline."""
 
 import importlib.util
-import subprocess
+# Subprocesses use explicit argv and never a shell.
+import subprocess  # nosec B404
 import tempfile
 import unittest
 from pathlib import Path

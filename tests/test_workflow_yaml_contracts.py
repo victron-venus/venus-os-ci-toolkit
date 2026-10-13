@@ -28,15 +28,15 @@ class WorkflowYAMLTests(unittest.TestCase):
     def test_duplicate_top_level_and_nested_keys_are_rejected(self):
         for source in ("jobs: {}\njobs: {}", "jobs:\n  test:\n    uses: one\n    uses: two"):
             with self.subTest(source=source), self.assertRaises(ValueError):
-                yaml.load(source, Loader=CONTRACTS.UniqueKeyLoader)
+                yaml.load(source, Loader=CONTRACTS.UniqueKeyLoader)  # nosec B506 - BaseLoader subclass, no object construction
 
     def test_yaml_trigger_keys_and_scalars_remain_strings(self):
-        result = yaml.load("on: push\nvalue: true\n", Loader=CONTRACTS.UniqueKeyLoader)
+        result = yaml.load("on: push\nvalue: true\n", Loader=CONTRACTS.UniqueKeyLoader)  # nosec B506 - BaseLoader subclass, no object construction
         self.assertEqual(result, {"on": "push", "value": "true"})
 
     def test_non_string_mapping_keys_are_rejected(self):
         with self.assertRaises(ValueError):
-            yaml.load("? [one, two]\n: value", Loader=CONTRACTS.UniqueKeyLoader)
+            yaml.load("? [one, two]\n: value", Loader=CONTRACTS.UniqueKeyLoader)  # nosec B506 - BaseLoader subclass, no object construction
 
     def test_mutable_or_unknown_generated_actions_are_rejected(self):
         for reference, pins in (("actions/checkout@main", None), ("actions/checkout@" + SHA, {})):
