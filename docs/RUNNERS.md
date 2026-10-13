@@ -179,8 +179,25 @@ untrusted certificates and hostname mismatches. The single S5332 suppression at
 `serve_forever` accounts for older Sonar analyzers that classify the inherited
 server loop as plaintext without following its mandatory TLS wrapper (see the
 [upstream check and its documented limitation](https://github.com/SonarSource/sonar-python/blob/master/python-checks/src/main/java/org/sonar/python/checks/hotspots/ClearTextProtocolsCheck.java)).
-If discovery or the firewall transaction fails, new workers cannot register.
-NetworkPolicy provides another boundary; it does not replace the node fence.
+The guard checks local CNI state and the live veth MAC/ifindex every two seconds,
+without spawning a process. A disappeared or reused interface revokes admission.
+CRI discovery runs every 15 seconds; a new worker may wait that long for its
+first admission. The owned nftables table is inspected every 10 seconds and
+atomically replaced only when workers or filtering rules change. Rule order,
+selectors, verdicts and chain attributes are compared; packet counters and kernel
+handles are ignored. The expected snapshot comes from the guard's own atomic
+transaction, and a separate read must match before admission. A deleted or
+externally modified table is therefore repaired without trusting it as a new
+baseline. Existing unrelated tables and private runners are not changed.
+
+The root-owned JSON configuration optionally sets `identity_check_interval_seconds`
+(default 2, range 1–10), `discovery_interval_seconds` (default 15, range 1–300) and
+`firewall_check_interval_seconds` (default 10, range 1–60). Intervals are seconds
+between completed checks, plus scheduler delays on an overloaded node. Readiness
+expires after twice the identity interval plus one second if the checking thread
+stalls. Discovery, identity, firewall-read or firewall-write failures clear
+admission; recovery requires fresh CRI discovery. NetworkPolicy provides another
+boundary; it does not replace the node fence.
 
 Generate the node guard TLS key and certificate on the node, with the node IP in
 the certificate SAN. Keep the private key root-readable on that node; configure

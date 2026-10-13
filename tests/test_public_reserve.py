@@ -1,6 +1,7 @@
 """Public workers must be fenced before admission, without affecting private pools."""
 import importlib.util
 import json
+import tempfile
 from pathlib import Path
 import unittest
 from unittest.mock import patch
@@ -32,20 +33,6 @@ class NetworkAdmissionTests(unittest.TestCase):
 
     def test_no_workers_leaves_private_traffic_untouched(self):
         self.assertNotIn('drop', guard_module.rules([], '10.66.10.2', '10.43.0.10'))
-
-    def test_admission_is_revoked_when_atomic_firewall_update_fails(self):
-        guard = guard_module.Guard({'node_ip': '10.66.10.2', 'dns_ip': '10.43.0.10'})
-        with patch.object(guard_module, 'discover', return_value=[WORKER]), \
-                patch.object(guard_module.subprocess, 'run') as run, \
-                patch.object(guard_module, 'command') as command:
-            run.return_value.returncode = 1
-            guard.sync()
-            self.assertEqual(guard.admitted, {'10.42.3.250': 'pod-1'})
-            self.assertEqual(command.call_args.args, ('nft', '-f', '-'))
-            command.side_effect = RuntimeError('nft failure')
-            with self.assertRaises(RuntimeError):
-                guard.sync()
-            self.assertEqual(guard.admitted, {})
 
     def test_cni_cache_must_match_cri_identity_and_live_veth(self):
         pod = {'id': 'a' * 64, 'metadata': {'uid': 'pod-1'}}
@@ -87,6 +74,182 @@ class NetworkAdmissionTests(unittest.TestCase):
                 with self.assertRaises(RuntimeError):
                     server.process_request_thread(object(), ('127.0.0.1', 1000))
             self.assertTrue(server.slots.acquire(blocking=False))
+
+
+class GuardReconciliationTests(unittest.TestCase):
+    def setUp(self):
+        self.guard = guard_module.Guard({'node_ip': '10.66.10.2', 'dns_ip': '10.43.0.10'})
+        self.objects = [{'table': {'family': 'bridge', 'name': guard_module.TABLE}},
+                        {'chain': {'family': 'bridge', 'table': guard_module.TABLE,
+                                   'name': 'ingress', 'type': 'filter', 'hook': 'prerouting',
+                                   'prio': -350, 'policy': 'accept'}},
+                        {'rule': {'family': 'bridge', 'table': guard_module.TABLE,
+                                  'chain': 'ingress', 'expr': [{'counter': {}}, {'drop': None}]}}]
+        self.echo = json.dumps({'nftables': [{'add': item} for item in self.objects]})
+        self.clock = self.enterContext(patch.object(guard_module.time, 'monotonic', return_value=100))
+        self.discovery = self.enterContext(patch.object(guard_module, 'discover', return_value=[WORKER]))
+        self.validate = self.enterContext(patch.object(guard_module, 'validate_workers'))
+        self.snapshot = self.enterContext(patch.object(guard_module, 'firewall_snapshot',
+                                                      return_value=self.objects))
+        self.command = self.enterContext(patch.object(guard_module, 'command', return_value=self.echo))
+
+    def test_unchanged_workers_poll_cri_less_and_never_rewrite_firewall(self):
+        self.guard.sync()
+        for now in range(102, 162, 2):
+            self.clock.return_value = now
+            self.guard.sync()
+        self.assertEqual(self.discovery.call_count, 4)
+        self.assertEqual(self.command.call_count, 1)
+        self.assertEqual(self.snapshot.call_count, 8)
+        self.assertEqual(self.guard.admitted, {WORKER['ip']: WORKER['uid']})
+        self.assertGreaterEqual(self.validate.call_count, 30)
+
+    def test_removed_or_changed_table_is_repaired_without_cri_poll(self):
+        self.guard.sync()
+        for now, actual in [(110, None), (120, self.objects[:-1])]:
+            self.clock.return_value = now
+            self.snapshot.side_effect = [actual, self.objects]
+            self.guard.sync()
+            self.assertEqual(self.guard.admitted, {WORKER['ip']: WORKER['uid']})
+        self.assertEqual(self.command.call_count, 3)
+        self.assertEqual(self.discovery.call_count, 2)
+
+    def test_failed_atomic_apply_revokes_admission(self):
+        self.guard.sync()
+        self.clock.return_value = 110
+        self.snapshot.return_value = None
+        self.command.side_effect = RuntimeError('nft failure')
+        with self.assertRaises(RuntimeError):
+            self.guard.sync()
+        self.assertEqual(self.guard.admitted, {})
+        self.assertEqual(self.guard.admitted_until, 0)
+
+    def test_post_apply_drift_is_not_adopted_as_baseline(self):
+        self.snapshot.side_effect = [None, self.objects[:-1]]
+        with self.assertRaisesRegex(RuntimeError, 'changed during'):
+            self.guard.sync()
+        self.assertEqual(self.guard.admitted, {})
+        self.assertIsNone(self.guard.firewall)
+
+    def test_bad_echo_cannot_admit_workers(self):
+        for echo in ['', '{}', '{"nftables": []}']:
+            with self.subTest(echo=echo):
+                self.command.return_value = echo
+                with self.assertRaises((ValueError, KeyError)):
+                    self.guard.sync()
+                self.assertEqual(self.guard.admitted, {})
+
+    def test_cri_failure_requires_fresh_discovery_before_readmission(self):
+        self.guard.sync()
+        self.clock.return_value = 116
+        self.discovery.side_effect = RuntimeError('runtime unavailable')
+        with self.assertRaises(RuntimeError):
+            self.guard.sync()
+        self.assertEqual(self.guard.admitted, {})
+        self.discovery.side_effect = None
+        self.clock.return_value = 118
+        self.guard.sync()
+        self.assertEqual(self.discovery.call_count, 3)
+        self.assertEqual(self.guard.admitted, {WORKER['ip']: WORKER['uid']})
+
+    def test_identity_loss_revokes_before_next_cri_or_firewall_check(self):
+        self.guard.sync()
+        self.clock.return_value = 102
+        self.validate.side_effect = ValueError('veth reused')
+        with self.assertRaises(ValueError):
+            self.guard.sync()
+        self.assertEqual(self.guard.admitted, {})
+        self.assertEqual(self.command.call_count, 1)
+        self.assertEqual(self.discovery.call_count, 1)
+        self.assertEqual(self.guard.next_discovery, 0)
+
+    def test_worker_replacement_and_removal_apply_before_admission(self):
+        self.guard.sync()
+        for now, workers in [(116, [{**WORKER, 'uid': 'pod-2'}]), (132, [])]:
+            self.clock.return_value = now
+            self.discovery.return_value = workers
+            self.guard.sync()
+            self.assertEqual(self.guard.admitted, {row['ip']: row['uid'] for row in workers})
+        self.assertEqual(self.command.call_count, 3)
+
+    def test_firewall_snapshot_failure_revokes_even_when_workers_unchanged(self):
+        self.guard.sync()
+        self.clock.return_value = 110
+        self.snapshot.side_effect = ValueError('invalid JSON')
+        with self.assertRaises(ValueError):
+            self.guard.sync()
+        self.assertEqual(self.guard.admitted, {})
+
+    def test_fingerprints_ignore_only_volatile_fields(self):
+        changed = json.loads(json.dumps(self.objects))
+        changed[-1]['rule']['handle'] = 999
+        changed[-1]['rule']['expr'][0]['counter'] = {'packets': 5, 'bytes': 300}
+        self.assertEqual(guard_module.canonical_ruleset(json.dumps({'nftables': changed})), self.objects)
+        changed[-1]['rule']['expr'][-1] = {'accept': None}
+        self.assertNotEqual(guard_module.canonical_ruleset(json.dumps({'nftables': changed})), self.objects)
+        self.assertNotEqual(guard_module.canonical_ruleset(
+            json.dumps({'nftables': list(reversed(self.objects))})), self.objects)
+        changed = json.loads(json.dumps(self.objects))
+        changed[1]['chain']['prio'] = 0
+        self.assertNotEqual(guard_module.canonical_ruleset(json.dumps({'nftables': changed})), self.objects)
+
+    def test_nft_input_file_is_private_and_removed_even_on_failure(self):
+        paths = []
+        def inspect(*args):
+            path = Path(args[-1])
+            paths.append(path)
+            self.assertEqual(path.read_text(), 'test rules')
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+            raise RuntimeError('nft failed')
+        self.command.side_effect = inspect
+        with self.assertRaises(RuntimeError):
+            guard_module.apply_firewall('test rules')
+        self.assertFalse(paths[0].exists())
+
+    def test_invalid_intervals_are_rejected(self):
+        for value in (True, 0, -1, float('nan'), float('inf'), '15', 301):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                guard_module.Guard({'discovery_interval_seconds': value})
+
+
+class LocalIdentityTests(unittest.TestCase):
+    def test_local_identity_rejects_reused_veth_and_changed_or_missing_cni(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            cni, devices = root / 'cni', root / 'devices'
+            cni.mkdir()
+            device = devices / WORKER['interface']
+            device.mkdir(parents=True)
+            host_mac = '02:00:00:00:00:01'
+            (device / 'address').write_text(host_mac)
+            (device / 'ifindex').write_text('17')
+            pod = {'id': 'a' * 64, 'metadata': {'uid': WORKER['uid']}}
+            cache = {'kind': 'cniCacheV1', 'containerId': pod['id'], 'ifName': 'eth0', 'result': {
+                'interfaces': [{'name': WORKER['interface'], 'mac': host_mac},
+                               {'name': 'eth0', 'mac': WORKER['mac'], 'sandbox': '/run/netns/cni-123'}],
+                'ips': [{'address': WORKER['ip'] + '/24', 'interface': 1}]}}
+            path = cni / ('cbr0-' + pod['id'] + '-eth0')
+            path.write_text(json.dumps(cache))
+            with patch.object(guard_module, 'CNI_RESULTS', cni), \
+                    patch.object(guard_module, 'NETWORK_DEVICES', devices), \
+                    patch.object(guard_module, 'command') as command:
+                worker = guard_module.cached_worker(pod)
+                guard_module.validate_workers([worker])
+                command.assert_not_called()
+                (device / 'ifindex').write_text('18')
+                with self.assertRaises(ValueError):
+                    guard_module.validate_workers([worker])
+                (device / 'ifindex').write_text('17')
+                cache['containerId'] = 'b' * 64
+                path.write_text(json.dumps(cache))
+                with self.assertRaises(ValueError):
+                    guard_module.validate_workers([worker])
+                path.unlink()
+                with self.assertRaises(OSError):
+                    guard_module.validate_workers([worker])
+                path.symlink_to(root / 'other')
+                with self.assertRaises(ValueError):
+                    guard_module.validate_workers([worker])
 
 POOL_SPEC = importlib.util.spec_from_file_location('render_pool', ROOT / 'deploy/runner-reserve/render_pool.py')
 pool_module = importlib.util.module_from_spec(POOL_SPEC)
@@ -185,6 +348,7 @@ class TLSAdmissionTests(unittest.TestCase):
             server_context.load_cert_chain(cert, key)
             guard = guard_module.Guard({})
             guard.admitted = {'127.0.0.1': 'pod-1'}
+            guard.admitted_until = float('inf')
             with guard_module.ReadinessServer(('127.0.0.1', 0), guard_module.handler(guard),
                                              tls_context=server_context) as server:
                 thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -199,10 +363,17 @@ class TLSAdmissionTests(unittest.TestCase):
                         with self.assertRaises(urllib.error.URLError) as error:
                             urllib.request.urlopen(target, context=context, timeout=4)
                         self.assertIsInstance(error.exception.reason, ssl.SSLCertVerificationError)
+                    guard.admitted_until = 0
+                    with self.assertRaises(urllib.error.HTTPError) as expired:
+                        urllib.request.urlopen(url, context=trusted, timeout=4)
+                    self.assertEqual(expired.exception.code, 503)
+                    expired.exception.close()
+                    guard.admitted_until = float('inf')
                     wrong_url = url.replace('pod-1', 'wrong-pod')
                     with self.assertRaises(urllib.error.HTTPError) as denied:
                         urllib.request.urlopen(wrong_url, context=trusted, timeout=4)
                     self.assertEqual(denied.exception.code, 503)
+                    denied.exception.close()
                     with socket.create_connection(server.server_address, timeout=4) as plain:
                         plain.sendall(b'GET /ready/pod-1 HTTP/1.1\r\nHost: localhost\r\n\r\n')
                         try:
