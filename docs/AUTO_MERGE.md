@@ -66,6 +66,10 @@ once, using GitHub's paginated PR list. Pending, missing or failed validation an
 missing reviews defer that PR without sleeping; other candidates are still
 examined. The job has a five-minute timeout. API, authentication and malformed
 identity errors fail visibly instead of being reported as a successful check.
+An unsuccessful merge command is never retried within the same evaluation;
+other candidates still receive fresh checks, and the run fails after the scan
+with the affected PR numbers. Metadata/read failures, including authentication
+failures during those reads, stop immediately.
 Existing consumers keep their polling behavior until explicitly migrated.
 
 The caller must provide future wakeups; otherwise a deferred PR will remain open:

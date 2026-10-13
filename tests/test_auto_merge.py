@@ -670,6 +670,7 @@ class SinglePassReviewedTests(unittest.TestCase):
         check_runs=None,
         compare=None,
         failure=None,
+        rejected_merges=(),
     ):
         """Mock only metadata transport; execute the actual main and merge decision."""
         import json  # pylint: disable=import-outside-toplevel
@@ -686,6 +687,8 @@ class SinglePassReviewedTests(unittest.TestCase):
             if args == ("api", "repos/example/repo", "--jq", ".default_branch"):
                 return "main"
             if args[:2] == ("pr", "merge"):
+                if int(args[2]) in rejected_merges:
+                    raise self.code["subprocess"].CalledProcessError(1, args)
                 return ""
             endpoint = next(item for item in args if item.startswith("repos/"))
             if failure and failure in endpoint:
@@ -763,8 +766,11 @@ class SinglePassReviewedTests(unittest.TestCase):
             ),
             patch("time.sleep") as sleep,
         ):
-            self.code["main"]()
-            sleep.assert_not_called()
+            try:
+                self.code["main"]()
+            finally:
+                self.last_calls = mocked.call_args_list
+                sleep.assert_not_called()
         return mocked.call_args_list
 
     @staticmethod
@@ -859,6 +865,32 @@ class SinglePassReviewedTests(unittest.TestCase):
         listing = next(call for call in calls if "/pulls?" in " ".join(call.args))
         self.assertIn("--paginate", listing.args)
         self.assertIn("--slurp", listing.args)
+
+    def test_rejected_merge_does_not_starve_later_pr_but_still_fails_the_run(self):
+        """A write rejection is not a success or a retry of an ambiguous operation."""
+        with self.assertRaisesRegex(RuntimeError, r"#7 \(exit 1\)"):
+            self.run_once(
+                [self.ready()] * 6,
+                pages=[[self.candidate(), self.candidate(8)]],
+                rejected_merges=(7,),
+            )
+        self.assertEqual([call[2] for call in self.merges(self.last_calls)], ["7", "8"])
+        self.assertEqual(
+            sum("/compare/" in " ".join(call.args) for call in self.last_calls), 6
+        )
+
+    def test_read_failure_aborts_before_attempting_any_candidate_merge(self):
+        """Continuing after write rejection never hides a read or authentication error."""
+        with self.assertRaisesRegex(RuntimeError, "API/authentication"):
+            self.run_once(
+                [self.ready()] * 6,
+                pages=[[self.candidate(), self.candidate(8)]],
+                failure="/compare/",
+            )
+        self.assertFalse(self.merges(self.last_calls))
+        self.assertEqual(
+            sum("/compare/" in " ".join(call.args) for call in self.last_calls), 1
+        )
 
     def test_current_base_is_required_before_first_observation_and_merge(self):
         """A stable but outdated branch must be updated and revalidated first."""
