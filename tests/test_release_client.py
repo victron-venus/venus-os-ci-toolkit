@@ -331,7 +331,7 @@ class GeneratorTest(unittest.TestCase):
             for publication in ("candidate", "final"):
                 if publication in jobs:
                     self.assertIn("gate", jobs[publication]["needs"])
-                    self.assertIn("always()", jobs[publication]["if"])
+                    self.assertIn("!cancelled()", jobs[publication]["if"])
                     self.assertIn("needs.gate.result == 'success'", jobs[publication]["if"])
             for dependency in gate["needs"]:
                 for result in ("success", "failure", "cancelled", "skipped"):

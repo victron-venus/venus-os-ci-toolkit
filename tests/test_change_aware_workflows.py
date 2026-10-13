@@ -42,7 +42,7 @@ def rendered(data):
     return yaml.safe_load(installer.dump(data))
 
 
-def job_runs(job, needs, *, ancestor_results=(), **context):
+def job_runs(job, needs, *, ancestor_results=(), workflow_cancelled=False, **context):
     """Evaluate only rendered job conditions; fail on unsupported expression syntax.
 
     This deliberately small harness models GitHub's implicit success() guard and
@@ -51,8 +51,10 @@ def job_runs(job, needs, *, ancestor_results=(), **context):
     """
     names = job.get("needs", [])
     names = [names] if isinstance(names, str) else names
-    success = all(needs[name]["result"] == "success" for name in names) and all(
-        result == "success" for result in ancestor_results
+    success = (
+        not workflow_cancelled
+        and all(needs[name]["result"] == "success" for name in names)
+        and all(result == "success" for result in ancestor_results)
     )
     expression = (
         job.get("if", "${{ success() }}").removeprefix("${{").removesuffix("}}")
@@ -75,12 +77,15 @@ def job_runs(job, needs, *, ancestor_results=(), **context):
     )
     expression = expression.replace("always()", "True").replace(
         "success()", repr(success)
-    )
+    ).replace("cancelled()", repr(workflow_cancelled))
+    expression = re.sub(r"!(?!=)", " not ", expression)
     expression = expression.replace("&&", " and ").replace("||", " or ").strip()
 
     def evaluate(node):
         if isinstance(node, ast.Constant):
             return node.value
+        if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
+            return not evaluate(node.operand)
         if isinstance(node, ast.BoolOp):
             values = [bool(evaluate(child)) for child in node.values]
             if isinstance(node.op, ast.And):
@@ -150,6 +155,18 @@ class GeneratedFuzzPublication(unittest.TestCase):
             values["prepare"]["outputs"]["build"] = build
             self.assertFalse(job_runs(candidate, values, ancestor_results=["skipped"],
                                       vars={"RELEASE_CHANNELS_ENABLED": enabled}))
+
+    def test_cancellation_after_successful_gate_stops_publication_and_signing(self):
+        jobs = self.jobs(True)
+        for channel, name in (("beta", "candidate"), ("rc", "candidate"),
+                              ("stable", "final"), ("beta", "sign"),
+                              ("rc", "sign"), ("stable", "sign")):
+            with self.subTest(channel=channel, job=name):
+                self.assertFalse(job_runs(
+                    jobs[name], self.results(channel), workflow_cancelled=True,
+                    vars={"RELEASE_CHANNELS_ENABLED": "true"},
+                    github={"repository": "example/change-aware", "ref": "refs/heads/main"},
+                ))
 
     def test_signer_allows_skipped_non_rc_fuzz_but_requires_each_build_dependency(self):
         signer = self.jobs(True)["sign"]
