@@ -353,6 +353,12 @@ Use [the merge caller example](examples/auto-merge.yml) with an immutable toolki
 
 `pr-author` can narrow the trusted author set. `required-status-checks` adds exact comma-separated check names that must be present; the latest attempt of every observed check must also succeed (neutral/skipped checks are accepted). Empty means use the actual reported checks and repository protections, not invented generic check names. Pending checks wait for up to two hours; failed checks stop the run. Only this merge job's own waiting check is excluded. Before requesting native auto-merge, the workflow rechecks eligibility, check results, and the current head. It never uses an administrator override.
 
+For reviewed merges on a scarce metadata runner, the opt-in
+`reviewed-single-pass` mode releases the runner between evaluations. It requires
+completion/review/external-status wakeups, a recovery schedule and current-base
+ancestry; see [reviewed evaluation and official Actions reviewer options](AUTO_MERGE.md#release-the-runner-between-reviewed-evaluations)
+before changing the caller. Existing polling and native modes keep their defaults.
+
 Secrets: explicitly forward `BOT_PAT`. The `automerge` label, a ready PR, and the default target branch are required. Existing branch protection and CODEOWNERS rules still apply. After repairing a failed check, rerun the merge workflow if no new PR event occurs.
 
 #### `nightly.yml` (retired)

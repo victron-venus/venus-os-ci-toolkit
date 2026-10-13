@@ -58,6 +58,90 @@ metadata races. Enable proper branch rules and use protected native mode when
 available. Never remove existing branch protections to use this mode.
 
 
+## Release the runner between reviewed evaluations
+
+For a consumer with scarce metadata runners, set both `reviewed-merge: true`
+and `reviewed-single-pass: true`. This opt-in evaluates every eligible open PR
+once, using GitHub's paginated PR list. Pending, missing or failed validation and
+missing reviews defer that PR without sleeping; other candidates are still
+examined. The job has a five-minute timeout. API, authentication and malformed
+identity errors fail visibly instead of being reported as a successful check.
+Existing consumers keep their polling behavior until explicitly migrated.
+
+The caller must provide future wakeups; otherwise a deferred PR will remain open:
+
+- Keep `pull_request_target` state/label events, with a same-repository head and
+  trusted-author guard. For a privileged self-hosted caller, do not add
+  `pull_request` or `pull_request_review`: their workflow context can include PR
+  changes. Manual reviews can be picked up by the recovery schedule.
+- Use `workflow_run: {types: [completed], workflows: [...]}` with the exact names
+  of both the CI and approval workflows. A review made with `GITHUB_TOKEN` may not
+  create another workflow run through `pull_request_review`.
+- Add `status` for external commit statuses. `check_run: {types: [completed]}` can
+  help with external checks, but GitHub suppresses some check events associated
+  with Actions commits; it is not a replacement for `workflow_run`.
+- Add `workflow_dispatch` and a recovery schedule, such as every fifteen minutes,
+  in the opted-in caller to recover missed external events. Do not install a
+  fleet-wide scheduled poll as part of an unrelated consumer update.
+
+Use one repository-wide concurrency group for this caller with
+`cancel-in-progress: false`. Each invocation evaluates all eligible PRs, so
+coalescing queued events does not discard an individual PR's evaluation. Allow
+non-PR wakeups through an explicit event allowlist and a
+`github.ref == format('refs/heads/{0}', github.event.repository.default_branch)`
+guard. Keep the caller's same-repository/trusted-author check on PR-target
+events. The reusable workflow resolves current PR identities itself and enforces
+its author, label, default-base,
+non-draft and same-repository rules. Event head SHAs and event PR lists are only
+wakeups, never authorization. Keep this workflow on the default branch, pin the
+reusable code, and never check out PR code or execute downloaded artifacts in it.
+Do not include this merge workflow itself in the `workflow_run` list.
+
+This mode also requires the **current default-branch commit to be an ancestor of
+the PR head**. If another PR has merged, update the branch and rerun CI before it
+can merge. The base, head, checks and review decisions must remain stable across
+three fresh observations; the ancestry check is repeated before the merge. An
+old cancelled auto-merge check is excluded only after its repository, workflow,
+Actions job and GitHub Actions CheckRun identity are verified through GitHub's
+API. A similarly named check from another workflow or app remains mandatory.
+The current invocation need not have a check on the PR, which is normal for
+`workflow_run`, `status` and scheduled events.
+
+The existing limitation still applies: GitHub offers no atomic transaction for
+these metadata reads and the subsequent merge. `--match-head-commit` guards the
+head; a last-moment base, review or check change after the final read requires
+server-enforced branch rules to eliminate completely.
+
+### Official GitHub Actions reviewer
+
+Reviewed mode keeps the existing `4alvit` and `californiantiramisu` independent
+reviewer policy by default. Two separate options align it with repositories that
+already permit the shared approval workflow's official `GITHUB_TOKEN` paths:
+
+- `allow-dependabot-actions-review: true` accepts `github-actions[bot]` only for a
+  genuine GitHub bot identity `dependabot[bot]` in a same-repository PR.
+- `allow-owned-bot-actions-review: true` separately accepts that reviewer for the
+  existing `californiantiramisu` fallback. Enable it only where that fallback is
+  part of the repository's intended approval policy.
+
+Both require reviewed mode. The REST reviewer identity must be exactly
+`github-actions[bot]` with type `Bot`, and its latest decisive review must approve
+the current head. Dismissals and any outstanding changes requests still block.
+Neither option admits Actions approval of a `4alvit`-authored PR or another bot's
+PR. Human-authored PRs continue to require the independent bot/PAT review.
+
+This trusts workflows allowed to issue Actions reviews in that repository,
+matching GitHub's **Allow GitHub Actions to create and approve pull requests**
+setting. The review does not prove which specific workflow produced it. Keep
+workflow modification permissions and branch-writer trust consistent with that
+policy; the merge workflow still uses `BOT_PAT`.
+
+See GitHub's [workflow event reference](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows)
+and [GITHUB_TOKEN event behavior](https://docs.github.com/en/actions/concepts/security/github_token)
+when choosing the consumer's wakeups. Completion workflows must exist on the
+default branch and remain within GitHub's workflow chaining limits.
+
+
 ## Metadata runner selection
 
 Both `auto-merge.yml` and `auto-approve-reusable.yml` accept `runner-labels`, a
@@ -74,7 +158,10 @@ imports. The runner host and its preinstalled Python/`gh` executables must still
 be trusted; this does not isolate metadata jobs from a compromised persistent host.
 This option does not provision a runner, change GitHub billing, or grant runner
 access across repositories. A waiting merge job occupies a runner slot, so label
-a PR for merge after its CI has completed when using a single dedicated runner.
+a PR for merge after its CI has completed when using a single dedicated runner,
+or opt into the nonblocking reviewed evaluation above. Public repositories keep
+the existing runner trust boundary: completion/status wakeups use hosted runners;
+this change does not extend public self-hosted routing to those events.
 
 
 ## Recover an unavailable approval runner

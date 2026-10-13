@@ -629,3 +629,462 @@ class ReviewedMergeTests(unittest.TestCase):
         self.assertFalse(self.code["review_state"](result)[0])
         self.assertIn("--paginate", transport.call_args_list[-1].args)
         self.assertIn("--slurp", transport.call_args_list[-1].args)
+
+
+class SinglePassReviewedTests(unittest.TestCase):
+    """Exercise wakeups, API identities and races without occupying a runner."""
+
+    setUp = ReviewedMergeTests.setUp
+    HEAD = "a" * 40
+    BASE = "b" * 40
+
+    @classmethod
+    def ready(cls):
+        """A same-repository, current-base branch with a current-head approval."""
+        value = ReviewedMergeTests.reviewed(head=cls.HEAD)
+        value["baseRefOid"] = cls.BASE
+        value["statusCheckRollup"][1]["__typename"] = "CheckRun"
+        return value
+
+    @staticmethod
+    def candidate(number=7):
+        """REST candidate discovery is separate from authoritative snapshots."""
+        return {
+            "number": number,
+            "draft": False,
+            "base": {"ref": "main"},
+            "head": {"repo": {"full_name": "example/repo"}},
+            "user": {"login": "4alvit"},
+            "labels": [{"name": "automerge"}],
+        }
+
+    def run_once(
+        self,
+        snapshots,
+        *,
+        pages=None,
+        event=None,
+        environment=None,
+        runs=None,
+        jobs=None,
+        check_runs=None,
+        compare=None,
+        failure=None,
+    ):
+        """Mock only metadata transport; execute the actual main and merge decision."""
+        import json  # pylint: disable=import-outside-toplevel
+
+        current = {}
+        values = iter(snapshots)
+
+        def read_snapshot(*_args, **_kwargs):
+            current.clear()
+            current.update(copy.deepcopy(next(values)))
+            return copy.deepcopy(current)
+
+        def transport(*args):
+            if args == ("api", "repos/example/repo", "--jq", ".default_branch"):
+                return "main"
+            if args[:2] == ("pr", "merge"):
+                return ""
+            endpoint = next(item for item in args if item.startswith("repos/"))
+            if failure and failure in endpoint:
+                raise RuntimeError("API/authentication failed")
+            if "/actions/runs/" in endpoint:
+                number = int(endpoint.rsplit("/", 1)[1])
+                return json.dumps(
+                    (runs or {}).get(
+                        number,
+                        {
+                            "id": number,
+                            "workflow_id": 10,
+                            "repository": {"full_name": "example/repo"},
+                        },
+                    )
+                )
+            if "/actions/jobs/" in endpoint:
+                number = int(endpoint.rsplit("/", 1)[1])
+                return json.dumps(
+                    (jobs or {}).get(
+                        number,
+                        {
+                            "id": number,
+                            "run_id": 123,
+                            "name": "Auto Merge",
+                            "check_run_url": "https://api.github.com/repos/example/repo/check-runs/42",
+                        },
+                    )
+                )
+            if "/check-runs?" in endpoint:
+                checks = (
+                    check_runs
+                    if check_runs is not None
+                    else [
+                        {
+                            "name": "Auto Merge",
+                            "app": {"slug": "github-actions"},
+                            "details_url": own_check()["detailsUrl"],
+                            "head_sha": current["headRefOid"],
+                            "url": "https://api.github.com/repos/example/repo/check-runs/42",
+                        }
+                    ]
+                )
+                return json.dumps([{"check_runs": checks}])
+            if "/compare/" in endpoint:
+                return compare if compare is not None else current["baseRefOid"]
+            if endpoint.endswith("/pulls?state=open&per_page=100"):
+                return json.dumps(pages if pages is not None else [[self.candidate()]])
+            raise AssertionError(f"Unexpected API call: {args}")
+
+        env = (
+            self.environment
+            | {
+                "PR_NUMBER": "",
+                "REVIEWED_MERGE": "true",
+                "REVIEWED_SINGLE_PASS": "true",
+                "REQUIRED_CHECKS": "CI",
+                "GITHUB_EVENT_NAME": "workflow_run",
+                "GITHUB_EVENT_PATH": "/test/event.json",
+                "GITHUB_SERVER_URL": "https://github.com",
+            }
+            | (environment or {})
+        )
+        payload = (
+            event
+            if event is not None
+            else {"repository": {"full_name": "example/repo"}}
+        )
+        mocked = unittest.mock.Mock(side_effect=transport)
+        with (
+            patch.dict(os.environ, env, clear=True),
+            patch.dict(self.code, {"snapshot": read_snapshot, "gh": mocked}),
+            patch(
+                "builtins.open", unittest.mock.mock_open(read_data=json.dumps(payload))
+            ),
+            patch("time.sleep") as sleep,
+        ):
+            self.code["main"]()
+            sleep.assert_not_called()
+        return mocked.call_args_list
+
+    @staticmethod
+    def merges(calls):
+        """Select only actual merge mutations from read-only API calls."""
+        return [call.args for call in calls if call.args[:2] == ("pr", "merge")]
+
+    def test_default_branch_wakeups_need_no_own_check_or_pr_number(self):
+        """Completion/cron events evaluate current state even for an old event head."""
+        ready = self.ready()
+        ready["statusCheckRollup"] = ready["statusCheckRollup"][:1]
+        for event_name in ("workflow_run", "schedule", "status", "pull_request_review"):
+            with self.subTest(event=event_name):
+                calls = self.run_once(
+                    [ready] * 3,
+                    environment={"GITHUB_EVENT_NAME": event_name},
+                    event={
+                        "repository": {"full_name": "example/repo"},
+                        "workflow_run": {"head_sha": "old", "pull_requests": []},
+                    },
+                )
+                self.assertEqual(len(self.merges(calls)), 1)
+                self.assertEqual(
+                    self.merges(calls)[0][-2:], ("--match-head-commit", self.HEAD)
+                )
+                self.assertNotIn("--admin", self.merges(calls)[0])
+                self.assertNotIn("--auto", self.merges(calls)[0])
+
+    def test_main_wires_separate_official_reviewer_options(self):
+        """The two flags allow only their configured author through the full gate."""
+        for author, flag in (
+            ("dependabot[bot]", "ALLOW_DEPENDABOT_ACTIONS_REVIEW"),
+            ("californiantiramisu", "ALLOW_OWNED_BOT_ACTIONS_REVIEW"),
+        ):
+            with self.subTest(author=author):
+                value = self.ready()
+                value["author"] = {"login": author, "is_bot": True}
+                value["reviewHistory"][0]["user"] = {
+                    "login": "github-actions[bot]",
+                    "type": "Bot",
+                }
+                pages = [[self.candidate() | {"user": {"login": author}}]]
+                env = {"PR_AUTHORS": author}
+                self.assertFalse(
+                    self.merges(self.run_once([value], pages=pages, environment=env))
+                )
+                self.assertEqual(
+                    len(
+                        self.merges(
+                            self.run_once(
+                                [value] * 3,
+                                pages=pages,
+                                environment=env | {flag: "true"},
+                            )
+                        )
+                    ),
+                    1,
+                )
+
+    def test_cancelled_same_workflow_job_is_excluded_by_verified_identity(self):
+        """An earlier cancelled orchestration job cannot deadlock future wakeups."""
+        ready = self.ready()
+        ready["statusCheckRollup"][1].update(status="COMPLETED", conclusion="CANCELLED")
+        self.assertEqual(len(self.merges(self.run_once([ready] * 3))), 1)
+
+    def test_pending_failed_missing_and_skipped_required_checks_defer_without_sleep(
+        self,
+    ):
+        """Incomplete and failed validation frees the sole metadata runner normally."""
+        for state in ("PENDING", "FAILURE", "CANCELLED", "SKIPPED", "NEUTRAL"):
+            with self.subTest(state=state):
+                value = self.ready()
+                value["statusCheckRollup"][0]["conclusion"] = state
+                self.assertFalse(self.merges(self.run_once([value])))
+        self.assertFalse(
+            self.merges(
+                self.run_once(
+                    [self.ready()], environment={"REQUIRED_CHECKS": "Missing"}
+                )
+            )
+        )
+
+    def test_every_candidate_page_is_processed_after_an_unready_pr(self):
+        """Events coalesce safely because one failed PR cannot hide a later ready PR."""
+        failed = self.ready()
+        failed["statusCheckRollup"][0]["conclusion"] = "FAILURE"
+        calls = self.run_once(
+            [failed, self.ready(), self.ready(), self.ready()],
+            pages=[[self.candidate()], [self.candidate(8)]],
+        )
+        self.assertEqual(self.merges(calls)[0][2], "8")
+        listing = next(call for call in calls if "/pulls?" in " ".join(call.args))
+        self.assertIn("--paginate", listing.args)
+        self.assertIn("--slurp", listing.args)
+
+    def test_current_base_is_required_before_first_observation_and_merge(self):
+        """A stable but outdated branch must be updated and revalidated first."""
+        self.assertFalse(self.merges(self.run_once([self.ready()], compare="c" * 40)))
+        calls = self.run_once([self.ready()] * 3)
+        self.assertEqual(sum("/compare/" in " ".join(call.args) for call in calls), 3)
+
+    def test_final_state_changes_never_merge(self):
+        """Current base, head, decisions and eligibility are checked at the last read."""
+        ready = self.ready()
+        for change in (
+            {"baseRefOid": "c" * 40},
+            {"headRefOid": "d" * 40},
+            {"reviewHistory": []},
+            {"reviewHistory": [ready["reviewHistory"][0] | {"id": 2}]},
+            {
+                "headRefOid": "d" * 40,
+                "reviewHistory": [ready["reviewHistory"][0] | {"commit_id": "d" * 40}],
+            },
+            {"isCrossRepository": True},
+            {"state": "CLOSED"},
+            {"isDraft": True},
+            {"author": {"login": "stranger"}},
+            {"labels": []},
+            {"baseRefName": "other"},
+            {"statusCheckRollup": [{"name": "CI", "status": "IN_PROGRESS"}]},
+        ):
+            with self.subTest(change=change):
+                self.assertFalse(
+                    self.merges(self.run_once([ready, ready, ready | change]))
+                )
+
+    def test_fork_draft_untrusted_and_unlabelled_candidates_are_not_read(self):
+        """The paginated discovery prefilter never authorizes an ineligible PR."""
+        for change in (
+            {"draft": True},
+            {"base": {"ref": "dev"}},
+            {"labels": []},
+            {"user": {"login": "stranger"}},
+            {"head": {"repo": {"full_name": "fork/repo"}}},
+        ):
+            self.assertFalse(
+                self.merges(self.run_once([], pages=[[self.candidate() | change]]))
+            )
+
+    def test_malformed_or_foreign_events_and_run_identity_fail_closed(self):
+        """Neither an unrelated repository nor an unverified run can authorize merge."""
+        for kwargs in (
+            {"event": {"repository": {"full_name": "foreign/repo"}}},
+            {"environment": {"GITHUB_EVENT_NAME": "push"}},
+            {"environment": {"GITHUB_RUN_ID": "bad"}},
+            {
+                "runs": {
+                    123: {
+                        "id": 123,
+                        "workflow_id": 0,
+                        "repository": {"full_name": "example/repo"},
+                    }
+                }
+            },
+            {
+                "runs": {
+                    123: {
+                        "id": 1,
+                        "workflow_id": 10,
+                        "repository": {"full_name": "example/repo"},
+                    }
+                }
+            },
+        ):
+            with self.subTest(kwargs=kwargs), self.assertRaises(RuntimeError):
+                self.run_once([], **kwargs)
+
+    def test_api_errors_never_become_normal_not_ready(self):
+        """Auth and incomplete API results fail the workflow so recovery is visible."""
+        for failure in (
+            "/pulls?",
+            "/actions/runs/",
+            "/compare/",
+            "/actions/jobs/",
+            "/check-runs?",
+        ):
+            with (
+                self.subTest(failure=failure),
+                self.assertRaisesRegex(RuntimeError, "API/authentication"),
+            ):
+                self.run_once([self.ready()], failure=failure)
+
+    def test_foreign_workflow_job_and_spoofed_check_are_never_excluded(self):
+        """A name or URL alone does not prove an orchestration check belongs to us."""
+        base_run = {
+            "id": 122,
+            "workflow_id": 99,
+            "repository": {"full_name": "example/repo"},
+        }
+        variants = [
+            {
+                "detailsUrl": "https://foreign.example/example/repo/actions/runs/123/job/4"
+            },
+            {"detailsUrl": "https://github.com/foreign/repo/actions/runs/123/job/4"},
+            {"detailsUrl": own_check()["detailsUrl"] + "?forged=1"},
+            {"detailsUrl": own_check()["detailsUrl"] + "/extra"},
+            {"detailsUrl": own_check()["detailsUrl"].replace("/123/", "/122/")},
+            {"__typename": "StatusContext"},
+            {"name": "Actual validator"},
+        ]
+        for change in variants:
+            with self.subTest(change=change):
+                value = self.ready()
+                value["statusCheckRollup"][1].update(change)
+                self.assertFalse(
+                    self.merges(self.run_once([value], runs={122: base_run}))
+                )
+        for job in (
+            {"id": 4, "run_id": 999, "name": "Auto Merge"},
+            {"id": 4, "run_id": 123, "name": "Actual validator"},
+        ):
+            self.assertFalse(self.merges(self.run_once([self.ready()], jobs={4: job})))
+        self.assertFalse(self.merges(self.run_once([self.ready()], check_runs=[])))
+        legitimate = {
+            "name": "Auto Merge",
+            "app": {"slug": "github-actions"},
+            "head_sha": self.HEAD,
+            "details_url": own_check()["detailsUrl"],
+            "url": "https://api.github.com/repos/example/repo/check-runs/42",
+        }
+        for checks in (
+            [legitimate | {"app": {"slug": "foreign-app"}}],
+            [
+                legitimate
+                | {"url": "https://api.github.com/repos/example/repo/check-runs/99"}
+            ],
+            [legitimate, legitimate | {"app": {"slug": "foreign-app"}}],
+        ):
+            self.assertFalse(
+                self.merges(self.run_once([self.ready()], check_runs=checks))
+            )
+
+
+class OfficialActionsReviewTests(unittest.TestCase):
+    """The optional Actions reviewer is scoped to two explicitly allowed authors."""
+
+    setUp = ReviewedMergeTests.setUp
+
+    @staticmethod
+    def response(author="dependabot[bot]", bot=True):
+        """Represent REST reviewer type independently of the GraphQL PR author."""
+        value = ReviewedMergeTests.reviewed()
+        value["author"] = {"login": author, "is_bot": bot}
+        value["reviewHistory"][0]["user"] = {
+            "login": "github-actions[bot]",
+            "type": "Bot",
+        }
+        return value
+
+    def test_each_official_path_requires_its_own_explicit_option(self):
+        """Legacy defaults and the other author's flag cannot enable this reviewer."""
+        for author in ("dependabot[bot]", "californiantiramisu"):
+            response = self.response(author)
+            self.assertFalse(self.code["review_state"](response)[0])
+            self.assertTrue(self.code["review_state"](response, {author})[0])
+            other = {"dependabot[bot]", "californiantiramisu"} - {author}
+            self.assertFalse(self.code["review_state"](response, other)[0])
+        self.assertTrue(
+            self.code["review_state"](
+                self.response("app/dependabot"), {"dependabot[bot]"}
+            )[0]
+        )
+
+    def test_human_and_other_bot_authors_never_gain_actions_review(self):
+        """Even both flags cannot substitute Actions for the existing human PR policy."""
+        for author, bot in (
+            ("4alvit", False),
+            ("renovate[bot]", True),
+            ("dependabot[bot]", False),
+            ("app/dependabot", False),
+            ("stranger", False),
+        ):
+            self.assertFalse(
+                self.code["review_state"](
+                    self.response(author, bot),
+                    {"dependabot[bot]", "californiantiramisu"},
+                )[0]
+            )
+
+    def test_forks_stale_or_nonbot_reviews_never_qualify(self):
+        """An exact reviewer login is insufficient without Bot type and current head."""
+        ready = self.response()
+        for cross in (True, None):
+            self.assertFalse(
+                self.code["review_state"](
+                    ready | {"isCrossRepository": cross}, {"dependabot[bot]"}
+                )[0]
+            )
+        for change in (
+            {"user": {"login": "github-actions[bot]", "type": "User"}},
+            {"user": {"login": "other[bot]", "type": "Bot"}},
+            {"commit_id": "old"},
+            {"state": "DISMISSED"},
+            {"state": "COMMENTED"},
+        ):
+            value = ready | {"reviewHistory": [ready["reviewHistory"][0] | change]}
+            self.assertFalse(self.code["review_state"](value, {"dependabot[bot]"})[0])
+
+    def test_later_dismissal_and_changes_requested_still_block(self):
+        """Opting in does not erase reviewer decisions or accept a dismissed review."""
+        ready = self.response()
+        for change in (
+            {"state": "DISMISSED"},
+            {"state": "CHANGES_REQUESTED", "user": {"login": "someone"}},
+        ):
+            value = ready | {
+                "reviewHistory": ready["reviewHistory"]
+                + [ready["reviewHistory"][0] | change | {"id": 2}]
+            }
+            self.assertFalse(self.code["review_state"](value, {"dependabot[bot]"})[0])
+
+    def test_main_requires_reviewed_mode_for_all_new_options(self):
+        """Neither new mode nor reviewer flags affect legacy or native consumers."""
+        for flag in (
+            "REVIEWED_SINGLE_PASS",
+            "ALLOW_DEPENDABOT_ACTIONS_REVIEW",
+            "ALLOW_OWNED_BOT_ACTIONS_REVIEW",
+        ):
+            with (
+                self.subTest(flag=flag),
+                self.assertRaisesRegex(RuntimeError, "require reviewed"),
+            ):
+                AutoMergeTests.run_workflow(self, [], {flag: "true"})
