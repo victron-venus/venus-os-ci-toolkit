@@ -1199,6 +1199,9 @@ def validate_policy(directory: Path, policy: dict) -> None:
     mode = policy.get("mode", "release")
     release_validation.channel_workflows(policy)
     release_signing_workflow.enabled(policy)
+    from release_provenance import policy_pairs  # pylint: disable=import-outside-toplevel
+
+    policy_pairs(policy)
     if "release_notes" in policy and policy["release_notes"] != "CHANGELOG.md":
         raise ValueError("release_notes must name the source-bound CHANGELOG.md")
     validate_asset_restrictions(policy)
@@ -1430,6 +1433,16 @@ def release_files(directory: Path, policy: dict) -> dict[str, str]:
             marker, "RELEASE_SIGNATURES_REQUIRED = True"
         )
         files["scripts/release_signing.py"] = (ROOT / "scripts/release_signing.py").read_text()
+        from release_provenance import policy_pairs  # pylint: disable=import-outside-toplevel
+
+        provenance_source = (ROOT / "scripts/release_provenance.py").read_text()
+        if provenance_source.count("REQUIRED_PAIRS = ()") != 1:
+            raise ValueError("Provenance enforcement marker changed")
+        files["scripts/release_provenance.py"] = provenance_source.replace(
+            "REQUIRED_PAIRS = ()", f"REQUIRED_PAIRS = {policy_pairs(policy)!r}"
+        )
+        files["scripts/merge_oci_archives.py"] = (ROOT / "scripts/merge_oci_archives.py").read_text()
+
         files[".github/release-tests/test_release_signing.py"] = (
             (ROOT / "tests/test_release_signing.py").read_text().replace(
                 "Path(__file__).resolve().parents[1]", "Path(__file__).resolve().parents[2]"
@@ -1455,6 +1468,14 @@ def release_files(directory: Path, policy: dict) -> dict[str, str]:
             "write_binary_build_metadata",
         ):
             files[f"scripts/{name}.py"] = (ROOT / f"scripts/{name}.py").read_text()
+        if policy.get("detached_provenance"):
+            for name in ("version_receipt", "stage_release_assets"):
+                path = f"scripts/{name}.py"
+                if files[path].count("DETACHED_PROVENANCE_REQUIRED = False") != 1:
+                    raise ValueError("Provenance enforcement marker changed")
+                files[path] = files[path].replace(
+                    "DETACHED_PROVENANCE_REQUIRED = False", "DETACHED_PROVENANCE_REQUIRED = True"
+                )
         for name in (
             "version_plan",
             "versioned_release",
@@ -1472,6 +1493,14 @@ def release_files(directory: Path, policy: dict) -> dict[str, str]:
                 .replace(
                     "Path(__file__).resolve().parents[1]",
                     "Path(__file__).resolve().parents[2]",
+                )
+            )
+    if policy.get("detached_provenance"):
+        files["docs/detached-provenance.md"] = (ROOT / "docs/detached-provenance.md").read_text()
+        for name in ("release_provenance", "merge_oci_archives"):
+            files[f".github/release-tests/test_{name}.py"] = (
+                (ROOT / f"tests/test_{name}.py").read_text().replace(
+                    "Path(__file__).resolve().parents[1]", "Path(__file__).resolve().parents[2]"
                 )
             )
     if policy.get("container_assets") or policy.get("pypi_assets"):
