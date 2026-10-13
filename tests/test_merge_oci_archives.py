@@ -5,7 +5,8 @@ import hashlib
 import importlib.util
 import io
 import json
-import subprocess
+# Tests run the local Python interpreter with explicit fixture argv and no shell.
+import subprocess  # nosec B404
 import sys
 import tarfile
 import tempfile
@@ -679,9 +680,11 @@ class MergeTest(unittest.TestCase):
         ]
         for platform, path in inputs.items():
             arguments += ["--input", f"{platform}={path}"]
-        result = subprocess.run(arguments, capture_output=True, text=True, check=True)
+        # The argv above selects this interpreter and a copied local fixture script.
+        result = subprocess.run(arguments, capture_output=True, text=True, check=True)  # nosec B603
         self.assertEqual(json.loads(result.stdout)["revision"], REVISION)
-        duplicate = subprocess.run(
+        # Append a literal duplicate-input flag to the same local fixture invocation.
+        duplicate = subprocess.run(  # nosec B603
             arguments + ["--input", f"linux/amd64={inputs['linux/amd64']}"],
             capture_output=True,
             text=True,
@@ -711,7 +714,8 @@ class MergeTest(unittest.TestCase):
         ]
         for platform, path in inputs.items():
             arguments.extend(["--input", f"{platform}={path}"])
-        return subprocess.run(
+        # The argv above selects this interpreter and a copied local fixture script.
+        return subprocess.run(  # nosec B603
             arguments,
             capture_output=True,
             text=True,
