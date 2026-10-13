@@ -10,9 +10,11 @@ from __future__ import annotations
 import argparse
 import ipaddress
 import json
+import math
 import re
 import ssl
 import subprocess
+import tempfile
 import threading
 import time
 from http.server import BaseHTTPRequestHandler
@@ -24,6 +26,10 @@ LABEL = "runner-reserve.github.io/role"
 NAMESPACES = {"runner-reserve-ci", "runner-reserve-automation", "runner-reserve-release"}
 DENIED = tuple(json.loads(Path(__file__).with_name("network-policy.json").read_text())["denied_networks"])
 PORT = 19999
+CNI_RESULTS = Path("/var/lib/cni/results")
+NETWORK_DEVICES = Path("/sys/class/net")
+SYNC_ERRORS = (OSError, ValueError, KeyError, IndexError, TypeError,
+               StopIteration, RuntimeError, subprocess.TimeoutExpired)
 
 
 def command(*args, input_text=None):
@@ -59,24 +65,47 @@ def worker_from_cache(pod, cache, links):
             "interface": peers[0]["name"], "mac": nic["mac"]}
 
 
+def cached_worker(pod):
+    """Read only local CNI/sysfs state; never spawn a process for identity checks."""
+    sandbox_id = pod["id"]
+    if not re.fullmatch(r"[0-9a-f]{64}", sandbox_id):
+        raise ValueError("Invalid sandbox identity")
+    path = CNI_RESULTS / ("cbr0-" + sandbox_id + "-eth0")
+    if path.is_symlink():
+        raise ValueError("Refusing a CNI cache symlink")
+    cache = json.loads(path.read_text())
+    peers = [v for v in cache["result"]["interfaces"] if v["name"].startswith("veth")]
+    if len(peers) != 1 or not re.fullmatch(r"veth[A-Za-z0-9]{1,11}", peers[0]["name"]):
+        raise ValueError("Invalid worker interface")
+    interface = peers[0]["name"]
+    device = NETWORK_DEVICES / interface
+    mac = (device / "address").read_text().strip()
+    worker = worker_from_cache(pod, cache, {interface: mac})
+    # ifindex changes when an interface name is reused, even with the same MAC.
+    return {**worker, "sandbox_id": sandbox_id,
+            "host_mac": mac, "ifindex": int((device / "ifindex").read_text())}
+
+
+def validate_workers(workers):
+    """A stale CRI snapshot must not admit a different pod that reused its IP/veth."""
+    for worker in workers:
+        pod = {"id": worker["sandbox_id"], "metadata": {"uid": worker["uid"]}}
+        if cached_worker(pod) != worker:
+            raise ValueError("Worker network identity has changed")
+
+
 def discover():
-    """Avoid expensive sandbox inspection RPCs on the admission path."""
+    """Only the periodic discovery pass consults the container runtime."""
     pods = json.loads(command("/opt/victron-ci-reserve/crictl", "--runtime-endpoint",
                               "unix:///run/k3s/containerd/containerd.sock", "pods",
                               "--label", LABEL + "=worker", "-o", "json"))["items"]
-    links = {v["ifname"]: v.get("address") for v in json.loads(command("ip", "-j", "link"))}
     result = []
     for pod in pods:
         if (pod["metadata"]["namespace"] not in NAMESPACES
                 or pod.get("labels", {}).get(LABEL) != "worker"
                 or pod.get("state") != "SANDBOX_READY"):
             continue
-        if not re.fullmatch(r"[0-9a-f]{64}", pod["id"]):
-            raise ValueError("Invalid sandbox identity")
-        path = Path("/var/lib/cni/results") / ("cbr0-" + pod["id"] + "-eth0")
-        if path.is_symlink():
-            raise ValueError("Refusing a CNI cache symlink")
-        result.append(worker_from_cache(pod, json.loads(path.read_text()), links))
+        result.append(cached_worker(pod))
     return sorted(result, key=lambda row: row["uid"])
 
 
@@ -114,38 +143,127 @@ def rules(workers, node_ip, dns_ip, extra_denied=(), *, exists=False):
     return "\n".join([*result, "}", "}", ""])
 
 
+def canonical_ruleset(payload, *, echoed=False):
+    """Ignore counters/handles, but retain rule order and every filtering attribute."""
+    def stable(value):
+        if isinstance(value, list):
+            return [stable(item) for item in value]
+        if isinstance(value, dict):
+            result = {}
+            for key, item in value.items():
+                if key == "handle":
+                    continue
+                if key == "counter" and isinstance(item, dict):
+                    item = {k: v for k, v in item.items() if k not in {"packets", "bytes"}}
+                result[key] = stable(item)
+            return result
+        return value
+
+    objects = []
+    for item in json.loads(payload)["nftables"]:
+        if "metainfo" in item:
+            continue
+        if echoed:
+            if "delete" in item:
+                continue
+            item = item.get("add", item)
+        objects.append(stable(item))
+    if not objects:
+        raise ValueError("Empty firewall snapshot")
+    return objects
+
+
+def firewall_snapshot():
+    result = subprocess.run(["nft", "--json", "--stateless", "list", "table", "bridge", TABLE],
+                            text=True, capture_output=True, check=False, timeout=15)
+    return canonical_ruleset(result.stdout) if result.returncode == 0 else None
+
+
+def apply_firewall(rendered):
+    # nft 1.0.x may consume stdin while detecting JSON input. A private file
+    # keeps text input and JSON echo reliable without invoking a shell.
+    with tempfile.NamedTemporaryFile(mode="w", prefix="reserve-guard-", suffix=".nft") as source:
+        source.write(rendered)
+        source.flush()
+        return command("nft", "--json", "--stateless", "--echo", "-f", source.name)
+
+
+def interval(config, key, default, maximum):
+    value = config.get(key, default)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError("Invalid guard interval: " + key)
+    if not math.isfinite(value) or not 1 <= value <= maximum:
+        raise ValueError("Invalid guard interval: " + key)
+    return value
+
+
 class Guard:
-    """Expose readiness only after the corresponding firewall transaction succeeds."""
+    """Check local identity frequently; reconcile expensive state only when needed."""
     def __init__(self, config):
         self.config = config
+        self.poll_interval = interval(config, "identity_check_interval_seconds", 2, 10)
+        self.discovery_interval = interval(config, "discovery_interval_seconds", 15, 300)
+        self.firewall_interval = interval(config, "firewall_check_interval_seconds", 10, 60)
         self.admitted = {}
+        self.admitted_until = 0
+        self.workers = None
+        self.firewall = None
+        self.next_discovery = self.next_firewall = 0
         self.lock = threading.Lock()
 
-    def sync(self):
-        workers = discover()
-        check = subprocess.run(["nft", "list", "table", "bridge", TABLE],
-                               capture_output=True, check=False, timeout=15)
-        rendered = rules(workers, self.config["node_ip"], self.config["dns_ip"],
-                         self.config.get("extra_denied", []), exists=check.returncode == 0)
-        # A single nftables transaction has no delete/recreate exposure window.
-        # Reconcile even unchanged workers so a cleared table cannot stay stale.
+    def revoke(self):
         with self.lock:
             self.admitted = {}
-        command("nft", "-f", "-", input_text=rendered)
+            self.admitted_until = 0
+
+    def sync(self):
+        try:
+            self._sync()
+        except SYNC_ERRORS:
+            self.revoke()
+            # Recover only from a fresh CRI snapshot, never from cached admission.
+            self.next_discovery = self.next_firewall = 0
+            raise
+
+    def _sync(self):
+        now = time.monotonic()
+        workers = self.workers
+        if workers is None or now >= self.next_discovery:
+            workers = discover()
+            self.next_discovery = time.monotonic() + self.discovery_interval
+        elif now >= self.next_firewall:
+            validate_workers(workers)
+        changed = workers != self.workers
+        if changed or now >= self.next_firewall:
+            actual = firewall_snapshot()
+            if changed or self.firewall is None or actual != self.firewall:
+                self.revoke()
+                rendered = rules(workers, self.config["node_ip"], self.config["dns_ip"],
+                                 self.config.get("extra_denied", []), exists=actual is not None)
+                # Echo comes from our own atomic transaction, not an untrusted
+                # post-write listing that might already contain external drift.
+                installed = apply_firewall(rendered)
+                expected = canonical_ruleset(installed, echoed=True)
+                if firewall_snapshot() != expected:
+                    raise RuntimeError("Firewall changed during reconciliation")
+                self.firewall = expected
+            self.next_firewall = time.monotonic() + self.firewall_interval
+        # CRI/nft operations can take seconds under load. Validate identities
+        # again before acknowledging them, including after a firewall repair.
+        validate_workers(workers)
+        self.workers = workers
         with self.lock:
             self.admitted = {row["ip"]: row["uid"] for row in workers}
+            # A stalled/crashed reconciliation thread cannot admit indefinitely.
+            self.admitted_until = time.monotonic() + self.poll_interval * 2 + 1
 
     def loop(self):
         while True:
             try:
                 self.sync()
-            except (OSError, ValueError, KeyError, IndexError, TypeError,
-                    StopIteration, RuntimeError, subprocess.TimeoutExpired):
-                # Keep the last firewall rules; never admit new workers from stale state.
-                with self.lock:
-                    self.admitted = {}
+            except SYNC_ERRORS:
                 print("Node guard unavailable; new workers remain stopped", flush=True)
-            time.sleep(2)
+            time.sleep(self.poll_interval)
 
 
 class ReadinessServer(ThreadingMixIn, TCPServer):
@@ -193,7 +311,8 @@ def handler(guard):
             uid = self.path.removeprefix("/ready/")
             with guard.lock:
                 allowed = (self.path.startswith("/ready/") and
-                           guard.admitted.get(self.client_address[0]) == uid)
+                           guard.admitted.get(self.client_address[0]) == uid and
+                           time.monotonic() < guard.admitted_until)
             self.send_response(200 if allowed else 503)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
