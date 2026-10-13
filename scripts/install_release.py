@@ -907,8 +907,11 @@ PY
         },
         "candidate": {
             "needs": ["prepare", "gate"],
+            # The gate audits allowed skips; GitHub's implicit success() would
+            # otherwise reject a skipped transitive dependency such as fuzz.
             "if": (
-                "${{ needs.prepare.outputs.build == 'true' && "
+                "${{ always() && needs.gate.result == 'success' && "
+                "needs.prepare.outputs.build == 'true' && "
                 "needs.prepare.outputs.channel != 'stable' && "
                 "vars.RELEASE_CHANNELS_ENABLED == 'true' }}"
             ),
@@ -1181,7 +1184,8 @@ def release(policy):
     )
     final = copy.deepcopy(candidate)
     final["if"] = (
-        "${{ needs.prepare.outputs.channel == 'stable' && needs.prepare.outputs.build == 'true' }}"
+        "${{ always() && needs.gate.result == 'success' && "
+        "needs.prepare.outputs.channel == 'stable' && needs.prepare.outputs.build == 'true' }}"
     )
     final["environment"] = "release"
     for step in final["steps"]:
