@@ -600,11 +600,20 @@ def workflow_contract_job(directory):
     }
 
 
+def release_contract_python(policy):
+    """Select a supported interpreter for the consumer's release acceptance tests."""
+    version = policy.get("release_contract_python", "3.12")
+    if not isinstance(version, str) or version not in {"3.11", "3.12", "3.13", "3.14"}:
+        raise ValueError("release_contract_python must be a string from 3.11 through 3.14")
+    return version
+
+
 def quality(policy, directory=None):
     """Compose callable validators and a gate that rejects every non-success result."""
     validators = policy.get("validation_workflows", [])
     if not validators:
         raise ValueError("At least one real validation workflow is required")
+    contract_python = release_contract_python(policy)
     config = scope_policy(policy)
     oidc = validation_oidc_workflows(policy)
     jobs = {"scope": scope_job(policy, force_input=True)}
@@ -626,7 +635,7 @@ def quality(policy, directory=None):
                 {"uses": CHECKOUT, "with": {"persist-credentials": False}},
                 {
                     "uses": ACTION_REFS["actions/setup-python"],
-                    "with": {"python-version": "3.12"},
+                    "with": {"python-version": contract_python},
                 },
                 {
                     "run": "python3 -m pip install --require-hashes --only-binary=:all: "
@@ -1256,6 +1265,7 @@ def validate_policy(directory: Path, policy: dict) -> None:
     if "release_notes" in policy and policy["release_notes"] != "CHANGELOG.md":
         raise ValueError("release_notes must name the source-bound CHANGELOG.md")
     validate_asset_restrictions(policy)
+    release_contract_python(policy)
     validation_oidc_workflows(policy)
     coverage_policy(policy)
     publication_token_env(policy)
