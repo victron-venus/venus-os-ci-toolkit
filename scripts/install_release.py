@@ -26,6 +26,7 @@ import yaml
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from runner_selection import render_consumer, runner_labels  # pylint: disable=wrong-import-position
 import release_validation  # pylint: disable=wrong-import-position
+import release_fuzz  # pylint: disable=wrong-import-position
 import release_signing_workflow  # pylint: disable=wrong-import-position
 from workflow_hardening import harden_jobs  # pylint: disable=wrong-import-position
 
@@ -1061,6 +1062,49 @@ def publication_token_env(policy):
     }
 
 
+def configure_fuzzing(workflow, policy):
+    """Only public RC dispatches allocate a fuzz runner; release publication fails closed."""
+    config = release_fuzz.configuration(policy)
+    if config is None:
+        return
+    jobs = workflow["jobs"]
+    condition = (
+        "github.event.repository.private == false && github.event_name == 'workflow_dispatch' && "
+        "github.event.inputs.channel == 'rc' && "
+        "github.ref == format('refs/heads/{0}', github.event.repository.default_branch)"
+    )
+    jobs["fuzz"] = {
+        "needs": "prepare",
+        "if": "${{ needs.prepare.outputs.build == 'true' && " + condition + " }}",
+        "uses": f"{TOOLKIT}/.github/workflows/fuzz.yml@{config['toolkit_ref']}",
+        "with": {"toolkit-ref": config["toolkit_ref"], "release-plan-artifact": "${{ needs.prepare.outputs.plan_artifact }}"},
+        "permissions": {"contents": "read"},
+    }
+    gate = jobs["gate"]
+    gate["needs"].append("fuzz")
+    gate["steps"][0]["env"]["FUZZ_REQUIRED"] = "${{ " + condition + " }}"
+    original = "failed = {name: results.get(name, {}).get('result') "
+    source = gate["steps"][0]["run"]
+    if source.count(original) != 1:
+        raise ValueError("Release gate changed; review the fuzz gate")
+    extra = (
+        "expected['fuzz'] = 'success' if os.environ['FUZZ_REQUIRED'] == 'true' else 'skipped'\n"
+        "if set(results) != set(expected):\n"
+        "    raise SystemExit('Release job inventory differs')\n"
+    )
+    gate["steps"][0]["run"] = source.replace(original, extra + original)
+    if "sign" in jobs:
+        signer = jobs["sign"]
+        signer["needs"].append("fuzz")
+        existing = signer["if"][3:-3].strip()
+        signer["if"] = (
+            "${{ always() && (" + existing + ") && needs.prepare.result == 'success' && "
+            "needs.checks.result == 'success' && needs.build.result == 'success' && "
+            "(needs.fuzz.result == 'success' || (needs.prepare.outputs.channel != 'rc' && "
+            "needs.fuzz.result == 'skipped')) }}"
+        )
+
+
 def release(policy):
     """Opt declared consumers into early plans without changing legacy contracts."""
     workflow = _legacy_release(policy)
@@ -1147,6 +1191,7 @@ def release(policy):
             )
     jobs["final"] = final
     release_signing_workflow.apply(workflow, policy, ACTION_REFS)
+    configure_fuzzing(workflow, policy)
     return workflow
 
 
@@ -1198,6 +1243,8 @@ def validate_policy(directory: Path, policy: dict) -> None:
     """Reject unsupported policy modes, stale publishers and invalid repository names."""
     mode = policy.get("mode", "release")
     release_validation.channel_workflows(policy)
+    if release_fuzz.configuration(policy) is not None:
+        release_fuzz.manifest(directory)
     release_signing_workflow.enabled(policy)
     from release_provenance import policy_pairs  # pylint: disable=import-outside-toplevel
 
@@ -1411,6 +1458,9 @@ def release_files(directory: Path, policy: dict) -> dict[str, str]:
         raise ValueError("A real release-build.yml adapter is required")
     files = {".github/workflows/release-pipeline.yml": dump(release(policy))}
     files["scripts/release_validation.py"] = (ROOT / "scripts/release_validation.py").read_text()
+    if release_fuzz.configuration(policy) is not None:
+        files["scripts/release_fuzz.py"] = (ROOT / "scripts/release_fuzz.py").read_text()
+        files["docs/rc-fuzzing.md"] = (ROOT / "docs/rc-fuzzing.md").read_text()
     if release_validation.channel_workflows(policy) is not None:
         files[WORKFLOWS + "/" + release_validation.WORKFLOW] = dump(release_quality(policy, directory))
     files["RELEASING.md"] = release_strategy(directory, policy)
@@ -1450,6 +1500,10 @@ def release_files(directory: Path, policy: dict) -> dict[str, str]:
         )
         files["docs/release-signatures.md"] = (ROOT / "docs/release-signatures.md").read_text()
     if policy.get("versioning"):
+        # Versioned validation imports the provenance verifier even for projects
+        # with no OCI artifacts. Fresh consumers need its dependency closure too.
+        for name in ("release_provenance", "merge_oci_archives"):
+            files.setdefault(f"scripts/{name}.py", (ROOT / f"scripts/{name}.py").read_text())
         files["docs/VERSIONING.md"] = (ROOT / "docs/VERSIONING.md").read_text()
         files["docs/runner-preflight.md"] = (
             ROOT / "docs/runner-preflight.md"
@@ -1485,6 +1539,7 @@ def release_files(directory: Path, policy: dict) -> dict[str, str]:
             "runner_preflight",
             "consumer_versioning",
             "cli_version_paths",
+            "release_import_modes",
         ):
             files[f".github/release-tests/test_{name}.py"] = (
                 (ROOT / f"tests/test_{name}.py")
@@ -1626,6 +1681,16 @@ def release_strategy(directory: Path, policy: dict) -> str:
     text = (ROOT / "templates/release-strategy.md").read_text()
     for key, value in values.items():
         text = text.replace("@" + key + "@", value)
+    if release_fuzz.configuration(policy) is not None:
+        text += (
+            "\n## Release-candidate fuzzing\n\n"
+            "Every RC must pass bounded, network-isolated fuzz campaigns against the exact "
+            "candidate source. The release inventory includes the report and its "
+            "version-plan receipt. PRs, betas, nightlies and stable builds do not run these "
+            "campaigns; stable qualification verifies the accepted RC evidence. See "
+            "[the shared fuzzing contract](docs/rc-fuzzing.md) and this project's "
+            "`.github/fuzz.json` for targets and budgets.\n"
+        )
     return text
 
 

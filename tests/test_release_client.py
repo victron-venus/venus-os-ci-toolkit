@@ -117,7 +117,7 @@ class GeneratorTest(unittest.TestCase):
             )
 
     def test_native_oci_tools_and_tests_follow_versioned_container_policy(self):
-        """Install both runtime helpers and their contracts only with their dependencies."""
+        """Versioned validation needs provenance imports; native builders remain opt-in."""
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             adapter = root / ".github/workflows/release-build.yml"
@@ -141,12 +141,14 @@ class GeneratorTest(unittest.TestCase):
                 files = installer.release_files(root, policy)
                 for name in ("merge_oci_archives", "assemble_native_container"):
                     self.assertEqual(
-                        f"scripts/{name}.py" in files, container and versioned
+                        f"scripts/{name}.py" in files,
+                        versioned if name == "merge_oci_archives" else container and versioned,
                     )
                     self.assertEqual(
                         f".github/release-tests/test_{name}.py" in files,
                         container and versioned,
                     )
+                self.assertEqual("scripts/release_provenance.py" in files, versioned)
 
     def test_asset_restrictions_are_rendered_as_current_static_policy(self):
         """Older RC promotion uses the current retirement policy without rereading files."""

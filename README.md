@@ -7,6 +7,12 @@ For bug reports, proposed changes and local verification, see
 [CI dependency updates](docs/DEPENDENCY_UPDATES.md): Renovate updates related
 actions and reusable workflows together, with required consistency checks.
 
+[RC-only fuzzing](docs/rc-fuzzing.md) provides a shared, bounded input-testing
+workflow for public release candidates. Consumers supply real application
+targets and locked build steps; private repositories, PRs, beta, nightly and
+stable runs do not launch fuzz campaigns. Reports bind each result to its source
+and run attempt and become part of the candidate's release inventory.
+
 ## Operator inventories
 
 See [public source and operator configuration](docs/OPERATOR_CONFIG.md) before

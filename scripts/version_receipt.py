@@ -18,8 +18,12 @@ import sys
 from pathlib import Path
 from typing import cast
 
-import version_plan
-from release_control import stream_identity
+if __package__:
+    from . import version_plan
+    from .release_control import stream_identity
+else:
+    import version_plan
+    from release_control import stream_identity
 
 DETACHED_PROVENANCE_REQUIRED = False
 MAX_RECEIPT_BYTES = 2_000_000
@@ -236,7 +240,10 @@ def verify_receipts(
     if covered != set(expected) - receipts:
         raise ValueError("Some release payloads lack version input evidence")
     if policy is not None and (DETACHED_PROVENANCE_REQUIRED or policy.get("detached_provenance")):
-        from release_provenance import verify_all  # pylint: disable=import-outside-toplevel
+        if __package__:
+            from .release_provenance import verify_all  # pylint: disable=import-outside-toplevel
+        else:
+            from release_provenance import verify_all  # pylint: disable=import-outside-toplevel
 
         verify_all(directory, policy, plan, payloads)
     return results
