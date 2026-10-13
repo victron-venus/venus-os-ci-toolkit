@@ -155,6 +155,7 @@ def verified_rc(
     manifest = rc.validate_manifest(raw, gh.repo, tag)
     source_policy = rc.source_policy_snapshot(gh, cast(str, manifest["source_sha"]))
     rc.require(source_policy == manifest["source_policy"], "RC source policy changed")
+    rc.require_current_fuzzing(gh, cast(dict[str, object], source_policy["data"]), cast(str, current_run["head_sha"]))
     rc.require(
         cast(dict[str, object], ref["object"]).get("sha")
         == cast(str, manifest["source_sha"]),
@@ -593,7 +594,17 @@ def publish_versioned(args: argparse.Namespace) -> dict[str, object]:
     with tempfile.TemporaryDirectory(prefix="release-versioned-") as temp:
         stage = Path(temp)
         assets = rc.stage_assets(Path(args.assets), stage)
+        if "fuzzing" in policy and channel == "rc":
+            from release_fuzz import verify_report
+
+            verify_report(stage, Path.cwd(), gh.repo, cast(str, plan["source_sha"]),
+                          cast(int, run["id"]), cast(int, run["run_attempt"]))
         receipts = verify_receipts(stage, plan, assets, policy)
+        validation_receipts = []
+        if "fuzzing" in policy and channel == "rc":
+            from release_fuzz import split_receipts
+
+            receipts, validation_receipts = split_receipts(receipts)
         rc.verify_required_signatures(stage, gh.repo, cast(str, plan["source_sha"]))
         if parent:
             verify_final_toolchains(gh, candidate, receipts)
@@ -623,6 +634,14 @@ def publish_versioned(args: argparse.Namespace) -> dict[str, object]:
         selected_profile = rc.validation_profile(policy, channel)
         if selected_profile is not None:
             manifest["validation_profile"] = selected_profile
+        if "fuzzing" in policy:
+            from release_fuzz import profile as fuzz_profile
+
+            manifest["fuzzing_profile"] = fuzz_profile(policy, channel)
+            manifest["validation_receipts"] = [
+                {"name": value["name"], "sha256": value["sha256"]}
+                for value in validation_receipts
+            ]
         content = rc.json_bytes(manifest)
         (stage / rc.MANIFEST).write_bytes(content)
         # Recheck immediately before the first public release mutation.

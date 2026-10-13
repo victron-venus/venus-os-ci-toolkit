@@ -1,0 +1,100 @@
+name: RC fuzzing
+'on':
+  workflow_call:
+    inputs:
+      toolkit-ref:
+        type: string
+        required: true
+        description: Exact reviewed SHA of this toolkit workflow revision
+      release-plan-artifact:
+        type: string
+        required: true
+        description: Frozen version plan from this release attempt
+permissions:
+  contents: read
+jobs:
+  campaign:
+    name: RC fuzzing
+    if: ${{ github.event.repository.private == false && github.event_name == 'workflow_dispatch' && github.event.inputs.channel == 'rc' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+    - name: Harden runner
+      uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25
+      with:
+        egress-policy: audit
+    - name: Checkout exact candidate source
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        ref: ${{ github.sha }}
+        persist-credentials: false
+    - name: Checkout pinned fuzz runner
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        repository: victron-venus/venus-os-ci-toolkit
+        ref: ${{ inputs.toolkit-ref }}
+        path: .fuzz-toolkit
+        persist-credentials: false
+    - name: Validate public RC event and target contract
+      id: config
+      run: python3 .fuzz-toolkit/scripts/release_fuzz.py inspect
+    - name: Set up Python
+      uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+      with:
+        python-version: '3.12'
+    - name: Set up Go from project declaration
+      if: ${{ steps.config.outputs.language == 'go' && steps.config.outputs.go_version_file != '' }}
+      uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+      with:
+        go-version-file: ${{ steps.config.outputs.go_version_file }}
+        cache: false
+    - name: Set up default Go
+      if: ${{ steps.config.outputs.language == 'go' && steps.config.outputs.go_version_file == '' }}
+      uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+      with:
+        go-version: 1.26.9
+        cache: false
+    - name: Set up Rust fuzz toolchain
+      if: ${{ steps.config.outputs.language == 'rust' }}
+      run: 'rustup toolchain install nightly-2026-10-12 --profile minimal --component rust-src
+
+        cargo install cargo-fuzz --version 0.13.1 --locked'
+    - name: Set up Node
+      if: ${{ steps.config.outputs.language == 'javascript' }}
+      uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+      with:
+        node-version: '24'
+    - name: Build and run isolated bounded targets
+      run: python3 .fuzz-toolkit/scripts/release_fuzz.py run --output "$RUNNER_TEMP/fuzz-evidence"
+    - name: Retain diagnostics and crash inputs
+      if: ${{ always() }}
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      with:
+        name: fuzz-diagnostics-${{ github.run_attempt }}
+        path: ${{ runner.temp }}/fuzz-evidence
+        if-no-files-found: warn
+        retention-days: 30
+        include-hidden-files: true
+    - name: Download frozen RC plan
+      uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+      with:
+        name: ${{ inputs.release-plan-artifact }}
+        path: .
+    - name: Bind report to the release plan
+      run: 'python3 scripts/version_plan.py sync --root . --plan .release-plan.json
+
+        mkdir .fuzz-result
+
+        cp "$RUNNER_TEMP/fuzz-evidence/fuzz-report.json" .fuzz-result/fuzz-report.json
+
+        python3 scripts/stage_release_assets.py --target fuzz --pattern .fuzz-result/fuzz-report.json'
+    - name: Export successful RC report for release inventory
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+      with:
+        name: release-assets-fuzz
+        path: release-assets/fuzz/*
+        if-no-files-found: error
+        retention-days: 90
+        overwrite: true
