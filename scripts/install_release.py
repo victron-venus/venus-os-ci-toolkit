@@ -907,8 +907,11 @@ PY
         },
         "candidate": {
             "needs": ["prepare", "gate"],
+            # The gate audits allowed skips; GitHub's implicit success() would
+            # otherwise reject a skipped transitive dependency such as fuzz.
             "if": (
-                "${{ needs.prepare.outputs.build == 'true' && "
+                "${{ !cancelled() && needs.gate.result == 'success' && "
+                "needs.prepare.outputs.build == 'true' && "
                 "needs.prepare.outputs.channel != 'stable' && "
                 "vars.RELEASE_CHANNELS_ENABLED == 'true' }}"
             ),
@@ -1098,7 +1101,7 @@ def configure_fuzzing(workflow, policy):
         signer["needs"].append("fuzz")
         existing = signer["if"][3:-3].strip()
         signer["if"] = (
-            "${{ always() && (" + existing + ") && needs.prepare.result == 'success' && "
+            "${{ !cancelled() && (" + existing + ") && needs.prepare.result == 'success' && "
             "needs.checks.result == 'success' && needs.build.result == 'success' && "
             "(needs.fuzz.result == 'success' || (needs.prepare.outputs.channel != 'rc' && "
             "needs.fuzz.result == 'skipped')) }}"
@@ -1181,7 +1184,8 @@ def release(policy):
     )
     final = copy.deepcopy(candidate)
     final["if"] = (
-        "${{ needs.prepare.outputs.channel == 'stable' && needs.prepare.outputs.build == 'true' }}"
+        "${{ !cancelled() && needs.gate.result == 'success' && "
+        "needs.prepare.outputs.channel == 'stable' && needs.prepare.outputs.build == 'true' }}"
     )
     final["environment"] = "release"
     for step in final["steps"]:

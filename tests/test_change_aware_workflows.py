@@ -42,15 +42,20 @@ def rendered(data):
     return yaml.safe_load(installer.dump(data))
 
 
-def job_runs(job, needs, **context):
+def job_runs(job, needs, *, ancestor_results=(), workflow_cancelled=False, **context):
     """Evaluate only rendered job conditions; fail on unsupported expression syntax.
 
     This deliberately small harness models GitHub's implicit success() guard and
     missing output strings, not its whole expression engine or scope algorithm.
+    Ancestor results model skipped transitive dependencies such as RC-only fuzz.
     """
     names = job.get("needs", [])
     names = [names] if isinstance(names, str) else names
-    success = all(needs[name]["result"] == "success" for name in names)
+    success = (
+        not workflow_cancelled
+        and all(needs[name]["result"] == "success" for name in names)
+        and all(result == "success" for result in ancestor_results)
+    )
     expression = (
         job.get("if", "${{ success() }}").removeprefix("${{").removesuffix("}}")
     )
@@ -72,12 +77,15 @@ def job_runs(job, needs, **context):
     )
     expression = expression.replace("always()", "True").replace(
         "success()", repr(success)
-    )
+    ).replace("cancelled()", repr(workflow_cancelled))
+    expression = re.sub(r"!(?!=)", " not ", expression)
     expression = expression.replace("&&", " and ").replace("||", " or ").strip()
 
     def evaluate(node):
         if isinstance(node, ast.Constant):
             return node.value
+        if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
+            return not evaluate(node.operand)
         if isinstance(node, ast.BoolOp):
             values = [bool(evaluate(child)) for child in node.values]
             if isinstance(node.op, ast.And):
@@ -93,6 +101,97 @@ def job_runs(job, needs, **context):
         raise AssertionError(f"Unsupported generated condition: {expression}")
 
     return bool(evaluate(ast.parse(expression, mode="eval").body))
+
+
+class GeneratedFuzzPublication(unittest.TestCase):
+    """Optional RC fuzz must not suppress successful non-RC publication."""
+
+    @staticmethod
+    def jobs(signed):
+        return rendered(installer.release(policy(
+            sign_releases=signed,
+            versioning={"schema": 1, "promotion": "final-build",
+                        "files": [{"path": "VERSION", "format": "text", "value": "package"}]},
+            fuzzing={"toolkit_ref": "a" * 40},
+        )))["jobs"]
+
+    @staticmethod
+    def results(channel):
+        values = {name: {"result": "success"} for name in
+                  ("scope", "prepare", "checks", "build", "sign", "gate", "fuzz")}
+        values["prepare"]["outputs"] = {"channel": channel, "build": "true"}
+        values["fuzz"]["result"] = "success" if channel == "rc" else "skipped"
+        return values
+
+    def test_publication_uses_successful_gate_despite_skipped_fuzz_ancestor(self):
+        for signed in (False, True):
+            jobs = self.jobs(signed)
+            for channel in ("nightly", "beta", "rc", "stable"):
+                values = self.results(channel)
+                for name in ("candidate", "final"):
+                    with self.subTest(signed=signed, channel=channel, job=name):
+                        self.assertEqual(job_runs(
+                            jobs[name], values,
+                            ancestor_results=[values["fuzz"]["result"]],
+                            vars={"RELEASE_CHANNELS_ENABLED": "true"},
+                        ), (name == "final") == (channel == "stable"))
+
+    def test_unsuccessful_gate_still_blocks_publication(self):
+        for channel, name in (("beta", "candidate"), ("stable", "final")):
+            for conclusion in ("failure", "cancelled", "skipped"):
+                with self.subTest(channel=channel, conclusion=conclusion):
+                    values = self.results(channel)
+                    values["gate"]["result"] = conclusion
+                    self.assertFalse(job_runs(
+                        self.jobs(True)[name], values,
+                        ancestor_results=["skipped"],
+                        vars={"RELEASE_CHANNELS_ENABLED": "true"},
+                    ))
+
+    def test_candidate_still_requires_publication_opt_in_and_a_build(self):
+        candidate = self.jobs(True)["candidate"]
+        for enabled, build in (("false", "true"), ("true", "false")):
+            values = self.results("beta")
+            values["prepare"]["outputs"]["build"] = build
+            self.assertFalse(job_runs(candidate, values, ancestor_results=["skipped"],
+                                      vars={"RELEASE_CHANNELS_ENABLED": enabled}))
+
+    def test_cancellation_after_successful_gate_stops_publication_and_signing(self):
+        jobs = self.jobs(True)
+        for channel, name in (("beta", "candidate"), ("rc", "candidate"),
+                              ("stable", "final"), ("beta", "sign"),
+                              ("rc", "sign"), ("stable", "sign")):
+            with self.subTest(channel=channel, job=name):
+                self.assertFalse(job_runs(
+                    jobs[name], self.results(channel), workflow_cancelled=True,
+                    vars={"RELEASE_CHANNELS_ENABLED": "true"},
+                    github={"repository": "example/change-aware", "ref": "refs/heads/main"},
+                ))
+
+    def test_signer_allows_skipped_non_rc_fuzz_but_requires_each_build_dependency(self):
+        signer = self.jobs(True)["sign"]
+        context = {"github": {"repository": "example/change-aware", "ref": "refs/heads/main"}}
+        for channel in ("beta", "rc", "stable"):
+            values = self.results(channel)
+            with self.subTest(channel=channel):
+                self.assertTrue(job_runs(signer, values, **context))
+                for name in ("prepare", "checks", "build"):
+                    values[name]["result"] = "failure"
+                    self.assertFalse(job_runs(signer, values, **context))
+                    values[name]["result"] = "success"
+        values = self.results("rc")
+        values["fuzz"]["result"] = "skipped"
+        self.assertFalse(job_runs(signer, values, **context))
+
+    def test_byte_promotion_has_no_fuzz_dependency_and_requires_preparation(self):
+        promotion = self.jobs(True)["stable"]
+        self.assertEqual(promotion["needs"], "prepare")
+        values = self.results("stable")
+        values["prepare"]["outputs"]["build"] = "false"
+        self.assertTrue(job_runs(promotion, values))
+        for conclusion in ("failure", "cancelled", "skipped"):
+            values["prepare"]["result"] = conclusion
+            self.assertFalse(job_runs(promotion, values))
 
 
 class GeneratedGateExecution(unittest.TestCase):
