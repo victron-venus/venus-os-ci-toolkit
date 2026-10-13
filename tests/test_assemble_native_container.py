@@ -26,6 +26,9 @@ class NativeReceiptTests(unittest.TestCase):
     """Use real plans, overlays, receipts and archive bytes at the assembly boundary."""
 
     def setUp(self):
+        # This synthetic fixture intentionally has no detached OCI contract.
+        import release_provenance
+        self.enterContext(patch.object(release_provenance, "REQUIRED_PAIRS", ()))
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name).resolve()

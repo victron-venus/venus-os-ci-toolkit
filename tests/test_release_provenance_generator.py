@@ -2,6 +2,7 @@
 
 import copy
 import importlib.util
+import json
 import subprocess
 import sys
 import tempfile
@@ -28,8 +29,10 @@ class ProvenanceGeneratorTests(unittest.TestCase):
             root = Path(temporary)
             adapter = root / ".github/workflows/release-build.yml"
             adapter.parent.mkdir(parents=True)
-            adapter.write_text("on: {workflow_call: {}}\njobs: {}\n")
-            files = installer.release_files(root, policy)
+            adapter.write_text("on: {workflow_call: {inputs: {release_plan_artifact: {type: string, required: true}}}}\njobs: {}\n")
+            (root / ".release-policy.json").write_text(json.dumps(policy))
+            (adapter.parent / "ci.yml").write_text("on: {workflow_call: {}}\njobs: {}\n")
+            files = installer.render(root)
             for name, content in files.items():
                 path = root / name
                 path.parent.mkdir(parents=True, exist_ok=True)
@@ -50,6 +53,37 @@ class ProvenanceGeneratorTests(unittest.TestCase):
             self.assertIn("test_semantics_reject_replacement_after_inventory_hashing", checked.stderr)
             self.assertIn("test_policy_cannot_remove_or_change_embedded_requirement", checked.stderr)
             self.assertNotIn("NO TESTS RAN", checked.stderr)
+            for suite in ("test_release_signing.py", "test_version_receipt.py", "test_versioned_release.py"):
+                checked = subprocess.run([sys.executable, "-m", "unittest", "discover", "-s", ".github/release-tests",
+                                          "-p", suite, "-q"], cwd=root, capture_output=True, text=True)
+                self.assertEqual(checked.returncode, 0, checked.stdout + checked.stderr)
+
+    def test_nonoci_signed_consumer_has_complete_import_and_verification_dependencies(self):
+        policy = {"repository": "example/project", "mode": "release", "sign_releases": True,
+                  "validation_workflows": ["ci.yml"], "versioning": {"schema": 1,
+                  "promotion": "promote-bytes", "files": [{"path": "version", "format": "text", "value": "package"}]}}
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            adapter = root / ".github/workflows/release-build.yml"
+            adapter.parent.mkdir(parents=True)
+            adapter.write_text("on: {workflow_call: {inputs: {release_plan_artifact: {type: string, required: true}}}}\njobs: {}\n")
+            (root / ".release-policy.json").write_text(json.dumps(policy))
+            (adapter.parent / "ci.yml").write_text("on: {workflow_call: {}}\njobs: {}\n")
+            files = installer.render(root)
+            for name, content in files.items():
+                path = root / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(content)
+            for name in ("release_signing", "release_provenance", "merge_oci_archives", "version_plan"):
+                self.assertIn(f"scripts/{name}.py", files)
+            checked = subprocess.run([sys.executable, "-I", "-c",
+                "import sys; sys.path.insert(0, 'scripts'); import release_signing, release_provenance; "
+                "assert release_provenance.REQUIRED_PAIRS == ()"], cwd=root, capture_output=True, text=True)
+            self.assertEqual(checked.returncode, 0, checked.stderr)
+            checked = subprocess.run([sys.executable, "-m", "unittest", "discover", "-s", ".github/release-tests",
+                                      "-p", "test_release_signing.py", "-v"], cwd=root, capture_output=True, text=True)
+            self.assertEqual(checked.returncode, 0, checked.stdout + checked.stderr)
+            self.assertIn("test_complete_inventory_authenticates_source_and_build_receipt", checked.stderr)
 
     def test_invalid_policy_is_rejected_at_generation(self):
         with tempfile.TemporaryDirectory() as temporary:
