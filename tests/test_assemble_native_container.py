@@ -339,18 +339,53 @@ class NativeReceiptTests(unittest.TestCase):
         self.assertFalse(self.evidence.exists())
 
     def test_detached_staging_cleanup_failure_preserves_success(self):
+        import release_provenance
+
         original = tempfile.TemporaryDirectory.cleanup
+        held = []
 
         def interrupted_cleanup(directory):
             if Path(directory.name).name.startswith(".native-assembly-"):
+                held.append(directory)
                 raise OSError("staging cleanup unavailable")
             original(directory)
 
-        with patch.object(tempfile.TemporaryDirectory, "cleanup", interrupted_cleanup):
-            result = self.assemble()
-        self.assertEqual(result, json.loads(self.evidence.read_text()))
-        self.assertTrue(self.output.is_file())
-        self.assertTrue((self.output.parent / "container.provenance.json").is_file())
+        try:
+            with patch.object(
+                tempfile.TemporaryDirectory, "cleanup", interrupted_cleanup
+            ):
+                result = self.assemble()
+            self.assertEqual(result, json.loads(self.evidence.read_text()))
+            for path in (
+                self.output,
+                self.evidence,
+                self.output.parent / "container.provenance.json",
+            ):
+                self.assertEqual(path.stat().st_nlink, 1)
+            release_provenance.verify_all(self.output.parent, self.policy, self.plan)
+        finally:
+            for directory in held:
+                original(directory)
+
+    def test_detached_staging_link_removal_failure_rolls_back(self):
+        original = Path.unlink
+
+        def denied(path, *args, **kwargs):
+            if (
+                path.parent.name.startswith(".native-assembly-")
+                and path.name == self.output.name
+            ):
+                raise PermissionError("cannot remove staging alias")
+            return original(path, *args, **kwargs)
+
+        with (
+            patch.object(Path, "unlink", denied),
+            self.assertRaisesRegex(PermissionError, "staging alias"),
+        ):
+            self.assemble()
+        self.assertFalse(self.output.exists())
+        self.assertFalse(self.evidence.exists())
+        self.assertFalse((self.output.parent / "container.provenance.json").exists())
 
     def test_detached_existing_sidecar_is_not_replaced(self):
         path = self.output.parent / "container.provenance.json"

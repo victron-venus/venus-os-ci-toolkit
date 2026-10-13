@@ -186,7 +186,15 @@ def publish_detached_outputs(staging: Path, outputs: tuple[Path, ...]) -> None:
             owned = source.stat()
             os.link(source, output)
             linked.append((output, owned))
-    except OSError:
+        # Strict recipients reject aliases. Removing staging links is part of
+        # publication, unlike removing the now-empty temporary directory.
+        for output in outputs:
+            (staging / output.name).unlink()
+        require(
+            all(path.stat().st_nlink == 1 for path in outputs),
+            "Published native outputs must be unaliased",
+        )
+    except (OSError, ValueError):
         for output, owned in linked:
             with suppress(OSError):
                 if os.path.samestat(output.stat(follow_symlinks=False), owned):
