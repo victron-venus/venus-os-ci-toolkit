@@ -50,6 +50,20 @@ JSONObject = dict[str, object]
 ReleaseSnapshot = tuple[JSONObject, JSONObject, list[JSONObject]]
 ASSET_RESTRICTIONS: tuple[AssetRestriction, ...]
 ASSET_RESTRICTIONS = ()
+RELEASE_SIGNATURES_REQUIRED = False
+
+
+def verify_required_signatures(directory: Path, repo: str, sha: str) -> None:
+    """Fail closed before publication when this reviewed consumer requires signing."""
+    if not RELEASE_SIGNATURES_REQUIRED:
+        return
+    # Only signed consumers vendor this optional verifier, from the same checkout.
+    from release_signing import read_json, verify  # pylint: disable=import-outside-toplevel
+
+    policy = read_json(Path(POLICY))
+    if policy.get("repository") != repo or policy.get("sign_releases") is not True:
+        raise ReleaseError("Trusted release-signing policy does not match this repository")
+    verify(directory, policy, sha)
 VERSION_PATTERN = r"(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)"
 VERSION_RE = re.compile(VERSION_PATTERN, re.ASCII)
 TAG_RE = re.compile(
@@ -1467,6 +1481,7 @@ def _publish_prepared(
     Callers that maintain publication state prepare notes before their first
     persistent write. Keep mutable tag/workflow authorization checks here too.
     """
+    verify_required_signatures(directory, gh.repo, sha)
     reject_restricted_assets(path.name for path in directory.iterdir())
     ensure_absent(gh, tag)
     check_workflow_publication(gh, sha)
@@ -2025,6 +2040,7 @@ def promote(args: argparse.Namespace) -> JSONObject:
             == snapshot_identity(initial),
             "Candidate changed during verification",
         )
+        verify_required_signatures(stage, gh.repo, cast(str, manifest["source_sha"]))
         # Recheck mutable authorization/provenance just before the first write.
         latest_run = cast(JSONObject, gh.api(f"actions/runs/{manifest['run_id']}"))
         validate_validation_run(gh, latest_run, cast(JSONObject, policy_snapshot["data"]), "rc")

@@ -27,6 +27,10 @@ SPEC = importlib.util.spec_from_file_location(
 )
 rc = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(rc)
+# These fixtures model the original unsigned publication contract. Consumers may
+# opt into signatures; that boundary is exercised with enforcement enabled in
+# test_release_signing.py, rather than requiring Cosign/network access here.
+rc.RELEASE_SIGNATURES_REQUIRED = False
 
 REPO = "example/project"
 SHA = "a" * 40

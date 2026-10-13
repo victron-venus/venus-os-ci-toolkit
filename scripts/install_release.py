@@ -26,6 +26,7 @@ import yaml
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from runner_selection import render_consumer, runner_labels  # pylint: disable=wrong-import-position
 import release_validation  # pylint: disable=wrong-import-position
+import release_signing_workflow  # pylint: disable=wrong-import-position
 from workflow_hardening import harden_jobs  # pylint: disable=wrong-import-position
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -1145,6 +1146,7 @@ def release(policy):
                 "Publish the separately validated final packages after approval"
             )
     jobs["final"] = final
+    release_signing_workflow.apply(workflow, policy, ACTION_REFS)
     return workflow
 
 
@@ -1196,6 +1198,7 @@ def validate_policy(directory: Path, policy: dict) -> None:
     """Reject unsupported policy modes, stale publishers and invalid repository names."""
     mode = policy.get("mode", "release")
     release_validation.channel_workflows(policy)
+    release_signing_workflow.enabled(policy)
     if "release_notes" in policy and policy["release_notes"] != "CHANGELOG.md":
         raise ValueError("release_notes must name the source-bound CHANGELOG.md")
     validate_asset_restrictions(policy)
@@ -1419,6 +1422,20 @@ def release_files(directory: Path, policy: dict) -> dict[str, str]:
     files[RELEASE_CONTROL_PATH] = files[RELEASE_CONTROL_PATH].replace(
         marker, f"ASSET_RESTRICTIONS = {validate_asset_restrictions(policy)!r}"
     )
+    if release_signing_workflow.enabled(policy):
+        marker = "RELEASE_SIGNATURES_REQUIRED = False"
+        if files[RELEASE_CONTROL_PATH].count(marker) != 1:
+            raise ValueError("Release signature enforcement marker changed")
+        files[RELEASE_CONTROL_PATH] = files[RELEASE_CONTROL_PATH].replace(
+            marker, "RELEASE_SIGNATURES_REQUIRED = True"
+        )
+        files["scripts/release_signing.py"] = (ROOT / "scripts/release_signing.py").read_text()
+        files[".github/release-tests/test_release_signing.py"] = (
+            (ROOT / "tests/test_release_signing.py").read_text().replace(
+                "Path(__file__).resolve().parents[1]", "Path(__file__).resolve().parents[2]"
+            )
+        )
+        files["docs/release-signatures.md"] = (ROOT / "docs/release-signatures.md").read_text()
     if policy.get("versioning"):
         files["docs/VERSIONING.md"] = (ROOT / "docs/VERSIONING.md").read_text()
         files["docs/runner-preflight.md"] = (
@@ -1481,6 +1498,18 @@ def release_files(directory: Path, policy: dict) -> dict[str, str]:
         .read_text()
         .replace(TEST_ROOT_EXPRESSION, VENDORED_TEST_ROOT_EXPRESSION)
     )
+    for name in ("change_scope", "release_client_consumer"):
+        files[f".github/release-tests/test_{name}.py"] = (
+            (ROOT / f"tests/test_{name}.py").read_text().replace(
+                "Path(__file__).resolve().parents[1]", "Path(__file__).resolve().parents[2]"
+            ).replace(TEST_ROOT_EXPRESSION, VENDORED_TEST_ROOT_EXPRESSION)
+        )
+    if policy.get("container_assets"):
+        files[".github/release-tests/test_verified_publication.py"] = (
+            (ROOT / "tests/test_verified_publication.py").read_text().replace(
+                "Path(__file__).resolve().parents[1]", "Path(__file__).resolve().parents[2]"
+            )
+        )
     files[".github/release-tests/test_release_notes.py"] = (
         (ROOT / "tests/test_release_notes.py")
         .read_text()
