@@ -868,12 +868,10 @@ class SinglePassReviewedTests(unittest.TestCase):
 
     def test_rejected_merge_does_not_starve_later_pr_but_still_fails_the_run(self):
         """A write rejection is not a success or a retry of an ambiguous operation."""
+        snapshots = [self.ready()] * 6
+        pages = [[self.candidate(), self.candidate(8)]]
         with self.assertRaisesRegex(RuntimeError, r"#7 \(exit 1\)"):
-            self.run_once(
-                [self.ready()] * 6,
-                pages=[[self.candidate(), self.candidate(8)]],
-                rejected_merges=(7,),
-            )
+            self.run_once(snapshots, pages=pages, rejected_merges=(7,))
         self.assertEqual([call[2] for call in self.merges(self.last_calls)], ["7", "8"])
         self.assertEqual(
             sum("/compare/" in " ".join(call.args) for call in self.last_calls), 6
@@ -881,12 +879,10 @@ class SinglePassReviewedTests(unittest.TestCase):
 
     def test_read_failure_aborts_before_attempting_any_candidate_merge(self):
         """Continuing after write rejection never hides a read or authentication error."""
+        snapshots = [self.ready()] * 6
+        pages = [[self.candidate(), self.candidate(8)]]
         with self.assertRaisesRegex(RuntimeError, "API/authentication"):
-            self.run_once(
-                [self.ready()] * 6,
-                pages=[[self.candidate(), self.candidate(8)]],
-                failure="/compare/",
-            )
+            self.run_once(snapshots, pages=pages, failure="/compare/")
         self.assertFalse(self.merges(self.last_calls))
         self.assertEqual(
             sum("/compare/" in " ".join(call.args) for call in self.last_calls), 1
