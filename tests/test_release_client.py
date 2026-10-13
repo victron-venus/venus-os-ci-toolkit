@@ -490,11 +490,14 @@ jobs:
                 path.write_text(files[name])
             run = subprocess.run(
                 [sys.executable, "-m", "unittest", "discover", "-s",
-                 ".github/workflow-tests", "-p", "test_*.py"],
+                 ".github/workflow-tests", "-p", "test_*.py", "-v"],
                 cwd=root, capture_output=True, text=True, check=False,
             )
             self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
-            self.assertIn("Ran 10 tests", run.stderr)
+            # Assert that the exported safety contracts actually ran without
+            # tying self-containment to the suite's evolving test count.
+            self.assertIn("test_duplicate_top_level_and_nested_keys_are_rejected", run.stderr)
+            self.assertIn("test_docker_actions_require_full_content_digest", run.stderr)
         steps = installer.quality(dict(self.policy, single_entry_ci=True))[
             "jobs"
         ]["workflow-contracts"]["steps"]
