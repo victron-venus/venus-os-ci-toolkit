@@ -63,11 +63,7 @@ def argv(value: object) -> list[str]:
     return value
 
 
-def manifest(root: Path) -> dict:
-    raw = (root / MANIFEST).read_bytes()
-    if len(raw) > 65536:
-        raise ValueError("Fuzz manifest is too large")
-    data = json.loads(raw)
+def validate_manifest_shape(data: object) -> None:
     if (
         not isinstance(data, dict)
         or set(data) - {"schema", "language", "setup", "targets", "go-version-file"}
@@ -77,6 +73,36 @@ def manifest(root: Path) -> dict:
         or not isinstance(data.get("targets"), list) or not 1 <= len(data["targets"]) <= 12
     ):
         raise ValueError("Invalid fuzz manifest")
+
+
+def validate_target(root: Path, target: object, names: set[str]) -> None:
+    if (
+        not isinstance(target, dict)
+        or set(target) - {"name", "engine", "command", "seconds", "cwd", "corpus"}
+        or not isinstance(target.get("name"), str)
+        or not re.fullmatch(r"[a-z][a-z0-9-]{0,49}", target["name"])
+        or target["name"] in names
+        or target.get("engine") not in {"go", "libfuzzer", "atheris"}
+        or type(target.get("seconds")) is not int or not 1 <= target["seconds"] <= 120
+    ):
+        raise ValueError("Invalid, duplicated or unbounded fuzz target")
+    names.add(target["name"])
+    argv(target.get("command"))
+    confined(root, relative(target.get("cwd", ".")))
+    if "corpus" in target:
+        confined(root, relative(target["corpus"]))
+    # The runner owns the time/resource limits and crash destination.
+    reserved = ("-fuzztime", "-fuzzminimizetime", "-parallel", "-timeout", "-max_total_time", "-rss_limit_mb", "-artifact_prefix", "-runs", "-jobs", "-workers")
+    if any(arg.split("=", 1)[0] in reserved for arg in target["command"]):
+        raise ValueError("Fuzz target cannot override runner limits")
+
+
+def manifest(root: Path) -> dict:
+    raw = (root / MANIFEST).read_bytes()
+    if len(raw) > 65536:
+        raise ValueError("Fuzz manifest is too large")
+    data = json.loads(raw)
+    validate_manifest_shape(data)
     for command in data["setup"]:
         argv(command)
     if "go-version-file" in data:
@@ -85,25 +111,7 @@ def manifest(root: Path) -> dict:
         confined(root, relative(data["go-version-file"]))
     names = set()
     for target in data["targets"]:
-        if (
-            not isinstance(target, dict)
-            or set(target) - {"name", "engine", "command", "seconds", "cwd", "corpus"}
-            or not isinstance(target.get("name"), str)
-            or not re.fullmatch(r"[a-z][a-z0-9-]{0,49}", target["name"])
-            or target["name"] in names
-            or target.get("engine") not in {"go", "libfuzzer", "atheris"}
-            or type(target.get("seconds")) is not int or not 1 <= target["seconds"] <= 120
-        ):
-            raise ValueError("Invalid, duplicated or unbounded fuzz target")
-        names.add(target["name"])
-        argv(target.get("command"))
-        confined(root, relative(target.get("cwd", ".")))
-        if "corpus" in target:
-            confined(root, relative(target["corpus"]))
-        # The runner owns the time/resource limits and crash destination.
-        reserved = ("-fuzztime", "-fuzzminimizetime", "-parallel", "-timeout", "-max_total_time", "-rss_limit_mb", "-artifact_prefix", "-runs", "-jobs", "-workers")
-        if any(arg.split("=", 1)[0] in reserved for arg in target["command"]):
-            raise ValueError("Fuzz target cannot override runner limits")
+        validate_target(root, target, names)
     if sum(t["seconds"] for t in data["targets"]) > 600:
         raise ValueError("Fuzz campaign budget exceeds ten minutes")
     return data
@@ -210,6 +218,32 @@ def execute(command: list[str], cwd: Path, output: Path, timeout: int, isolated:
     return code, round(time.monotonic() - start, 3)
 
 
+def run_target(root: Path, output: Path, target: dict) -> dict:
+    name, seconds = target["name"], target["seconds"]
+    target_dir = output / name
+    target_dir.mkdir()
+    corpus = target_dir / "corpus"
+    if "corpus" in target:
+        shutil.copytree(confined(root, target["corpus"]), corpus)
+    else:
+        corpus.mkdir()
+    command = list(target["command"])
+    if target["engine"] == "go":
+        command += [f"-fuzztime={seconds}s", "-fuzzminimizetime=10s", "-parallel=2", f"-timeout={seconds + 60}s"]
+    else:
+        command += [f"-max_total_time={seconds}", "-timeout=10", "-rss_limit_mb=2048",
+                    f"-artifact_prefix={target_dir}/", str(corpus)]
+    cwd = confined(root, target.get("cwd", "."))
+    code, elapsed = execute(command, cwd, target_dir / "run.log", seconds + 300, True)
+    if code == 0 and not exercised(target["engine"], (target_dir / "run.log").read_text(errors="replace")):
+        code = 125
+    if target["engine"] == "go":
+        for index, path in enumerate(cwd.rglob("testdata/fuzz")):
+            if path.is_dir():
+                shutil.copytree(path, target_dir / f"go-regressions-{index}")
+    return {"name": name, "seconds": seconds, "exit_code": code, "elapsed_seconds": elapsed}
+
+
 def campaign(root: Path, output: Path) -> None:
     event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text())
     event_contract(event, os.environ["GITHUB_EVENT_NAME"], os.environ["GITHUB_REF"],
@@ -232,29 +266,7 @@ def campaign(root: Path, output: Path) -> None:
             if code:
                 raise ValueError(f"Fuzz build/setup {index} failed with {code}")
         for target in data["targets"]:
-            name, seconds = target["name"], target["seconds"]
-            target_dir = output / name
-            target_dir.mkdir()
-            corpus = target_dir / "corpus"
-            if "corpus" in target:
-                shutil.copytree(confined(root, target["corpus"]), corpus)
-            else:
-                corpus.mkdir()
-            command = list(target["command"])
-            if target["engine"] == "go":
-                command += [f"-fuzztime={seconds}s", "-fuzzminimizetime=10s", "-parallel=2", f"-timeout={seconds + 60}s"]
-            else:
-                command += [f"-max_total_time={seconds}", "-timeout=10", "-rss_limit_mb=2048",
-                            f"-artifact_prefix={target_dir}/", str(corpus)]
-            cwd = confined(root, target.get("cwd", "."))
-            code, elapsed = execute(command, cwd, target_dir / "run.log", seconds + 300, True)
-            if code == 0 and not exercised(target["engine"], (target_dir / "run.log").read_text(errors="replace")):
-                code = 125
-            report["targets"].append({"name": name, "seconds": seconds, "exit_code": code, "elapsed_seconds": elapsed})
-            if target["engine"] == "go":
-                for index, path in enumerate(cwd.rglob("testdata/fuzz")):
-                    if path.is_dir():
-                        shutil.copytree(path, target_dir / f"go-regressions-{index}")
+            report["targets"].append(run_target(root, output, target))
         if any(t["exit_code"] for t in report["targets"]):
             raise ValueError("One or more fuzz targets failed; inspect diagnostics")
         report["status"] = "passed"

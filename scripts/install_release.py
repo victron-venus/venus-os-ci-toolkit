@@ -1539,6 +1539,7 @@ def release_files(directory: Path, policy: dict) -> dict[str, str]:
             "runner_preflight",
             "consumer_versioning",
             "cli_version_paths",
+            "release_import_modes",
         ):
             files[f".github/release-tests/test_{name}.py"] = (
                 (ROOT / f"tests/test_{name}.py")
