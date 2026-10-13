@@ -288,7 +288,7 @@ def read_raw(archive, name):
     return raw
 
 
-def detach(inputs, output, sidecar, policy, plan):
+def detach(inputs, output, sidecar, policy, plan, expected_inputs=None):
     """Create a no-clobber pair; preserve all original graph metadata bytes."""
     pairs = policy_pairs(policy)
     pair = next((item for item in pairs if item["image"] == output.name and item["sidecar"] == sidecar.name), None)
@@ -300,6 +300,13 @@ def detach(inputs, output, sidecar, policy, plan):
     version, revision = pair_version(policy, pair, plan), plan["source_sha"]
     with ExitStack() as stack:
         archives = [oci.Archive(inputs[name], name, version, revision, stack) for name in oci.PLATFORMS]
+        if expected_inputs is not None:
+            require(set(expected_inputs) == set(oci.PLATFORMS), "Native input identities are incomplete")
+            for archive in archives:
+                actual = {"name": archive.path.name, **archive.archive_identity,
+                          "config_digest": "sha256:" + archive.images[0]["config_sha256"]}
+                require(actual == expected_inputs[archive.platform],
+                        "Native OCI input differs from verified receipt or smoke image")
         descriptors, runtime_blobs, metadata, originals = {}, {}, {}, []
         for archive in archives:
             require(any(oci.PROVENANCE_TYPES.intersection(item["predicate_types"]) for item in archive.attestations),
@@ -320,6 +327,18 @@ def detach(inputs, output, sidecar, policy, plan):
             originals.append({"platform": archive.platform,
                               "index": base64.b64encode(read_raw(archive, "index.json")).decode(),
                               "layout": base64.b64encode(read_raw(archive, "oci-layout")).decode()})
+        native_evidence = {
+            "inputs": [{"platform": archive.platform, "name": archive.path.name,
+                        **archive.archive_identity} for archive in archives],
+            "images": {archive.platform: {
+                "platform": archive.platform,
+                "config_digest": "sha256:" + archive.images[0]["config_sha256"],
+                "manifest_digest": archive.images[0]["descriptor"]["digest"],
+                "attestation_digests": [item["digest"] for item in archive.attestations],
+                "provenance_digests": [item["digest"] for item in archive.attestations
+                                       if oci.PROVENANCE_TYPES.intersection(item["predicate_types"])],
+            } for archive in archives},
+        }
         generated, index_digest = runtime_metadata(descriptors)
         # Both files are prepared and semantically checked before either final name appears.
         temporary = stack.enter_context(tempfile.TemporaryDirectory(prefix=".detached-", dir=output.parent))
@@ -363,7 +382,7 @@ def detach(inputs, output, sidecar, policy, plan):
                         path.unlink()
             raise
     return {"image": output.name, "sidecar": sidecar.name, "source_sha": revision,
-            "plan_sha256": version_plan.plan_digest(plan), **image_identity}
+            "plan_sha256": version_plan.plan_digest(plan), **image_identity, **native_evidence}
 
 
 def main():
