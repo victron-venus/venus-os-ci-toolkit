@@ -21,6 +21,7 @@ from typing import cast
 import version_plan
 from release_control import stream_identity
 
+DETACHED_PROVENANCE_REQUIRED = False
 MAX_RECEIPT_BYTES = 2_000_000
 
 
@@ -234,6 +235,10 @@ def verify_receipts(
         results.append({"name": name, "sha256": sha256(raw), "inputs": receipt})
     if covered != set(expected) - receipts:
         raise ValueError("Some release payloads lack version input evidence")
+    if policy is not None and (DETACHED_PROVENANCE_REQUIRED or policy.get("detached_provenance")):
+        from release_provenance import verify_all  # pylint: disable=import-outside-toplevel
+
+        verify_all(directory, policy, plan, payloads)
     return results
 
 
