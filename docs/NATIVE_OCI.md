@@ -24,6 +24,9 @@ versions reject Zstandard instead of accepting unverified filesystem bytes.
 
 Each platform must retain an in-toto SLSA provenance statement (`v0.2` or `v1`).
 Other attestations, including SBOMs, are preserved but do not satisfy this check.
+Each in-toto statement is limited to 16 MiB. Structural JSON (indexes, manifests,
+configs and the layout marker) remains limited to 2,000,000 bytes per document;
+the aggregate metadata budget remains 32,000,000 bytes per input archive.
 Evidence records predicate types and the provenance manifest digests separately.
 The evidence JSON is written and flushed to a temporary file before atomic
 publication without overwriting an existing destination. A failed write leaves

@@ -3,7 +3,8 @@
 import io
 import json
 import os
-import subprocess
+# Only mocked publication calls and subprocess exception fixtures are used here.
+import subprocess  # nosec B404
 import sys
 import tempfile
 import unittest
