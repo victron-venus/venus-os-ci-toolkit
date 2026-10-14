@@ -87,7 +87,7 @@ def validate_target(root: Path, target: object, names: set[str]) -> None:
         or set(target) - {"name", "engine", "command", "seconds", "cwd", "corpus", "instrumentation"}
         or not isinstance(target.get("name"), str)
         or not re.fullmatch(r"[a-z][a-z0-9-]{0,49}", target["name"])
-        or target["name"] in names
+        or target["name"] in names or target["name"] == "preflight"
         or target.get("engine") not in {"go", "libfuzzer", "atheris"}
         or type(target.get("seconds")) is not int or not 1 <= target["seconds"] <= 120
     ):
@@ -291,11 +291,22 @@ def retain_corpus(source: Path, destination: Path, *, required: bool = False) ->
     """Copy only bounded regular corpus inputs, never symlinks or a build cache."""
     result = {"files": 0, "bytes": 0, "truncated": False}
     destination.mkdir(parents=True, exist_ok=True)
-    if required and (not source.is_dir() or source.is_symlink()):
-        raise ValueError("Declared preflight corpus must be an existing directory without symlinks")
-    if not source.is_dir() or source.is_symlink():
+    if source.is_symlink() or (source.exists() and not source.is_dir()):
+        raise ValueError("Corpus must be an existing directory without symlinks")
+    if not source.is_dir():
+        if required:
+            raise ValueError("Declared preflight corpus must be an existing directory without symlinks")
         return result
-    for path in corpus_files(source, required=required):
+    result = retain_corpus_files(source, destination, corpus_files(source, required=required))
+    if required and not result["files"]:
+        raise ValueError("Declared preflight corpus must contain at least one regular seed file")
+    return result
+
+
+def retain_corpus_files(source: Path, destination: Path, files) -> dict:
+    """Apply one aggregate storage budget to an ordered stream of seed files."""
+    result = {"files": 0, "bytes": 0, "truncated": False}
+    for path in files:
         size = path.stat().st_size
         if result["files"] >= CORPUS_FILES or result["bytes"] + size > CORPUS_BYTES:
             result["truncated"] = True
@@ -305,8 +316,6 @@ def retain_corpus(source: Path, destination: Path, *, required: bool = False) ->
         shutil.copyfile(path, target)
         result["files"] += 1
         result["bytes"] += size
-    if required and not result["files"]:
-        raise ValueError("Declared preflight corpus must contain at least one regular seed file")
     return result
 
 
@@ -346,18 +355,31 @@ def execute(command: list[str], cwd: Path, output: Path, timeout: int, isolated:
     return code, round(time.monotonic() - start, 3)
 
 
+def go_regression_files(cwd: Path, target_dir: Path):
+    """Find owned native regressions without traversing links or saved output."""
+    excluded = target_dir.parent if target_dir.parent != cwd else target_dir
+    for current, directories, _files in os.walk(cwd, followlinks=False, onerror=corpus_walk_error):
+        path = Path(current)
+        directories[:] = sorted(name for name in directories
+                                if name not in {".git", "vendor", "node_modules"}
+                                and not (path / name).is_symlink() and path / name != excluded)
+        if path.name == "fuzz" and path.parent.name == "testdata":
+            directories[:] = []
+            yield from corpus_files(path)
+
+
 def retain_go_diagnostics(root: Path, cwd: Path, target_dir: Path, go_version_file: str | None) -> dict:
     """Save native Go failures and bounded coverage discoveries separately."""
-    for index, path in enumerate(cwd.rglob("testdata/fuzz")):
-        if path.is_dir():
-            shutil.copytree(path, target_dir / f"go-regressions-{index}")
+    regressions = retain_corpus_files(cwd, target_dir / "go-regressions", go_regression_files(cwd, target_dir))
+    (target_dir / "go-regressions.json").write_text(json.dumps(regressions, indent=2) + "\n")
     # Native Go keeps coverage discoveries outside testdata/fuzz. Resolve the
     # selected toolchain's cache; do not include compiled objects or modules.
     # A target may invoke Go through a Python/build adapter. Query the Go
     # selected on PATH in the declared module, never the adapter executable.
     go_cwd = go_module_directory(root, go_version_file) if go_version_file else cwd
     cache = subprocess.check_output(["go", "env", "GOCACHE"], cwd=go_cwd, text=True, timeout=30).strip()  # nosec B603, B607
-    return retain_corpus(Path(cache) / "fuzz", target_dir / "go-generated-corpus")
+    return {"go_regressions": regressions,
+            "generated_corpus": retain_corpus(Path(cache) / "fuzz", target_dir / "go-generated-corpus")}
 
 
 def run_target(root: Path, output: Path, target: dict, *, go_version_file: str | None = None) -> dict:
@@ -383,7 +405,7 @@ def run_target(root: Path, output: Path, target: dict, *, go_version_file: str |
     if code == 0 and not metrics["executions"]:
         code = 125
     if target["engine"] == "go":
-        metrics["generated_corpus"] = retain_go_diagnostics(root, cwd, target_dir, go_version_file)
+        metrics.update(retain_go_diagnostics(root, cwd, target_dir, go_version_file))
     return {"name": name, "seconds": seconds, "exit_code": code, "elapsed_seconds": elapsed, **metrics}
 
 

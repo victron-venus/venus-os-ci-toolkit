@@ -207,6 +207,26 @@ steps:
                 with self.subTest(policy_reference=reference), self.assertRaises(ValueError):
                     CONTRACTS.generator_pins(root)
 
+    def test_fuzz_configuration_may_be_absent_or_null(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            CONTRACTS.validate_fuzz_pins(root, {})
+            for policy in ({}, {"fuzzing": None}):
+                (root / ".release-policy.json").write_text(json.dumps(policy))
+                with self.subTest(policy=policy):
+                    CONTRACTS.validate_fuzz_pins(root, {})
+
+    def test_declared_fuzz_configuration_requires_mapping_and_sha(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for configuration in ({}, {"enabled": True}, [], "", False, 0, "enabled",
+                                  {"toolkit_ref": None}, {"toolkit_ref": 42},
+                                  {"toolkit_ref": "main"}, {"toolkit_ref": "a" * 39},
+                                  {"toolkit_ref": "A" * 40}):
+                (root / ".release-policy.json").write_text(json.dumps({"fuzzing": configuration}))
+                with self.subTest(configuration=configuration), self.assertRaises(ValueError):
+                    CONTRACTS.validate_fuzz_pins(root, {})
+
     def test_consumer_fuzz_pins_agree_without_generator_manifest(self):
         action = "victron-venus/venus-os-ci-toolkit/.github/workflows/fuzz.yml"
         with tempfile.TemporaryDirectory() as directory:

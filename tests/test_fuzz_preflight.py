@@ -220,7 +220,82 @@ class FuzzPreflightTests(unittest.TestCase):
                     "engine": "go", "command": ["go", "test", "-fuzz=FuzzParse"]})
             self.assertEqual(report["executions"], 23)
             self.assertEqual(report["generated_corpus"]["files"], 1)
+            self.assertEqual(report["go_regressions"], {"files": 0, "bytes": 0, "truncated": False})
             self.assertTrue((root / "parse/go-generated-corpus/example/FuzzParse/interesting").is_file())
+
+    def test_go_regressions_are_bounded_across_packages_and_keep_relative_paths(self):
+        for limits in ({"CORPUS_FILES": 1}, {"CORPUS_BYTES": 5}):
+            with self.subTest(limits=limits), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp)
+                output = root / "diagnostics/parse"
+                output.mkdir(parents=True)
+                for package in ("a", "b"):
+                    source = root / package / "testdata/fuzz/FuzzParse"
+                    source.mkdir(parents=True)
+                    (source / "seed").write_bytes(b"seed")
+                with patch.multiple(fuzz, **limits), patch.object(
+                        fuzz.subprocess, "check_output", return_value=str(root / "cache")):
+                    generated = fuzz.retain_go_diagnostics(root, root, output, None)
+                summary = json.loads((output / "go-regressions.json").read_text())
+                self.assertEqual(summary, {"files": 1, "bytes": 4, "truncated": True})
+                self.assertEqual((output / "go-regressions/a/testdata/fuzz/FuzzParse/seed").read_bytes(), b"seed")
+                self.assertFalse((output / "go-regressions/b").exists())
+                self.assertEqual(generated["generated_corpus"], {"files": 0, "bytes": 0, "truncated": False})
+                self.assertEqual(generated["go_regressions"], summary)
+
+    def test_go_regressions_do_not_follow_links_or_recapture_output_and_vendor_files(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            output = root / "diagnostics/parse"
+            output.mkdir(parents=True)
+            source = root / "pkg/testdata/fuzz/FuzzParse"
+            source.mkdir(parents=True)
+            (source / "seed").write_bytes(b"seed")
+            secret = root / "secret"
+            secret.write_bytes(b"not a seed")
+            (source / "linked-file").symlink_to(secret)
+            (source / "linked-dir").symlink_to(root, target_is_directory=True)
+            (root / "alias").symlink_to(root / "pkg", target_is_directory=True)
+            for directory in ("diagnostics/previous", "vendor/dependency", "node_modules/dependency", ".git/worktree"):
+                excluded = root / directory / "testdata/fuzz/FuzzParse"
+                excluded.mkdir(parents=True)
+                (excluded / "ignored").write_bytes(b"must not copy")
+            with patch.object(fuzz.subprocess, "check_output", return_value=str(root / "cache")):
+                fuzz.retain_go_diagnostics(root, root, output, None)
+            copied = [p.relative_to(output / "go-regressions").as_posix()
+                      for p in (output / "go-regressions").rglob("*") if p.is_file()]
+            self.assertEqual(copied, ["pkg/testdata/fuzz/FuzzParse/seed"])
+            self.assertEqual(json.loads((output / "go-regressions.json").read_text()),
+                             {"files": 1, "bytes": 4, "truncated": False})
+
+    def test_optional_generated_corpus_rejects_existing_invalid_roots(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "file").write_bytes(b"not a directory")
+            (root / "link").symlink_to(root / "missing")
+            for name in ("file", "link"):
+                with self.subTest(name=name), self.assertRaisesRegex(ValueError, "directory without symlinks"):
+                    fuzz.retain_corpus(root / name, root / (name + "-out"))
+            self.assertEqual(fuzz.retain_corpus(root / "missing", root / "out"),
+                             {"files": 0, "bytes": 0, "truncated": False})
+
+    def test_go_regression_scan_propagates_unreadable_directories(self):
+        def unreadable(_source, *, onerror, **_kwargs):
+            onerror(PermissionError("unreadable Go regressions"))
+            return iter(())
+        with patch.object(fuzz.os, "walk", side_effect=unreadable):
+            with self.assertRaisesRegex(PermissionError, "unreadable Go regressions"):
+                list(fuzz.go_regression_files(Path("/source"), Path("/output/target")))
+
+    def test_target_name_cannot_collide_with_preflight_output(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / ".github").mkdir()
+            (root / fuzz.MANIFEST).write_text(json.dumps({
+                "schema": 1, "language": "go", "setup": [], "targets": [{
+                    "name": "preflight", "engine": "go", "seconds": 1, "command": ["go", "test"]}]}))
+            with self.assertRaises(ValueError):
+                fuzz.manifest(root)
 
     def test_libfuzzer_metrics_use_completed_engine_work(self):
         result = fuzz.engine_metrics("atheris", "#123 DONE cov: 10 ft: 20 corp: 3/10b\nDone 123 runs in 1 second(s)")

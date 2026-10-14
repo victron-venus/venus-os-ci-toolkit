@@ -6,6 +6,10 @@
   for Python seed replay and RC campaigns; reject setup-only false passes.
 - Validate required seed corpora and Go module files before campaigns, and retain
   bounded generated Go corpus snapshots with measured counts and sizes.
+- Bound source Go regression retention across packages, excluding links, saved
+  diagnostics and vendored dependencies, and reserve the internal preflight name.
+- Reject explicitly malformed optional toolkit workflow configurations instead
+  of silently treating falsey values as absent.
 - Add selective, bounded Python fuzz preflight to ordinary CI while keeping
   time-budgeted mutation campaigns exclusive to public-repository RCs.
 - Enforce matching immutable fuzz workflow references and preserve generated
