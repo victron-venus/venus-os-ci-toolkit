@@ -166,7 +166,10 @@ Dependency builds may access the network. Each target executes with the runner's
 unprivileged UID/GID in a new Linux network namespace, with no access to a real
 broker, Cerbo or actuator. Only toolchain environment variables are forwarded.
 This is network isolation, not a sandbox for malicious source code: adoption
-still requires review of the source, dependencies and commands.
+still requires review of the source, dependencies and commands. Execution counts
+and instrumentation records detect accidental empty or uninstrumented runs of
+that reviewed code. They are not independent attestation against a malicious
+harness that prints fabricated engine output or rewrites its own evidence.
 
 Go uses two fuzz workers and a 1536 MiB runtime memory target; libFuzzer/Atheris
 uses a 2048 MiB RSS limit and a 10-second per-input timeout. Go's memory target is
