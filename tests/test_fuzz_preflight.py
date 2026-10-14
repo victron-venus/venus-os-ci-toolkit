@@ -69,6 +69,18 @@ class FuzzPreflightTests(unittest.TestCase):
             self.assertIn("parents[2]", first[".github/workflow-tests/test_workflow_yaml_contracts.py"])
             subprocess.run([sys.executable, "-m", "unittest", "discover", "-s", ".github/workflow-tests"],
                            cwd=root, check=True, capture_output=True)
+            policy_path = root / ".release-policy.json"
+            policy = json.loads(policy_path.read_text())
+            policy.pop("single_entry_ci")
+            policy_path.write_text(json.dumps(policy))
+            manifest_path = root / ".github/fuzz.json"
+            manifest = json.loads(manifest_path.read_text())
+            manifest["language"] = "javascript"
+            manifest["targets"] = [{"name": "parse", "engine": "libfuzzer", "seconds": 1, "command": ["jazzer"]}]
+            manifest_path.write_text(json.dumps(manifest))
+            native = installer.render_fuzz(root)
+            self.assertIn(".github/workflows/release-pipeline.yml", native)
+            self.assertNotIn(".github/workflows/quality-gate.yml", native)
 
     def test_corpus_retains_regular_inputs_with_hard_storage_caps(self):
         with tempfile.TemporaryDirectory() as temp:

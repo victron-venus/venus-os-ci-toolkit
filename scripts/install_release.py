@@ -1853,9 +1853,11 @@ def render_fuzz(directory: Path) -> dict[str, str]:
     """Refresh only an already-adopted fuzz contract and its immutable pins."""
     policy = json.loads((directory / POLICY_FILE).read_text())
     config = release_fuzz.configuration(policy)
-    if config is None or policy.get("single_entry_ci") is not True:
-        raise ValueError("Fuzz-only refresh requires an opted-in public single-entry consumer")
+    if config is None:
+        raise ValueError("Fuzz-only refresh requires an opted-in public consumer")
     data = release_fuzz.manifest(directory)
+    if data["language"] == "python" and policy.get("single_entry_ci") is not True:
+        raise ValueError("Automatic Python preflight requires an existing single-entry CI gate")
     files = {name: (ROOT / name).read_text() for name in (
         "scripts/release_fuzz.py", "scripts/fuzz_python_preflight.py",
         WORKFLOW_CONTRACTS_PATH, "docs/rc-fuzzing.md")}
