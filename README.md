@@ -1,5 +1,12 @@
 # Venus OS CI Toolkit
 
+[![Fuzzing: RC only](https://img.shields.io/badge/Fuzzing-RC%20only-blue)](docs/self-release.md)
+
+The toolkit publishes versioned source candidates with an explicit file inventory
+and acceptance tests against the extracted archive. See [source installation and
+RC qualification](docs/self-release.md); consumer workflow references remain
+independent, reviewed commit pins.
+
 For bug reports, proposed changes and local verification, see
 [CONTRIBUTING.md](CONTRIBUTING.md). Security reports use the private process in
 [SECURITY.md](SECURITY.md). The toolkit is distributed under the [MIT license](LICENSE).

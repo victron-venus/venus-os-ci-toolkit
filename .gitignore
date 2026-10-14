@@ -69,3 +69,6 @@ release.txt
 # Operator inventories belong outside public source.
 operator-config/
 *.operator.json
+
+# Local source candidate build output.
+/release-dist/

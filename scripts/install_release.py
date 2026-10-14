@@ -608,12 +608,43 @@ def release_contract_python(policy):
     return version
 
 
+def release_contract_job(policy, directory):
+    """Run original toolkit tests or a consumer's exported release contracts."""
+    canonical = directory is not None and directory.resolve() == ROOT.resolve()
+    tests = "tests" if canonical else ".github/release-tests"
+    requirements = ".github/requirements-generator.txt" if canonical else CONTRACT_REQUIREMENTS
+    job = {
+        "name": "Release tooling contracts",
+        "runs-on": runner_labels(),
+        "timeout-minutes": 5,
+        "steps": [
+            {"uses": CHECKOUT, "with": {"persist-credentials": False}},
+            {
+                "uses": ACTION_REFS["actions/setup-python"],
+                "with": {"python-version": release_contract_python(policy)},
+            },
+            {
+                "run": "python3 -m pip install --require-hashes --only-binary=:all: "
+                f"-r {requirements}"
+            },
+            {"run": f"python3 -m unittest discover -s {tests} -p 'test_*.py' -v"},
+        ],
+    }
+    if canonical:
+        job["steps"].insert(2, {
+            "name": "Install uv for locked dependency contracts",
+            "uses": ACTION_REFS["astral-sh/setup-uv"],
+            "with": {"version": "0.12.18"},
+        })
+    return job
+
+
 def quality(policy, directory=None):
     """Compose callable validators and a gate that rejects every non-success result."""
     validators = policy.get("validation_workflows", [])
     if not validators:
         raise ValueError("At least one real validation workflow is required")
-    contract_python = release_contract_python(policy)
+    release_contract_python(policy)
     config = scope_policy(policy)
     oidc = validation_oidc_workflows(policy)
     jobs = {"scope": scope_job(policy, force_input=True)}
@@ -627,25 +658,7 @@ def quality(policy, directory=None):
         if len(always) > 1:
             always.add("workflow-contracts")
     if policy.get("mode", "release") == "release":
-        jobs["release-contracts"] = {
-            "name": "Release tooling contracts",
-            "runs-on": runner_labels(),
-            "timeout-minutes": 5,
-            "steps": [
-                {"uses": CHECKOUT, "with": {"persist-credentials": False}},
-                {
-                    "uses": ACTION_REFS["actions/setup-python"],
-                    "with": {"python-version": contract_python},
-                },
-                {
-                    "run": "python3 -m pip install --require-hashes --only-binary=:all: "
-                    f"-r {CONTRACT_REQUIREMENTS}"
-                },
-                {
-                    "run": "python3 -m unittest discover -s .github/release-tests -p 'test_*.py' -v"
-                },
-            ],
-        }
+        jobs["release-contracts"] = release_contract_job(policy, directory)
         if policy.get("versioning"):
             jobs["release-contracts"]["steps"].append(
                 {
@@ -1619,6 +1632,10 @@ def release_files(directory: Path, policy: dict) -> dict[str, str]:
     files[".github/release-tests/test_release_validation.py"] = (
         ROOT / "tests/test_release_validation.py"
     ).read_text().replace("Path(__file__).resolve().parents[1]", "Path(__file__).resolve().parents[2]")
+    if directory.resolve() == ROOT.resolve():
+        # The toolkit already owns these tests; only consumers need copies.
+        return {name: source for name, source in files.items()
+                if not name.startswith(".github/release-tests/")}
     return files
 
 
@@ -2124,7 +2141,9 @@ References: [GitHub schedules](https://docs.github.com/en/actions/reference/work
             "\nA local candidate package also needs the saved `.release-plan.json` "
             "at its exact source "
             "commit. Restore the `version_plan` object from the published `release-manifest.json` "
-            "into a disposable checkout before `release.py package`; do not invent a tag or "
+            "as `.release-plan.json` in a disposable checkout. Apply the recorded version "
+            "fields with `python3 scripts/version_plan.py sync --root . --plan .release-plan.json` "
+            "before `release.py package`; do not invent a tag or "
             "native counter locally. Ordinary development builds can use the project's native "
             "build command and explicitly local version identity.\n"
         )

@@ -164,6 +164,28 @@ steps:
         workflow["jobs"]["build"]["uses"] = "./.github/workflows/build.yml"
         CONTRACTS.validate_workflow_pins("release-pipeline.yml", workflow, {})
 
+    def test_configured_fuzz_workflow_requires_exact_policy_pin(self):
+        action = "victron-venus/venus-os-ci-toolkit/.github/workflows/fuzz.yml"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            folder = root / ".github/workflows"
+            folder.mkdir(parents=True)
+            (folder / "release-pipeline.yml").write_text(MARKER)
+            (root / ".github/action-pins.json").write_text("[]")
+            policy = root / ".release-policy.json"
+            policy.write_text(json.dumps({"fuzzing": {"toolkit_ref": SHA}}))
+            workflow = {"jobs": {"fuzz": {"uses": action + "@" + SHA}}}
+            CONTRACTS.validate_generator_pins(root, {"release-pipeline.yml": workflow})
+            for reference in (action + "@" + "b" * 40, action + "@main",
+                              "other/repo/.github/workflows/fuzz.yml@" + SHA):
+                workflow["jobs"]["fuzz"]["uses"] = reference
+                with self.subTest(reference=reference), self.assertRaises(ValueError):
+                    CONTRACTS.validate_generator_pins(root, {"release-pipeline.yml": workflow})
+            for reference in ("main", "a" * 39, "A" * 40, None, 42):
+                policy.write_text(json.dumps({"fuzzing": {"toolkit_ref": reference}}))
+                with self.subTest(policy_reference=reference), self.assertRaises(ValueError):
+                    CONTRACTS.generator_pins(root)
+
     def test_non_generated_workflows_require_sha_without_manifest_membership(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
