@@ -21,6 +21,18 @@ MAX_FILE = 16 * 1024 * 1024
 MAX_TOTAL = 128 * 1024 * 1024
 
 
+def source_path(root, name):
+    """Resolve an explicit relative name without traversing symbolic links."""
+    if name.startswith("/") or "\\" in name or "\0" in name or any(p in {"", ".", ".."} for p in name.split("/")):
+        raise ValueError("Unsafe source inventory path")
+    path = root
+    for part in name.split("/"):
+        path = path / part
+        if path.is_symlink():
+            raise ValueError("Source inventory cannot contain symlinks")
+    return path
+
+
 def inventory(root):
     """Require unique, explicit regular-file paths with no symlink components."""
     names = json.loads((root / "source-files.json").read_text())
@@ -30,13 +42,7 @@ def inventory(root):
         raise ValueError("Source inventory must be unique and sorted")
     total = 0
     for name in names:
-        if name.startswith("/") or "\\" in name or "\0" in name or any(p in {"", ".", ".."} for p in name.split("/")):
-            raise ValueError("Unsafe source inventory path")
-        path = root
-        for part in name.split("/"):
-            path = path / part
-            if path.is_symlink():
-                raise ValueError("Source inventory cannot contain symlinks")
+        path = source_path(root, name)
         if not path.is_file() or path.stat().st_size > MAX_FILE:
             raise ValueError("Source inventory requires bounded regular files")
         total += path.stat().st_size
