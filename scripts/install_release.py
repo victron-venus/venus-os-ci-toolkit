@@ -606,6 +606,9 @@ def configure_python_preflight(job, directory):
     """Add deterministic checks to the existing public consumer contract job."""
     manifest = directory / release_fuzz.MANIFEST if directory is not None else None
     if manifest is not None and manifest.exists() and release_fuzz.manifest(directory)["language"] == "python":
+        # Preserve the existing contract/setup allowance plus four bounded
+        # preflight minutes and one minute for failure diagnostics.
+        job["timeout-minutes"] = 10
         # Reuse the small existing Python job; only locked wheels are cached.
         # Full history allows the preflight selector to skip unrelated changes.
         checkout = next(step for step in job["steps"] if step.get("uses", "").startswith("actions/checkout@"))

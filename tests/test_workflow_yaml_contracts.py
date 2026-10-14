@@ -72,6 +72,25 @@ steps:
                 with self.assertRaisesRegex(ValueError, "fail-closed profile gate"):
                     CONTRACTS.validate_release_gate(gate)
 
+    def test_release_gate_rejects_step_and_inherited_shell_overrides(self):
+        for scope in ("step", "job", "workflow"):
+            gate = {
+                "name": "CI gate", "if": "${{ always() }}",
+                "steps": [{
+                    "run": 'python3 scripts/release_validation.py gate --channel "$RELEASE_CHANNEL"',
+                    "env": {"RESULTS": "${{ toJSON(needs) }}", "RELEASE_CHANNEL": "${{ inputs.channel }}"},
+                }],
+            }
+            workflow = {"jobs": {"gate": gate}}
+            CONTRACTS.validate_release_gate(gate, workflow)
+            if scope == "step":
+                target = gate["steps"][0]
+            else:
+                target = (gate if scope == "job" else workflow).setdefault("defaults", {}).setdefault("run", {})
+            target["shell"] = "bash -c 'exit 0' {0}"
+            with self.subTest(scope=scope), self.assertRaisesRegex(ValueError, "cannot override its shell"):
+                CONTRACTS.validate_release_gate(gate, workflow)
+
     def test_non_string_mapping_keys_are_rejected(self):
         with self.assertRaises(ValueError):
             yaml.load("? [one, two]\n: value", Loader=CONTRACTS.UniqueKeyLoader)  # nosec B506 - BaseLoader subclass, no object construction

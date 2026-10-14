@@ -59,6 +59,8 @@ class FuzzPreflightTests(unittest.TestCase):
             source = root / ".github/workflows/release-pipeline.yml"
             source.write_text(source.read_text() + "# retain this reviewed consumer comment\n")
             first = installer.render_fuzz(root)
+            workflow = installer.yaml.load(first[".github/workflows/quality-gate.yml"], Loader=installer.WorkflowLoader)
+            self.assertEqual(workflow["jobs"]["workflow-contracts"]["timeout-minutes"], 10)
             self.assertIn("# retain this reviewed consumer comment", first[".github/workflows/release-pipeline.yml"])
             self.assertNotIn("scripts/release_control.py", first)
             for name, content in first.items():
