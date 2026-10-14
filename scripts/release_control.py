@@ -225,6 +225,23 @@ def parse_json(data: bytes, label: str) -> object:
         raise ReleaseError(f"Invalid JSON in {label}") from exc
 
 
+def _github_http_head(data: bytes) -> tuple[int, bytes]:
+    """Validate one HTTP header block and preserve the following body bytes."""
+    separator = re.search(rb"\r?\n\r?\n", data)
+    if separator is None:
+        raise GitHubError("GitHub response headers are missing or truncated")
+    lines = data[:separator.start()].splitlines()
+    status = re.fullmatch(
+        rb"HTTP/(?:1\.[01]|2(?:\.0)?) ([1-5]\d{2})(?: [^\r\n]*)?", lines[0]
+    ) if lines else None
+    if status is None or any(
+        not re.fullmatch(rb"[!#$%&'*+.^_`|~0-9A-Za-z-]+:[^\r\n]*", line)
+        for line in lines[1:]
+    ):
+        raise GitHubError("GitHub response headers are invalid")
+    return int(status.group(1)), data[separator.end():]
+
+
 def github_http_response(stdout: bytes, paginated: bool = False) -> tuple[int, bytes]:
     """Decode protocol headers emitted by gh --include, never its error prose.
 
@@ -232,22 +249,7 @@ def github_http_response(stdout: bytes, paginated: bool = False) -> tuple[int, b
     gh normalizes those server-generated objects (including duplicate keys);
     nonpaginated bodies retain their exact bytes and strict JSON validation.
     """
-    def read_head(data: bytes) -> tuple[int, bytes]:
-        separator = re.search(rb"\r?\n\r?\n", data)
-        if separator is None:
-            raise GitHubError("GitHub response headers are missing or truncated")
-        lines = data[:separator.start()].splitlines()
-        status = re.fullmatch(
-            rb"HTTP/(?:1\.[01]|2(?:\.0)?) ([1-5]\d{2})(?: [^\r\n]*)?", lines[0]
-        ) if lines else None
-        if status is None or any(
-            not re.fullmatch(rb"[!#$%&'*+.^_`|~0-9A-Za-z-]+:[^\r\n]*", line)
-            for line in lines[1:]
-        ):
-            raise GitHubError("GitHub response headers are invalid")
-        return int(status.group(1)), data[separator.end():]
-
-    status, body = read_head(stdout)
+    status, body = _github_http_head(stdout)
     if not paginated:
         return status, body
     pages: list[object] = []
@@ -274,7 +276,7 @@ def github_http_response(stdout: bytes, paginated: bool = False) -> tuple[int, b
         if separator is None:
             raise GitHubError("GitHub response headers are missing or truncated")
         header = text[position:separator.end()].encode("utf-8", errors="surrogateescape")
-        status, _ = read_head(header)
+        status, _ = _github_http_head(header)
         position = separator.end()
     # A failed page invalidates every preceding page from the same attempt.
     return status, b""
