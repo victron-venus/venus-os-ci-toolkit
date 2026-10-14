@@ -110,6 +110,38 @@ class FuzzPreflightTests(unittest.TestCase):
             self.assertEqual((root / "out/example/FuzzParse/a").read_bytes(), b"first")
             self.assertFalse((root / "out/example/FuzzParse/external").exists())
 
+    def test_declared_preflight_corpus_is_required_and_walk_errors_propagate(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            target = {"name": "parse", "corpus": "missing"}
+            with self.assertRaisesRegex(ValueError, "existing directory"):
+                fuzz.replay_python_target(root, root, target, 100)
+            self.assertEqual(fuzz.retain_corpus(root / "absent-go-cache", root / "optional")["files"], 0)
+            source = root / "source"
+            source.mkdir()
+            def unreadable(_source, *, onerror, **_kwargs):
+                onerror(PermissionError("unreadable corpus"))
+                return iter(())
+            with patch.object(fuzz.os, "walk", side_effect=unreadable):
+                with self.assertRaisesRegex(PermissionError, "unreadable corpus"):
+                    fuzz.retain_corpus(source, root / "required", required=True)
+
+    def test_required_corpus_rejects_missing_file_symlink_and_empty_sources(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "file").write_bytes(b"seed")
+            (root / "empty").mkdir()
+            (root / "link").symlink_to(root / "empty", target_is_directory=True)
+            for name in ("missing", "file", "empty", "link"):
+                with self.subTest(name=name), self.assertRaises(ValueError):
+                    fuzz.retain_corpus(root / name, root / (name + "-out"), required=True)
+            (root / "escape").symlink_to(root.parent, target_is_directory=True)
+            with self.assertRaisesRegex(ValueError, "outside source"):
+                fuzz.confined(root, "escape")
+            (root / "seeds").mkdir()
+            (root / "seeds/empty-seed").write_bytes(b"")
+            self.assertEqual(fuzz.retain_corpus(root / "seeds", root / "good", required=True)["files"], 1)
+
     def test_go_target_retains_generated_cache_outside_testdata(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -159,6 +191,9 @@ class FuzzPreflightTests(unittest.TestCase):
                                         (b".github/fuzz.json\0", True), (b"app2/parser.py\0", False)):
                     with patch.object(fuzz.subprocess, "check_output", return_value=paths):
                         self.assertEqual(fuzz.preflight_needed(root, {"preflight-paths": ["app"]}), expected)
+                with patch.object(fuzz.subprocess, "check_output") as query:
+                    self.assertTrue(fuzz.preflight_needed(root, {"preflight-paths": ["."]}))
+                    query.assert_not_called()
                 event.write_text(json.dumps({"repository": {"private": True, "full_name": "o/r"}}))
                 with self.assertRaisesRegex(ValueError, "public repository"):
                     fuzz.preflight_needed(root, {})
