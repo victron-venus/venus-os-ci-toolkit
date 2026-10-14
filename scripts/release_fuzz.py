@@ -69,7 +69,7 @@ def validate_manifest_shape(data: object) -> None:
         not isinstance(data, dict)
         or set(data) - {"schema", "language", "setup", "targets", "go-version-file"}
         or type(data.get("schema")) is not int or data["schema"] != 1
-        or data.get("language") not in {"go", "rust", "python", "javascript", "c"}
+        or data.get("language") not in {"go", "rust", "python", "javascript", "c", "jvm"}
         or not isinstance(data.get("setup"), list) or len(data["setup"]) > 16
         or not isinstance(data.get("targets"), list) or not 1 <= len(data["targets"]) <= 12
     ):
@@ -202,7 +202,7 @@ def execute(command: list[str], cwd: Path, output: Path, timeout: int, isolated:
             raise ValueError(f"Fuzz executable is unavailable: {command[0]}")
         environment = [f"{key}={os.environ[key]}" for key in (
             "PATH", "HOME", "GOROOT", "GOPATH", "GOCACHE", "GOMODCACHE", "GOTOOLCHAIN",
-            "RUSTUP_HOME", "CARGO_HOME", "LD_LIBRARY_PATH", "PYTHONPATH",
+            "RUSTUP_HOME", "CARGO_HOME", "LD_LIBRARY_PATH", "PYTHONPATH", "JAVA_HOME",
         ) if key in os.environ]
         command = ["sudo", "-n", "unshare", "--net", f"--setgid={os.getgid()}",
                    f"--setuid={os.getuid()}", "--", "/usr/bin/env", "-i", *environment,

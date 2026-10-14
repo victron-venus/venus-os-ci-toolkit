@@ -66,6 +66,12 @@ jobs:
       uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
       with:
         node-version: '24'
+    - name: Set up JVM
+      if: ${{ steps.config.outputs.language == 'jvm' }}
+      uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+      with:
+        distribution: temurin
+        java-version: '17'
     - name: Build and run isolated bounded targets
       run: python3 .fuzz-toolkit/scripts/release_fuzz.py run --output "$RUNNER_TEMP/fuzz-evidence"
     - name: Retain diagnostics and crash inputs
