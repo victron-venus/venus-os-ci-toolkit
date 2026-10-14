@@ -1,6 +1,5 @@
 """Exercise the owned OCI JSON and tar-member parsers without filesystem I/O."""
 
-import json
 import sys
 import tarfile
 from pathlib import Path
@@ -21,10 +20,7 @@ def test_one_input(data: bytes) -> None:
     else:
         assert isinstance(value, dict)
         assert value == oci.document(data)
-        # Standard JSON serialization preserves accepted numeric values, including
-        # JSON exponent overflow. Named nonstandard constants remain forbidden.
-        if "Infinity" not in json.dumps(value):
-            assert value == oci.document(oci.canonical(value))
+        assert value == oci.document(oci.canonical(value))
     entry = tarfile.TarInfo(data.decode("utf-8", errors="replace"))
     if data and data[0] & 1:
         entry.type = tarfile.DIRTYPE

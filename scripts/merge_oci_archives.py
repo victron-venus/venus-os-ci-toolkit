@@ -8,6 +8,7 @@ import gzip
 import hashlib
 import io
 import json
+import math
 import os
 import re
 import stat
@@ -89,10 +90,16 @@ def document(raw, *, max_bytes=MAX_JSON):
     def invalid_constant(value):
         raise ValueError(f"Invalid OCI JSON constant: {value}")
 
+    def finite_float(value):
+        number = float(value)
+        require(math.isfinite(number), "OCI JSON number must remain finite")
+        return number
+
     require(len(raw) <= max_bytes, "Oversized OCI JSON")
     try:
         result = json.loads(
-            raw, object_pairs_hook=pairs, parse_constant=invalid_constant
+            raw, object_pairs_hook=pairs, parse_constant=invalid_constant,
+            parse_float=finite_float,
         )
     except (RecursionError, UnicodeDecodeError) as error:
         raise ValueError("Invalid OCI JSON") from error
