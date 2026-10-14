@@ -486,6 +486,8 @@ jobs:
             root = Path(temp)
             shutil.copytree(installer.ROOT / ".github/workflows", root / ".github/workflows")
             shutil.copyfile(installer.ROOT / ".release-policy.json", root / ".release-policy.json")
+            # The canonical toolkit is itself a fuzz-enabled release consumer.
+            shutil.copyfile(installer.ROOT / ".github/fuzz.json", root / ".github/fuzz.json")
             files = installer.render(root)
             for name in ("scripts/workflow_contracts.py", exported):
                 path = root / name

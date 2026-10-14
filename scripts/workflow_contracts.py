@@ -139,7 +139,7 @@ def validate_workflow_pins(filename, workflow, pins):
 
 
 def generator_pins(directory):
-    """Load the canonical pin set, including an opt-in coverage workflow."""
+    """Load canonical action pins and explicitly configured toolkit workflows."""
     manifest = directory / ".github/action-pins.json"
     # Consumers vendor the generated scripts, not the generator or its manifest.
     # The canonical toolkit must retain the manifest consumed by its generator.
@@ -158,15 +158,15 @@ def generator_pins(directory):
     ):
         raise ValueError("Generator pins must be full commit SHAs")
     policy_path = directory / ".release-policy.json"
-    coverage = (
-        json.loads(policy_path.read_text()).get("coverage")
-        if policy_path.exists()
-        else None
-    )
-    if pins is not None and coverage:
-        pins[
-            "victron-venus/venus-os-ci-toolkit/.github/workflows/coverage-upload.yml"
-        ] = coverage["toolkit_ref"]
+    policy = json.loads(policy_path.read_text()) if policy_path.exists() else {}
+    if pins is not None:
+        for section, workflow in (("coverage", "coverage-upload.yml"), ("fuzzing", "fuzz.yml")):
+            configuration = policy.get(section)
+            if configuration:
+                reference = configuration["toolkit_ref"]
+                if not isinstance(reference, str) or not re.fullmatch(COMMIT_SHA_PATTERN, reference):
+                    raise ValueError("Toolkit workflow pins must be full commit SHAs")
+                pins[f"victron-venus/venus-os-ci-toolkit/.github/workflows/{workflow}"] = reference
     return pins
 
 

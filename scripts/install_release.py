@@ -2124,7 +2124,9 @@ References: [GitHub schedules](https://docs.github.com/en/actions/reference/work
             "\nA local candidate package also needs the saved `.release-plan.json` "
             "at its exact source "
             "commit. Restore the `version_plan` object from the published `release-manifest.json` "
-            "into a disposable checkout before `release.py package`; do not invent a tag or "
+            "as `.release-plan.json` in a disposable checkout. Apply the recorded version "
+            "fields with `python3 scripts/version_plan.py sync --root . --plan .release-plan.json` "
+            "before `release.py package`; do not invent a tag or "
             "native counter locally. Ordinary development builds can use the project's native "
             "build command and explicitly local version identity.\n"
         )
