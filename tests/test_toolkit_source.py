@@ -15,6 +15,16 @@ from scripts import release_control, toolkit_source, version_plan
 
 
 class ToolkitReleaseNotesTests(unittest.TestCase):
+    def test_checkout_inventory_includes_runtime_harnesses_and_acceptance_tests(self):
+        root = Path(__file__).resolve().parents[1]
+        declared = set(toolkit_source.inventory(root))
+        required = {
+            str(path.relative_to(root))
+            for directory in ("scripts", "tests", "fuzz")
+            for path in (root / directory).rglob("*.py")
+        }
+        self.assertFalse(required - declared, f"Unshipped Python source: {sorted(required - declared)}")
+
     def test_checkout_changelog_supports_beta_and_rc(self):
         root = Path(__file__).resolve().parents[1]
         policy = json.loads((root / ".release-policy.json").read_text())
