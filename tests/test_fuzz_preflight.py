@@ -81,6 +81,19 @@ class FuzzPreflightTests(unittest.TestCase):
             native = installer.render_fuzz(root)
             self.assertIn(".github/workflows/release-pipeline.yml", native)
             self.assertNotIn(".github/workflows/quality-gate.yml", native)
+            self.assertIn(installer.CONTRACT_REQUIREMENTS, native)
+
+    def test_preflight_diff_rejects_arguments_at_the_process_boundary(self):
+        import change_scope
+
+        for revisions in (("--output=/tmp/unsafe", "b" * 40, ".."),
+                          ("a" * 40, "--ext-diff", "..."),
+                          ("a" * 40, "b" * 40, " -- ")):
+            with patch.object(change_scope, "event_revisions", return_value=revisions), patch.object(
+                    fuzz.subprocess, "check_output") as query:
+                with self.assertRaises(ValueError):
+                    fuzz.preflight_changed_paths(ROOT, "pull_request", {})
+                query.assert_not_called()
 
     def test_corpus_retains_regular_inputs_with_hard_storage_caps(self):
         with tempfile.TemporaryDirectory() as temp:
