@@ -1,17 +1,19 @@
 """Exercise native OCI assembly without Docker, registry access or extraction."""
 
+import errno
 import gzip
 import hashlib
 import importlib.util
 import io
 import json
+import os
 # Tests run the local Python interpreter with explicit fixture argv and no shell.
 import subprocess  # nosec B404
 import sys
 import tarfile
 import tempfile
 import unittest
-from contextlib import ExitStack
+from contextlib import ExitStack, suppress
 from pathlib import Path
 from unittest import mock
 
@@ -276,6 +278,46 @@ class MergeTest(unittest.TestCase):
         entries["manifest.json"] = b"ignored extension"
         self.merge(self.inputs(entries, self.fixture("arm64", nested=False)))
         self.assertNotIn("manifest.json", self.load(self.output))
+
+    def test_fdopen_failure_closes_raw_descriptor(self):
+        source = self.archive("input.tar", self.fixture("amd64"))
+        descriptors = []
+
+        def fail(descriptor, *_args, **_kwargs):
+            descriptors.append(descriptor)
+            raise OSError("cannot wrap descriptor")
+
+        with self.assertRaisesRegex(OSError, "cannot wrap descriptor"):
+            with (
+                ExitStack() as stack,
+                mock.patch.object(oci.os, "fdopen", side_effect=fail),
+            ):
+                oci.Archive(source, "linux/amd64", VERSION, REVISION, stack)
+        self.assertEqual(len(descriptors), 1)
+        try:
+            with self.assertRaises(OSError) as raised:
+                os.fstat(descriptors[0])
+            self.assertEqual(raised.exception.errno, errno.EBADF)
+        finally:
+            with suppress(OSError):
+                os.close(descriptors[0])
+
+    def test_archive_stack_owns_wrapper_and_descriptor(self):
+        source = self.archive("input.tar", self.fixture("amd64"))
+        with ExitStack() as stack:
+            archive = oci.Archive(source, "linux/amd64", VERSION, REVISION, stack)
+            descriptor = archive.stream.fileno()
+            self.assertEqual(
+                archive.archive_identity["sha256"],
+                hashlib.sha256(source.read_bytes()).hexdigest(),
+            )
+            archive.stream.close()
+            # Closing the non-owning wrapper must not double-close the raw FD.
+            self.assertEqual(os.fstat(descriptor).st_size, source.stat().st_size)
+        self.assertTrue(archive.stream.closed)
+        with self.assertRaises(OSError) as raised:
+            os.fstat(descriptor)
+        self.assertEqual(raised.exception.errno, errno.EBADF)
 
     def test_corrupt_layer_with_unchanged_length_fails(self):
         entries = self.fixture("amd64")
