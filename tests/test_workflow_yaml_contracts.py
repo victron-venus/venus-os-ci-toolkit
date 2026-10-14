@@ -174,7 +174,7 @@ steps:
             (root / ".github/action-pins.json").write_text("[]")
             policy = root / ".release-policy.json"
             policy.write_text(json.dumps({"fuzzing": {"toolkit_ref": SHA}}))
-            workflow = {"jobs": {"fuzz": {"uses": action + "@" + SHA}}}
+            workflow = {"jobs": {"fuzz": {"uses": action + "@" + SHA, "with": {"toolkit-ref": SHA}}}}
             CONTRACTS.validate_generator_pins(root, {"release-pipeline.yml": workflow})
             for reference in (action + "@" + "b" * 40, action + "@main",
                               "other/repo/.github/workflows/fuzz.yml@" + SHA):
@@ -185,6 +185,22 @@ steps:
                 policy.write_text(json.dumps({"fuzzing": {"toolkit_ref": reference}}))
                 with self.subTest(policy_reference=reference), self.assertRaises(ValueError):
                     CONTRACTS.generator_pins(root)
+
+    def test_consumer_fuzz_pins_agree_without_generator_manifest(self):
+        action = "victron-venus/venus-os-ci-toolkit/.github/workflows/fuzz.yml"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / ".github/workflows").mkdir(parents=True)
+            (root / ".github/workflows/release-pipeline.yml").write_text(MARKER)
+            (root / ".release-policy.json").write_text(json.dumps({"fuzzing": {"toolkit_ref": SHA}}))
+            for wrapper, runtime, accepted in ((SHA, SHA, True), ("b" * 40, SHA, False),
+                                               (SHA, "b" * 40, False), ("b" * 40, "b" * 40, False)):
+                workflow = {"jobs": {"fuzz": {"uses": action + "@" + wrapper, "with": {"toolkit-ref": runtime}}}}
+                if accepted:
+                    CONTRACTS.validate_generator_pins(root, {"release-pipeline.yml": workflow})
+                else:
+                    with self.subTest(wrapper=wrapper, runtime=runtime), self.assertRaises(ValueError):
+                        CONTRACTS.validate_generator_pins(root, {"release-pipeline.yml": workflow})
 
     def test_non_generated_workflows_require_sha_without_manifest_membership(self):
         with tempfile.TemporaryDirectory() as directory:

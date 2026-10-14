@@ -190,6 +190,19 @@ def validate_generator_pins(directory, workflows):
         ):
             raise ValueError(f"{filename}: missing generator marker")
         validate_workflow_pins(filename, workflow, pins)
+    validate_fuzz_pins(directory, workflows)
+
+
+def validate_fuzz_pins(directory, workflows):
+    """Consumers must update their wrapper, runtime and policy atomically."""
+    configured = configured_workflow_pins(directory)
+    action = "victron-venus/venus-os-ci-toolkit/.github/workflows/fuzz.yml"
+    if action not in configured:
+        return
+    reference = configured[action]
+    job = workflows.get("release-pipeline.yml", {}).get("jobs", {}).get("fuzz", {})
+    if job.get("uses") != action + "@" + reference or job.get("with", {}).get("toolkit-ref") != reference:
+        raise ValueError("Fuzz workflow, runtime and policy toolkit_ref must match")
 
 
 def _callable_workflow(workflows, visited, filename, chain=()):

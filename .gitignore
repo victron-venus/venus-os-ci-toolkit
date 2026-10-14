@@ -13,6 +13,7 @@ logs
 # Virtual environments
 venv/
 .venv/
+.fuzz-venv/
 env/
 
 # IDE
