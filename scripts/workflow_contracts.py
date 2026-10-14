@@ -338,7 +338,10 @@ def validate_release_gate(gate):
     if (
         gate.get("name") != "CI gate"
         or gate.get("if") != "${{ always() }}"
+        or gate.get("continue-on-error", "false") != "false"
         or len(commands) != 1
+        or commands[0].get("continue-on-error", "false") != "false"
+        or "if" in commands[0]
         or commands[0].get("run")
         != 'python3 scripts/release_validation.py gate --channel "$RELEASE_CHANNEL"'
         or commands[0].get("env")
@@ -357,7 +360,10 @@ def validate_release_channels(policy, workflows):
         if name in workflows:
             raise ValueError("Release validation workflow has no channel policy")
         return
-    from release_validation import channel_workflows, expected_results
+    if __package__:
+        from .release_validation import channel_workflows, expected_results
+    else:
+        from release_validation import channel_workflows, expected_results
 
     beta = channel_workflows(policy)
     validate_graph(workflows, beta)
