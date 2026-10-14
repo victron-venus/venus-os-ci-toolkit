@@ -149,7 +149,10 @@ class Archive:
             self.path,
             os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0),
         )
-        self.stream = stack.enter_context(os.fdopen(descriptor, "rb"))
+        # Own the raw descriptor before fdopen can fail (for example on a
+        # directory). The stack closes the wrapper first, then the descriptor.
+        stack.callback(os.close, descriptor)
+        self.stream = stack.enter_context(os.fdopen(descriptor, "rb", closefd=False))
         self.initial_stat = os.fstat(self.stream.fileno())
         require(stat.S_ISREG(self.initial_stat.st_mode), "Input must be a regular file")
         self.archive_identity = identity(self.stream)

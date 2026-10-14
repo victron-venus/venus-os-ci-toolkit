@@ -87,8 +87,11 @@ def read_snapshot(path, limit):
     """Read a bounded, regular, unaliased FD without following or waiting on swaps."""
     path = Path(path)
     require(not path.is_symlink(), "Snapshot must not be a symlink")
-    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
-    with os.fdopen(descriptor, "rb") as stream:
+    with ExitStack() as stack:
+        descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
+        # Register ownership before wrapping: fdopen can reject an opened FD.
+        stack.callback(os.close, descriptor)
+        stream = stack.enter_context(os.fdopen(descriptor, "rb", closefd=False))
         before = os.fstat(stream.fileno())
         require(stat.S_ISREG(before.st_mode) and before.st_nlink == 1,
                 "Snapshot must be a regular unaliased file")
