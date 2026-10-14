@@ -204,8 +204,9 @@ class MergeTest(unittest.TestCase):
                 self.assertEqual(self.load(output)[name], entries[name])
         entries = self.fixture("amd64", attestation="artifact",
                                attestation_size=oci.MAX_ATTESTATION_JSON + 1)
+        inputs = self.inputs(amd64=entries)
         with self.assertRaisesRegex(ValueError, "oversized OCI metadata"):
-            self.merge(self.inputs(amd64=entries))
+            self.merge(inputs)
         self.assertFalse(self.output.exists())
 
     def test_structural_json_size_boundary_is_unchanged(self):
