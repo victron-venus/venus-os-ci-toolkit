@@ -41,6 +41,32 @@ class ReleaseImportTests(unittest.TestCase):
         )
         self.run_python("-c", script)
 
+    def test_workflow_contract_validation_in_package_and_script_modes(self):
+        script = """
+policy = {'single_entry_ci': True, 'versioning': {},
+          'validation_workflows': ['ci.yml'],
+          'channel_validation_workflows': {'beta': ['beta.yml']}}
+workflows = {
+    'beta.yml': {'on': {'workflow_call': {}}, 'jobs': {}},
+    'release-quality-gate.yml': {
+        'on': {'workflow_call': {'inputs': {'channel': {'type': 'string', 'required': 'true'}}}},
+        'jobs': {},
+    },
+}
+try:
+    contracts.validate_release_channels(policy, workflows)
+except ValueError as error:
+    assert str(error) == 'Release validation gate inventory differs from channel policy'
+else:
+    raise AssertionError('Incomplete channel gate accepted')
+"""
+        for setup in (
+            "from scripts import workflow_contracts as contracts\n",
+            "import sys; sys.path.insert(0, 'scripts'); import workflow_contracts as contracts\n",
+        ):
+            with self.subTest(setup=setup):
+                self.run_python("-c", setup + script)
+
     def test_package_dependencies_share_module_and_exception_identity(self):
         script = """
 import importlib
