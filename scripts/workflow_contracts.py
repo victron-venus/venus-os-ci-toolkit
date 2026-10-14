@@ -341,6 +341,7 @@ def validate_release_gate(gate):
         or gate.get("continue-on-error", "false") != "false"
         or len(commands) != 1
         or commands[0].get("continue-on-error", "false") != "false"
+        or "if" in commands[0]
         or commands[0].get("run")
         != 'python3 scripts/release_validation.py gate --channel "$RELEASE_CHANNEL"'
         or commands[0].get("env")

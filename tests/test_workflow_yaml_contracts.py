@@ -56,6 +56,22 @@ steps:
                         with self.assertRaisesRegex(ValueError, "fail-closed profile gate"):
                             CONTRACTS.validate_release_gate(gate)
 
+    def test_release_gate_command_cannot_be_conditionally_skipped(self):
+        gate = {
+            "name": "CI gate",
+            "if": "${{ always() }}",
+            "steps": [{
+                "run": 'python3 scripts/release_validation.py gate --channel "$RELEASE_CHANNEL"',
+                "env": {"RESULTS": "${{ toJSON(needs) }}", "RELEASE_CHANNEL": "${{ inputs.channel }}"},
+            }],
+        }
+        CONTRACTS.validate_release_gate(gate)
+        for condition in ("false", "${{ false }}", "${{ inputs.run_gate }}", "${{ success() }}"):
+            with self.subTest(condition=condition):
+                gate["steps"][0]["if"] = condition
+                with self.assertRaisesRegex(ValueError, "fail-closed profile gate"):
+                    CONTRACTS.validate_release_gate(gate)
+
     def test_non_string_mapping_keys_are_rejected(self):
         with self.assertRaises(ValueError):
             yaml.load("? [one, two]\n: value", Loader=CONTRACTS.UniqueKeyLoader)  # nosec B506 - BaseLoader subclass, no object construction
