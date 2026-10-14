@@ -155,6 +155,13 @@ Consumers continue to build from their committed files without a producer checko
 3. Verify generated drift with `--check`, inspect diffs, and submit PRs.
 4. Merge workflows before enabling their required status checks. Keep existing security and review requirements active.
 
+Release acceptance tests run on Python 3.12 by default. If a consumer's archive
+acceptance tests execute project code requiring another interpreter, set
+`"release_contract_python": "3.14"` in its reviewed `.release-policy.json` before
+rendering. Supported string values are `3.11`, `3.12`, `3.13`, and `3.14`. This
+changes only the generated Release tooling contracts job; project validators,
+build adapters, and the CI configuration contracts job retain their own settings.
+
 ## Signed source and release artifacts
 
 Public versioned release consumers can enable `sign_releases: true` in their
