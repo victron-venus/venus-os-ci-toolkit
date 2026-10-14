@@ -34,6 +34,28 @@ class WorkflowYAMLTests(unittest.TestCase):
         result = yaml.load("on: push\nvalue: true\n", Loader=CONTRACTS.UniqueKeyLoader)  # nosec B506 - BaseLoader subclass, no object construction
         self.assertEqual(result, {"on": "push", "value": "true"})
 
+    def test_release_gate_cannot_ignore_job_or_command_failure(self):
+        source = """name: CI gate
+if: ${{ always() }}
+steps:
+  - run: python3 scripts/release_validation.py gate --channel "$RELEASE_CHANNEL"
+    env:
+      RESULTS: ${{ toJSON(needs) }}
+      RELEASE_CHANNEL: ${{ inputs.channel }}
+"""
+        for scope in ("job", "step"):
+            for value in (None, "false", "true", "${{ inputs.ignore_failure }}"):
+                with self.subTest(scope=scope, value=value):
+                    gate = yaml.load(source, Loader=CONTRACTS.UniqueKeyLoader)  # nosec B506
+                    target = gate if scope == "job" else gate["steps"][0]
+                    if value is not None:
+                        target["continue-on-error"] = value
+                    if value in (None, "false"):
+                        CONTRACTS.validate_release_gate(gate)
+                    else:
+                        with self.assertRaisesRegex(ValueError, "fail-closed profile gate"):
+                            CONTRACTS.validate_release_gate(gate)
+
     def test_non_string_mapping_keys_are_rejected(self):
         with self.assertRaises(ValueError):
             yaml.load("? [one, two]\n: value", Loader=CONTRACTS.UniqueKeyLoader)  # nosec B506 - BaseLoader subclass, no object construction

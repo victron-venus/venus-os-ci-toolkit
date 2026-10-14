@@ -338,7 +338,9 @@ def validate_release_gate(gate):
     if (
         gate.get("name") != "CI gate"
         or gate.get("if") != "${{ always() }}"
+        or gate.get("continue-on-error", "false") != "false"
         or len(commands) != 1
+        or commands[0].get("continue-on-error", "false") != "false"
         or commands[0].get("run")
         != 'python3 scripts/release_validation.py gate --channel "$RELEASE_CHANNEL"'
         or commands[0].get("env")
