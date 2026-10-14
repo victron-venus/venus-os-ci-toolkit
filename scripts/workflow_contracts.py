@@ -138,6 +138,21 @@ def validate_workflow_pins(filename, workflow, pins):
             validate_action_reference(filename, reference, pins)
 
 
+def configured_workflow_pins(directory):
+    """Allow only canonical toolkit workflows explicitly enabled by the policy."""
+    policy_path = directory / ".release-policy.json"
+    policy = json.loads(policy_path.read_text()) if policy_path.exists() else {}
+    pins = {}
+    for section, workflow in (("coverage", "coverage-upload.yml"), ("fuzzing", "fuzz.yml")):
+        configuration = policy.get(section)
+        if configuration:
+            reference = configuration["toolkit_ref"]
+            if not isinstance(reference, str) or not re.fullmatch(COMMIT_SHA_PATTERN, reference):
+                raise ValueError("Toolkit workflow pins must be full commit SHAs")
+            pins[f"victron-venus/venus-os-ci-toolkit/.github/workflows/{workflow}"] = reference
+    return pins
+
+
 def generator_pins(directory):
     """Load canonical action pins and explicitly configured toolkit workflows."""
     manifest = directory / ".github/action-pins.json"
@@ -157,16 +172,8 @@ def generator_pins(directory):
         not re.fullmatch(COMMIT_SHA_PATTERN, pin) for pin in pins.values()
     ):
         raise ValueError("Generator pins must be full commit SHAs")
-    policy_path = directory / ".release-policy.json"
-    policy = json.loads(policy_path.read_text()) if policy_path.exists() else {}
     if pins is not None:
-        for section, workflow in (("coverage", "coverage-upload.yml"), ("fuzzing", "fuzz.yml")):
-            configuration = policy.get(section)
-            if configuration:
-                reference = configuration["toolkit_ref"]
-                if not isinstance(reference, str) or not re.fullmatch(COMMIT_SHA_PATTERN, reference):
-                    raise ValueError("Toolkit workflow pins must be full commit SHAs")
-                pins[f"victron-venus/venus-os-ci-toolkit/.github/workflows/{workflow}"] = reference
+        pins.update(configured_workflow_pins(directory))
     return pins
 
 

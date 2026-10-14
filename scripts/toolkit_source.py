@@ -62,15 +62,18 @@ def build(root, output, base, channel):
     if any(output.iterdir()):
         raise ValueError("Source output directory must be empty")
     archive = output / f"{PREFIX}-{version}.tar.gz"
-    with archive.open("wb") as stream, gzip.GzipFile(filename="", mode="wb", fileobj=stream, mtime=0) as compressed:
-        with tarfile.open(fileobj=compressed, mode="w") as package:
-            for name in names:
-                path = root / name
-                raw = path.read_bytes()
-                entry = tarfile.TarInfo(f"{PREFIX}/{name}")
-                entry.size = len(raw)
-                entry.mode = 0o755 if path.stat().st_mode & 0o111 else 0o644
-                package.addfile(entry, io.BytesIO(raw))
+    with (
+        archive.open("wb") as stream,
+        gzip.GzipFile(filename="", mode="wb", fileobj=stream, mtime=0) as compressed,
+        tarfile.open(fileobj=compressed, mode="w") as package,
+    ):
+        for name in names:
+            path = root / name
+            raw = path.read_bytes()
+            entry = tarfile.TarInfo(f"{PREFIX}/{name}")
+            entry.size = len(raw)
+            entry.mode = 0o755 if path.stat().st_mode & 0o111 else 0o644
+            package.addfile(entry, io.BytesIO(raw))
     (output / "SHA256SUMS").write_text(f"{hashlib.sha256(archive.read_bytes()).hexdigest()}  {archive.name}\n")
     return archive
 
