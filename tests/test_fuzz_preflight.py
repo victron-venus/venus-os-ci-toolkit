@@ -32,7 +32,7 @@ class FuzzPreflightTests(unittest.TestCase):
                 "run_id": 1, "run_attempt": 1, "channel": "rc", "private": False, "status": "passed",
                 "network": "isolated", "manifest_sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
                 "targets": [{"name": "parse", "seconds": 1, "exit_code": 0, "engine": "atheris", "executions": 100}],
-                "preflight": {"python_targets": [proof]}}
+                "preflight": {"python_targets": [proof], "commands": 0}}
             for count, proofs, accepted in ((100, [proof], True), (0, [proof], False),
                                             (True, [proof], False), (100, [], False)):
                 report["targets"][0]["executions"] = count
@@ -43,6 +43,10 @@ class FuzzPreflightTests(unittest.TestCase):
                 else:
                     with self.assertRaises(ValueError):
                         fuzz.verify_report(root, root, "o/r", "a" * 40, 1, 1)
+            report["schema"] = 1
+            (root / fuzz.REPORT).write_text(json.dumps(report))
+            with self.assertRaisesRegex(ValueError, "schema-2"):
+                fuzz.verify_report(root, root, "o/r", "a" * 40, 1, 1)
 
     def test_targeted_migration_preserves_custom_workflow_and_is_idempotent(self):
         with tempfile.TemporaryDirectory() as temp:

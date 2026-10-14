@@ -190,6 +190,10 @@ def verify_report(directory: Path, root: Path, repository: str, sha: str, run: i
     }
     if type(data.get("schema")) is not int or data["schema"] not in {1, 2} or any(type(data.get(k)) is not type(v) or data.get(k) != v for k, v in expected.items()):
         raise ValueError("Fuzz report identity or outcome mismatch")
+    if data["schema"] == 1 and (config.get("preflight") or any(target.get("instrumentation") for target in config["targets"])):
+        raise ValueError("Declared preflight evidence requires a schema-2 fuzz report")
+    if data["schema"] == 2 and data.get("preflight", {}).get("commands") != len(config.get("preflight", [])):
+        raise ValueError("Fuzz report preflight command inventory mismatch")
     targets = data.get("targets", [])
     if not isinstance(targets, list) or any(
         not isinstance(t, dict) or type(t.get("seconds")) is not int or type(t.get("exit_code")) is not int
