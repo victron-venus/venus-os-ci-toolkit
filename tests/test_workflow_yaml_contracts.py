@@ -72,8 +72,10 @@ steps:
                 with self.assertRaisesRegex(ValueError, "fail-closed profile gate"):
                     CONTRACTS.validate_release_gate(gate)
 
-    def test_release_gate_rejects_step_and_inherited_shell_overrides(self):
-        for scope in ("step", "job", "workflow"):
+    def test_release_gate_rejects_step_and_inherited_execution_overrides(self):
+        cases = ((scope, key, value) for scope in ("step", "job", "workflow")
+                 for key, value in (("shell", "bash -c 'exit 0' {0}"), ("working-directory", "other")))
+        for scope, key, value in cases:
             gate = {
                 "name": "CI gate", "if": "${{ always() }}",
                 "steps": [{
@@ -87,8 +89,8 @@ steps:
                 target = gate["steps"][0]
             else:
                 target = (gate if scope == "job" else workflow).setdefault("defaults", {}).setdefault("run", {})
-            target["shell"] = "bash -c 'exit 0' {0}"
-            with self.subTest(scope=scope), self.assertRaisesRegex(ValueError, "cannot override its shell"):
+            target[key] = value
+            with self.subTest(scope=scope, key=key), self.assertRaisesRegex(ValueError, "cannot override its shell"):
                 CONTRACTS.validate_release_gate(gate, workflow)
 
     def test_non_string_mapping_keys_are_rejected(self):

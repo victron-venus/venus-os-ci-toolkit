@@ -356,11 +356,12 @@ def validate_release_scope(scope):
 def validate_release_gate(gate, workflow=None):
     """Require the shared fail-closed gate with all dependency results."""
     commands = [step for step in gate.get("steps", []) if "run" in step]
+    execution_overrides = {"shell", "working-directory"}
     for scope in (workflow or {}, gate):
-        if "shell" in scope.get("defaults", {}).get("run", {}):
-            raise ValueError("Release validation gate cannot override its shell")
-    if any("shell" in step for step in commands):
-        raise ValueError("Release validation gate cannot override its shell")
+        if execution_overrides.intersection(scope.get("defaults", {}).get("run", {})):
+            raise ValueError("Release validation gate cannot override its shell or working-directory")
+    if any(execution_overrides.intersection(step) for step in commands):
+        raise ValueError("Release validation gate cannot override its shell or working-directory")
     if (
         gate.get("name") != "CI gate"
         or gate.get("if") != "${{ always() }}"
