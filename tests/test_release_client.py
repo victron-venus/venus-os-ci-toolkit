@@ -479,6 +479,27 @@ jobs:
         self.assertEqual(result["jobs"]["gate"]["name"], "CI gate")
         self.assertEqual(result["jobs"]["gate"]["if"], "${{ always() }}")
 
+    def test_toolkit_self_release_uses_original_tests_without_exported_copies(self):
+        """Self qualification keeps full tests and dependencies without duplication."""
+        files = installer.render(installer.ROOT)
+        self.assertFalse(any(name.startswith(".github/release-tests/") for name in files))
+        workflow = installer.yaml.load(files[".github/workflows/quality-gate.yml"], Loader=installer.yaml.BaseLoader)
+        commands = [step.get("run", "") for step in workflow["jobs"]["release-contracts"]["steps"]]
+        self.assertIn("python3 -m unittest discover -s tests -p 'test_*.py' -v", commands)
+        self.assertTrue(any("--require-hashes --only-binary=:all: -r .github/requirements-generator.txt" in command
+                            for command in commands))
+        setup_uv = [step for step in workflow["jobs"]["release-contracts"]["steps"]
+                    if step.get("uses", "").startswith("astral-sh/setup-uv@")]
+        self.assertEqual(len(setup_uv), 1)
+        self.assertEqual(setup_uv[0]["uses"], installer.ACTION_REFS["astral-sh/setup-uv"])
+        self.assertEqual(setup_uv[0]["with"], {"version": "0.12.18"})
+        consumer = installer.release_contract_job(self.policy, None)
+        self.assertFalse(any(step.get("uses", "").startswith("astral-sh/setup-uv@")
+                             for step in consumer["steps"]))
+        commands = [step.get("run", "") for step in consumer["steps"]]
+        self.assertIn("python3 -m unittest discover -s .github/release-tests -p 'test_*.py' -v", commands)
+        self.assertTrue(any(installer.CONTRACT_REQUIREMENTS in command for command in commands))
+
     def test_exported_workflow_tests_run_without_the_generator(self):
         """A consumer's mandatory regression suite is self-contained after rendering."""
         exported = ".github/workflow-tests/test_workflow_yaml_contracts.py"
@@ -486,7 +507,11 @@ jobs:
             root = Path(temp)
             shutil.copytree(installer.ROOT / ".github/workflows", root / ".github/workflows")
             shutil.copyfile(installer.ROOT / ".release-policy.json", root / ".release-policy.json")
+            # The canonical toolkit is itself a fuzz-enabled release consumer.
+            shutil.copyfile(installer.ROOT / ".github/fuzz.json", root / ".github/fuzz.json")
             files = installer.render(root)
+            for name in ("test_release_control.py", "test_version_plan.py", "test_versioned_release.py"):
+                self.assertIn(".github/release-tests/" + name, files)
             for name in ("scripts/workflow_contracts.py", exported):
                 path = root / name
                 path.parent.mkdir(parents=True, exist_ok=True)

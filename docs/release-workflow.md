@@ -34,18 +34,91 @@ Callable validation workflows:
 - `.github/workflows/security-required.yml`
 - `.github/workflows/contract-tests.yml`
 
-## Nightly validation and deployment
+The [release strategy](../RELEASING.md) defines versioning, channels, acceptance,
+ownership, hotfixes and rollback. This document is the operational runbook.
 
-This repository uses validation-only policy: PR/merge queue checks and staggered
-nightly validation. It does not publish synthetic application beta/RC releases.
-Infrastructure deployments remain manual and use the checks and explicit source
-approval declared by their deployment workflow. Terraform validation uses backend-disabled
-copies; a green syntax/validate job is not a reviewed plan or a deployment.
+## Nightly, beta and RC
+
+During rollout, checks and builds run but public candidate publication is disabled
+until repository variable `RELEASE_CHANNELS_ENABLED=true`. Enable it only after
+required release reviewers are configured and legacy production webhooks have
+been migrated. This prevents the first nightly/beta from reaching an old auto-deploy
+handler. Manual beta/RC/stable requests fail with an explicit configuration error
+until enabled; build-only nightlies remain available in Actions artifacts.
+
+Nightly runs daily at the repository's staggered UTC schedule. Default-branch
+pushes request beta builds through the same validation and build gates. Publication
+also requires the opt-in variable and an eligible unreleased base version. GitHub can delay
+scheduled runs; schedule timing is not an SLA. A committed base version (`X.Y.Z`)
+is required. Version changes go through PR review, including any native companion
+version files. The frozen release plan supplies full candidate versions to declared
+format adapters before compilation; the manifest binds the plan and build receipts.
+
+From a clean checkout matching GitHub's default-branch HEAD:
+
+```bash
+python3 scripts/release.py package --version 1.2.3 --channel rc
+python3 scripts/release.py nightly --dry-run
+python3 scripts/release.py beta --version 1.2.3
+python3 scripts/release.py rc --version 1.2.3
+python3 scripts/release.py status
+```
+
+Replace the example version with the committed project version. Native multi-OS
+packages require the hosted build matrix; local packaging covers only supported
+local targets. These commands never stage unrelated changes, push `main`, or create
+tags directly. Publication commands dispatch `release-pipeline.yml` on the default
+branch; `package` builds locally, `status` reads run history, and `--dry-run` only
+displays the request.
+
+If the base version already has a stable release, bump the committed version through
+a PR before beta/RC publication. Nightly builds may still use that existing base. After every fresh check and platform build passes, an automatic nightly skips duplicate GitHub publication if retained immutable evidence qualifies an existing beta/RC/stable at the same source, policy and base. It reports `reused` with that tag, retains its Actions build artifacts, and does not advance the publication floor or create new promotion evidence. Reserved counters may have gaps. Mutable build inputs and current security databases are still exercised. Manual nightly requests, new sources and missing/expired/unverifiable evidence retain full publication.
+Automatic push betas skip packaging/publication with `version-required` when their
+committed base already has a stable tag. Quality and security checks still run.
+Prepare the next version through a PR; manual beta/RC requests still fail strictly.
+
+Candidate tags are unique and immutable: `vX.Y.Z-beta.N`, `vX.Y.Z-rc.N`, or
+`vX.Y.Z-nightly.<UTC timestamp>.<run>.<attempt>`. Candidates are prereleases and
+never update stable/latest. All required platforms must build before publication.
+`release-manifest.json` records source SHA, workflow/run attempt and every payload
+SHA-256. The manifest is also saved in immutable Actions evidence for 90 days.
+
+Automatic push betas and scheduled nightlies publish the current default HEAD.
+An older source is explicitly marked `superseded` only after ancestry and one
+newer automatic replacement run at current HEAD are verified. This does not claim
+that the replacement passed or published. No tag, release or promotion evidence
+is created for that skipped publication, and its reserved number is not reused.
+Missing replacement evidence or API failures remain errors. Manual releases keep
+their existing checks. A race after the final check can still fail publication;
+inspect the error and dispatch a fresh run at current HEAD, never reset the ledger.
+
+## Stable promotion
+
+After testing the RC on the intended target/environment:
+
+```bash
+python3 scripts/release.py doctor
+python3 scripts/release.py stable --rc v1.2.3-rc.1 --dry-run
+python3 scripts/release.py stable --rc v1.2.3-rc.1
+```
+
+Approve the pending `release` environment in GitHub Actions. The publisher checks
+that reviewers are configured, verifies the RC's successful run/attempt, default
+branch ancestry, Release gate, immutable evidence and every payload checksum.
+Stable `vX.Y.Z` copies the tested RC bytes without rebuilding. No override or
+force-tag option exists. Expired/missing evidence requires a new RC. A partial
+upload remains an unpublished draft; inspect it before any manual recovery.
+
+GitHub releases do not deploy production. Existing push/tag/CI deployment hooks
+must be migrated or disabled before enabling automatic prereleases. Container
+and PyPI publication use verified stable assets as a separate explicit operation.
 
 ## Project limits and rollout requirements
 
 - Tooling contracts cover candidate/promotion rejection cases. Retired legacy publisher/dispatcher entry points now fail with a migration message; consumers pinned to older toolkit SHAs must migrate explicitly.
 - ci.yml already runs CodeQL; security-required.yml adds strict full-source Trivy without duplicate language analysis.
+- Source candidates carry an explicit inventory of toolkit source and are accepted by installing locked dependencies and running contracts against the extracted archive.
+- The source distribution version is independent of immutable workflow references. Publishing a candidate does not update consumers or establish device or deployment acceptance.
 
 For public repositories, merge and verify the workflows before enabling the
 additive Terraform **CI gate** ruleset. Where release/deployment workflows use
@@ -68,3 +141,9 @@ into consumer repositories.
 References: [GitHub schedules](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule),
 [protected environments](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/manage-environments),
 [artifact provenance](https://docs.github.com/en/rest/actions/artifacts).
+
+## Automatic version preparation
+
+Run `python3 scripts/release.py prepare-version --pr` from the clean default-branch HEAD. The command refreshes tags and opens a PR with synchronized owned version fields. An existing unreleased base is retained; use `--bump minor`, `--bump major`, or `--version X.Y.Z` for explicit intent. See [version plans](VERSIONING.md) for build overlays, the dedicated allocation ledger and recovery.
+
+A local candidate package also needs the saved `.release-plan.json` at its exact source commit. Restore the `version_plan` object from the published `release-manifest.json` as `.release-plan.json` in a disposable checkout. Apply the recorded version fields with `python3 scripts/version_plan.py sync --root . --plan .release-plan.json` before `release.py package`; do not invent a tag or native counter locally. Ordinary development builds can use the project's native build command and explicitly local version identity.

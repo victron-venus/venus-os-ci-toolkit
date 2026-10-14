@@ -2,13 +2,15 @@
 
 import base64
 import copy
+import errno
 import hashlib
 import importlib.util
 import json
+import os
 import subprocess  # nosec B404
 import sys
 import unittest
-from contextlib import ExitStack
+from contextlib import ExitStack, suppress
 from pathlib import Path
 from unittest.mock import patch
 
@@ -306,6 +308,47 @@ class DetachedProvenanceTests(unittest.TestCase):
             capture_output=True, text=True, timeout=5, check=False)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("regular unaliased", result.stderr)
+
+    def test_snapshot_fdopen_failure_closes_raw_descriptor(self):
+        control = self.root / "control"
+        control.write_bytes(b"control")
+        descriptors = []
+
+        def fail(descriptor, *_args, **_kwargs):
+            descriptors.append(descriptor)
+            raise OSError("cannot wrap descriptor")
+
+        with patch.object(provenance.os, "fdopen", side_effect=fail):
+            with self.assertRaisesRegex(OSError, "cannot wrap descriptor"):
+                provenance.read_snapshot(control, 1024)
+        self.assertEqual(len(descriptors), 1)
+        try:
+            with self.assertRaises(OSError) as raised:
+                os.fstat(descriptors[0])
+            self.assertEqual(raised.exception.errno, errno.EBADF)
+        finally:
+            with suppress(OSError):
+                os.close(descriptors[0])
+
+    def test_snapshot_success_closes_wrapper_and_descriptor(self):
+        control = self.root / "control"
+        control.write_bytes(b"control")
+        wrappers = []
+        fdopen = os.fdopen
+
+        def wrap(descriptor, *args, **kwargs):
+            stream = fdopen(descriptor, *args, **kwargs)
+            wrappers.append((descriptor, stream))
+            return stream
+
+        with patch.object(provenance.os, "fdopen", side_effect=wrap):
+            self.assertEqual(provenance.read_snapshot(control, 1024), b"control")
+        self.assertEqual(len(wrappers), 1)
+        descriptor, stream = wrappers[0]
+        self.assertTrue(stream.closed)
+        with self.assertRaises(OSError) as raised:
+            os.fstat(descriptor)
+        self.assertEqual(raised.exception.errno, errno.EBADF)
 
     def test_signature_control_swap_rejected_before_cosign(self):
         signing, _ = self.signed_inventory()

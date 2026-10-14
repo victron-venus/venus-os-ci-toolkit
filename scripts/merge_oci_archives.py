@@ -8,6 +8,7 @@ import gzip
 import hashlib
 import io
 import json
+import math
 import os
 import re
 import stat
@@ -89,10 +90,16 @@ def document(raw, *, max_bytes=MAX_JSON):
     def invalid_constant(value):
         raise ValueError(f"Invalid OCI JSON constant: {value}")
 
+    def finite_float(value):
+        number = float(value)
+        require(math.isfinite(number), "OCI JSON number must remain finite")
+        return number
+
     require(len(raw) <= max_bytes, "Oversized OCI JSON")
     try:
         result = json.loads(
-            raw, object_pairs_hook=pairs, parse_constant=invalid_constant
+            raw, object_pairs_hook=pairs, parse_constant=invalid_constant,
+            parse_float=finite_float,
         )
     except (RecursionError, UnicodeDecodeError) as error:
         raise ValueError("Invalid OCI JSON") from error
@@ -142,7 +149,10 @@ class Archive:
             self.path,
             os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0),
         )
-        self.stream = stack.enter_context(os.fdopen(descriptor, "rb"))
+        # Own the raw descriptor before fdopen can fail (for example on a
+        # directory). The stack closes the wrapper first, then the descriptor.
+        stack.callback(os.close, descriptor)
+        self.stream = stack.enter_context(os.fdopen(descriptor, "rb", closefd=False))
         self.initial_stat = os.fstat(self.stream.fileno())
         require(stat.S_ISREG(self.initial_stat.st_mode), "Input must be a regular file")
         self.archive_identity = identity(self.stream)

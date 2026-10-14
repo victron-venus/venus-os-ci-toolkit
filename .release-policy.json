@@ -1,6 +1,6 @@
 {
   "repository": "victron-venus/venus-os-ci-toolkit",
-  "mode": "validation-only",
+  "mode": "release",
   "default_branch": "main",
   "validation_workflows": [
     "ci.yml",
@@ -12,7 +12,9 @@
   ],
   "notes": [
     "Tooling contracts cover candidate/promotion rejection cases. Retired legacy publisher/dispatcher entry points now fail with a migration message; consumers pinned to older toolkit SHAs must migrate explicitly.",
-    "ci.yml already runs CodeQL; security-required.yml adds strict full-source Trivy without duplicate language analysis."
+    "ci.yml already runs CodeQL; security-required.yml adds strict full-source Trivy without duplicate language analysis.",
+    "Source candidates carry an explicit inventory of toolkit source and are accepted by installing locked dependencies and running contracts against the extracted archive.",
+    "The source distribution version is independent of immutable workflow references. Publishing a candidate does not update consumers or establish device or deployment acceptance."
   ],
   "visibility": "public",
   "single_entry_ci": true,
@@ -22,5 +24,32 @@
     "always_validate_workflows": [
       "ci.yml"
     ]
+  },
+  "artifact_pattern": "release-assets*",
+  "version_file": "SOURCE_VERSION",
+  "release_notes": "CHANGELOG.md",
+  "toolkit_revision": "d55d9899310c9fb068fbdb36cdc42cc3f539d41c",
+  "versioning": {
+    "schema": 1,
+    "promotion": "promote-bytes",
+    "toolkit_revision": "d55d9899310c9fb068fbdb36cdc42cc3f539d41c",
+    "files": [
+      {
+        "path": "SOURCE_VERSION",
+        "format": "text",
+        "value": "package"
+      }
+    ],
+    "artifacts": [
+      {
+        "path": "venus-os-ci-toolkit-*.tar.gz",
+        "format": "tar-text",
+        "member": "venus-os-ci-toolkit/SOURCE_VERSION",
+        "value": "package"
+      }
+    ]
+  },
+  "fuzzing": {
+    "toolkit_ref": "d55d9899310c9fb068fbdb36cdc42cc3f539d41c"
   }
 }

@@ -1,0 +1,46 @@
+{
+  "schema": 1,
+  "language": "python",
+  "setup": [
+    [
+      "python3",
+      "-m",
+      "venv",
+      ".fuzz-venv"
+    ],
+    [
+      ".fuzz-venv/bin/python",
+      "-m",
+      "pip",
+      "install",
+      "--require-hashes",
+      "--only-binary=:all:",
+      "-r",
+      ".github/requirements-fuzz.txt"
+    ]
+  ],
+  "targets": [
+    {
+      "name": "oci-metadata",
+      "engine": "atheris",
+      "command": [
+        ".fuzz-venv/bin/python",
+        "fuzz/fuzz_oci_metadata.py",
+        "-max_len=4096"
+      ],
+      "seconds": 60,
+      "corpus": "fuzz/corpus/oci-metadata"
+    },
+    {
+      "name": "version-policy",
+      "engine": "atheris",
+      "command": [
+        ".fuzz-venv/bin/python",
+        "fuzz/fuzz_version_policy.py",
+        "-max_len=4096"
+      ],
+      "seconds": 60,
+      "corpus": "fuzz/corpus/version-policy"
+    }
+  ]
+}
