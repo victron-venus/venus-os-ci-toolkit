@@ -488,7 +488,14 @@ jobs:
         self.assertIn("python3 -m unittest discover -s tests -p 'test_*.py' -v", commands)
         self.assertTrue(any("--require-hashes --only-binary=:all: -r .github/requirements-generator.txt" in command
                             for command in commands))
+        setup_uv = [step for step in workflow["jobs"]["release-contracts"]["steps"]
+                    if step.get("uses", "").startswith("astral-sh/setup-uv@")]
+        self.assertEqual(len(setup_uv), 1)
+        self.assertEqual(setup_uv[0]["uses"], installer.ACTION_REFS["astral-sh/setup-uv"])
+        self.assertEqual(setup_uv[0]["with"], {"version": "0.12.18"})
         consumer = installer.release_contract_job(self.policy, None)
+        self.assertFalse(any(step.get("uses", "").startswith("astral-sh/setup-uv@")
+                             for step in consumer["steps"]))
         commands = [step.get("run", "") for step in consumer["steps"]]
         self.assertIn("python3 -m unittest discover -s .github/release-tests -p 'test_*.py' -v", commands)
         self.assertTrue(any(installer.CONTRACT_REQUIREMENTS in command for command in commands))

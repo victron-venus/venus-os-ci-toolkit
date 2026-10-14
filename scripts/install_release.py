@@ -613,7 +613,7 @@ def release_contract_job(policy, directory):
     canonical = directory is not None and directory.resolve() == ROOT.resolve()
     tests = "tests" if canonical else ".github/release-tests"
     requirements = ".github/requirements-generator.txt" if canonical else CONTRACT_REQUIREMENTS
-    return {
+    job = {
         "name": "Release tooling contracts",
         "runs-on": runner_labels(),
         "timeout-minutes": 5,
@@ -630,6 +630,13 @@ def release_contract_job(policy, directory):
             {"run": f"python3 -m unittest discover -s {tests} -p 'test_*.py' -v"},
         ],
     }
+    if canonical:
+        job["steps"].insert(2, {
+            "name": "Install uv for locked dependency contracts",
+            "uses": ACTION_REFS["astral-sh/setup-uv"],
+            "with": {"version": "0.12.18"},
+        })
+    return job
 
 
 def quality(policy, directory=None):
