@@ -27,14 +27,18 @@ class FuzzPreflightTests(unittest.TestCase):
                 "instrumentation": [{"module": "owned", "functions": ["parse"]}]}]}
             source = root / fuzz.MANIFEST
             source.write_text(json.dumps(config))
-            proof = {"target": "parse", "instrumentation": [{"module": "owned", "function": "parse"}]}
+            proof = {"target": "parse", "engine": "atheris", "executions": 3,
+                     "instrumentation": [{"module": "owned", "function": "parse"}]}
             report = {"schema": 2, "repository": "o/r", "source_sha": "a" * 40,
                 "run_id": 1, "run_attempt": 1, "channel": "rc", "private": False, "status": "passed",
                 "network": "isolated", "manifest_sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
                 "targets": [{"name": "parse", "seconds": 1, "exit_code": 0, "engine": "atheris", "executions": 100}],
                 "preflight": {"python_targets": [proof], "commands": 0}}
             for count, proofs, accepted in ((100, [proof], True), (0, [proof], False),
-                                            (True, [proof], False), (100, [], False)):
+                                            (True, [proof], False), (100, [], False),
+                                            (100, [{**proof, "executions": 0}], False),
+                                            (100, [{**proof, "executions": True}], False),
+                                            (100, [{**proof, "executions": None}], False)):
                 report["targets"][0]["executions"] = count
                 report["preflight"]["python_targets"] = proofs
                 (root / fuzz.REPORT).write_text(json.dumps(report))
@@ -61,6 +65,10 @@ class FuzzPreflightTests(unittest.TestCase):
             first = installer.render_fuzz(root)
             workflow = installer.yaml.load(first[".github/workflows/quality-gate.yml"], Loader=installer.WorkflowLoader)
             self.assertEqual(workflow["jobs"]["workflow-contracts"]["timeout-minutes"], 10)
+            interpreter = next(step for step in workflow["jobs"]["workflow-contracts"]["steps"]
+                               if step.get("uses", "").startswith("actions/setup-python@"))
+            self.assertEqual(interpreter["with"]["cache-dependency-path"].splitlines(),
+                             [".github/requirements-fuzz.txt", installer.CONTRACT_REQUIREMENTS])
             self.assertIn("# retain this reviewed consumer comment", first[".github/workflows/release-pipeline.yml"])
             self.assertNotIn("scripts/release_control.py", first)
             for name, content in first.items():
@@ -143,6 +151,59 @@ class FuzzPreflightTests(unittest.TestCase):
             (root / "seeds").mkdir()
             (root / "seeds/empty-seed").write_bytes(b"")
             self.assertEqual(fuzz.retain_corpus(root / "seeds", root / "good", required=True)["files"], 1)
+            for linked in (root / "file", root / "empty"):
+                link = root / "seeds/linked"
+                link.symlink_to(linked, target_is_directory=linked.is_dir())
+                with self.subTest(linked=linked), self.assertRaisesRegex(ValueError, "contain symlinks"):
+                    fuzz.retain_corpus(root / "seeds", root / "rejected", required=True)
+                link.unlink()
+
+    def test_go_version_file_requires_a_confined_existing_regular_file(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / ".github").mkdir()
+            (root / "engine").mkdir()
+            (root / "engine/go.mod").write_text("module example.invalid/engine\ngo 1.26\n")
+            (root / "link").symlink_to(root / "engine/go.mod")
+            config = {"schema": 1, "language": "go", "setup": [], "targets": [{
+                "name": "parse", "engine": "go", "command": ["go", "test", "-fuzz=FuzzParse"], "seconds": 1}]}
+            for path in (".", "engine", "missing.mod", "link"):
+                (root / fuzz.MANIFEST).write_text(json.dumps({**config, "go-version-file": path}))
+                with self.subTest(path=path), self.assertRaisesRegex(ValueError, "existing regular file"):
+                    fuzz.manifest(root)
+            (root / fuzz.MANIFEST).write_text(json.dumps({**config, "go-version-file": "engine/go.mod"}))
+            self.assertEqual(fuzz.manifest(root)["go-version-file"], "engine/go.mod")
+
+    def test_setup_only_python_proof_cannot_substitute_for_native_seed_replay(self):
+        for log, accepted in (("Setup only\n", False), ("Done 0 runs in 0 second(s)\n", False),
+                              ("Done 3 runs in 0 second(s)\n", True)):
+            with self.subTest(log=log), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp)
+                def execute(command, _cwd, output, *_args):
+                    Path(command[command.index("--output") + 1]).write_text(json.dumps({"target": "parse"}))
+                    output.write_text(log)
+                    return 0, 0.0
+                target = {"name": "parse", "command": ["python", "harness.py"]}
+                with patch.object(fuzz, "bounded_preflight", side_effect=execute):
+                    if accepted:
+                        proof = fuzz.replay_python_target(root, root, target, 100)
+                        self.assertEqual(proof["executions"], 3)
+                        self.assertEqual(proof, json.loads((root / "parse/instrumentation.json").read_text()))
+                    else:
+                        with self.assertRaisesRegex(ValueError, "positive engine execution"):
+                            fuzz.replay_python_target(root, root, target, 100)
+
+    def test_every_engine_rejects_empty_declared_corpus_before_execution(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "empty").mkdir()
+            for engine in ("go", "atheris", "libfuzzer"):
+                target = {"name": engine, "engine": engine, "seconds": 1,
+                          "command": ["never-executed"], "corpus": "empty"}
+                with self.subTest(engine=engine), patch.object(fuzz, "execute") as execute:
+                    with self.assertRaisesRegex(ValueError, "at least one regular seed"):
+                        fuzz.run_target(root, root, target)
+                    execute.assert_not_called()
 
     def test_go_target_retains_generated_cache_outside_testdata(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -191,8 +252,9 @@ class FuzzPreflightTests(unittest.TestCase):
             self.assertEqual(len(python_preflight.verify_instrumentation(declaration, ROOT, good)), 1)
             def missing(function):
                 function.__code__ = (lambda: 2).__code__
+            missing_atheris = SimpleNamespace(instrument_func=missing)
             with self.assertRaisesRegex(ValueError, "Missing production instrumentation"):
-                python_preflight.verify_instrumentation(declaration, ROOT, SimpleNamespace(instrument_func=missing))
+                python_preflight.verify_instrumentation(declaration, ROOT, missing_atheris)
             with self.assertRaisesRegex(ValueError, "project-local"):
                 python_preflight.verify_instrumentation(declaration, ROOT / "other", good)
         with self.assertRaisesRegex(ValueError, "not loaded"):
@@ -206,9 +268,13 @@ class FuzzPreflightTests(unittest.TestCase):
                 "pull_request": {"base": {"sha": "a" * 40}, "head": {"sha": "b" * 40}}}))
             with patch.dict(os.environ, {"GITHUB_EVENT_PATH": str(event), "GITHUB_EVENT_NAME": "pull_request", "GITHUB_REPOSITORY": "o/r"}):
                 for paths, expected in ((b"docs/guide.md\0", False), (b"app/parser.py\0", True),
-                                        (b".github/fuzz.json\0", True), (b"app2/parser.py\0", False)):
+                                        (b".github/fuzz.json\0", True), (b"scripts/change_scope.py\0", True),
+                                        (b"app2/parser.py\0", False)):
                     with patch.object(fuzz.subprocess, "check_output", return_value=paths):
                         self.assertEqual(fuzz.preflight_needed(root, {"preflight-paths": ["app"]}), expected)
+                for error in (subprocess.CalledProcessError(1, "git"), FileNotFoundError("git unavailable")):
+                    with patch.object(fuzz.subprocess, "check_output", side_effect=error):
+                        self.assertTrue(fuzz.preflight_needed(root, {"preflight-paths": ["app"]}))
                 with patch.object(fuzz.subprocess, "check_output") as query:
                     self.assertTrue(fuzz.preflight_needed(root, {"preflight-paths": ["."]}))
                     query.assert_not_called()
@@ -223,6 +289,16 @@ class FuzzPreflightTests(unittest.TestCase):
                 evidence = fuzz.run_preflight(root, root / "preflight", {"language": "rust", "setup": [["expensive-build"]]}, setup=True)
             execute.assert_not_called()
             self.assertEqual(evidence, {"python_targets": [], "commands": 0})
+
+    def test_python_preflight_rejects_missing_declarations_before_setup(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            data = {"language": "python", "setup": [["must-not-install"]],
+                    "targets": [{"engine": "atheris", "command": ["python", "harness.py"]}]}
+            with patch.object(fuzz, "execute") as execute:
+                with self.assertRaisesRegex(ValueError, "production instrumentation declarations"):
+                    fuzz.run_preflight(root, root / "preflight", data, setup=True)
+                execute.assert_not_called()
 
 
 if __name__ == "__main__":
