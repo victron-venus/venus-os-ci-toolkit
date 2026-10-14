@@ -166,6 +166,22 @@ class FuzzPreflightTests(unittest.TestCase):
         self.assertEqual(result, {"engine": "atheris", "executions": 123, "coverage_edges": 10, "coverage_features": 20})
         self.assertEqual(fuzz.engine_metrics("atheris", "no target")['executions'], 0)
 
+    def test_go_wrapper_queries_selected_go_in_declared_module(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "engine").mkdir()
+            (root / "engine/go.mod").write_text("module example.invalid/engine\ngo 1.26\n")
+            def execute(_command, _cwd, output, _timeout, _isolated):
+                output.write_text("fuzz: elapsed: 1s, execs: 23, new interesting: 0\n")
+                return 0, 1.0
+            with patch.object(fuzz, "execute", side_effect=execute), patch.object(
+                    fuzz.subprocess, "check_output", return_value=str(root / "cache")) as query:
+                report = fuzz.run_target(root, root, {"name": "parse", "seconds": 1,
+                    "engine": "go", "command": ["python3", "engine/build.py", "fuzz"]},
+                    go_version_file="engine/go.mod")
+            query.assert_called_once_with(["go", "env", "GOCACHE"], cwd=root / "engine", text=True, timeout=30)
+            self.assertEqual(report["generated_corpus"]["files"], 0)
+
     def test_instrumentation_requires_loaded_project_functions_and_idempotence(self):
         def owned():
             return 1
