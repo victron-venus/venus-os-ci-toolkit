@@ -46,13 +46,26 @@ Example manifest:
 }
 ```
 
-`language` selects setup for Go, Rust, Python, JavaScript or C/C++ (`c`). C/C++
+`language` selects setup for Go, Rust, Python, JavaScript, JVM (`jvm`) or C/C++ (`c`). C/C++
 manifests must select an explicit installed compiler, such as `clang-18`, and
 build host-only targets with libFuzzer and address/undefined sanitizers. `setup` contains
 reviewed argument arrays for dependency installation and compilation, never shell
 fragments. Pin dependencies; for Python use a dedicated `.fuzz-venv` and a
 hash-locked requirements file. Rust targets should build with pinned cargo-fuzz
 and `nightly-2026-10-12`, then execute the compiled libFuzzer binary directly.
+
+JVM targets use Temurin JDK 17 and the `libfuzzer` engine with the official
+[Jazzer standalone launcher](https://github.com/CodeIntelligenceTesting/jazzer#jazzer-standalone).
+Compile the real Java/Kotlin production sources and harness during `setup`, and
+pin the Jazzer distribution and all build dependencies in the consumer. An
+Android consumer can compile its pure JVM modules without starting Android or
+an emulator. Its ordinary app, device and signing checks remain separate and
+required. Pass the launcher its classpath and target class in `command`; the
+runner supplies the bounded libFuzzer flags and writable copied corpus. Do not
+use a build command that silently falls back to deterministic regression mode.
+`JAVA_HOME` is forwarded to the isolated target so Jazzer can locate `libjvm`;
+ambient `JAVA_TOOL_OPTIONS`, `JDK_JAVA_OPTIONS` and credentials are not forwarded.
+The same public-default-branch RC gate applies to JVM targets.
 
 Each target needs a unique lowercase kebab-case name, `engine` (`go`, `atheris`
 or `libfuzzer`), argument-array `command`, and `seconds` (1–120). Optional `cwd`

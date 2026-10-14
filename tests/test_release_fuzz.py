@@ -12,6 +12,8 @@ import unittest
 from unittest.mock import patch
 import venv
 
+import yaml
+
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 import install_release as installer  # noqa: E402
@@ -33,6 +35,62 @@ def config():
 
 
 class FuzzContracts(unittest.TestCase):
+    def test_jvm_workflow_provisions_java_only_for_jvm_manifests(self):
+        workflow = yaml.safe_load((ROOT / ".github/workflows/fuzz.yml").read_text())
+        steps = workflow["jobs"]["campaign"]["steps"]
+        java = [step for step in steps if step.get("uses", "").startswith("actions/setup-java@")]
+        self.assertEqual(len(java), 1)
+        self.assertEqual(java[0]["if"], "${{ steps.config.outputs.language == 'jvm' }}")
+        self.assertEqual(java[0]["uses"], "actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6")
+        self.assertEqual(java[0]["with"], {"distribution": "temurin", "java-version": "17"})
+        self.assertLess(steps.index(java[0]), next(i for i, step in enumerate(steps)
+                                                if step["name"] == "Build and run isolated bounded targets"))
+
+    def test_jvm_target_uses_shared_libfuzzer_budget_and_execution_proof(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / ".github").mkdir()
+            target = {"name": "parser", "engine": "libfuzzer", "seconds": 60,
+                      "command": ["./jazzer", "--cp=build/target.jar", "--target_class=example.ParserFuzz"]}
+            (root / fuzz.MANIFEST).write_text(json.dumps(
+                {"schema": 1, "language": "jvm", "setup": [], "targets": [target]}))
+            self.assertEqual(fuzz.manifest(root)["language"], "jvm")
+
+            def executed(command, cwd, output, timeout, isolated):
+                self.assertEqual(command[:3], target["command"])
+                self.assertIn("-max_total_time=60", command)
+                self.assertIn("-timeout=10", command)
+                self.assertIn("-rss_limit_mb=2048", command)
+                self.assertEqual(cwd, root)
+                self.assertEqual(timeout, 360)
+                self.assertTrue(isolated)
+                output.write_text("Done 123 runs in 60 second(s)\n")
+                return 0, 60.0
+
+            with patch.object(fuzz, "execute", side_effect=executed):
+                self.assertEqual(fuzz.run_target(root, root, target)["exit_code"], 0)
+
+    def test_isolated_environment_retains_jdk_location_without_ambient_jvm_options(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            real_popen = subprocess.Popen
+
+            def namespace_stub(command, **kwargs):
+                self.assertIn("--net", command)
+                self.assertIn(f"--setuid={os.getuid()}", command)
+                return real_popen(command[command.index("/usr/bin/env"):], **kwargs)
+
+            environment = {"JAVA_HOME": "/synthetic/jdk-17", "JAVA_TOOL_OPTIONS": "-Xmx99g",
+                           "JDK_JAVA_OPTIONS": "--invalid-option", "GH_TOKEN": "synthetic-test-value"}
+            code = "import json,os; print(json.dumps({k:os.environ.get(k) for k in " + repr(list(environment)) + "}))"
+            output = root / "run.log"
+            with patch.dict(os.environ, environment), patch.object(fuzz.subprocess, "Popen", side_effect=namespace_stub):
+                result, _ = fuzz.execute([sys.executable, "-c", code], root, output, 20, True)
+            self.assertEqual(result, 0)
+            self.assertEqual(json.loads(output.read_text()), {
+                "JAVA_HOME": "/synthetic/jdk-17", "JAVA_TOOL_OPTIONS": None,
+                "JDK_JAVA_OPTIONS": None, "GH_TOKEN": None})
+
     def test_isolated_command_preserves_real_virtual_environment_entrypoint(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp).resolve()
