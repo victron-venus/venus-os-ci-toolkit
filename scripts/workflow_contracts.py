@@ -357,7 +357,10 @@ def validate_release_channels(policy, workflows):
         if name in workflows:
             raise ValueError("Release validation workflow has no channel policy")
         return
-    from release_validation import channel_workflows, expected_results
+    if __package__:
+        from .release_validation import channel_workflows, expected_results
+    else:
+        from release_validation import channel_workflows, expected_results
 
     beta = channel_workflows(policy)
     validate_graph(workflows, beta)
