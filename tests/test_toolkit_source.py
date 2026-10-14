@@ -1,5 +1,7 @@
 """Source candidates preserve the declared inputs and reject malformed archives."""
 
+import base64
+import hashlib
 import io
 import json
 import subprocess
@@ -7,8 +9,37 @@ import tarfile
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import Mock, patch
 
-from scripts import toolkit_source, version_plan
+from scripts import release_control, toolkit_source, version_plan
+
+
+class ToolkitReleaseNotesTests(unittest.TestCase):
+    def test_checkout_changelog_supports_beta_and_rc(self):
+        root = Path(__file__).resolve().parents[1]
+        policy = json.loads((root / ".release-policy.json").read_text())
+        base = (root / "SOURCE_VERSION").read_text().strip().split("-", 1)[0]
+        raw = (root / "CHANGELOG.md").read_bytes()
+        source = "a" * 40
+        response = {
+            "type": "file", "path": "CHANGELOG.md", "encoding": "base64",
+            "content": base64.b64encode(raw).decode(), "size": len(raw),
+            "sha": hashlib.sha1(
+                b"blob " + str(len(raw)).encode() + b"\0" + raw,
+                usedforsecurity=False,
+            ).hexdigest(),
+        }
+        for channel in ("beta", "rc"):
+            with self.subTest(channel=channel):
+                github = Mock(spec=release_control.GitHub)
+                github.api.return_value = response
+                with patch.object(release_control, "source_policy_snapshot", return_value={"data": policy}):
+                    notes = release_control.release_notes(github, f"v{base}-{channel}.1", source, "Source-bound build evidence.")
+                github.api.assert_called_once_with(f"contents/CHANGELOG.md?ref={source}")
+                self.assertIn(f"## Changes in {base}", notes)
+                self.assertIn("### Upgrade", notes)
+                self.assertIn("### Security", notes)
+                self.assertIn("Source-bound build evidence.", notes)
 
 
 class ToolkitSourceTests(unittest.TestCase):

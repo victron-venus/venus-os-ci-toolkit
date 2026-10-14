@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.1 - 2026-10-13
+## [0.1.1] - 2026-10-13
 
 - Add versioned source candidates with deterministic archives, an explicit source
   inventory, version receipts and contract tests against the extracted source.
@@ -9,6 +9,20 @@
 - Reject JSON numbers that overflow finite floating-point representation before
   accepting OCI metadata, preserving canonical JSON round trips.
 - Keep source distribution versions independent of consumer workflow commit pins.
+
+### Upgrade
+
+Download the candidate source archive and follow `docs/self-release.md` to install
+its locked development dependencies and rerun the extracted-source tests. Existing
+consumers keep their immutable workflow commits until explicitly updated; source
+candidate versions are independent of those workflow references.
+
+### Security
+
+The OCI metadata reader now rejects overflowing JSON numbers. RCs additionally
+record bounded, isolated Linux campaigns over the metadata and version-policy
+parsers. Review the evidence attached to the exact candidate tag before adopting
+it. These software checks do not certify hardware integrations or deployed systems.
 
 ## 0.1.0 - 2026-09-12
 
