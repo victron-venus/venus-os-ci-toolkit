@@ -29,7 +29,16 @@
         "-max_len=4096"
       ],
       "seconds": 60,
-      "corpus": "fuzz/corpus/oci-metadata"
+      "corpus": "fuzz/corpus/oci-metadata",
+      "instrumentation": [
+        {
+          "module": "merge_oci_archives",
+          "functions": [
+            "document",
+            "member_name"
+          ]
+        }
+      ]
     },
     {
       "name": "version-policy",
@@ -40,7 +49,29 @@
         "-max_len=4096"
       ],
       "seconds": 60,
-      "corpus": "fuzz/corpus/version-policy"
+      "corpus": "fuzz/corpus/version-policy",
+      "instrumentation": [
+        {
+          "module": "version_plan",
+          "functions": [
+            "validate_policy",
+            "create_plan",
+            "validate_plan"
+          ]
+        }
+      ]
     }
+  ],
+  "preflight-paths": [
+    "scripts",
+    "fuzz",
+    "tests"
+  ],
+  "preflight": [
+    [
+      ".fuzz-venv/bin/python",
+      "tests/test_atheris_instrumentation.py",
+      "-v"
+    ]
   ]
 }

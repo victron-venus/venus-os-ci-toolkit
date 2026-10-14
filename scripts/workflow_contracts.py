@@ -13,6 +13,7 @@ import yaml
 
 COMMIT_SHA_PATTERN = r"[0-9a-f]{40}"
 QUALITY_GATE = "quality-gate.yml"
+RELEASE_PIPELINE = "release-pipeline.yml"
 LOCAL_WORKFLOW_PREFIX = "./.github/workflows/"
 
 
@@ -181,7 +182,7 @@ def validate_generator_pins(directory, workflows):
     """Validate generated consumers and the toolkit's canonical pin manifest."""
     pins = generator_pins(directory)
     for filename, workflow in workflows.items():
-        if filename not in {QUALITY_GATE, "release-pipeline.yml", "release-quality-gate.yml"}:
+        if filename not in {QUALITY_GATE, RELEASE_PIPELINE, "release-quality-gate.yml"}:
             validate_workflow_pins(filename, workflow, None)
             continue
         source = (directory / ".github/workflows" / filename).read_text()
@@ -190,6 +191,19 @@ def validate_generator_pins(directory, workflows):
         ):
             raise ValueError(f"{filename}: missing generator marker")
         validate_workflow_pins(filename, workflow, pins)
+    validate_fuzz_pins(directory, workflows)
+
+
+def validate_fuzz_pins(directory, workflows):
+    """Consumers must update their wrapper, runtime and policy atomically."""
+    configured = configured_workflow_pins(directory)
+    action = "victron-venus/venus-os-ci-toolkit/.github/workflows/fuzz.yml"
+    if action not in configured:
+        return
+    reference = configured[action]
+    job = workflows.get(RELEASE_PIPELINE, {}).get("jobs", {}).get("fuzz", {})
+    if job.get("uses") != action + "@" + reference or job.get("with", {}).get("toolkit-ref") != reference:
+        raise ValueError("Fuzz workflow, runtime and policy toolkit_ref must match")
 
 
 def _callable_workflow(workflows, visited, filename, chain=()):
@@ -339,9 +353,15 @@ def validate_release_scope(scope):
         )
 
 
-def validate_release_gate(gate):
+def validate_release_gate(gate, workflow=None):
     """Require the shared fail-closed gate with all dependency results."""
     commands = [step for step in gate.get("steps", []) if "run" in step]
+    execution_overrides = {"shell", "working-directory"}
+    for scope in (workflow or {}, gate):
+        if execution_overrides.intersection(scope.get("defaults", {}).get("run", {})):
+            raise ValueError("Release validation gate cannot override its shell or working-directory")
+    if any(execution_overrides.intersection(step) for step in commands):
+        raise ValueError("Release validation gate cannot override its shell or working-directory")
     if (
         gate.get("name") != "CI gate"
         or gate.get("if") != "${{ always() }}"
@@ -395,8 +415,8 @@ def validate_release_channels(policy, workflows):
     validate_release_baseline(jobs, workflows[QUALITY_GATE]["jobs"])
     validate_beta_callers(jobs, beta)
     validate_release_scope(jobs["scope"])
-    validate_release_gate(jobs["gate"])
-    caller = workflows.get("release-pipeline.yml", {}).get("jobs", {}).get("checks", {})
+    validate_release_gate(jobs["gate"], wrapper)
+    caller = workflows.get(RELEASE_PIPELINE, {}).get("jobs", {}).get("checks", {})
     if (
         caller.get("uses") != LOCAL_WORKFLOW_PREFIX + name
         or caller.get("needs") != "prepare"

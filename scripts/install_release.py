@@ -52,6 +52,14 @@ WORKFLOW_CONTRACTS_PATH = "scripts/workflow_contracts.py"
 RELEASE_CONTROL_PATH = "scripts/release_control.py"
 GITHUB_TOKEN = "${{ github.token }}"
 PUBLISH_CANDIDATE_STEP = "Publish checked candidate"
+RELEASE_PIPELINE_NAME = 'release-pipeline.yml'
+FUZZ_RUNNER_PATH = 'scripts/release_fuzz.py'
+FUZZ_PREFLIGHT_PATH = 'scripts/fuzz_python_preflight.py'
+FUZZ_DOC_PATH = 'docs/rc-fuzzing.md'
+CONSUMER_WORKFLOW_TEST_PATH = '.github/workflow-tests/test_workflow_yaml_contracts.py'
+WORKFLOW_TEST_PATH = 'tests/test_workflow_yaml_contracts.py'
+TEST_RESOLVED_ROOT = 'ROOT = Path(__file__).resolve().parents[1]'
+CONSUMER_RESOLVED_ROOT = 'ROOT = Path(__file__).resolve().parents[2]'
 
 
 class WorkflowLoader(yaml.SafeLoader):
@@ -402,7 +410,7 @@ def validation_oidc_workflows(policy):
         or any(
             not isinstance(name, str)
             or not re.fullmatch(r"[A-Za-z0-9_-]+\.ya?ml", name)
-            or name in {QUALITY_GATE_NAME, "release-pipeline.yml"}
+            or name in {QUALITY_GATE_NAME, RELEASE_PIPELINE_NAME}
             for name in selected
         )
         or len(selected) != len(set(selected))
@@ -560,7 +568,7 @@ def validation_job(policy, directory, filename, oidc):
     """Build one callable validator with its explicitly required permissions."""
     if not re.fullmatch(r"[A-Za-z0-9_-]+\.ya?ml", filename) or filename in {
         QUALITY_GATE_NAME,
-        "release-pipeline.yml",
+        RELEASE_PIPELINE_NAME,
     }:
         raise ValueError(f"Invalid/recursive validation workflow: {filename}")
     permissions = {"contents": "read", "actions": "read"}
@@ -580,7 +588,7 @@ def workflow_contract_job(directory):
         if directory is not None and directory.resolve() == ROOT.resolve()
         else "python3 -m unittest discover -s .github/workflow-tests -p 'test_*.py'"
     )
-    return {
+    job = {
         "name": "CI configuration contracts",
         "runs-on": runner_labels(),
         "timeout-minutes": 5,
@@ -598,6 +606,42 @@ def workflow_contract_job(directory):
             {"run": workflow_test_command},
         ],
     }
+    configure_python_preflight(job, directory)
+    return job
+
+
+def configure_python_preflight(job, directory):
+    """Add deterministic checks to the existing public consumer contract job."""
+    manifest = directory / release_fuzz.MANIFEST if directory is not None else None
+    if manifest is not None and manifest.exists() and release_fuzz.manifest(directory)["language"] == "python":
+        # Preserve the existing contract/setup allowance plus four bounded
+        # preflight minutes and one minute for failure diagnostics.
+        job["timeout-minutes"] = 10
+        # Reuse the small existing Python job; only locked wheels are cached.
+        # Full history allows the preflight selector to skip unrelated changes.
+        checkout = next(step for step in job["steps"] if step.get("uses", "").startswith("actions/checkout@"))
+        interpreter = next(step for step in job["steps"] if step.get("uses", "").startswith("actions/setup-python@"))
+        checkout.setdefault("with", {})["fetch-depth"] = 0
+        if (directory / ".github/requirements-fuzz.txt").is_file():
+            interpreter.setdefault("with", {}).update({"cache": "pip", "cache-dependency-path": ".github/requirements-fuzz.txt\n" + CONTRACT_REQUIREMENTS})
+        step = {
+            "name": "Replay relevant Python fuzz seeds and verify instrumentation",
+            "id": "fuzz_preflight",
+            "if": "${{ github.event.repository.private == false && needs.scope.outputs.run == 'true' }}",
+            "run": 'python3 scripts/release_fuzz.py preflight --if-changed --output "$RUNNER_TEMP/fuzz-preflight"',
+        }
+        diagnostics = {
+            "name": "Retain failed fuzz preflight diagnostics",
+            "if": "${{ failure() && steps.fuzz_preflight.outcome == 'failure' }}",
+            "uses": UPLOAD,
+            "with": {
+                "name": "fuzz-preflight-${{ github.run_attempt }}",
+                "path": "${{ runner.temp }}/fuzz-preflight",
+                "retention-days": 7,
+                "if-no-files-found": "ignore",
+            },
+        }
+        job["steps"] = [old for old in job["steps"] if old.get("name") not in {step["name"], diagnostics["name"]}] + [step, diagnostics]
 
 
 def release_contract_python(policy):
@@ -1486,8 +1530,9 @@ def release_files(directory: Path, policy: dict) -> dict[str, str]:
     files = {".github/workflows/release-pipeline.yml": dump(release(policy))}
     files["scripts/release_validation.py"] = (ROOT / "scripts/release_validation.py").read_text()
     if release_fuzz.configuration(policy) is not None:
-        files["scripts/release_fuzz.py"] = (ROOT / "scripts/release_fuzz.py").read_text()
-        files["docs/rc-fuzzing.md"] = (ROOT / "docs/rc-fuzzing.md").read_text()
+        files[FUZZ_RUNNER_PATH] = (ROOT / FUZZ_RUNNER_PATH).read_text()
+        files[FUZZ_PREFLIGHT_PATH] = (ROOT / FUZZ_PREFLIGHT_PATH).read_text()
+        files[FUZZ_DOC_PATH] = (ROOT / FUZZ_DOC_PATH).read_text()
     if release_validation.channel_workflows(policy) is not None:
         files[WORKFLOWS + "/" + release_validation.WORKFLOW] = dump(release_quality(policy, directory))
     files["RELEASING.md"] = release_strategy(directory, policy)
@@ -1815,16 +1860,68 @@ def render_coverage(directory: Path) -> dict[str, str]:
     files.update(coverage_adapters(directory, policy))
     files.update(coverage_release_caller(directory, policy))
     if directory.resolve() != ROOT.resolve():
-        files[".github/workflow-tests/test_workflow_yaml_contracts.py"] = (
-            ROOT / "tests/test_workflow_yaml_contracts.py"
+        files[CONSUMER_WORKFLOW_TEST_PATH] = (
+            ROOT / WORKFLOW_TEST_PATH
         ).read_text().replace(
-            "ROOT = Path(__file__).resolve().parents[1]",
-            "ROOT = Path(__file__).resolve().parents[2]",
+            TEST_RESOLVED_ROOT,
+            CONSUMER_RESOLVED_ROOT,
         )
         for name, source in files.items():
             if name.endswith(".py"):
                 files[name] = consumer_python(source)
     return files
+
+
+def refresh_fuzz_workflow(directory: Path, name: str, config: dict) -> str:
+    """Preserve unrelated YAML while refreshing one adopted fuzz entrypoint."""
+    path = WORKFLOWS + "/" + name
+    source = (directory / path).read_text()
+    if not source.startswith("# Generated by venus-os-ci-toolkit/scripts/install_release.py;"):
+        raise ValueError("Fuzz-only refresh requires an existing generated " + name)
+    # BaseLoader subclass: no object construction.
+    yaml.load(source, Loader=WorkflowLoader)  # nosec B506
+    editor, _ = coverage_yaml()
+    workflow = editor.load(source)
+    if name == RELEASE_PIPELINE_NAME:
+        job = workflow["jobs"].get("fuzz")
+        if not isinstance(job, dict):
+            raise ValueError("Adopt fuzzing with the full installer before a fuzz-only refresh")
+        job["uses"] = f"{TOOLKIT}/.github/workflows/fuzz.yml@{config['toolkit_ref']}"
+        job["with"]["toolkit-ref"] = config["toolkit_ref"]
+    else:
+        job = workflow["jobs"]["workflow-contracts"]
+        if "scope" not in job.get("needs", []):
+            raise ValueError("Fuzz preflight requires the existing change-scope dependency")
+        configure_python_preflight(job, directory)
+    output = io.StringIO()
+    editor.dump(workflow, output)
+    return output.getvalue()
+
+
+def render_fuzz(directory: Path) -> dict[str, str]:
+    """Refresh only an already-adopted fuzz contract and its immutable pins."""
+    policy = json.loads((directory / POLICY_FILE).read_text())
+    config = release_fuzz.configuration(policy)
+    if config is None:
+        raise ValueError("Fuzz-only refresh requires an opted-in public consumer")
+    data = release_fuzz.manifest(directory)
+    if data["language"] == "python" and policy.get("single_entry_ci") is not True:
+        raise ValueError("Automatic Python preflight requires an existing single-entry CI gate")
+    files = {name: (ROOT / name).read_text() for name in (
+        FUZZ_RUNNER_PATH, FUZZ_PREFLIGHT_PATH,
+        WORKFLOW_CONTRACTS_PATH, CONTRACT_REQUIREMENTS, FUZZ_DOC_PATH)}
+    names = [RELEASE_PIPELINE_NAME]
+    if data["language"] == "python":
+        names += [QUALITY_GATE_NAME]
+        if (directory / WORKFLOWS / release_validation.WORKFLOW).exists():
+            names += [release_validation.WORKFLOW]
+    for name in names:
+        files[WORKFLOWS + "/" + name] = refresh_fuzz_workflow(directory, name, config)
+    if directory.resolve() != ROOT.resolve():
+        files[CONSUMER_WORKFLOW_TEST_PATH] = (
+            ROOT / WORKFLOW_TEST_PATH).read_text().replace(
+                TEST_RESOLVED_ROOT, CONSUMER_RESOLVED_ROOT)
+    return prepare_consumer_files(directory, files)
 
 
 def render(directory: Path) -> dict[str, str]:
@@ -1852,11 +1949,11 @@ def render(directory: Path) -> dict[str, str]:
         if release_validation.channel_workflows(policy) is not None:
             files["scripts/release_validation.py"] = (ROOT / "scripts/release_validation.py").read_text()
         if directory.resolve() != ROOT.resolve():
-            files[".github/workflow-tests/test_workflow_yaml_contracts.py"] = (
-                ROOT / "tests/test_workflow_yaml_contracts.py"
+            files[CONSUMER_WORKFLOW_TEST_PATH] = (
+                ROOT / WORKFLOW_TEST_PATH
             ).read_text().replace(
-                "ROOT = Path(__file__).resolve().parents[1]",
-                "ROOT = Path(__file__).resolve().parents[2]",
+                TEST_RESOLVED_ROOT,
+                CONSUMER_RESOLVED_ROOT,
             )
     files["docs/release-workflow.md"] = operator_guide(policy)
     if not local:
@@ -2190,6 +2287,10 @@ def main():
     modes.add_argument(
         "--runners-only", action="store_const", dest="renderer", const=render_runners,
         help="adapt existing Linux/x64 job routing only; preserve other release files",
+    )
+    modes.add_argument(
+        "--fuzz-only", action="store_const", dest="renderer", const=render_fuzz,
+        help="refresh adopted fuzz pins, evidence and deterministic preflight only",
     )
     args = parser.parse_args()
     try:
