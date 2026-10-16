@@ -220,6 +220,15 @@ Mobile viewport/touch emulation is not testing iOS/Android devices. Media codecs
 DRM, GPU drivers, assistive technology and embedded webviews also require their
 native acceptance paths. Preserve such checks when adopting the shared matrix.
 
+Hosted Windows WebKit rows also run `install-deps chromium` through the exact
+locked Playwright CLI before installing WebKit. This installs the Windows Server
+Media Foundation dependency without downloading Chromium or changing the
+selected browser. Playwright's Windows dependency installer currently enables
+this feature only for its Chromium group; `install --with-deps webkit` alone
+does not prepare video playback. Installer failures fail the job, and the
+application's actual decoded-playback assertions remain required. This setup
+does not claim support for DRM or additional media codecs.
+
 GitHub-hosted systems remain the default. Only `ubuntu-latest` targets may select
 the existing, opt-in, isolated Linux reserve via `CI_RUNNER_MODE`. The planner
 uses that same reserve policy. Forks and untrusted events stay hosted. Fixed
@@ -235,3 +244,5 @@ channel fails its runtime probe rather than silently changing browser coverage.
 References: [Playwright browser and branded-channel differences](https://playwright.dev/docs/browsers),
 [CI platform setup](https://playwright.dev/docs/ci), and
 [Safari WebDriver](https://developer.apple.com/documentation/webkit/testing-with-webdriver-in-safari).
+The Windows prerequisite is implemented by
+[Playwright's dependency installer](https://github.com/microsoft/playwright/blob/main/packages/playwright-core/src/server/registry/dependencies.ts).

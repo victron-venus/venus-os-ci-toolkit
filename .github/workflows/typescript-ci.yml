@@ -350,6 +350,11 @@ jobs:
         run: bash -e -o pipefail -c "$PREPARE_COMMAND"
       - name: Install exact locked browser toolchain
         run: npm ci --prefix "$CI_BROWSER_TOOLCHAIN" --ignore-scripts --omit=optional --no-audit --no-fund
+      # Playwright installs the Windows Media Foundation feature only through
+      # its Chromium dependency group, but WebKit video playback needs it too.
+      - name: Install Windows WebKit media dependencies
+        if: ${{ runner.environment == 'github-hosted' && runner.os == 'Windows' && matrix.engine == 'webkit' }}
+        run: node "$CI_PLAYWRIGHT_MODULE/cli.js" install-deps chromium
       - name: Install selected browser and hosted system dependencies
         if: runner.environment == 'github-hosted'
         run: node "$CI_PLAYWRIGHT_MODULE/cli.js" install --with-deps "${CI_BROWSER_CHANNEL:-$CI_BROWSER_ENGINE}"
