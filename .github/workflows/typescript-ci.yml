@@ -201,7 +201,7 @@ jobs:
           const fail = message => { throw new Error(message); };
           if (!Array.isArray(rows) || !rows.length || rows.length > 96) fail('Expected 1..96 browser targets');
           if (!process.env.BROWSER_COMMAND.trim()) fail('Application acceptance command is required');
-          const systems = new Set(['ubuntu-latest', 'ubuntu-24.04', 'windows-2022', 'macos-15', 'macos-15-intel']);
+          const systems = new Set(['ubuntu-latest', 'ubuntu-24.04', 'ubuntu-26.04', 'windows-2022', 'macos-15', 'macos-15-intel']);
           const ids = new Set();
           const allowed = new Set(['id', 'os', 'engine', 'playwright', 'browser_version', 'toolchain', 'tier', 'channel']);
           for (const row of rows) {
@@ -224,7 +224,7 @@ jobs:
             const full = ['rc', 'stable'].includes(releaseChannel);
             if (rows.length !== 35 || rows.filter(row => row.tier === 'required').length !== 5) fail('Release qualification requires the reviewed 35-target inventory with 5 required targets');
             if ((process.env.BROWSER_EXTENDED === 'true') !== full || selected.length !== (full ? 35 : 5)) fail('Release channel does not match the required qualification breadth');
-            const platformIdentity = os => os === 'macos-15-intel' ? 'macos-15' : os;
+            const platformIdentity = os => os === 'macos-15-intel' ? 'macos-15' : os === 'ubuntu-26.04' ? 'ubuntu-latest' : os;
             const identity = row => JSON.stringify([platformIdentity(row.os), row.engine, row.playwright, row.channel]);
             const identities = new Set(rows.map(identity));
             if (identities.size !== rows.length) fail('Release inventory must not repeat a browser/platform/version identity');
@@ -295,6 +295,12 @@ jobs:
           const expected = row.os.startsWith('ubuntu-') ? 'linux' : row.os.startsWith('windows-') ? 'win32' : 'darwin';
           if (process.platform !== expected) throw new Error('Runner platform does not match the reviewed target');
           if (row.os === 'macos-15-intel' && process.arch !== 'x64') throw new Error('Intel macOS target requires an x64 runner');
+          let runnerPlatform;
+          if (row.os === 'ubuntu-26.04') {
+            const release = fs.readFileSync('/etc/os-release', 'utf8');
+            if (process.arch !== 'x64' || !/^ID=(?:ubuntu|"ubuntu")$/m.test(release) || !/^VERSION_ID=(?:26\.04|"26\.04")$/m.test(release)) throw new Error('Ubuntu 26.04 target requires the actual Ubuntu 26.04 x64 runtime');
+            runnerPlatform = {runnerArchitecture: process.arch, runnerOsId: 'ubuntu', runnerOsVersion: '26.04'};
+          }
           const root = fs.realpathSync(process.cwd());
           const directory = fs.realpathSync(path.resolve(root, row.toolchain));
           if (!directory.startsWith(root + path.sep)) throw new Error('Toolchain escapes the application directory');
@@ -315,6 +321,7 @@ jobs:
             fs.appendFileSync(process.env.GITHUB_ENV, `${key}=${value}\n`);
           }
           fs.writeFileSync(path.join(output, 'target.json'), JSON.stringify(row, null, 2));
+          if (runnerPlatform) fs.writeFileSync(path.join(output, 'runner-platform.json'), JSON.stringify(runnerPlatform, null, 2));
           NODE
       - name: Validate candidate artifact destination
         if: ${{ inputs.browser-artifact-id != '' }}
@@ -382,6 +389,11 @@ jobs:
               if (!/^\d+(?:\.\d+){1,3}$/.test(browserVersion)) throw new Error('Browser did not report a version');
               if (!process.env.CI_BROWSER_CHANNEL && browserVersion !== process.env.CI_BROWSER_EXPECTED_VERSION) throw new Error(`Browser version differs: ${browserVersion}`);
               const receipt = {schema: 1, target: process.env.CI_BROWSER_TARGET_ID, engine: process.env.CI_BROWSER_ENGINE, channel: process.env.CI_BROWSER_CHANNEL, playwrightVersion: version, browserVersion, platform: process.platform, sourceSha: process.env.GITHUB_SHA, runId: process.env.GITHUB_RUN_ID, runAttempt: process.env.GITHUB_RUN_ATTEMPT, releaseChannel: process.env.CI_BROWSER_RELEASE_CHANNEL || '', candidateArtifactId: process.env.CI_BROWSER_CANDIDATE_ARTIFACT_ID || ''};
+              if (JSON.parse(process.env.CI_BROWSER_TARGET || '{}').os === 'ubuntu-26.04') {
+                const runner = JSON.parse(fs.readFileSync(path.join(process.env.CI_BROWSER_DIAGNOSTICS, 'runner-platform.json')));
+                if (runner.runnerArchitecture !== 'x64' || runner.runnerOsId !== 'ubuntu' || runner.runnerOsVersion !== '26.04') throw new Error('Missing qualified Ubuntu 26.04 runtime identity');
+                Object.assign(receipt, {runnerArchitecture: runner.runnerArchitecture, runnerOsId: runner.runnerOsId, runnerOsVersion: runner.runnerOsVersion});
+              }
               fs.writeFileSync(path.join(process.env.CI_BROWSER_DIAGNOSTICS, 'runtime.json'), JSON.stringify(receipt, null, 2));
             } finally { await browser.close(); }
           })().catch(error => { console.error(error); process.exitCode = 1; });
@@ -481,6 +493,7 @@ jobs:
             const {data: result, digest} = read(folder, 'result.json');
             const platform = row.os.startsWith('ubuntu-') ? 'linux' : row.os.startsWith('windows-') ? 'win32' : 'darwin';
             const expected = {...binding, target: row.id, engine: row.engine, channel: row.channel, playwrightVersion: row.playwright, platform};
+            if (row.os === 'ubuntu-26.04') Object.assign(expected, {runnerArchitecture: 'x64', runnerOsId: 'ubuntu', runnerOsVersion: '26.04'});
             for (const [key, value] of Object.entries(expected)) {
               if (runtime[key] !== value || result[key] !== value) fail(`Qualification identity mismatch: ${row.id}/${key}`);
             }

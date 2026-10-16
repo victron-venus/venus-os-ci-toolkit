@@ -108,8 +108,8 @@ class BrowserCompatibilityTests(unittest.TestCase):
         self.assertNotEqual(self.plan(duplicate_identity, BROWSER_RELEASE_CHANNEL="rc",
                                      BROWSER_EXTENDED="true").returncode, 0)
 
-    def release_evidence(self, channel="rc"):
-        rows = self.release_targets()
+    def release_evidence(self, channel="rc", rows=None):
+        rows = self.release_targets() if rows is None else rows
         if channel in ("nightly", "beta"):
             rows = [row for row in rows if row["tier"] == "required"]
         directory = self.root / "evidence"
@@ -123,6 +123,8 @@ class BrowserCompatibilityTests(unittest.TestCase):
             runtime = binding | {"target": row["id"], "engine": row["engine"],
                                  "channel": row.get("channel", ""), "playwrightVersion": row["playwright"],
                                  "platform": platform, "browserVersion": "156.0.1.2" if row.get("channel") else row["browser_version"]}
+            if row["os"] == "ubuntu-26.04":
+                runtime.update(runnerArchitecture="x64", runnerOsId="ubuntu", runnerOsVersion="26.04")
             row.setdefault("channel", "")
             for name, data in (("target", row), ("runtime", runtime),
                                ("result", runtime | {"testsPassed": 2, "testsFailed": 0, "scenarios": ["sign in", "refresh state"]})):
@@ -207,6 +209,61 @@ class BrowserCompatibilityTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("complete three-OS", result.stderr)
         self.assertFalse((self.root / "output").exists())
+
+    def linux26_targets(self):
+        rows = self.release_targets()
+        for row in rows:
+            if row["os"] == "ubuntu-latest" and row["engine"] == "webkit":
+                row["os"] = "ubuntu-26.04"
+                row["id"] = row["id"].replace("ubuntu-latest", "ubuntu-26-04")
+        return rows
+
+    def test_explicit_linux26_preserves_runner_and_release_breadth(self):
+        rows = self.linux26_targets()
+        for channel in ("nightly", "beta", "rc", "stable"):
+            full = channel in ("rc", "stable")
+            with self.subTest(channel=channel):
+                (self.root / "output").unlink(missing_ok=True)
+                result = self.plan(rows, BROWSER_RELEASE_CHANNEL=channel,
+                                   BROWSER_EXTENDED=str(full).lower())
+                self.assertEqual(result.returncode, 0, result.stderr)
+                selected = json.loads((self.root / "output").read_text().split("=", 1)[1])["include"]
+                self.assertEqual(selected, [row | {"channel": row.get("channel", "")}
+                                            for row in rows if full or row["tier"] == "required"])
+                self.assertEqual(len(selected), 35 if full else 5)
+                self.assertEqual(sum(row["os"] == "ubuntu-26.04" for row in selected), 3 if full else 1)
+
+    def test_linux26_alias_cannot_duplicate_linux_or_replace_other_os(self):
+        for duplicate in (True, False):
+            rows = self.release_targets()
+            linux = next(row for row in rows if row["os"] == "ubuntu-latest"
+                         and (row["engine"] == "webkit" if duplicate else row.get("channel") == "chrome"))
+            index = next(index for index, row in enumerate(rows)
+                         if row["os"] == "windows-2022" and row["engine"] == linux["engine"]
+                         and not row.get("channel") and (row["playwright"] == linux["playwright"] if duplicate
+                                                          else row["playwright"] != linux["playwright"]))
+            rows[index] = linux | {"id": "linux26-alias", "os": "ubuntu-26.04",
+                                   "playwright": rows[index]["playwright"], "tier": rows[index]["tier"]}
+            result = self.plan(rows, BROWSER_RELEASE_CHANNEL="rc", BROWSER_EXTENDED="true")
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("must not repeat" if duplicate else "complete three-OS", result.stderr)
+            self.assertFalse((self.root / "output").exists())
+
+    def test_linux26_verdict_requires_distribution_and_architecture_identity(self):
+        rows, directory = self.release_evidence(rows=self.linux26_targets())
+        result = self.verdict(rows, directory)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        row = next(row for row in rows if row["os"] == "ubuntu-26.04")
+        folder = directory / f"browser-release-{row['id']}-2"
+        for name in ("runtime", "result"):
+            path = folder / f"{name}.json"
+            original = json.loads(path.read_text())
+            for key, value in (("runnerOsVersion", "24.04"), ("runnerOsId", "debian"),
+                               ("runnerArchitecture", "arm64"), ("runnerOsVersion", None)):
+                path.write_text(json.dumps(original | {key: value}))
+                self.assertNotEqual(self.verdict(rows, directory).returncode, 0)
+            path.write_text(json.dumps(original))
+
 
     def verdict(self, rows, directory, channel="rc", **env):
         return self.execute("browser-verdict", "Verify the exact release target set and evidence identity",
@@ -426,6 +483,35 @@ class BrowserCompatibilityTests(unittest.TestCase):
                 )
                 self.assertEqual(result.returncode == 0, accepted, result.stderr)
 
+    def test_linux26_lock_admission_checks_actual_distribution_and_architecture(self):
+        self.make_lock()
+        body = script("browser", "Validate the isolated lock and actual runner platform")
+        for platform, architecture, release, accepted in (
+            ("linux", "x64", 'ID=ubuntu\nVERSION_ID="26.04"\n', True),
+            ("linux", "x64", 'ID="ubuntu"\nVERSION_ID=26.04\n', True),
+            ("linux", "arm64", 'ID=ubuntu\nVERSION_ID="26.04"\n', False),
+            ("linux", "x64", 'ID=ubuntu\nVERSION_ID="24.04"\n', False),
+            ("linux", "x64", 'ID=debian\nVERSION_ID="26.04"\n', False),
+            ("darwin", "x64", 'ID=ubuntu\nVERSION_ID="26.04"\n', False),
+        ):
+            with self.subTest(platform=platform, architecture=architecture, release=release):
+                prelude = (
+                    "Object.defineProperty(process, 'platform', {value: " + json.dumps(platform) + "});"
+                    "Object.defineProperty(process, 'arch', {value: " + json.dumps(architecture) + "});"
+                    "const testFs = require('node:fs'); const originalRead = testFs.readFileSync;"
+                    "testFs.readFileSync = (file, ...args) => file === '/etc/os-release' ? "
+                    + json.dumps(release) + " : originalRead(file, ...args);"
+                )
+                result = subprocess.run(
+                    ["node", "-e", prelude + body], cwd=self.root,
+                    env=self.env | {"CI_BROWSER_TARGET": json.dumps(TARGET | {"os": "ubuntu-26.04"})},
+                    capture_output=True, text=True, check=False,
+                )
+                self.assertEqual(result.returncode == 0, accepted, result.stderr)
+                if accepted:
+                    receipt = json.loads((self.root / ".compatibility" / TARGET["id"] / "runner-platform.json").read_text())
+                    self.assertEqual(receipt, {"runnerArchitecture": "x64", "runnerOsId": "ubuntu", "runnerOsVersion": "26.04"})
+
     def test_generator_inventory_keeps_three_real_generations_and_five_required_rows(self):
         spec = importlib.util.spec_from_file_location("browser_generator", ROOT / "scripts/prepare_browser_compatibility.py")
         generator = importlib.util.module_from_spec(spec)
@@ -474,6 +560,37 @@ class BrowserCompatibilityTests(unittest.TestCase):
             self.assertEqual(result.returncode == 0, actual == "156.0.8078.4", result.stderr)
             self.assertEqual((self.root / "closed").read_text(), "yes")
             (self.root / "closed").unlink()
+
+    def test_linux26_runtime_receipt_carries_only_qualified_platform_identity(self):
+        module = self.root / "node_modules/playwright"
+        core = self.root / "node_modules/playwright-core"
+        module.mkdir(parents=True)
+        core.mkdir(parents=True)
+        (module / "package.json").write_text(json.dumps({"version": "1.64.0", "main": "index.js"}))
+        (core / "package.json").write_text(json.dumps({"version": "1.64.0"}))
+        (module / "index.js").write_text(
+            "exports.chromium = {launch: async () => ({version: () => '156.0.8078.4',"
+            "close: async () => require('node:fs').writeFileSync('closed', 'yes')})};"
+        )
+        for version in ("26.04", "24.04"):
+            platform = {"runnerArchitecture": "x64", "runnerOsId": "ubuntu", "runnerOsVersion": version}
+            (self.root / "runner-platform.json").write_text(json.dumps(platform))
+            (self.root / "runtime.json").unlink(missing_ok=True)
+            result = self.execute(
+                "browser", "Check installed runtime identity", CI_PLAYWRIGHT_MODULE=str(module),
+                CI_PLAYWRIGHT_VERSION="1.64.0", CI_BROWSER_ENGINE="chromium", CI_BROWSER_CHANNEL="",
+                CI_BROWSER_EXPECTED_VERSION="156.0.8078.4", CI_BROWSER_TARGET_ID="fixture",
+                CI_BROWSER_TARGET=json.dumps(TARGET | {"os": "ubuntu-26.04"}),
+                CI_BROWSER_DIAGNOSTICS=str(self.root), GITHUB_SHA="a" * 40,
+                GITHUB_RUN_ID="123", GITHUB_RUN_ATTEMPT="2",
+            )
+            self.assertEqual(result.returncode == 0, version == "26.04", result.stderr)
+            self.assertEqual((self.root / "closed").read_text(), "yes")
+            if version == "26.04":
+                runtime = json.loads((self.root / "runtime.json").read_text())
+                self.assertTrue(all(runtime[key] == value for key, value in platform.items()))
+            else:
+                self.assertFalse((self.root / "runtime.json").exists())
 
     def test_evidence_binds_actual_browser_source_attempt_and_scenarios(self):
         runtime = {"schema": 1, "target": TARGET["id"], "engine": "chromium", "channel": "",
