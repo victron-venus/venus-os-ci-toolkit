@@ -146,8 +146,10 @@ def configured_workflow_pins(directory):
     pins = {}
     for section, workflow in (("coverage", "coverage-upload.yml"), ("fuzzing", "fuzz.yml")):
         configuration = policy.get(section)
-        if configuration:
-            reference = configuration["toolkit_ref"]
+        if configuration is not None:
+            if not isinstance(configuration, dict):
+                raise ValueError("Toolkit workflow configuration must be a mapping")
+            reference = configuration.get("toolkit_ref")
             if not isinstance(reference, str) or not re.fullmatch(COMMIT_SHA_PATTERN, reference):
                 raise ValueError("Toolkit workflow pins must be full commit SHAs")
             pins[f"victron-venus/venus-os-ci-toolkit/.github/workflows/{workflow}"] = reference

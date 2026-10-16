@@ -1,5 +1,36 @@
 # Changelog
 
+## [0.1.2] - 2026-10-14
+
+- Require positive engine execution counts and retained instrumentation evidence
+  for Python seed replay and RC campaigns; reject setup-only false passes.
+- Validate required seed corpora and Go module files before campaigns, and retain
+  bounded generated Go corpus snapshots with measured counts and sizes.
+- Bound source Go regression retention across packages, excluding links, saved
+  diagnostics and vendored dependencies, and reserve the internal preflight name.
+- Reject explicitly malformed optional toolkit workflow configurations instead
+  of silently treating falsey values as absent.
+- Add selective, bounded Python fuzz preflight to ordinary CI while keeping
+  time-budgeted mutation campaigns exclusive to public-repository RCs.
+- Enforce matching immutable fuzz workflow references and preserve generated
+  workflow and source-package contracts.
+
+### Upgrade
+
+Download the source archive and follow `docs/self-release.md` to install the
+shipped locked dependencies and validate the extracted source. Consumer workflow
+pins remain independent of this source-package version. Consumers adopting this
+runtime must keep their policy, wrapper and runtime references consistent and
+include valid seed corpora; existing invalid configurations now fail early.
+
+### Security
+
+Schema 2 campaign reports bind actual executions, coverage and retained preflight
+proof to the candidate source. Required seed corpora reject links and truncation,
+and Go module selection remains confined to the repository. This closes evidence
+validation gaps without weakening ordinary CI or claiming untested deployment
+and device compatibility.
+
 ## [0.1.1] - 2026-10-13
 
 - Add versioned source candidates with deterministic archives, an explicit source
