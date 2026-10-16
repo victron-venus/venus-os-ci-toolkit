@@ -305,8 +305,14 @@ jobs:
         run: bash -e -o pipefail -c "$PREPARE_COMMAND"
       - name: Install exact locked browser toolchain
         run: npm ci --prefix "$CI_BROWSER_TOOLCHAIN" --ignore-scripts --omit=optional --no-audit --no-fund
-      - name: Install selected browser
+      - name: Install selected browser and hosted system dependencies
+        if: runner.environment == 'github-hosted'
         run: node "$CI_PLAYWRIGHT_MODULE/cli.js" install --with-deps "${CI_BROWSER_CHANNEL:-$CI_BROWSER_ENGINE}"
+      # Branded installers may run a system package manager even without --with-deps.
+      # Reserve images must provision those channels before accepting jobs.
+      - name: Install bundled browser on the prepared reserve
+        if: ${{ runner.environment == 'self-hosted' && matrix.channel == '' }}
+        run: node "$CI_PLAYWRIGHT_MODULE/cli.js" install "${CI_BROWSER_CHANNEL:-$CI_BROWSER_ENGINE}"
       - name: Check installed runtime identity
         id: identity
         run: |

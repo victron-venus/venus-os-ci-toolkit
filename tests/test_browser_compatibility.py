@@ -120,6 +120,16 @@ class BrowserCompatibilityTests(unittest.TestCase):
         (self.root / "plain").write_text("not a directory")
         self.assertNotEqual(verify("plain/dist").returncode, 0)
 
+    def test_prepared_reserve_does_not_install_system_packages(self):
+        steps = WORKFLOW["jobs"]["browser"]["steps"]
+        installers = [step for step in steps if "cli.js\" install" in step.get("run", "")]
+        self.assertEqual(len(installers), 2)
+        hosted = next(step for step in installers if "--with-deps" in step["run"])
+        reserve = next(step for step in installers if "--with-deps" not in step["run"])
+        self.assertEqual(hosted["if"], "runner.environment == 'github-hosted'")
+        self.assertEqual(reserve["if"], "${{ runner.environment == 'self-hosted' && matrix.channel == '' }}")
+        self.assertNotIn("sudo", reserve["run"])
+
     def test_matrix_file_cannot_escape_checkout(self):
         matrix = self.root / "targets.json"
         matrix.write_text(json.dumps([TARGET]))

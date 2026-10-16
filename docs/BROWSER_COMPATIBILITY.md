@@ -170,7 +170,11 @@ uses that same reserve policy. Forks and untrusted events stay hosted. Fixed
 Ubuntu, macOS and Windows targets retain their explicit hosted systems; they do
 not collapse onto a Linux worker during an outage. Dedicated non-Linux reserves
 need their own admission evidence before routing can be extended. No switch or
-runner registration is changed by this feature.
+runner registration is changed by this feature. Reserve images must already
+contain system libraries and any requested branded Chrome/Edge channels. Jobs
+only download bundled engines on the reserve; they do not run branded browser
+installers or system package installation there. An unavailable preinstalled
+channel fails its runtime probe rather than silently changing browser coverage.
 
 References: [Playwright browser and branded-channel differences](https://playwright.dev/docs/browsers),
 [CI platform setup](https://playwright.dev/docs/ci), and
