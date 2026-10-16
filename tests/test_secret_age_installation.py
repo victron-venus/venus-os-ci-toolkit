@@ -15,7 +15,7 @@ from unittest.mock import patch
 
 
 SCRIPT = Path(__file__).resolve().parents[1] / 'scripts/install-age-for-tests.py'
-SPEC = importlib.util.spec_from_file_location('install_age_for_tests', SCRIPT)
+SPEC = importlib.util.spec_from_file_location('scripts.install_age_for_tests', SCRIPT)
 installer = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(installer)
 
@@ -38,7 +38,7 @@ class AgeInstallationTests(unittest.TestCase):
         self.root = Path(temporary.name).resolve()
         self.root.chmod(0o700)
         self.enterContext(patch.dict(os.environ, {'RUNNER_TEMP': str(self.root)}))
-        self.network = self.enterContext(patch.object(installer.urllib.request, 'urlopen'))
+        self.network = self.enterContext(patch('urllib.request.urlopen'))
 
     def test_only_two_fixed_binaries_are_written_inside_base(self):
         archive = archive_bytes()

@@ -50,3 +50,21 @@ Each toolkit revision is identified by its Git commit. Consumers pin reviewed
 immutable commits and explicitly regenerate; updating this repository does not
 automatically update their installed copy. Follow each consumer's build and
 device acceptance procedure before publishing an application release.
+
+## Review, licensing and coding conventions
+
+Contributions must be compatible with the [MIT license](LICENSE); retain
+third-party notices and identify copied or vendored source. Python code follows
+PEP 8 naming and readable explicit control flow; use the checked-in Ruff rules.
+Go code follows gofmt and go vet; shell entry points use explicit error handling
+and quoted arguments; workflow YAML uses immutable third-party action pins and
+least-privilege permissions. Keep inline JavaScript syntax checked. Terraform
+examples follow `terraform fmt` and the checked-in provider lockfiles. Required
+checks enforce the relevant configured tools; this is not a claim that every
+possible style rule is enabled for every language.
+
+The maintainer reviews scope, compatibility and reported evidence under
+[GOVERNANCE.md](GOVERNANCE.md). All participants follow
+[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md). Major new functions require tests; every
+bug fix requires a focused regression when technically feasible and an explicit
+explanation otherwise. Document test commands/results in the pull request.
