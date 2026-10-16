@@ -9,6 +9,13 @@ Backend-only services and embedded firmware need their own runtime/platform test
 not empty browser jobs. Keep native application, installer and hardware checks in
 their current adapters.
 
+![PR and beta use five targets; RC requires all 35; stable either copies accepted RC bytes or qualifies a fresh build](assets/browser-release-process.svg)
+
+The diagrams describe the configured qualification policy. They do not certify
+that a consumer has passed a complete 35-target run. During this rollout, full
+RC qualification is still pending; assess each candidate from its own completed
+workflow and evidence. A smaller local or PR run is not a substitute.
+
 ## Prepare a consumer
 
 From a reviewed toolkit checkout, prepare the separate browser toolchain locks:
@@ -40,6 +47,12 @@ binary installation follows Playwright's pinned revision catalog. Branded Stable
 and Beta channels follow the vendor's installed current release and record its
 actual version; they are not advertised as historically pinned Chrome/Edge builds.
 
+![Three operating systems times three engines times three pinned generations, plus eight branded-channel targets; five current targets form the fast subset](assets/browser-compatibility-topology.svg)
+
+Each cell covers three browser generations. Amber markers identify the current
+generation used in the five-target subset. Chrome and Edge channels add eight
+targets outside that bundled-engine grid.
+
 Add these inputs to the existing TypeScript reusable call, pinned to the reviewed
 toolkit commit as usual:
 
@@ -61,11 +74,15 @@ are relative to `working-directory`. A monorepo should prepare the lock director
 inside its selected application directory and keep the inventory accessible from
 the checkout root.
 
-The caller owns when the extended tier is required. Pass `browser-extended: true`
-from the existing RC qualification path as well as the scheduled/manual path.
-If the release adapter reuses ordinary CI without passing a channel, explicitly
-thread an `extended` boolean through that existing adapter. Merely having an
-extended inventory does not make a release execute it. Keep the reusable call in
+The caller owns scheduled/manual source audits: leave `browser-release-channel`
+empty and select the extended tier explicitly. A release caller must pass its
+actual `browser-release-channel`: `nightly` and `beta` require exactly the five
+required targets, while `rc` and a freshly built `stable` require all 35. Set
+`browser-extended` to true only for `rc`/`stable`; conflicting settings fail before
+jobs start. A stable promotion reuses an accepted RC's unchanged artifact and
+qualification; it must not substitute a smaller beta run. If ordinary CI is
+also the release validator, thread the release channel through that existing
+adapter. Merely having an extended inventory does not execute it. Keep the call in
 the required Quality gate so a failed selected target blocks that gate. Scheduled
 failures must be fixed before promoting a candidate; no target uses
 `continue-on-error` and an existing red check is not waived by a smaller rerun.
@@ -83,7 +100,39 @@ candidate qualification call the workflow within the same run, give the latter
 a distinct `browser-evidence-prefix` such as `browser-release` to prevent their
 artifact names from colliding. The inventory and assertions can remain identical.
 
+For a compiled release candidate, the caller therefore supplies:
+
+```yaml
+with:
+  browser-release-channel: ${{ inputs.channel }}
+  browser-extended: ${{ inputs.channel == 'rc' || inputs.channel == 'stable' }}
+  browser-evidence-prefix: browser-release
+  browser-artifact-id: ${{ needs.build.outputs.browser-artifact-id }}
+  browser-artifact-path: browser-candidate
+```
+
+The release verdict requires successful planning and every selected matrix job.
+It downloads the current attempt's evidence and checks the exact target set,
+each admitted target definition, actual browser version, successful named
+scenarios, source SHA, run ID, run attempt, channel and candidate artifact ID.
+The release plan also checks the full three-OS, three-engine, three-generation
+cross-product, consistent distinct browser pins, the five current required
+targets, and all eight current branded-channel targets. Keeping only the target
+count while removing a platform or engine is rejected.
+Missing, duplicate, extra or stale evidence fails qualification. Its aggregate
+receipt records the verified targets and each result's SHA-256 digest. Source
+audits with an empty release channel do not claim release qualification.
+Re-run the complete qualification workflow after a failure: results from an older
+run attempt are deliberately rejected, even if an individual old target passed.
+
 ## Application acceptance contract
+
+![The admitted candidate and target plan are compared with every runtime and application result before an aggregate release verdict is accepted](assets/browser-evidence-contract.svg)
+
+The outcome is a verifiable statement about the tested candidate: every expected
+target ran the application's actual scenarios, and every result belongs to the
+same source, release channel, artifact and workflow attempt. Traces help explain
+failures; the verdict cannot replace application assertions.
 
 The consumer must adapt real user-flow tests to the provided toolchain rather than
 loading the application's original Playwright in every purported version target:
@@ -120,7 +169,8 @@ Keep existing assertions and performance thresholds. Tests may add headed/Xvfb
 launching where the application requires it; the default identity probe is
 headless and does not itself count as a passing application scenario.
 
-Evidence must match the actual runtime probe, source SHA, run ID and run attempt.
+Evidence must match the actual runtime probe, source SHA, run ID, run attempt,
+release channel and candidate artifact ID (empty for checkout source tests).
 Missing evidence, zero tests, duplicated scenario names, stale attempts, mismatched
 browser versions and failed tests fail the job. The adapter clears old result
 evidence before invoking the application command. Write screenshots, traces and
@@ -143,6 +193,9 @@ rollout; this list is not evidence that every consumer already runs all targets.
 - `inverter-desktop`: qualify its Vue interface with a controlled Tauri IPC
   fixture; retain separate native Tauri, Rust and installer checks. Browser
   emulation cannot replace those platform checks.
+- `inverter-web-vitrine`: exercise its committed status page against synthetic
+  same-origin health/snapshot responses, including polling, failure recovery,
+  out-of-order replies and mobile layout. This remains validation-only.
 - `ottplay-core`: adapt its existing CJS browser scenarios to the selected
   isolated module and engine, retaining their real playback and UI assertions.
 - `ottplay-foss`: retain its specialized Playwright Test and media fixtures.

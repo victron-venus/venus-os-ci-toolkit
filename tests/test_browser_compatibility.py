@@ -40,6 +40,7 @@ class BrowserCompatibilityTests(unittest.TestCase):
             **os.environ, "GITHUB_OUTPUT": str(self.root / "output"),
             "GITHUB_ENV": str(self.root / "env"), "RUNNER_TEMP": str(self.root),
             "BROWSER_MATRIX_FILE": "", "BROWSER_EXTENDED": "false",
+            "BROWSER_RELEASE_CHANNEL": "",
             "BROWSER_EVIDENCE_PREFIX": "browser-compatibility",
             "BROWSER_COMMAND": "node scripts/application-acceptance.cjs",
         }
@@ -83,6 +84,153 @@ class BrowserCompatibilityTests(unittest.TestCase):
         self.assertNotEqual(self.plan([TARGET], BROWSER_COMMAND=" ").returncode, 0)
         self.assertNotEqual(self.plan([TARGET | {"tier": "extended"}]).returncode, 0)
         self.assertFalse((self.root / "output").exists())
+
+    def release_targets(self):
+        spec = importlib.util.spec_from_file_location("release_browser_generator", ROOT / "scripts/prepare_browser_compatibility.py")
+        generator = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(generator)
+        return json.loads(generator.render()[".github/browser-compatibility.json"])
+
+    def test_release_channels_cannot_downgrade_rc_or_expand_beta(self):
+        rows = self.release_targets()
+        for channel in ("nightly", "beta", "rc", "stable"):
+            extended = channel in ("rc", "stable")
+            with self.subTest(channel=channel):
+                result = self.plan(rows, BROWSER_RELEASE_CHANNEL=channel,
+                                   BROWSER_EXTENDED=str(extended).lower())
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertNotEqual(self.plan(rows, BROWSER_RELEASE_CHANNEL=channel,
+                                              BROWSER_EXTENDED=str(not extended).lower()).returncode, 0)
+        self.assertNotEqual(self.plan(rows, BROWSER_RELEASE_CHANNEL="release-candidate").returncode, 0)
+        self.assertNotEqual(self.plan(rows[:-1], BROWSER_RELEASE_CHANNEL="beta").returncode, 0)
+        duplicate_identity = copy.deepcopy(rows)
+        duplicate_identity[-1] = duplicate_identity[-2] | {"id": rows[-1]["id"]}
+        self.assertNotEqual(self.plan(duplicate_identity, BROWSER_RELEASE_CHANNEL="rc",
+                                     BROWSER_EXTENDED="true").returncode, 0)
+
+    def release_evidence(self, channel="rc"):
+        rows = self.release_targets()
+        if channel in ("nightly", "beta"):
+            rows = [row for row in rows if row["tier"] == "required"]
+        directory = self.root / "evidence"
+        directory.mkdir(exist_ok=True)
+        binding = {"schema": 1, "sourceSha": "a" * 40, "runId": "123",
+                   "runAttempt": "2", "releaseChannel": channel, "candidateArtifactId": "456"}
+        for row in rows:
+            folder = directory / f"browser-release-{row['id']}-2"
+            folder.mkdir()
+            platform = "linux" if row["os"].startswith("ubuntu-") else "win32" if row["os"].startswith("windows-") else "darwin"
+            runtime = binding | {"target": row["id"], "engine": row["engine"],
+                                 "channel": row.get("channel", ""), "playwrightVersion": row["playwright"],
+                                 "platform": platform, "browserVersion": "156.0.1.2" if row.get("channel") else row["browser_version"]}
+            row.setdefault("channel", "")
+            for name, data in (("target", row), ("runtime", runtime),
+                               ("result", runtime | {"testsPassed": 2, "testsFailed": 0, "scenarios": ["sign in", "refresh state"]})):
+                (folder / f"{name}.json").write_text(json.dumps(data))
+        return rows, directory
+
+    def test_release_inventory_preserves_full_topology_not_only_target_counts(self):
+        original = self.release_targets()
+        changes = [
+            (0, {"os": "ubuntu-24.04"}),
+            (0, {"playwright": "1.65.0"}),
+            (0, {"browser_version": "155.0.0.1"}),
+            (next(index for index, row in enumerate(original) if row.get("channel") == "chrome"),
+             {"playwright": "1.63.0"}),
+        ]
+        for index, changed in changes:
+            rows = copy.deepcopy(original)
+            rows[index].update(changed)
+            with self.subTest(changed=changed):
+                self.assertNotEqual(self.plan(rows, BROWSER_RELEASE_CHANNEL="rc",
+                                             BROWSER_EXTENDED="true").returncode, 0)
+        rows = copy.deepcopy(original)
+        required = next(row for row in rows if row["tier"] == "required")
+        extended = next(row for row in rows if row["tier"] == "extended")
+        required["tier"], extended["tier"] = "extended", "required"
+        self.assertNotEqual(self.plan(rows, BROWSER_RELEASE_CHANNEL="rc",
+                                     BROWSER_EXTENDED="true").returncode, 0)
+        rows = copy.deepcopy(original)
+        for row in rows:
+            if row["engine"] == "firefox":
+                row["engine"], row["channel"], row["browser_version"] = "chromium", "chrome-beta", "installed"
+        self.assertNotEqual(self.plan(rows, BROWSER_RELEASE_CHANNEL="rc",
+                                     BROWSER_EXTENDED="true").returncode, 0)
+
+    def verdict(self, rows, directory, channel="rc", **env):
+        return self.execute("browser-verdict", "Verify the exact release target set and evidence identity",
+                            BROWSER_MATRIX=json.dumps({"include": rows}),
+                            BROWSER_RELEASE_CHANNEL=channel, BROWSER_ARTIFACT_ID="456",
+                            BROWSER_EVIDENCE_PREFIX="browser-release", BROWSER_EVIDENCE_DIRECTORY=str(directory),
+                            BROWSER_VERDICT_FILE=str(self.root / "verdict.json"), GITHUB_SHA="a" * 40,
+                            GITHUB_RUN_ID="123", GITHUB_RUN_ATTEMPT="2", **env)
+
+    def test_release_verdict_binds_every_real_result_to_the_exact_plan(self):
+        rows, directory = self.release_evidence()
+        result = self.verdict(rows, directory)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        receipt = json.loads((self.root / "verdict.json").read_text())
+        self.assertEqual(len(receipt["targets"]), 35)
+        self.assertEqual(receipt["candidateArtifactId"], "456")
+        self.assertTrue(all(len(target["evidenceSha256"]) == 64 for target in receipt["targets"]))
+        self.assertNotEqual(self.verdict(rows[:-1], directory).returncode, 0)
+        self.assertNotEqual(self.verdict(rows[:-1] + [rows[0]], directory).returncode, 0)
+        self.assertNotEqual(self.verdict(rows, directory, channel="beta").returncode, 0)
+        self.assertNotEqual(self.verdict(rows, directory, channel="invalid").returncode, 0)
+
+    def test_beta_verdict_accepts_only_the_five_required_targets(self):
+        rows, directory = self.release_evidence("beta")
+        result = self.verdict(rows, directory, channel="beta")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotEqual(self.verdict(rows, directory, channel="rc").returncode, 0)
+        rows[0]["tier"] = "extended"
+        self.assertNotEqual(self.verdict(rows, directory, channel="beta").returncode, 0)
+
+    def test_release_verdict_rejects_missing_or_unexpected_artifacts(self):
+        rows, directory = self.release_evidence("beta")
+        folder = next(directory.iterdir())
+        missing = directory / "unrelated-extra"
+        folder.rename(missing)
+        self.assertNotEqual(self.verdict(rows, directory, channel="beta").returncode, 0)
+        missing.rename(folder)
+        (directory / "duplicate-evidence").mkdir()
+        self.assertNotEqual(self.verdict(rows, directory, channel="beta").returncode, 0)
+        (directory / "duplicate-evidence").rmdir()
+        (folder / "runtime.json").unlink()
+        self.assertNotEqual(self.verdict(rows, directory, channel="beta").returncode, 0)
+
+    def test_release_verdict_rejects_stale_mismatched_and_failed_receipts(self):
+        rows, directory = self.release_evidence("beta")
+        folder = next(directory.iterdir())
+        for name in ("runtime", "result"):
+            file = folder / f"{name}.json"
+            original = json.loads(file.read_text())
+            for changed in ({"runAttempt": "1"}, {"runId": "122"}, {"sourceSha": "b" * 40},
+                            {"releaseChannel": "rc"}, {"candidateArtifactId": "455"},
+                            {"target": "other"}, {"engine": "other"}, {"platform": "other"},
+                            {"playwrightVersion": "1.0.0"}, {"browserVersion": "155.0.0.1"}):
+                with self.subTest(name=name, changed=changed):
+                    file.write_text(json.dumps(original | changed))
+                    self.assertNotEqual(self.verdict(rows, directory, channel="beta").returncode, 0)
+            file.write_text(json.dumps(original))
+        file = folder / "result.json"
+        original = json.loads(file.read_text())
+        for changed in ({"testsPassed": 0}, {"testsFailed": 1}, {"scenarios": ["same", "same"]}):
+            file.write_text(json.dumps(original | changed))
+            self.assertNotEqual(self.verdict(rows, directory, channel="beta").returncode, 0)
+
+    def test_verdict_is_required_for_release_and_does_not_accept_skipped_jobs(self):
+        job = WORKFLOW["jobs"]["browser-verdict"]
+        self.assertEqual(job["needs"], ["browser-plan", "browser"])
+        self.assertEqual(job["if"], "${{ !cancelled() && inputs.browser-release-channel != '' }}")
+        require = next(step for step in job["steps"] if step.get("name") == "Require all browser jobs to succeed")
+        for result in ("success", "skipped", "failure", "cancelled", ""):
+            status = subprocess.run(["bash", "-c", require["run"]], env=os.environ | {
+                "PLAN_RESULT": "success", "BROWSER_RESULT": result}, check=False)
+            self.assertEqual(status.returncode == 0, result == "success")
+        download = next(step for step in job["steps"] if step.get("uses", "").startswith("actions/download-artifact@"))
+        self.assertNotIn("run-id", download["with"])
+        self.assertEqual(download["with"]["merge-multiple"], "false")
 
     def test_branded_channel_records_installed_version_without_claiming_a_pin(self):
         target = TARGET | {"channel": "msedge", "browser_version": "installed"}

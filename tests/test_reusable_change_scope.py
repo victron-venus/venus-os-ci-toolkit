@@ -87,6 +87,15 @@ class ReusableScopeContracts(unittest.TestCase):
                 for key, job in data["jobs"].items():
                     if key == "change-scope":
                         continue
+                    if name == "typescript-ci.yml" and key == "browser-verdict":
+                        # Release evidence must fail when planning/targets were
+                        # skipped, including an accidental docs-only release.
+                        self.assertEqual(job["needs"], ["browser-plan", "browser"])
+                        self.assertEqual(job["if"], "${{ !cancelled() && inputs.browser-release-channel != '' }}")
+                        admission = next(step for step in job["steps"]
+                                         if step.get("name") == "Require all browser jobs to succeed")
+                        self.assertEqual(admission["run"], 'test "$PLAN_RESULT" = success && test "$BROWSER_RESULT" = success')
+                        continue
                     needs = job["needs"]
                     self.assertIn(
                         "change-scope", [needs] if isinstance(needs, str) else needs
