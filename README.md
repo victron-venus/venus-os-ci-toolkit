@@ -20,6 +20,10 @@ targets and locked build steps; private repositories, PRs, beta, nightly and
 stable runs do not launch fuzz campaigns. Reports bind each result to its source
 and run attempt and become part of the candidate's release inventory.
 
+![Public RC fuzzing process and repair loop](docs/images/rc-fuzzing/process.svg)
+
+Explore the [illustrated release process and verified rollout results](docs/rc-fuzzing-results.md), with SVG diagrams and links to the accepted RC reports.
+
 ## Operator inventories
 
 For encrypted operator inputs and recovery, see the [secret control plane](docs/SECRETS.md).

@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="500" viewBox="0 0 1200 500" role="img" aria-labelledby="title desc">
+  <title id="title">What the evidence proves</title>
+  <desc id="desc">Source identity, executed targets, artifact verification and application behavior jointly inform release readiness. No single green check substitutes for all four.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#475569" />
+    </marker>
+  </defs>
+  <g font-family="DejaVu Sans, Arial, sans-serif">
+    <rect x="0" y="0" width="1200" height="500" rx="0" fill="#f8fafc" stroke="none" />
+    <text x="40" y="55" font-size="29" fill="#10243a" font-weight="700" text-anchor="start">What the evidence proves</text>
+    <text x="40" y="88" font-size="17" fill="#475569" font-weight="400" text-anchor="start">Different evidence answers different questions. Keep each claim within its tested scope.</text>
+    <rect x="40" y="118" width="740" height="64" rx="16" fill="#ffffff" stroke="#cbd5e1" />
+    <rect x="54" y="130" width="8" height="40" rx="4" fill="#e0f2fe" stroke="none" />
+    <text x="80" y="144" font-size="19" fill="#0369a1" font-weight="700" text-anchor="start">Source identity</text>
+    <text x="80" y="167" font-size="15" fill="#475569" font-weight="400" text-anchor="start">Repository · commit · RC tag · run attempt</text>
+    <path d="M 790 150 L 852 186" fill="none" stroke="#475569" stroke-width="2" marker-end="url(#arrow)" />
+    <rect x="40" y="196" width="740" height="64" rx="16" fill="#ffffff" stroke="#cbd5e1" />
+    <rect x="54" y="208" width="8" height="40" rx="4" fill="#ccfbf1" stroke="none" />
+    <text x="80" y="222" font-size="19" fill="#0f766e" font-weight="700" text-anchor="start">Executed tests</text>
+    <text x="80" y="245" font-size="15" fill="#475569" font-weight="400" text-anchor="start">Targets · positive counters · budgets · seeds</text>
+    <path d="M 790 228 L 852 240" fill="none" stroke="#475569" stroke-width="2" marker-end="url(#arrow)" />
+    <rect x="40" y="274" width="740" height="64" rx="16" fill="#ffffff" stroke="#cbd5e1" />
+    <rect x="54" y="286" width="8" height="40" rx="4" fill="#ede9fe" stroke="none" />
+    <text x="80" y="300" font-size="19" fill="#6d28d9" font-weight="700" text-anchor="start">Published files</text>
+    <text x="80" y="323" font-size="15" fill="#475569" font-weight="400" text-anchor="start">Manifest · hashes · signatures when required</text>
+    <path d="M 790 306 L 852 294" fill="none" stroke="#475569" stroke-width="2" marker-end="url(#arrow)" />
+    <rect x="40" y="352" width="740" height="64" rx="16" fill="#ffffff" stroke="#cbd5e1" />
+    <rect x="54" y="364" width="8" height="40" rx="4" fill="#fef3c7" stroke="none" />
+    <text x="80" y="378" font-size="19" fill="#b45309" font-weight="700" text-anchor="start">Application behavior</text>
+    <text x="80" y="401" font-size="15" fill="#475569" font-weight="400" text-anchor="start">Exact package · declared platform · actual checks</text>
+    <path d="M 790 384 L 852 348" fill="none" stroke="#475569" stroke-width="2" marker-end="url(#arrow)" />
+    <rect x="866" y="157" width="294" height="219" rx="16" fill="#10243a" stroke="none" />
+    <text x="1013" y="199" font-size="24" fill="#ffffff" font-weight="700" text-anchor="middle">Release decision</text>
+    <text x="1013" y="242" font-size="19" fill="#ffffff" font-weight="500" text-anchor="middle">All required checks</text>
+    <text x="1013" y="273" font-size="19" fill="#ffffff" font-weight="500" text-anchor="middle">refer to the intended</text>
+    <text x="1013" y="304" font-size="19" fill="#ffffff" font-weight="500" text-anchor="middle">source and artifacts.</text>
+    <text x="40" y="462" font-size="17" fill="#475569" font-weight="600" text-anchor="start">Counts ≠ coverage. Browser mocks ≠ packaged runtime. Hosted CI ≠ physical-device certification.</text>
+  </g>
+</svg>

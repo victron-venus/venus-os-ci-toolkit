@@ -6,6 +6,8 @@ not run on pull requests, pushes, beta releases, scheduled nightlies or stable
 promotion. Existing unit tests and fixed regression cases keep their usual
 schedule.
 
+Explore the [illustrated release process and verified rollout results](rc-fuzzing-results.md), with SVG diagrams and links to the accepted RC reports.
+
 ## Adoption
 
 Add meaningful targets that call production parsing, validation or transformation
