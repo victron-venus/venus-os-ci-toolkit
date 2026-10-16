@@ -253,6 +253,30 @@ class GeneratedGateExecution(unittest.TestCase):
                     values[name]["result"] = conclusion
                     self.assert_rejected(values)
 
+    def test_aggregate_runs_for_unsuccessful_jobs_but_releases_cancelled_runs(self):
+        """A cancelled old run must not keep its aggregate queued ahead of new CI."""
+        for conclusion in ("success", "failure", "cancelled", "skipped"):
+            with self.subTest(conclusion=conclusion):
+                values = self.results(full=True)
+                values["check-0"]["result"] = conclusion
+                self.assertTrue(job_runs(self.jobs["gate"], values))
+                self.assertEqual(self.run_gate(values).returncode == 0, conclusion == "success")
+                self.assertFalse(job_runs(self.jobs["gate"], values, workflow_cancelled=True))
+
+    def test_private_aggregate_preserves_nightly_opt_in_and_cancellation(self):
+        """The cancellation guard composes with private scheduled-run opt-in."""
+        jobs = rendered(installer.quality(policy(visibility="private")))["jobs"]
+        values = self.results(full=True)
+        values["check-0"]["result"] = "failure"
+        for event, opted_in, expected in (("pull_request", "", True),
+                                          ("schedule", "", False),
+                                          ("schedule", "true", True)):
+            with self.subTest(event=event, opted_in=opted_in):
+                context = {"github": {"event_name": event},
+                           "vars": {"NIGHTLY_CHECKS_ENABLED": opted_in}}
+                self.assertEqual(job_runs(jobs["gate"], values, **context), expected)
+                self.assertFalse(job_runs(jobs["gate"], values, workflow_cancelled=True, **context))
+
     def test_missing_or_extra_job_cannot_turn_into_a_green_gate(self):
         """Reject an incomplete or unexpected validation job inventory."""
         for name in self.results():
