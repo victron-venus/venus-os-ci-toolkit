@@ -22,6 +22,10 @@ and run attempt and become part of the candidate's release inventory.
 
 ## Operator inventories
 
+For encrypted operator inputs and recovery, see the [secret control plane](docs/SECRETS.md).
+It separates public tooling from a local private catalog and explains OCI/HCP
+publication, credential rotation, independent backups, and recovery drills.
+
 See [public source and operator configuration](docs/OPERATOR_CONFIG.md) before
 updating a local fleet or private-runner operator installation. Public source
 contains public inventory and synthetic examples; reviewed operational metadata
@@ -29,7 +33,7 @@ lives outside the checkout. Preparing that configuration does not switch runners
 
 ## Runtime scope
 
-This toolkit runs in GitHub Actions; it is not a service installed on Venus OS.
+The CI workflows run in GitHub Actions; they are not a service installed on Venus OS.
 A green workflow on an x86 Linux runner does not establish compatibility with
 Cerbo GX ARMv7 or Raspberry Pi firmware. Consumers shipping native GX services
 should separately exercise BusyBox/POSIX installers, offline dependency failure,

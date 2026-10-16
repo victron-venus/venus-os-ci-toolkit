@@ -1,0 +1,16 @@
+{
+  "hcp_variables": {
+    "service_token": {
+      "key": "SERVICE_TOKEN",
+      "category": "env",
+      "revision": 1,
+      "workspace_id": "ws-0000000000000001"
+    },
+    "shared_token": {
+      "key": "SHARED_TOKEN",
+      "category": "env",
+      "revision": 1,
+      "variable_set_id": "varset-0000000000000001"
+    }
+  }
+}
