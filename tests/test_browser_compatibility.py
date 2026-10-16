@@ -193,6 +193,21 @@ class BrowserCompatibilityTests(unittest.TestCase):
         self.assertIn("must not repeat", result.stderr)
         self.assertFalse((self.root / "output").exists())
 
+        rows = self.release_targets()
+        mac = next(row for row in rows if row["os"] == "macos-15"
+                   and row["engine"] == "chromium" and row.get("channel") == "chrome")
+        windows_index = next(index for index, row in enumerate(rows)
+                             if row["os"] == "windows-2022" and row["engine"] == "chromium"
+                             and not row.get("channel") and row["playwright"] != mac["playwright"])
+        rows[windows_index] = mac | {
+            "id": "intel-distinct", "os": "macos-15-intel",
+            "playwright": rows[windows_index]["playwright"], "tier": rows[windows_index]["tier"],
+        }
+        result = self.plan(rows, BROWSER_RELEASE_CHANNEL="rc", BROWSER_EXTENDED="true")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("complete three-OS", result.stderr)
+        self.assertFalse((self.root / "output").exists())
+
     def verdict(self, rows, directory, channel="rc", **env):
         return self.execute("browser-verdict", "Verify the exact release target set and evidence identity",
                             BROWSER_MATRIX=json.dumps({"include": rows}),
