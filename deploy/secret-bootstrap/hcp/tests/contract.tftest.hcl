@@ -44,7 +44,7 @@ run "reject_both_destinations" {
 run "reject_missing_destination" {
   command = plan
   variables {
-    hcp_variables     = { one = { key = "TOKEN", category = "env", revision = 1 } }
+    hcp_variables          = { one = { key = "TOKEN", category = "env", revision = 1 } }
     hcp_secret_values_json = jsonencode({ one = "synthetic-only" })
   }
   expect_failures = [var.hcp_variables]
@@ -65,7 +65,7 @@ run "reject_duplicate_ownership" {
 run "reject_missing_value" {
   command = plan
   variables {
-    hcp_variables     = { one = { key = "TOKEN", category = "env", revision = 1, workspace_id = "ws-0000000000000001" } }
+    hcp_variables          = { one = { key = "TOKEN", category = "env", revision = 1, workspace_id = "ws-0000000000000001" } }
     hcp_secret_values_json = jsonencode({})
   }
   expect_failures = [var.hcp_secret_values_json]
@@ -82,7 +82,7 @@ run "reject_unmapped_value" {
 run "reject_fractional_revision" {
   command = plan
   variables {
-    hcp_variables     = { one = { key = "TOKEN", category = "env", revision = 1.5, workspace_id = "ws-0000000000000001" } }
+    hcp_variables          = { one = { key = "TOKEN", category = "env", revision = 1.5, workspace_id = "ws-0000000000000001" } }
     hcp_secret_values_json = jsonencode({ one = "synthetic-only" })
   }
   expect_failures = [var.hcp_variables]
@@ -91,7 +91,7 @@ run "reject_fractional_revision" {
 run "reject_environment_key_injection" {
   command = plan
   variables {
-    hcp_variables     = { one = { key = "TOKEN\nOTHER", category = "env", revision = 1, workspace_id = "ws-0000000000000001" } }
+    hcp_variables          = { one = { key = "TOKEN\nOTHER", category = "env", revision = 1, workspace_id = "ws-0000000000000001" } }
     hcp_secret_values_json = jsonencode({ one = "synthetic-only" })
   }
   expect_failures = [var.hcp_variables]
