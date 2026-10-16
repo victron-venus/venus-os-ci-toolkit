@@ -683,7 +683,7 @@ def release_contract_job(policy, directory):
     return job
 
 
-def quality(policy, directory=None):
+def quality(policy, directory=None, *, release_profile=False):
     """Compose callable validators and a gate that rejects every non-success result."""
     validators = policy.get("validation_workflows", [])
     if not validators:
@@ -715,8 +715,9 @@ def quality(policy, directory=None):
     jobs["gate"] = {
         "name": "CI gate",
         "needs": list(jobs),
-        # Still inspect failed/skipped dependencies, but release cancelled runs.
-        "if": "${{ !cancelled() }}",
+        # PR aggregates release cancelled runs; dedicated release profiles retain
+        # their existing unconditional, fail-closed validation contract.
+        "if": "${{ always() }}" if release_profile else "${{ !cancelled() }}",
         "runs-on": runner_labels(),
         "timeout-minutes": 5,
         "steps": [
@@ -780,7 +781,7 @@ def release_quality(policy, directory=None):
     beta = release_validation.channel_workflows(policy)
     if beta is None:
         raise ValueError("Release validation requires a channel policy")
-    workflow = quality(policy, directory)
+    workflow = quality(policy, directory, release_profile=True)
     workflow.pop("concurrency")
     workflow["name"] = "Release validation"
     workflow["on"] = {
