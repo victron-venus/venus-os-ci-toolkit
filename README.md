@@ -84,6 +84,12 @@ Private repositories run ordinary OSS checks locally. Unavailable GitHub-hosted 
 
 ## Validation
 
+[Browser compatibility](docs/BROWSER_COMPATIBILITY.md) extends the existing
+TypeScript workflow with opt-in application acceptance across three operating
+systems, pinned browser generations and Chrome/Edge channels. It keeps a compact
+required subset and an explicit extended tier, records actual runtime versions,
+and preserves native Safari and real-device checks as separate coverage.
+
 The reusable `python-ci.yml` accepts `use-uv-lock: true` to install the selected
 Python environment from `uv.lock` with `uv sync --locked --all-extras`. Missing
 or stale locks fail validation. Include enabled tools (`ruff`, `mypy`, `pytest`

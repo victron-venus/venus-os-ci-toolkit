@@ -43,7 +43,7 @@ ACTIVE_WORKFLOWS = {
 }
 
 
-def runner_labels(profile="ci", *, explicit_input=None, scalar=False):
+def runner_labels(profile="ci", *, explicit_input=None, scalar=False, browser_matrix=False):
     """Keep hosted defaults and legacy explicit inputs, with no implicit pool reuse."""
     variable = PROFILES[profile]
     trusted = {"ci": TRUSTED_EVENT, "automation": METADATA_EVENT, "release": DEFAULT_BRANCH_EVENT}[profile]
@@ -51,6 +51,12 @@ def runner_labels(profile="ci", *, explicit_input=None, scalar=False):
         "(vars.CI_RUNNER_MODE == 'self-hosted' || vars.CI_RUNNER_MODE == 'k3s') && "
         f"{trusted} && (vars.{variable} || '[]') || '[\"ubuntu-latest\"]'"
     )
+    if browser_matrix:
+        if profile != "ci" or explicit_input is not None:
+            raise ValueError("Browser matrices support only the CI profile")
+        managed = "matrix.os == 'ubuntu-latest' && " + managed.removesuffix(
+            " || '[\"ubuntu-latest\"]'"
+        ) + " || format('[\"{0}\"]', matrix.os)"
     if explicit_input is not None:
         if explicit_input not in {"runner", "runner-labels"}:
             raise ValueError("Unsupported explicit runner input")
@@ -164,9 +170,10 @@ def render_shared_workflow(filename, profile):
     changed = False
     explicit = "runner-labels" if filename in {"auto-merge.yml", "auto-approve-reusable.yml"} else None
     selected = runner_labels(profile, explicit_input=explicit)
-    for job in workflow["jobs"].values():
-        if "runs-on" in job and job["runs-on"] != selected:
-            job["runs-on"] = selected
+    for name, job in workflow["jobs"].items():
+        expected = runner_labels(browser_matrix=True) if filename == "typescript-ci.yml" and name == "browser" else selected
+        if "runs-on" in job and job["runs-on"] != expected:
+            job["runs-on"] = expected
             changed = True
     output = io.StringIO()
     if changed:
