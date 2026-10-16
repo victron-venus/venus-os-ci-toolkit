@@ -101,6 +101,15 @@ class ChannelValidationTests(unittest.TestCase):
         self.assertIn("scripts/release_validation.py", files)
         self.assertIn(".github/release-tests/test_release_validation.py", files)
         contracts.validate(self.root)
+        workflows = self.workflows()
+        self.assertEqual(
+            workflows["quality-gate.yml"]["jobs"]["gate"]["if"],
+            "${{ !cancelled() }}",
+        )
+        self.assertEqual(
+            workflows["release-quality-gate.yml"]["jobs"]["gate"]["if"],
+            "${{ always() }}",
+        )
         pipeline = installer.release(self.policy)["jobs"]
         self.assertEqual(
             pipeline["checks"]["with"],

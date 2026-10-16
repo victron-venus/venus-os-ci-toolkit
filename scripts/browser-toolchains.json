@@ -1,0 +1,92 @@
+{
+  "schema": 1,
+  "current_playwright": "1.64.0",
+  "playwright": {
+    "1.64.0": {
+      "metadata_source": "https://raw.githubusercontent.com/microsoft/playwright/v1.64.0/packages/playwright-core/browsers.json",
+      "browsers": {
+        "chromium": {
+          "version": "156.0.8078.4",
+          "revision": "1248"
+        },
+        "firefox": {
+          "version": "157.0",
+          "revision": "1555"
+        },
+        "webkit": {
+          "version": "27.2",
+          "revision": "2370"
+        }
+      },
+      "packages": {
+        "playwright": {
+          "integrity": "sha512-kVzTnYFYEyQ9RGzBjNCd2+yEqWmVbxl3AHPynv3qQ6JTjv4a+kwRcnqQwIpuP3NnrnIrE/Q6wWAIAvMfIE2/Yg=="
+        },
+        "playwright-core": {
+          "integrity": "sha512-T9r+MZkTECl2+oUcZ26YgZzTrYidTsIhYYkJix+6iDOymOb1FB2RLLSOxRGnZGv5DStt+aduIVbt+E8WygXYpg=="
+        }
+      }
+    },
+    "1.63.0": {
+      "metadata_source": "https://raw.githubusercontent.com/microsoft/playwright/v1.63.0/packages/playwright-core/browsers.json",
+      "browsers": {
+        "chromium": {
+          "version": "153.0.8010.12",
+          "revision": "1243"
+        },
+        "firefox": {
+          "version": "155.0",
+          "revision": "1543"
+        },
+        "webkit": {
+          "version": "26.6",
+          "revision": "2359"
+        }
+      },
+      "packages": {
+        "playwright": {
+          "integrity": "sha512-+7ziBLidS4NaNCdt57SUDT+wYmmd5fmiQejUic/kb+YsYSCPyOOE9sebzMjNmQrsnNpDJqd4WHvV/8lfKfUDUg=="
+        },
+        "playwright-core": {
+          "integrity": "sha512-rYCsBF/M5HjUch52bbtVONEFjv6Xu8sm8h72dNlR5bzIE1fvC/bxgspzkjSfU+MweEMmPM8KJebG6nnyxo5mCg=="
+        }
+      }
+    },
+    "1.62.1": {
+      "metadata_source": "https://raw.githubusercontent.com/microsoft/playwright/v1.62.1/packages/playwright-core/browsers.json",
+      "browsers": {
+        "chromium": {
+          "version": "151.0.7922.34",
+          "revision": "1234"
+        },
+        "firefox": {
+          "version": "153.0",
+          "revision": "1538"
+        },
+        "webkit": {
+          "version": "26.5",
+          "revision": "2336"
+        }
+      },
+      "packages": {
+        "playwright": {
+          "integrity": "sha512-0M+L3LAD8/nm554LOla9Ayx0j0tmFZ0FBcoQ7F1VuVHpM/XpiC8RcDzBQB8W5+hA8L22THxELzeF+2WcUzvcLg==",
+          "optionalDependencies": {
+            "fsevents": "2.3.2"
+          }
+        },
+        "fsevents": {
+          "version": "2.3.2",
+          "integrity": "sha512-xiqMQR4xAeHTuB9uWm+fFRcIOgKBMiOBP+eXiyT7jsgVCq1bkVygt00oASowB7EdtpOHaaPgKt812P9ab+DDKA==",
+          "optional": true,
+          "os": [
+            "darwin"
+          ]
+        },
+        "playwright-core": {
+          "integrity": "sha512-wPYSwEBJY9GHraISXqyqtx0na0LpO3XEX7jNDhntbex7tzUS7kLnZsOlFruFJB4Hi/rhDMjXGqHewDZ68nYZVw=="
+        }
+      }
+    }
+  }
+}

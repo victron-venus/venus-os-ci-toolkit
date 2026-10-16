@@ -12,11 +12,12 @@ const declarations = JSON.parse(execFileSync(python, ['-c', [
   'import sys,json',
   'sys.path.insert(0,"scripts")',
   'from runner_selection import runner_labels',
-  'print(json.dumps({"ci":runner_labels(),"automation":runner_labels("automation"),"release":runner_labels("release"),"legacy":runner_labels("automation",explicit_input="runner-labels"),"scope":runner_labels(explicit_input="runner",scalar=True)}))',
+  'print(json.dumps({"ci":runner_labels(),"browser":runner_labels(browser_matrix=True),"automation":runner_labels("automation"),"release":runner_labels("release"),"legacy":runner_labels("automation",explicit_input="runner-labels"),"scope":runner_labels(explicit_input="runner",scalar=True)}))',
 ].join(';')], { encoding: 'utf8', cwd: new URL('../../', import.meta.url) }));
 function evaluate(kind, variables = {}, event = 'push', options = {}) {
   const context = {
     vars: variables,
+    matrix: { os: options.os || 'ubuntu-latest' },
     inputs: { 'runner-labels': '["ubuntu-latest"]', runner: 'ubuntu-latest', ...options.inputs },
     github: {
       repository: 'owner/project', event_name: event, ref: options.ref || 'refs/heads/main',
@@ -27,7 +28,7 @@ function evaluate(kind, variables = {}, event = 'push', options = {}) {
     },
   };
   const expression = declarations[kind].slice(3, -2).trim();
-  const ast = new Parser(new Lexer(expression).lex().tokens, ['vars', 'inputs', 'github'], []).parse();
+  const ast = new Parser(new Lexer(expression).lex().tokens, ['vars', 'inputs', 'github', 'matrix'], []).parse();
   const result = new Evaluator(ast, JSON.parse(JSON.stringify(context), data.reviver)).evaluate();
   return JSON.parse(JSON.stringify(result, data.replacer));
 }
@@ -37,7 +38,7 @@ function equal(kind, variables, event, options, expectedResult) {
   checks++;
 }
 const vars = { CI_RUNNER_MODE: 'self-hosted', CI_RUNNER_LABELS: '["self-hosted","linux","x64","isolated-ci"]', CI_RUNNER_AUTOMATION_LABELS: '["isolated-automation"]', CI_RUNNER_RELEASE_LABELS: '["isolated-release"]' };
-for (const kind of ['ci', 'automation', 'release', 'legacy', 'scope']) {
+for (const kind of ['ci', 'browser', 'automation', 'release', 'legacy', 'scope']) {
   for (const mode of ['', 'github', 'typo']) equal(kind, { ...vars, CI_RUNNER_MODE: mode }, 'push', {}, ['ubuntu-latest']);
   equal(kind, {}, 'push', {}, ['ubuntu-latest']);
   for (const event of ['pull_request', 'pull_request_target', 'pull_request_review']) equal(kind, vars, event, { fork: true }, ['ubuntu-latest']);
@@ -58,5 +59,13 @@ equal('legacy', vars, 'pull_request_target', { fork: true, inputs: { 'runner-lab
 equal('scope', {}, 'workflow_dispatch', { private: true, inputs: { runner: 'existing-private' } }, 'existing-private');
 equal('scope', vars, 'pull_request', { fork: true, inputs: { runner: 'forbidden' } }, ['ubuntu-latest']);
 equal('ci', { CI_RUNNER_MODE: 'self-hosted' }, 'push', {}, []); // invalid runs-on: fails admission, never guesses a pool
+equal('browser', vars, 'push', {}, ['self-hosted', 'linux', 'x64', 'isolated-ci']);
+equal('browser', { CI_RUNNER_MODE: 'self-hosted' }, 'push', {}, []);
+for (const os of ['ubuntu-24.04', 'windows-2022', 'macos-15', 'macos-15-intel']) {
+  for (const event of ['push', 'pull_request', 'workflow_dispatch']) {
+    equal('browser', vars, event, { os }, [os]);
+    equal('browser', vars, event, { os, fork: true }, [os]);
+  }
+}
 assert.throws(() => evaluate('ci', { ...vars, CI_RUNNER_LABELS: 'not json' }));
 console.log(`PASS: ${checks + 1} cases evaluated by GitHub expressions ${expected}`);
