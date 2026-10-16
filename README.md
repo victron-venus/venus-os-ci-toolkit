@@ -1,6 +1,12 @@
 # Venus OS CI Toolkit
 
+[![OpenSSF Best Practices](https://www.bestpractices.dev/projects/15552/badge)](https://www.bestpractices.dev/en/projects/15552)
+
 [![Fuzzing: RC only](https://img.shields.io/badge/Fuzzing-RC%20only-blue)](docs/self-release.md)
+
+See [governance](GOVERNANCE.md), [community conduct](CODE_OF_CONDUCT.md) and
+[architecture, security evidence and roadmap](docs/project-assurance.md). The live
+OpenSSF assessment records the currently achieved level and remaining criteria.
 
 The toolkit publishes versioned source candidates with an explicit file inventory
 and acceptance tests against the extracted archive. See [source installation and
