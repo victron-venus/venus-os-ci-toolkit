@@ -20,7 +20,7 @@ class ToolkitReleaseNotesTests(unittest.TestCase):
         declared = set(toolkit_source.inventory(root))
         required = {
             str(path.relative_to(root))
-            for directory in ("scripts", "tests", "fuzz")
+            for directory in ("scripts", "tests", "fuzz", "tools")
             for path in (root / directory).rglob("*.py")
         }
         self.assertFalse(required - declared, f"Unshipped Python source: {sorted(required - declared)}")

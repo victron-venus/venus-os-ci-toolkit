@@ -104,10 +104,16 @@ availability feature and does not replace an independent, versioned backup.
 
 ## Initial qualification — 2026-10-16
 
-The initial local qualification passed **62 Python checks**: 43 CLI contracts,
-10 private-file materialization checks, three real age integration scenarios
-and six Terraform source-contract checks. **18 Terraform mock tests** passed
-across the separate OCI and HCP roots. The age tests used version 1.3.2 and
+![Local passing check counts on 2026-10-16: 56 CLI, SDK and installer checks (46 CLI, 3 offline SDK and 7 installer boundary), 10 private materialization, 3 real age recovery and 6 Terraform static checks, totaling 75 Python checks; separately, 18 Terraform mocks. Counts are not coverage percentages; hosted CI is not claimed.](images/secrets-verification.svg)
+
+The local qualification passed **75 Python checks**: 46 CLI/catalog/OCI/HCP
+contract checks, 10 private-file materialization checks, three real age
+integration scenarios, six Terraform source-contract checks, seven installer
+boundary checks and three offline checks using the actual OCI SDK. The chart
+groups the CLI, SDK and installer checks into one bar of 56. Separately,
+**18 Terraform mock tests** passed across the OCI and HCP roots. These local
+checks use synthetic inputs; the SDK checks do not call the cloud.
+The age tests used version 1.3.2 and
 demonstrated recovery through a second recipient after deleting the operator's
 test key, wrong-key/tamper refusal, and immutable output/revision behavior.
 
@@ -119,14 +125,25 @@ and the wrapper refused the old generation. State file bytes are not an
 idempotency oracle: Terraform can update its serial or metadata without a
 resource change.
 
-The OCI live experiment is **not yet qualified**: creation reached the
-compartment and vault, while key creation awaits resolution of the new vault's
-endpoint. Local mocked OCI publication tests do not turn that partial result
-into a successful live secret-publication test.
+A live **synthetic OCI experiment** also passed. It created a compartment,
+vault and key, then verified secret creation and rotation by reading back each
+published value. Repeating both generations produced no-op results, and an old
+revision was refused. Fetching an explicit version verified an independent
+content digest and an identical-file repeat. Decrypting the catalog with the
+recovery identity and publishing it again also produced a no-op. No consumer IAM
+grants were added and no existing consumers were changed.
+
+One attempt immediately after rotation safely refused an ETag conflict without
+an extra write. After the service settled, a fresh read-only reconciliation
+allowed the no-op repeat. The conflict guard remained enabled; the successful
+experiment does not promise that cloud updates are immediately consistent.
 
 The hosted CI configuration adds Ubuntu/macOS coverage on Python 3.12 and 3.14
 with real pinned age binaries. That configured matrix is separate from the
 local results above; it had not run remotely at this qualification point.
+
+All live experiments use synthetic values. Recovery-key handoff to a password
+manager remains a later operator step; it is not claimed as completed here.
 
 These results establish the scenarios actually exercised, not production
 migration, workload federation, application rollout or disaster recovery for an

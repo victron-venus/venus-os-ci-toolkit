@@ -5,13 +5,62 @@ import configparser
 import hmac
 import importlib
 import logging
+import json
 import time
 from pathlib import Path
 from .catalog import ControlError, MAX_VALUE, require, integer, text
 from .private_io import read_private
 
 SDK_VERSION = "2.187.2"
-TAG = "secret-control."
+TAG = "secret-control-"
+
+
+def validate_freeform_tags(tags):
+    """OCI Tagging limits; SDK model constructors do not enforce these rules.
+
+    https://docs.oracle.com/en-us/iaas/Content/Tagging/Concepts/taggingoverview.htm
+    """
+    require(type(tags) is dict and len(tags) <= 10, "invalid OCI freeform tag count")
+    for key, value in tags.items():
+        require(
+            text(key, r"[!-~]{1,100}", 100) and "." not in key,
+            "invalid OCI freeform tag key",
+        )
+        require(
+            type(value) is str and len(value) <= 256, "invalid OCI freeform tag value"
+        )
+    try:
+        size = len(
+            json.dumps(tags, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        )
+    except UnicodeError:
+        raise ControlError("invalid OCI freeform tag encoding") from None
+    require(size <= 5120, "OCI freeform tag data limit")
+
+
+def safe_service_diagnostic(error):
+    """Allow only a numeric HTTP status and fixed public OCI error identifiers."""
+    status = getattr(error, "status", None)
+    code = getattr(error, "code", None)
+    fields = []
+    if type(status) is int and 100 <= status <= 599:
+        fields.append("HTTP " + str(status))
+    if type(code) is str and code in {
+        "NotAuthorizedOrNotFound",
+        "NotAuthenticated",
+        "InvalidParameter",
+        "InvalidRequest",
+        "IncorrectState",
+        "Conflict",
+        "PreconditionFailed",
+        "LimitExceeded",
+        "TooManyRequests",
+        "InternalError",
+        "InternalServerError",
+        "ServiceUnavailable",
+    }:
+        fields.append(code)
+    return "; " + "/".join(fields) if fields else ""
 
 
 def unpack(bundle, secret_id, version):
@@ -59,12 +108,21 @@ class SDK:
             item = parser[profile]
             key = Path(item["key_file"]).expanduser()
             require(key.is_absolute(), "OCI key path must be absolute")
+            key_content = read_private(key, 65536).decode("utf-8")
+            # A basic API-key Signer does not bypass the SDK's config validation.
+            # Supply only its required fields; key_content is the supported
+            # in-memory fallback for key_file, avoiding an unguarded second read.
+            cfg.update(
+                {name: item[name] for name in ("user", "tenancy", "fingerprint")}
+            )
+            cfg["key_content"] = key_content
+            self.oci.config.validate_config(cfg)
             signer = self.oci.signer.Signer(
-                item["tenancy"],
-                item["user"],
-                item["fingerprint"],
+                cfg["tenancy"],
+                cfg["user"],
+                cfg["fingerprint"],
                 private_key_file_location=None,
-                private_key_content=read_private(key, 65536).decode("utf-8"),
+                private_key_content=key_content,
                 pass_phrase=item.get("pass_phrase"),
             )
         retry = self.oci.retry.NoneRetryStrategy()
@@ -106,11 +164,13 @@ class SDK:
         )
 
     def advance(self, secret_id, tags, etag):
+        validate_freeform_tags(tags)
         details = self.oci.vault.models.UpdateSecretDetails(freeform_tags=tags)
         self.vault.update_secret(secret_id, details, if_match=etag)
         return secret_id
 
     def write(self, target, value, tags, secret_id=None, etag=None):
+        validate_freeform_tags(tags)
         models = self.oci.vault.models
         content = models.Base64SecretContentDetails(
             content=base64.b64encode(value).decode("ascii"), stage="CURRENT"
@@ -207,6 +267,7 @@ def publish(catalog, clients, *, apply=False, generation=None):
                     TAG + "revision": str(entry["revision"]),
                 }
             )
+            validate_freeform_tags(next_tags)
             operations.append((api, target, entry, sid, etag, next_tags, action))
     result = {
         "mode": "apply" if apply else "plan",
@@ -249,10 +310,11 @@ def publish(catalog, clients, *, apply=False, generation=None):
                 require(attempt < 12, "write not yet verified")
                 time.sleep(5)
             result["verified"] += 1
-        except Exception:
+        except Exception as error:
             raise ControlError(
                 "OCI batch stopped; verified writes: "
                 + str(result["verified"])
+                + safe_service_diagnostic(error)
                 + "; outcome may be partial; reconcile before retry"
             ) from None
     return result

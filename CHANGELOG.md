@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- Add an age-encrypted recovery catalog, explicit OCI secret publication with
+  revision and concurrency checks, and immutable verified private-file delivery.
+- Add isolated local Terraform roots for OCI topology and HCP write-only
+  variables; include recovery, rotation and partial-failure runbooks.
+- Test real encryption recovery on Linux and macOS with Python 3.12 and 3.14.
+  Adoption is opt-in: existing consumers and their credentials are unchanged.
+
 ## [0.1.3] - 2026-10-16
 
 - Accept explicitly selected Intel macOS runners in the complete browser release

@@ -342,6 +342,65 @@ class OCITests(unittest.TestCase):
         self.assertEqual(len(api.writes), 1)
         self.assertEqual(api.snapshots, 13)
 
+    def test_managed_tag_names_follow_actual_service_constraints(self):
+        value = fixture()
+        api = FakeOCI(value, existing=False)
+        oci_api.publish(value, lambda _: api, apply=True, generation=1)
+        tags = api.secret.freeform_tags
+        self.assertEqual(
+            set(tags),
+            {
+                "secret-control-managed",
+                "secret-control-catalog",
+                "secret-control-entry",
+                "secret-control-revision",
+            },
+        )
+        for key in tags:
+            self.assertTrue(0 < len(key) <= 100)
+            self.assertTrue(all(33 <= ord(char) <= 126 and char != "." for char in key))
+
+    def test_invalid_tags_refused_before_all_api_mutation_routes(self):
+        # No SDK/client fields: validation must happen before model/API access.
+        api = object.__new__(oci_api.SDK)
+        target = fixture()["entries"][0]["targets"][0]
+        invalid_keys = ("bad.key", "bad key", "bad\nkey", "é", "", "x" * 101)
+        for key in invalid_keys:
+            for mode in ("create", "update", "advance"):
+                with self.subTest(key=repr(key), mode=mode):
+                    with self.assertRaisesRegex(
+                        catalog.ControlError, "invalid OCI freeform tag key"
+                    ):
+                        if mode == "advance":
+                            api.advance("id", {key: "value"}, "etag")
+                        elif mode == "update":
+                            api.write(target, b"value", {key: "value"}, "id", "etag")
+                        else:
+                            api.write(target, b"value", {key: "value"})
+        oci_api.validate_freeform_tags({"x" * 100: "v" * 256})
+        for tags in ({str(i): "x" for i in range(11)}, {"key": "v" * 257}, {"key": 1}):
+            with self.assertRaises(catalog.ControlError):
+                oci_api.validate_freeform_tags(tags)
+
+    def test_batch_error_exposes_only_status_and_known_code(self):
+        class Failure(Exception):
+            status = 404
+            code = "NotAuthorizedOrNotFound"
+
+        value = fixture()
+        api = FakeOCI(value, existing=False)
+        with patch.object(
+            api, "write", side_effect=Failure("sensitive response body")
+        ) as write:
+            with self.assertRaises(catalog.ControlError) as error:
+                oci_api.publish(value, lambda _: api, apply=True, generation=1)
+            self.assertEqual(write.call_count, 1)
+        self.assertIn("HTTP 404/NotAuthorizedOrNotFound", str(error.exception))
+        self.assertNotIn("sensitive response body", str(error.exception))
+        self.assertEqual(
+            oci_api.safe_service_diagnostic(NS(status="private", code="private")), ""
+        )
+
     def test_same_revision_diff_and_newer_remote_refused(self):
         for revision in ("1", "3"):
             c = fixture()

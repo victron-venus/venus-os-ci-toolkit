@@ -97,6 +97,16 @@ do not use an empty state to recreate resources that still exist. Import or
 restore the appropriate state first. Record new resource identifiers in a new
 catalog generation rather than assuming identifiers survive reconstruction.
 
+### If the new vault endpoint is not ready
+
+A vault can report `ACTIVE` while its new management endpoint still returns
+DNS `NXDOMAIN`. A failed apply may already have persisted the compartment and
+vault in Terraform state. Preserve that state and the original failure; do not
+destroy and recreate the vault merely to retry key creation. Confirm DNS
+readiness, then take a fresh plan and check that it contains only the expected
+pending key operation. Investigate any additional change before applying. Use
+observed readiness rather than a fixed sleep as evidence that retrying is safe.
+
 ## 5. Create and review the first catalog
 
 Follow the [local catalog workflow](SECRETS_HOWTO.md) with the synthetic example
