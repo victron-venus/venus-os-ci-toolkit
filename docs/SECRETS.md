@@ -67,6 +67,14 @@ not automatically remove values from plans or state. Protect state even when
 secret payloads are omitted: identifiers and topology remain sensitive.
 [Terraform sensitive data](https://developer.hashicorp.com/terraform/language/manage-sensitive-data)
 
+HCP values use an ephemeral, sensitive JSON string, so literal `${` and `%{`
+sequences are preserved as data. HCP-targeted values must already be Unicode NFC:
+non-NFC input is refused before cloud changes or local intent-ledger writes,
+never normalized silently. HCP `env` values must also be single-line; carriage
+returns and line feeds are rejected without stripping or encoding them.
+Multiline values remain supported for HCP `terraform` variables and OCI targets.
+See the [HCP value contract](SECRETS_HOWTO.md#prepare-and-publish-hcp-variables).
+
 OCI payload publication uses the API rather than putting secret contents in
 ordinary Terraform resource attributes. OCI and HCP updates are separate
 operations, not one atomic transaction. Preserve a private publication record and
@@ -104,18 +112,22 @@ availability feature and does not replace an independent, versioned backup.
 
 ## Initial qualification — 2026-10-16
 
-![Local passing check counts on 2026-10-16: 56 CLI, SDK and installer checks (46 CLI, 3 offline SDK and 7 installer boundary), 10 private materialization, 3 real age recovery and 6 Terraform static checks, totaling 75 Python checks; separately, 18 Terraform mocks. Counts are not coverage percentages; hosted CI is not claimed.](images/secrets-verification.svg)
+![Local passing check counts on 2026-10-16: 59 CLI, SDK and installer checks (49 CLI, 3 offline SDK and 7 installer boundary), 10 private materialization, 3 real age recovery and 8 Terraform contract checks (6 static and 2 real Terraform parser tests), totaling 80 Python checks; separately, 18 Terraform mocks. Counts are not coverage percentages; current-head hosted CI is pending.](images/secrets-verification.svg)
 
-The local qualification passed **75 Python checks**: 46 CLI/catalog/OCI/HCP
+The focused local qualification passed **80 Python checks**: 49 CLI/catalog/OCI/HCP
 contract checks, 10 private-file materialization checks, three real age
-integration scenarios, six Terraform source-contract checks, seven installer
+integration scenarios, eight Terraform contract checks, seven installer
 boundary checks and three offline checks using the actual OCI SDK. The chart
-groups the CLI, SDK and installer checks into one bar of 56. Separately,
-**18 Terraform mock tests** passed across the OCI and HCP roots. These local
-checks use synthetic inputs; the SDK checks do not call the cloud.
-The age tests used version 1.3.2 and
-demonstrated recovery through a second recipient after deleting the operator's
-test key, wrong-key/tamper refusal, and immutable output/revision behavior.
+groups the CLI, SDK and installer checks into one bar of 59. The eight Terraform
+contract checks comprise six static checks and two tests using the real Terraform
+environment-variable parser. Those two tests cover six exact-byte vectors and
+13 invalid input shapes; the vectors and shapes are not counted as separate tests.
+
+Separately, **18 Terraform mock tests** passed across the OCI and HCP roots.
+These local checks use synthetic inputs; the SDK checks do not call the cloud.
+The age tests use version 1.3.2 and cover recovery through a second recipient
+after deleting the operator's test key, wrong-key/tamper refusal, and immutable
+output/revision behavior.
 
 A live **synthetic HCP experiment** also passed. It used an unattached, nonglobal
 variable set with no consumers. Creation and generation-2 rotation used the
@@ -124,6 +136,15 @@ value appeared in local state, a repeated detailed plan reported no changes,
 and the wrapper refused the old generation. State file bytes are not an
 idempotency oracle: Terraform can update its serial or metadata without a
 resource change.
+
+A further synthetic HCP run verified the updated transport with a single-line
+`env` variable and a multiline `terraform` variable. Literal `${` and `%{`,
+quotes and NFC Unicode were accepted; a repeated detailed plan had no changes.
+Both API values remained redacted and the test payloads were absent from state.
+Old catalogs and multiline `env` values were refused locally. Exact value
+transport was checked with the real Terraform parser tests; the sensitive HCP
+API does not provide payload readback. The variable set remained unattached,
+with no consumers.
 
 A live **synthetic OCI experiment** also passed. It created a compartment,
 vault and key, then verified secret creation and rotation by reading back each
@@ -139,8 +160,9 @@ allowed the no-op repeat. The conflict guard remained enabled; the successful
 experiment does not promise that cloud updates are immediately consistent.
 
 The hosted CI configuration adds Ubuntu/macOS coverage on Python 3.12 and 3.14
-with real pinned age binaries. That configured matrix is separate from the
-local results above; it had not run remotely at this qualification point.
+with real pinned age binaries. All four platform/Python combinations passed on
+an earlier revision; that does not qualify the final source. Hosted results for the current revision
+remain pending at this qualification point.
 
 All live experiments use synthetic values. Recovery-key handoff to a password
 manager remains a later operator step; it is not claimed as completed here.

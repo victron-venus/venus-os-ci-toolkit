@@ -202,6 +202,26 @@ Changing or removing an HCP destination needs a separate migration plan; the
 publisher does not silently delete or adopt variables. Keep unrelated Terraform
 resources in their own roots and state.
 
+HCP values travel through an ephemeral, sensitive JSON string that Terraform
+decodes as data. Literal `${` and `%{` sequences are supported; use ordinary JSON
+escaping in the catalog, without adding Terraform template escapes.
+
+Values with any HCP target must already use **Unicode NFC**. Decomposed or other
+non-NFC values are rejected before cloud changes or local intent-ledger writes;
+the tool never normalizes them. This avoids silently changing a credential's
+value because Terraform normalizes strings. Obtain an NFC-compatible value from
+its issuer if necessary, rather than rewriting an existing credential. This
+restriction is specific to HCP targets; OCI-only values retain their existing
+validation and byte-preserving publication contract.
+[Terraform string normalization](https://developer.hashicorp.com/terraform/language/functions/base64encode)
+
+HCP targets with category `env` also require a single-line value: carriage
+returns and line feeds are rejected before cloud changes or local intent-ledger
+writes. The tool does not strip line breaks or automatically encode credentials.
+Multiline values remain supported for HCP category `terraform` and OCI targets.
+If a consumer needs multiline material, choose an explicit consumer-supported
+Terraform-variable or file contract rather than silently changing the value.
+
 Write-only values and ephemeral inputs keep the payload out of ordinary
 Terraform state. That does not remove every sensitive identifier from state or
 prove consumers can use the value. HCP does not return sensitive variable values

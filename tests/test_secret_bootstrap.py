@@ -5,7 +5,11 @@ The adjacent mocked Terraform tests exercise accepted and rejected inputs.
 """
 
 import json
+import hashlib
+import os
 import re
+import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -65,13 +69,16 @@ class SecretBootstrapSafetyTests(unittest.TestCase):
 
     def test_hcp_values_are_ephemeral_write_only_and_not_exported(self):
         text = source("hcp")
-        values = block(text, "variable", "hcp_secret_values")
+        values = block(text, "variable", "hcp_secret_values_json")
+        self.assertRegex(values, r'type\s*=\s*string')
         self.assertRegex(values, r'sensitive\s*=\s*true')
         self.assertRegex(values, r'ephemeral\s*=\s*true')
-        self.assertIn("toset(keys(var.hcp_secret_values)) == toset(keys(var.hcp_variables))", values)
+        self.assertIn("length(keys(jsondecode(var.hcp_secret_values_json))) == length(var.hcp_variables)", values)
+        self.assertIn("contains(keys(var.hcp_variables), id)", values)
+        self.assertIn("value != null && value == tostring(value)", values)
         resource = block(text, "resource", "tfe_variable")
         self.assertRegex(resource, r'for_each\s*=\s*var.hcp_variables')
-        self.assertRegex(resource, r'value_wo\s*=\s*lookup\(var.hcp_secret_values, each.key, null\)')
+        self.assertRegex(resource, r'value_wo\s*=\s*lookup\(local.hcp_secret_values, each.key, null\)')
         self.assertRegex(resource, r'value_wo_version\s*=\s*each.value.revision')
         self.assertRegex(resource, r'sensitive\s*=\s*true')
         self.assertRegex(resource, r'hcl\s*=\s*false')
@@ -118,6 +125,89 @@ class SecretBootstrapSafetyTests(unittest.TestCase):
         for stage in ("hcp", "oci"):
             self.assertFalse(list((ROOT / stage).glob("*.auto.tfvars*")))
             self.assertFalse(list((ROOT / stage).glob("terraform.tfvars*")))
+
+
+@unittest.skipUnless(os.environ.get("SECRET_CONTROL_TERRAFORM"), "requires explicitly selected Terraform")
+class TerraformSecretTransportTests(unittest.TestCase):
+    """Run the exact production variable definitions through Terraform's env parser."""
+
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name).resolve()
+        self.root.chmod(0o700)
+        # This exact file contains the production type, validation and jsondecode.
+        # No provider, resource, credentials or live API is part of this fixture.
+        (self.root / "variables.tf").write_bytes((ROOT / "hcp/variables.tf").read_bytes())
+        self.env = {
+            key: value for key, value in os.environ.items()
+            if not key.startswith(("TF_", "TFE_", "OCI_"))
+        }
+        self.env.update(TF_CLI_CONFIG_FILE="/dev/null", CHECKPOINT_DISABLE="1", TF_IN_AUTOMATION="1")
+        self.tf("init", "-backend=false", "-input=false", "-no-color")
+
+    def tf(self, *args, success=True):
+        result = subprocess.run(
+            [os.environ["SECRET_CONTROL_TERRAFORM"], *args], cwd=self.root,
+            env=self.env, capture_output=True, text=True, timeout=60, check=False,
+        )
+        if success:
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        else:
+            self.assertNotEqual(result.returncode, 0)
+        return result
+
+    def inputs(self, values, identifiers=None):
+        identifiers = list(values) if identifiers is None else identifiers
+        metadata = {
+            key: {"key": key.upper(), "category": "env", "revision": 1,
+                  "workspace_id": "ws-0000000000000001"}
+            for key in identifiers
+        }
+        self.env["TF_VAR_hcp_variables"] = json.dumps(metadata, separators=(",", ":"))
+        self.env["TF_VAR_hcp_secret_values_json"] = json.dumps(values, separators=(",", ":"))
+
+    def test_actual_environment_preserves_bytes_and_omits_ephemeral_plan_input(self):
+        values = {
+            "interpolation": "HCP_VECTOR_${missing}",
+            "directive": "HCP_VECTOR_%{ if true }content%{ endif }",
+            "escaped": "HCP_VECTOR_$${escaped} %%{escaped}",
+            "unicode": "HCP_VECTOR_\u00e9\u96ea\U0001f642",
+            "multiline": 'HCP_VECTOR_line1\nline2\r\n\t"quote"\\path',
+            "empty": "",
+        }
+        self.inputs(values)
+        tests = self.root / "tests"
+        tests.mkdir()
+        assertions = [
+            'assert {\n condition = sha256(local.hcp_secret_values[' + json.dumps(key) + ']) == "'
+            + hashlib.sha256(value.encode()).hexdigest() + '"\n error_message = "Secret transport changed bytes"\n}\n'
+            for key, value in values.items()
+        ]
+        (tests / "transport.tftest.hcl").write_text('run "transport" {\n command = plan\n' + ''.join(assertions) + '}\n')
+        self.tf("test", "-no-color")
+        self.tf("plan", "-input=false", "-no-color", "-out=synthetic.tfplan")
+        shown = self.tf("show", "-json", "synthetic.tfplan")
+        plan = json.loads(shown.stdout)
+        # Terraform may retain the declaration's inert default, never the supplied payload.
+        if "hcp_secret_values_json" in plan.get("variables", {}):
+            self.assertEqual(plan["variables"]["hcp_secret_values_json"], {"value": "{}"})
+        self.assertNotIn("HCP_VECTOR_", shown.stdout)
+        self.assertFalse(list(self.root.glob("*.tfstate*")))
+
+    def test_invalid_json_shapes_and_value_types_are_rejected(self):
+        self.inputs({})
+        self.tf("plan", "-input=false", "-no-color")
+        invalid = [None, [], "string", 1, True, {"one": None}, {"one": 1},
+                   {"one": False}, {"one": []}, {"one": {}}, {}, {"one": "ok", "extra": "bad"}]
+        for value in invalid:
+            with self.subTest(kind=repr(value)):
+                self.inputs(value, identifiers=["one"])
+                result = self.tf("plan", "-input=false", "-no-color", success=False)
+                self.assertIn("Invalid value for variable", result.stderr)
+        self.inputs({"one": "ok"})
+        self.env["TF_VAR_hcp_secret_values_json"] = "not JSON"
+        self.tf("plan", "-input=false", "-no-color", success=False)
 
 
 if __name__ == "__main__":

@@ -511,6 +511,49 @@ class OCITests(unittest.TestCase):
 
 
 class HCPTests(unittest.TestCase):
+    def test_non_nfc_value_refused_before_local_or_remote_mutation(self):
+        c = fixture()
+        c["entries"][0]["value"] = "e\u0301"
+        with patch.object(hcp, "verify_root") as verify, patch.object(hcp, "process") as process:
+            with self.assertRaisesRegex(catalog.ControlError, "NFC-normalized"):
+                hcp.run(c, self.dest, "tf", apply=True, generation=1)
+        verify.assert_not_called()
+        process.assert_not_called()
+        c["entries"][0]["targets"] = [t for t in c["entries"][0]["targets"] if t["type"] == "oci"]
+        self.assertEqual(hcp.mappings(c), ({}, {}))
+
+    def test_json_string_transport_preserves_literal_templates(self):
+        c = fixture()
+        value = '${missing} %{ if true } $${escaped} %%{escaped} "quoted" \\path\n\u96ea\u00e9'
+        c["entries"][0]["value"] = value
+        for target in c["entries"][0]["targets"]:
+            if target["type"] == "hcp":
+                target["category"] = "terraform"
+        with patch.object(hcp, "trusted_tool", return_value="/trusted/terraform"), patch.object(hcp, "process") as process:
+            hcp.run(c, self.dest, "tf")
+        env = process.call_args.kwargs["env"]
+        self.assertNotIn("TF_VAR_hcp_secret_values", env)
+        self.assertEqual(list(json.loads(env["TF_VAR_hcp_secret_values_json"]).values()), [value])
+
+    def test_environment_newlines_refused_before_local_or_remote_mutation(self):
+        for newline in ("\n", "\r", "\r\n"):
+            with self.subTest(newline=repr(newline)):
+                c = fixture()
+                value = "first" + newline + "second"
+                c["entries"][0]["value"] = value
+                with patch.object(hcp, "verify_root") as verify, patch.object(hcp, "process") as process:
+                    with self.assertRaisesRegex(catalog.ControlError, "cannot contain CR or LF"):
+                        hcp.run(c, self.dest, "tf", apply=True, generation=1)
+                verify.assert_not_called()
+                process.assert_not_called()
+                for target in c["entries"][0]["targets"]:
+                    if target["type"] == "hcp":
+                        target["category"] = "terraform"
+                _, values = hcp.mappings(c)
+                self.assertEqual(list(values.values()), [value])
+                c["entries"][0]["targets"] = [t for t in c["entries"][0]["targets"] if t["type"] == "oci"]
+                self.assertEqual(hcp.mappings(c), ({}, {}))
+
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name).resolve()

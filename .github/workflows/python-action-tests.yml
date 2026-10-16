@@ -50,6 +50,7 @@ jobs:
             terraform -chdir="$root" validate -no-color
             terraform -chdir="$root" test -no-color
           done
+          printf 'SECRET_CONTROL_TERRAFORM=%s\n' "$(command -v terraform)" >> "$GITHUB_ENV"
       - name: Verify private I/O, publication contracts and real encryption recovery
         env:
           SECRET_CONTROL_AGE: ${{ runner.temp }}/secret-control-age/age

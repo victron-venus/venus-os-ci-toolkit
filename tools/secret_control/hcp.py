@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import stat
+import unicodedata
 from .catalog import require, _pairs
 from .private_io import (
     private_parent,
@@ -45,6 +46,15 @@ def mappings(catalog):
         for target in entry["targets"]:
             if target["type"] != "hcp":
                 continue
+            require(
+                unicodedata.normalize("NFC", entry["value"]) == entry["value"],
+                "HCP values must already be NFC-normalized; Terraform would change their bytes",
+            )
+            require(
+                target["category"] != "env"
+                or not any(char in entry["value"] for char in "\r\n"),
+                "HCP environment variable values cannot contain CR or LF",
+            )
             digest = hashlib.sha256(
                 json.dumps(target, sort_keys=True, separators=(",", ":")).encode()
             ).hexdigest()
@@ -287,9 +297,9 @@ def run(catalog, directory, terraform, *, apply=False, generation=None):
         if "TFE_TOKEN" in os.environ:
             env["TFE_TOKEN"] = os.environ["TFE_TOKEN"]
         env["TF_VAR_hcp_variables"] = json.dumps(metadata, separators=(",", ":"))
-        env["TF_VAR_hcp_secret_values"] = json.dumps(values, separators=(",", ":"))
+        env["TF_VAR_hcp_secret_values_json"] = json.dumps(values, separators=(",", ":"))
         require(
-            len(env["TF_VAR_hcp_secret_values"].encode()) < 120000
+            len(env["TF_VAR_hcp_secret_values_json"].encode()) < 120000
             and len(env["TF_VAR_hcp_variables"].encode()) < 120000,
             "HCP environment payload limit",
         )

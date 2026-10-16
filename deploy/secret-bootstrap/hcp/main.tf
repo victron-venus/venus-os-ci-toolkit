@@ -5,7 +5,7 @@ resource "tfe_variable" "secret" {
   category         = each.value.category
   workspace_id     = each.value.workspace_id
   variable_set_id  = each.value.variable_set_id
-  value_wo         = lookup(var.hcp_secret_values, each.key, null)
+  value_wo         = lookup(local.hcp_secret_values, each.key, null)
   value_wo_version = each.value.revision
   sensitive        = true
   hcl              = false

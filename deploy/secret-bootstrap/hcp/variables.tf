@@ -40,21 +40,33 @@ variable "hcp_variables" {
   }
 }
 
-variable "hcp_secret_values" {
-  description = "Runtime-only values keyed by the exact same IDs as hcp_variables. Never store in source or tfvars."
-  type        = map(string)
+variable "hcp_secret_values_json" {
+  description = "Runtime-only JSON object of string values keyed by the exact hcp_variables IDs. Pass as a string so Terraform does not interpret payload templates. Never store in source or tfvars."
+  type        = string
   sensitive   = true
   ephemeral   = true
-  default     = {}
+  default     = "{}"
   nullable    = false
 
   validation {
-    condition     = toset(keys(var.hcp_secret_values)) == toset(keys(var.hcp_variables))
-    error_message = "The secret-value IDs must exactly match the destination catalog IDs."
+    condition = try(
+      can(keys(jsondecode(var.hcp_secret_values_json))) &&
+      alltrue([for value in values(jsondecode(var.hcp_secret_values_json)) : value != null && value == tostring(value)]),
+      false
+    )
+    error_message = "Secret values must be a JSON object containing only strings, not null or coerced values."
   }
 
   validation {
-    condition     = alltrue([for value in values(var.hcp_secret_values) : value != null])
-    error_message = "Secret values must be strings, not null."
+    condition = try(
+      length(keys(jsondecode(var.hcp_secret_values_json))) == length(var.hcp_variables) &&
+      alltrue([for id in keys(jsondecode(var.hcp_secret_values_json)) : contains(keys(var.hcp_variables), id)]),
+      false
+    )
+    error_message = "The secret-value IDs must exactly match the destination catalog IDs."
   }
+}
+
+locals {
+  hcp_secret_values = try(jsondecode(var.hcp_secret_values_json), {})
 }
