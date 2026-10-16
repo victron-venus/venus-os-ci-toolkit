@@ -715,7 +715,8 @@ def quality(policy, directory=None):
     jobs["gate"] = {
         "name": "CI gate",
         "needs": list(jobs),
-        "if": "${{ always() }}",
+        # Still inspect failed/skipped dependencies, but release cancelled runs.
+        "if": "${{ !cancelled() }}",
         "runs-on": runner_labels(),
         "timeout-minutes": 5,
         "steps": [

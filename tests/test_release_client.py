@@ -472,12 +472,12 @@ jobs:
                 installer.validate_build_secrets(root, policy)
 
     def test_pr_and_queue_have_aggregate_gate(self):
-        """Run an unconditional aggregate gate for PR and merge-queue validation."""
+        """Aggregate unsuccessful dependencies without retaining cancelled runs."""
         result = installer.quality(self.policy)
         self.assertIn("pull_request", result["on"])
         self.assertIn("merge_group", result["on"])
         self.assertEqual(result["jobs"]["gate"]["name"], "CI gate")
-        self.assertEqual(result["jobs"]["gate"]["if"], "${{ always() }}")
+        self.assertEqual(result["jobs"]["gate"]["if"], "${{ !cancelled() }}")
 
     def test_toolkit_self_release_uses_original_tests_without_exported_copies(self):
         """Self qualification keeps full tests and dependencies without duplication."""
@@ -691,7 +691,7 @@ jobs:
             self.assertNotIn("security-events", job.get("permissions", {}))
             self.assertIn("github.event_name != 'schedule'", job["if"])
             self.assertIn("NIGHTLY_CHECKS_ENABLED", job["if"])
-        self.assertIn("always()", workflow["jobs"]["gate"]["if"])
+        self.assertIn("!cancelled()", workflow["jobs"]["gate"]["if"])
         self.assertIn("workflow_dispatch", workflow["on"])
 
     def test_private_release_cannot_inherit_public_paid_environment_adapter(self):
