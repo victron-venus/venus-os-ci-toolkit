@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Report whether an HCP secret plan has changes without exposing Terraform
+  output, and document convergence checks before consumer cutover.
+
 - Allow 35 minutes for each browser target, covering cold toolchain and browser
   setup plus application acceptance and evidence upload. Planner, release-verdict
   and application test timeouts are unchanged.
