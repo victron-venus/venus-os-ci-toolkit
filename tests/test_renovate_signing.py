@@ -1,4 +1,4 @@
-"""Real, ephemeral-key regressions for the Renovate signing preflight."""
+"""Real-key regressions for the Renovate signing preflight."""
 
 import base64
 import importlib.util
@@ -71,8 +71,14 @@ class RenovateSigningTests(unittest.TestCase):
                 timeout=30,
             )
             cls.ssh[label] = path.read_text()
-        cls.pgp = {}
-        for algorithm in ("rsa1024", "rsa2048", "ed25519", "ed448", "nistp256"):
+        # Random Ed448 generation can fail in libgcrypt's keygrip conversion
+        # when the native public point starts with 0x02/0x03. Keep inspection
+        # and real signing coverage without retrying that unrelated generator.
+        # Provenance and upstream code: tests/fixtures/signing/README.md.
+        cls.pgp = {
+            "ed448": (ROOT / "tests/fixtures/signing/ed448-synthetic.asc").read_text()
+        }
+        for algorithm in ("rsa1024", "rsa2048", "ed25519", "nistp256"):
             home = cls.root / (algorithm + "-pgp")
             home.mkdir(mode=0o700)
             args = [
@@ -163,6 +169,54 @@ class RenovateSigningTests(unittest.TestCase):
             if name != "rsa1024":
                 with self.subTest(name=name):
                     credentials.validate_signing_key(value)
+
+    def test_ed448_fixture_signs_and_rejects_tampered_content(self):
+        """The public test-only fixture must remain a usable Ed448 signing key."""
+        with tempfile.TemporaryDirectory(prefix="ed448-test-", dir="/tmp") as home:
+            args = [
+                "gpg", "--no-options", "--compliance=gnupg", "--homedir", home,
+                "--batch", "--no-tty", "--pinentry-mode", "loopback",
+                "--passphrase", "",
+            ]
+            try:
+                subprocess.run(
+                    args + ["--import"], input=self.pgp["ed448"].encode(),
+                    check=True, capture_output=True, timeout=15,
+                )
+                metadata = subprocess.check_output(
+                    args + ["--with-colons", "--list-secret-keys"],
+                    stderr=subprocess.PIPE, timeout=15,
+                ).decode()
+                credentials._check_pgp_metadata(metadata)
+                fingerprint = (
+                    "CA45CAE879F19EAAF88BD03A5A7234CCD3A0E3BE6B42A0FFD43B3253497F2A26"
+                )
+                self.assertIn(f"fpr:::::::::{fingerprint}:", metadata)
+                message = Path(home) / "message.txt"
+                signature = Path(home) / "message.sig"
+                message.write_bytes(b"Public synthetic Ed448 fixture regression\n")
+                subprocess.run(
+                    args + ["--local-user", fingerprint, "--output", str(signature),
+                            "--detach-sign", str(message)],
+                    check=True, capture_output=True, timeout=15,
+                )
+                verified = subprocess.run(
+                    args + ["--status-fd", "1", "--verify", str(signature), str(message)],
+                    check=True, capture_output=True, timeout=15,
+                )
+                self.assertIn(f"[GNUPG:] VALIDSIG {fingerprint} ".encode(), verified.stdout)
+                message.write_bytes(b"Tampered fixture regression\n")
+                rejected = subprocess.run(
+                    args + ["--status-fd", "1", "--verify", str(signature), str(message)],
+                    check=False, capture_output=True, timeout=15,
+                )
+                self.assertNotEqual(rejected.returncode, 0)
+                self.assertIn(b"[GNUPG:] BADSIG ", rejected.stdout)
+            finally:
+                subprocess.run(
+                    ["gpgconf", "--homedir", home, "--kill", "gpg-agent"],
+                    capture_output=True, timeout=15, check=True,
+                )
 
     def test_pem_rsa_with_and_without_passphrase(self):
         for passphrase in ("", "synthetic-fixture-passphrase"):
