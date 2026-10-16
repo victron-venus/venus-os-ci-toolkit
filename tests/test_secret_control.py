@@ -233,6 +233,44 @@ class PrivateIOTests(unittest.TestCase):
                 [sys.executable, "-c", "import os; os.close(0)"], b"x" * (1024 * 1024)
             )
 
+    def test_process_status_only_is_opt_in_and_keeps_failures_private(self):
+        for code in (0, 1, 2, 3):
+            argv = [
+                sys.executable, "-c",
+                f'import sys; print("synthetic-sensitive"); sys.exit({code})',
+            ]
+            with self.subTest(code=code):
+                if code == 0:
+                    self.assertEqual(private_io.process(argv), b"synthetic-sensitive\n")
+                else:
+                    with self.assertRaisesRegex(catalog.ControlError, "output withheld"):
+                        private_io.process(argv)
+                if code in (0, 2):
+                    self.assertEqual(
+                        private_io.process(
+                            argv, accepted_exit_codes=(0, 2), return_exit_code=True
+                        ),
+                        code,
+                    )
+                else:
+                    with self.assertRaises(catalog.ControlError) as ctx:
+                        private_io.process(
+                            argv, accepted_exit_codes=(0, 2), return_exit_code=True
+                        )
+                    self.assertNotIn("synthetic-sensitive", str(ctx.exception))
+
+    def test_status_only_preserves_output_and_input_guards(self):
+        options = {"accepted_exit_codes": (0, 2), "return_exit_code": True}
+        with self.assertRaisesRegex(catalog.ControlError, "output limit"):
+            private_io.process(
+                [sys.executable, "-c", 'print("x"*10000)'], limit=100, **options
+            )
+        with self.assertRaisesRegex(catalog.ControlError, "did not consume"):
+            private_io.process(
+                [sys.executable, "-c", "import os; os.close(0); raise SystemExit(2)"],
+                b"x" * (1024 * 1024), **options,
+            )
+
     def test_reaped_process_group_is_not_signalled(self):
         for code in (0, 1):
             with self.subTest(code=code), patch.object(private_io.os, "killpg", wraps=os.killpg) as kill:
@@ -291,6 +329,8 @@ class PrivateIOTests(unittest.TestCase):
             self.assertTrue(args[0][-1].startswith("/dev/fd/"))
             self.assertEqual(len(kw["pass_fds"]), 1)
             self.assertNotIn("identity", args[0])
+            self.assertNotIn("accepted_exit_codes", kw)
+            self.assertNotIn("return_exit_code", kw)
 
     def test_decrypt_bytes_uses_supplied_ciphertext_without_reopening(self):
         key = self.root / "key"
@@ -600,6 +640,65 @@ class OCITests(unittest.TestCase):
 
 
 class HCPTests(unittest.TestCase):
+    def run_cli_with_terraform_status(self, status, *, apply=False):
+        """Exercise actual subprocess transport and CLI redaction with synthetic data."""
+        binary = self.root / "terraform-test"
+        binary.write_text(
+            f"#!{sys.executable}\n"
+            "import json, os, sys\n"
+            "is_plan = sys.argv[1] == 'plan'\n"
+            "assert ('-detailed-exitcode' in sys.argv) == is_plan\n"
+            "value = next(iter(json.loads(os.environ['TF_VAR_hcp_secret_values_json']).values()))\n"
+            "print(value)\n"
+            "print(value, file=sys.stderr)\n"
+            f"raise SystemExit({status})\n"
+        )
+        binary.chmod(0o700)
+        stdout, stderr = io.StringIO(), io.StringIO()
+        argv = [
+            "hcp-apply" if apply else "hcp-plan",
+            "--catalog", "synthetic-catalog", "--identity", "synthetic-identity",
+            "--terraform-dir", str(self.dest),
+        ]
+        if apply:
+            argv.extend(["--generation", "1"])
+        with (
+            patch.object(cli, "tool", side_effect=lambda value: value),
+            patch.object(cli, "decrypt", return_value=json.dumps(fixture()).encode()),
+            patch.object(hcp, "trusted_tool", return_value=str(binary)),
+            patch.object(sys, "stdout", stdout),
+            patch.object(sys, "stderr", stderr),
+        ):
+            code = cli.main(argv)
+        self.assertNotIn("synthetic-value", stdout.getvalue() + stderr.getvalue())
+        for path in self.dest.rglob("*"):
+            if path.is_file():
+                self.assertNotIn(b"synthetic-value", path.read_bytes())
+        return code, stdout.getvalue(), stderr.getvalue()
+
+    def test_plan_reports_changed_and_unchanged_without_exposing_output(self):
+        for status, changes in ((0, False), (2, True)):
+            with self.subTest(status=status):
+                code, stdout, stderr = self.run_cli_with_terraform_status(status)
+                self.assertEqual(code, 0)
+                self.assertEqual(stderr, "")
+                self.assertEqual(json.loads(stdout), {
+                    "status": "planned", "variables": 1,
+                    "output": "withheld", "changes": changes,
+                })
+                self.assertFalse(list(self.dest.glob(".secret-control-intent-*.json")))
+                self.assertFalse((self.dest / ".secret-control-ledger-key").exists())
+
+    def test_plan_errors_and_apply_status_two_remain_refusals(self):
+        for status, apply in ((1, False), (3, False), (42, False), (2, True)):
+            with self.subTest(status=status, apply=apply):
+                code, stdout, stderr = self.run_cli_with_terraform_status(status, apply=apply)
+                self.assertEqual(code, 2)
+                self.assertEqual(stdout, "")
+                self.assertEqual(json.loads(stderr), {
+                    "status": "refused", "reason": "external tool failed; output withheld",
+                })
+
     def test_non_nfc_value_refused_before_local_or_remote_mutation(self):
         c = fixture()
         c["entries"][0]["value"] = "e\u0301"

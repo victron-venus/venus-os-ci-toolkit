@@ -65,6 +65,11 @@ or revision record is not plaintext proof. Use a separately authorized consumer
 check or a controlled re-publication decision. Do not copy unknown cloud values
 back into the catalog automatically.
 
+After reconciling a successful HCP publication, repeat `hcp-plan` against the
+same approved generation and require `changes: false`. A result of
+`changes: true` needs investigation, not an automatic retry. This convergence
+check does not replace the consumer check for HCP's write-only values.
+
 Resume only after choosing the intended generation and reconciling partial
 results. This tool does not automatically roll back a successful destination
 when another fails. Record that decision and rerun only through the supported,

@@ -314,14 +314,24 @@ def run(catalog, directory, terraform, *, apply=False, generation=None):
             "-lock=true",
             "-no-color",
         ]
+        process_options = {}
         if apply:
             argv.append("-auto-approve")
+        else:
+            argv.append("-detailed-exitcode")
+            process_options = {"accepted_exit_codes": (0, 2), "return_exit_code": True}
         # Never expose Terraform output; even an unexpected provider diagnostic is withheld.
-        process(argv, env=env, cwd=root, timeout=900, limit=8 * 1024 * 1024)
-        return {
+        status = process(
+            argv, env=env, cwd=root, timeout=900, limit=8 * 1024 * 1024,
+            **process_options,
+        )
+        result = {
             "status": "applied" if apply else "planned",
             "variables": len(metadata),
             "output": "withheld",
         }
+        if not apply:
+            result["changes"] = status == 2
+        return result
     finally:
         os.close(lock)

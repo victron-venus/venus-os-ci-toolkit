@@ -187,9 +187,20 @@ python3 -m tools.secret_control hcp-apply --age "$AGE_BIN" --terraform "$TERRAFO
 
 Unlike the catalog's local `plan`, `hcp-plan` runs Terraform and may contact HCP.
 The wrapper withholds raw Terraform output to prevent secret diagnostics from
-reaching the terminal. Its success reports a completed planning operation, not
-a human-readable plan or approval. Independently review the catalog generation,
-target bindings and module before authorizing an apply.
+reaching the terminal. Its JSON result includes `changes`: `false` for an empty
+plan or `true` when Terraform proposes changes. This uses Terraform's
+[`-detailed-exitcode`](https://developer.hashicorp.com/terraform/cli/commands/plan#detailed-exitcode)
+contract; errors remain failures. A successful plan is not an approval.
+Independently review the catalog generation, target bindings and module before
+authorizing an apply.
+
+After a successful apply, repeat `hcp-plan` with the same approved catalog and
+root. Require `changes: false` before recording convergence. If it reports
+`true`, reconcile the remaining difference instead of repeatedly applying.
+An empty plan confirms Terraform sees no pending changes; it does not prove the
+write-only values reached an application. Verify the selected consumer
+separately before changing its source or retiring an old credential.
+
 Preparation copies trusted HCP configuration only; provider initialization is
 an explicit dependency download step. Keep the resulting state, lock file and
 operation records private. Read the [HCP input contract](../deploy/secret-bootstrap/hcp/variables.tf)

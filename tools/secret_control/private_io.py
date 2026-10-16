@@ -151,8 +151,10 @@ def process(
     pass_fds=(),
     timeout=120,
     limit=MAX_CATALOG * 2,
+    accepted_exit_codes=(0,),
+    return_exit_code=False,
 ):
-    """Bound all streams in memory and discard tool diagnostics, including on failure."""
+    """Bound streams and discard diagnostics; status-only calls also discard stdout."""
     p = subprocess.Popen(
         argv,
         stdin=subprocess.PIPE,
@@ -201,15 +203,15 @@ def process(
                         continue
                     received += len(chunk)
                     require(received <= limit, "external tool output limit")
-                    if key.data == "out":
+                    if key.data == "out" and not return_exit_code:
                         output.extend(chunk)
         try:
             status = p.wait(timeout=max(0.1, timeout - (time.monotonic() - start)))
         except subprocess.TimeoutExpired:
             require(False, "external tool timeout")
-        require(status == 0, "external tool failed; output withheld")
+        require(status in accepted_exit_codes, "external tool failed; output withheld")
         require(sent == len(data), "external tool did not consume its input")
-        return bytes(output)
+        return status if return_exit_code else bytes(output)
     finally:
         # An exited but unreaped leader still reserves its PID while descendants
         # retain streams. After wait() reaps it, never signal a potentially reused
