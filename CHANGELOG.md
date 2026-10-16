@@ -6,6 +6,11 @@
   verification, with operator instructions and a recovery-exercise diagram.
 - Reject unsafe path ancestors and dangling HCP state links; bound external
   process groups and reject incomplete input delivery.
+- Add an opt-in strict OpenSSL 3 transport profile for owned Python HTTPS calls,
+  preserving stricter platform defaults and rejecting credential redirects.
+- Document project governance, complete source-release security scope and
+  OpenSSF evidence with an official live assessment badge.
+
 - Make Ed448 signing-preflight regression tests deterministic with an explicitly
   public test key, retaining real signing, verification and tamper rejection.
 - Allow 15 minutes for browser planning, including cold Node 22 installation on

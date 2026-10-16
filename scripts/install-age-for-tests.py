@@ -9,7 +9,11 @@ import platform
 import stat
 import sys
 import tarfile
-import urllib.request
+
+if __package__:
+    from .tls_profile import open_url
+else:
+    from tls_profile import open_url
 
 
 VERSION = '1.3.2'
@@ -49,7 +53,7 @@ def download_archive():
     architecture = 'arm64' if machine in ('arm64', 'aarch64') else 'amd64'
     name = f'age-v{VERSION}-{system.lower()}-{architecture}.tar.gz'
     url = f'https://github.com/FiloSottile/age/releases/download/v{VERSION}/{name}'
-    with urllib.request.urlopen(url, timeout=60) as response:
+    with open_url(url, timeout=60) as response:
         archive = response.read(40 * 1024 * 1024 + 1)
     if hashlib.sha256(archive).hexdigest() != expected:
         raise ValueError('age release archive digest mismatch')

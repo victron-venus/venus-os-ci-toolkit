@@ -73,3 +73,35 @@ Source references:
   and [verified-chain enforcement](https://github.com/golang/go/blob/go1.27.1/src/crypto/tls/common.go).
 - [OpenSSF Passing criteria](https://www.bestpractices.dev/en/criteria/0), particularly
   `crypto_keylength` and `crypto_pfs`.
+
+## Toolkit-owned Python HTTPS and complete source-release profile
+
+Use `VENUS_STRICT_TLS=1` for `scripts/check_renovate_credentials.py` and
+`scripts/install-age-for-tests.py`. This explicitly selected profile requires
+OpenSSL 3, retains normal certificate and DNS-name validation, requires TLS 1.2
+or newer and raises the OpenSSL security level to at least 3 without lowering a
+stricter platform default. Its conservative thresholds include RSA at least
+3072 bits and elliptic curves at least 256 bits. Static RSA key exchange is
+removed; TLS 1.3 remains configured by OpenSSL. HTTPS redirects cannot downgrade
+to plaintext or send Authorization to another origin. An unknown switch value
+or unsupported TLS runtime fails closed.
+
+Combine it with the verified Go setting for core toolkit operations:
+
+```sh
+VENUS_STRICT_TLS=1 GODEBUG=fips140=on python3 scripts/release.py status
+```
+
+Apply these environment settings to the relevant source generation, validation
+and GitHub source-release commands after normal review. Use a maintained host
+with GitHub's public HTTPS endpoints and normal system trust roots; inspect
+custom trust-store material separately. Keep optional OCI/HCP publication,
+skopeo container publication and cluster runner operation disabled in this
+profile. Those integrations remain separately supported tools, but their exact
+key-strength boundaries are not qualified by this profile. This does not claim
+to change consumer workflows or a deployed service's transport settings.
+
+`tests/test_tls_profile.py` exercises real TLS 1.2/1.3 connections, strong-key
+success, weak RSA rejection before HTTP authorization bytes, wrong DNS names,
+untrusted issuers, invalid profile settings and redirect boundaries. These
+synthetic local tests do not contact an operational secret service.
