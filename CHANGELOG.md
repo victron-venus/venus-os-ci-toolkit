@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Make Ed448 signing-preflight regression tests deterministic with an explicitly
+  public test key, retaining real signing, verification and tamper rejection.
+
 - Allow 15 minutes for browser planning, including cold Node 22 installation on
   newly created runners. Browser execution and release-verdict budgets are unchanged.
 - Add an age-encrypted recovery catalog, explicit OCI secret publication with

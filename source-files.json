@@ -230,6 +230,8 @@
   "tests/fixtures/python-type-error/example.py",
   "tests/fixtures/python_action_smoke/calculator.py",
   "tests/fixtures/python_action_smoke/test_calculator.py",
+  "tests/fixtures/signing/README.md",
+  "tests/fixtures/signing/ed448-synthetic.asc",
   "tests/fixtures/terraform-minimal/main.tf",
   "tests/renovate_grouping.mjs",
   "tests/test_arc_ottplay.py",
