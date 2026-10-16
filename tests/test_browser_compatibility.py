@@ -272,12 +272,36 @@ class BrowserCompatibilityTests(unittest.TestCase):
     def test_prepared_reserve_does_not_install_system_packages(self):
         steps = WORKFLOW["jobs"]["browser"]["steps"]
         installers = [step for step in steps if "cli.js\" install" in step.get("run", "")]
-        self.assertEqual(len(installers), 2)
+        self.assertEqual(len(installers), 3)
         hosted = next(step for step in installers if "--with-deps" in step["run"])
-        reserve = next(step for step in installers if "--with-deps" not in step["run"])
+        reserve = next(step for step in installers if "self-hosted" in step["if"])
         self.assertEqual(hosted["if"], "runner.environment == 'github-hosted'")
         self.assertEqual(reserve["if"], "${{ runner.environment == 'self-hosted' && matrix.channel == '' }}")
         self.assertNotIn("sudo", reserve["run"])
+
+    def test_windows_webkit_installs_only_locked_media_dependencies_and_propagates_failure(self):
+        steps = WORKFLOW["jobs"]["browser"]["steps"]
+        step = next(step for step in steps if step.get("name") == "Install Windows WebKit media dependencies")
+        self.assertEqual(step["if"], "${{ runner.environment == 'github-hosted' && runner.os == 'Windows' && matrix.engine == 'webkit' }}")
+        names = [step.get("name") for step in steps]
+        self.assertLess(names.index("Install exact locked browser toolchain"), names.index(step["name"]))
+        self.assertLess(names.index(step["name"]), names.index("Install selected browser and hosted system dependencies"))
+        self.assertNotIn("continue-on-error", step)
+        module = self.root / "locked toolchain/node_modules/playwright"
+        module.mkdir(parents=True)
+        (module / "cli.js").write_text(
+            "require('node:fs').writeFileSync(process.env.ARGUMENTS_FILE, JSON.stringify(process.argv.slice(2)));"
+            "process.exit(Number(process.env.INSTALL_EXIT));"
+        )
+        arguments = self.root / "arguments.json"
+        for code in (0, 23):
+            result = subprocess.run(
+                ["bash", "-e", "-o", "pipefail", "-c", step["run"]], cwd=self.root,
+                env=self.env | {"CI_PLAYWRIGHT_MODULE": str(module), "ARGUMENTS_FILE": str(arguments),
+                                "INSTALL_EXIT": str(code)}, capture_output=True, text=True, check=False,
+            )
+            self.assertEqual(result.returncode, code, result.stderr)
+            self.assertEqual(json.loads(arguments.read_text()), ["install-deps", "chromium"])
 
     def test_distinct_calls_can_namespace_artifacts_without_changing_inventory(self):
         self.assertEqual(self.plan([TARGET], BROWSER_EVIDENCE_PREFIX="browser-release").returncode, 0)
