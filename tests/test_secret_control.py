@@ -8,7 +8,10 @@ import json
 import os
 from pathlib import Path
 import stat
+import signal
+import sys
 import tempfile
+import time
 from types import SimpleNamespace as NS
 import unittest
 from unittest.mock import patch
@@ -161,6 +164,29 @@ class PrivateIOTests(unittest.TestCase):
         with self.assertRaises(OSError):
             private_io.read_private(self.root / "alias" / "a")
 
+    def test_writable_ancestor_refused_for_private_reads_and_writes(self):
+        ancestor = self.root / "shared"
+        ancestor.mkdir(mode=0o700)
+        leaf = ancestor / "private"
+        leaf.mkdir(mode=0o700)
+        private_io.new_private(leaf / "input", b"synthetic")
+        for mode in (0o770, 0o777):
+            ancestor.chmod(mode)
+            with self.subTest(mode=oct(mode)):
+                with self.assertRaises(catalog.ControlError):
+                    private_io.read_private(leaf / "input")
+                with self.assertRaises(catalog.ControlError):
+                    private_io.new_private(leaf / "output", b"synthetic")
+                self.assertFalse((leaf / "output").exists())
+        ancestor.chmod(0o700)
+
+    def test_shared_system_temporary_parent_remains_supported(self):
+        with tempfile.TemporaryDirectory(dir="/tmp") as temporary:
+            root = Path(temporary).resolve()
+            root.chmod(0o700)
+            private_io.new_private(root / "input", b"synthetic")
+            self.assertEqual(private_io.read_private(root / "input"), b"synthetic")
+
     def test_changed_read_rejected(self):
         p = self.root / "cipher"
         private_io.new_private(p, b"cipher")
@@ -189,8 +215,6 @@ class PrivateIOTests(unittest.TestCase):
         self.assertNotIn("PYTHONPATH", env)
 
     def test_process_redaction_and_limits(self):
-        import sys
-
         with self.assertRaises(catalog.ControlError) as ctx:
             private_io.process(
                 [
@@ -202,6 +226,55 @@ class PrivateIOTests(unittest.TestCase):
         self.assertNotIn("synthetic-sensitive", str(ctx.exception))
         with self.assertRaises(catalog.ControlError):
             private_io.process([sys.executable, "-c", 'print("x"*10000)'], limit=100)
+
+    def test_process_rejects_unconsumed_input(self):
+        with self.assertRaises(catalog.ControlError):
+            private_io.process(
+                [sys.executable, "-c", "import os; os.close(0)"], b"x" * (1024 * 1024)
+            )
+
+    def test_reaped_process_group_is_not_signalled(self):
+        for code in (0, 1):
+            with self.subTest(code=code), patch.object(private_io.os, "killpg", wraps=os.killpg) as kill:
+                argv = [sys.executable, "-c", f"raise SystemExit({code})"]
+                if code:
+                    with self.assertRaises(catalog.ControlError):
+                        private_io.process(argv)
+                else:
+                    self.assertEqual(private_io.process(argv), b"")
+                kill.assert_not_called()
+
+    def test_timeout_reaps_descendants_after_leader_exit(self):
+        pid_file = self.root / "child.pid"
+        ready = self.root / "ready"
+        release = self.root / "release"
+        survived = self.root / "survived"
+        child = (
+            "from pathlib import Path; import time; "
+            f"Path({str(ready)!r}).touch(); release=Path({str(release)!r})\n"
+            "while not release.exists(): time.sleep(0.005)\n"
+            f"Path({str(survived)!r}).touch(); time.sleep(30)"
+        )
+        leader = (
+            "import subprocess,sys,time; from pathlib import Path; "
+            f"p=subprocess.Popen([sys.executable,'-c',{child!r}]); "
+            f"Path({str(pid_file)!r}).write_text(str(p.pid)); "
+            f"ready=Path({str(ready)!r})\n"
+            "while not ready.exists(): time.sleep(0.005)\n"
+        )
+        try:
+            with self.assertRaisesRegex(catalog.ControlError, "timeout"):
+                private_io.process([sys.executable, "-c", leader], timeout=2)
+            self.assertTrue(ready.exists())
+            release.touch()
+            time.sleep(0.7)
+            self.assertFalse(survived.exists(), "descendant survived the tool timeout")
+        finally:
+            if pid_file.exists():
+                try:
+                    os.kill(int(pid_file.read_text()), signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
 
     def test_age_identity_fd_not_payload_argv(self):
         p = self.root / "cipher"
@@ -218,6 +291,22 @@ class PrivateIOTests(unittest.TestCase):
             self.assertTrue(args[0][-1].startswith("/dev/fd/"))
             self.assertEqual(len(kw["pass_fds"]), 1)
             self.assertNotIn("identity", args[0])
+
+    def test_decrypt_bytes_uses_supplied_ciphertext_without_reopening(self):
+        key = self.root / "key"
+        private_io.new_private(key, b"synthetic-identity")
+        with (
+            patch.object(private_io, "read_private", side_effect=AssertionError("unexpected reread")),
+            patch.object(private_io, "trusted_tool", return_value="/trusted/age"),
+            patch.object(private_io, "process", return_value=b"plain") as run,
+        ):
+            self.assertEqual(private_io.decrypt_bytes(b"exact-verified-ciphertext", key, "age"), b"plain")
+        self.assertEqual(run.call_args.args[1], b"exact-verified-ciphertext")
+        with patch.object(private_io, "open_private") as opened:
+            for invalid in ("not bytes", b"x" * (catalog.MAX_CATALOG * 2 + 1)):
+                with self.assertRaises(catalog.ControlError):
+                    private_io.decrypt_bytes(invalid, key, "age")
+            opened.assert_not_called()
 
 
 class FakeOCI:
@@ -738,6 +827,27 @@ class HCPTests(unittest.TestCase):
         p.symlink_to("/nonexistent")
         with self.assertRaises(OSError):
             hcp.internal_file(self.dest, ".terraform/terraform.tfstate")
+
+    def test_dangling_state_or_workspace_link_refused_before_process(self):
+        for relative in ("terraform.tfstate", ".terraform/environment"):
+            with self.subTest(relative=relative):
+                path = self.dest / relative
+                path.symlink_to(self.root / "absent-target")
+                try:
+                    with patch.object(hcp, "trusted_tool", return_value="/trusted/terraform"), patch.object(hcp, "process") as process:
+                        with self.assertRaises(OSError):
+                            hcp.run(fixture(), self.dest, "tf", apply=True, generation=1)
+                    process.assert_not_called()
+                    self.assertFalse(list(self.dest.glob(".secret-control-intent-*.json")))
+                finally:
+                    path.unlink()
+
+    def test_dangling_ledger_key_is_not_treated_as_absent(self):
+        (self.dest / ".secret-control-ledger-key").symlink_to(self.root / "missing-key")
+        with patch.object(hcp, "trusted_tool", return_value="/trusted/terraform"), patch.object(hcp, "process") as process:
+            with self.assertRaises(OSError):
+                hcp.run(fixture(), self.dest, "tf")
+        process.assert_not_called()
 
     def test_ledger_hmac_not_bare_secret_hash(self):
         c = fixture()

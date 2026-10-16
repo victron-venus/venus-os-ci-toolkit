@@ -35,6 +35,8 @@ Explore the [illustrated release process and verified rollout results](docs/rc-f
 For encrypted operator inputs and recovery, see the [secret control plane](docs/SECRETS.md).
 It separates public tooling from a local private catalog and explains OCI/HCP
 publication, credential rotation, independent backups, and recovery drills.
+Start with the [offline synthetic recovery exercise](docs/SECRETS_DRILL.md);
+it does not need cloud credentials or production data.
 
 See [public source and operator configuration](docs/OPERATOR_CONFIG.md) before
 updating a local fleet or private-runner operator installation. Public source

@@ -106,3 +106,52 @@ entry revision, destination, tool/source version, timestamp and observed
 outcome. Even identifiers and plan output can reveal private topology, so keep
 receipts in the private operator root. Never record plaintext values, encoded
 equivalents or unkeyed hashes of low-entropy credentials as public proof.
+
+## Refusal before publication
+
+For a local-only diagnosis, start with `validate` or the
+[synthetic recovery drill](SECRETS_DRILL.md). `plan` is local, but `oci-publish`
+without `--apply` and `hcp-plan` can still contact their destination. Select the
+command according to the access you intend to exercise.
+
+For an executable or private-file ownership refusal, inspect the selected path
+and its parent permissions. Use a verified private binary if a shared package
+manager tree is group-writable. Do not disable ownership checks, recursively
+change an existing operator tree, or place an identity in the public checkout.
+
+For an HCP value refusal, check the documented
+[NFC and single-line environment-variable requirements](SECRETS_HOWTO.md#prepare-and-publish-hcp-variables).
+Never normalize, strip newlines or encode an existing credential solely to pass
+validation. Obtain an issuer-approved replacement or use an explicit
+consumer-supported Terraform-variable or file contract. Literal `${` and `%{`
+are data; adding Terraform interpolation escapes changes the intended value.
+
+A stale generation, conflicting intent ledger or unexpected Terraform state is
+a reconciliation problem. Keep state, the ledger key and intent files together.
+Restore a known consistent set and compare the approved generation; deleting
+one component to force a run destroys the evidence needed for recovery.
+
+Keep the HCP state and workspace-selector paths as the expected private regular
+files. A dangling symlink is still a conflicting path, not an absent state file.
+Do not bypass a refusal by replacing it with an empty state; determine what the
+original path should contain and restore or reconcile the intended state first.
+
+Use the verified executable directly rather than an unreviewed wrapper that may
+ignore or truncate its input. An input-delivery failure or external-tool timeout
+must not be treated as successful decryption or publication. Preserve the failed
+attempt; if the command could have written to a cloud, inspect the destination
+read-only before deciding whether to retry. Local process cleanup does not undo
+a remote write.
+
+## Repeated ETag conflicts or delayed OCI readiness
+
+A preflight-to-write ETag change means the destination changed while it was
+being inspected. Stop, preserve the attempt and perform a fresh read-only
+reconciliation. If another publisher is active, establish one rotation owner
+before trying again. Do not remove the ETag guard or loop writes until they pass.
+A previous confirmed write may already be complete even if a later repeat fails.
+
+For a newly created vault whose management endpoint is not yet resolvable,
+follow the [bootstrap readiness procedure](SECRETS_BOOTSTRAP.md#if-the-new-vault-endpoint-is-not-ready).
+Preserve partial Terraform state and check the next plan; recreating the vault
+can turn a temporary readiness delay into a different recovery problem.

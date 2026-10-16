@@ -11,7 +11,7 @@ from .catalog import require, MAX_CATALOG
 
 
 def private_parent(path):
-    """Pin every directory component without following symlinks."""
+    """Pin private paths beneath trusted, non-renameable directory components."""
     path = Path(path).absolute()
     require(".." not in path.parts and bool(path.name), "invalid private path")
     fd = os.open("/", os.O_RDONLY | os.O_DIRECTORY)
@@ -22,6 +22,17 @@ def private_parent(path):
             )
             os.close(fd)
             fd = child
+            info = os.fstat(fd)
+            # Root-owned sticky temporary directories protect each owned child
+            # from renaming by other users. Other writable ancestors do not.
+            require(
+                info.st_uid in (0, os.geteuid())
+                and (
+                    not info.st_mode & 0o022
+                    or (info.st_uid == 0 and info.st_mode & stat.S_ISVTX)
+                ),
+                "unsafe private path ancestor",
+            )
         info = os.fstat(fd)
         require(
             info.st_uid == os.geteuid() and stat.S_IMODE(info.st_mode) == 0o700,
@@ -192,14 +203,22 @@ def process(
                     require(received <= limit, "external tool output limit")
                     if key.data == "out":
                         output.extend(chunk)
-        require(
-            p.wait(timeout=max(0.1, timeout - (time.monotonic() - start))) == 0,
-            "external tool failed; output withheld",
-        )
+        try:
+            status = p.wait(timeout=max(0.1, timeout - (time.monotonic() - start)))
+        except subprocess.TimeoutExpired:
+            require(False, "external tool timeout")
+        require(status == 0, "external tool failed; output withheld")
+        require(sent == len(data), "external tool did not consume its input")
         return bytes(output)
     finally:
-        if p.poll() is None:
-            os.killpg(p.pid, signal.SIGKILL)
+        # An exited but unreaped leader still reserves its PID while descendants
+        # retain streams. After wait() reaps it, never signal a potentially reused
+        # process-group ID. Do not poll() here: that would also reap the leader.
+        if p.returncode is None:
+            try:
+                os.killpg(p.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
             p.wait()
         sel.close()
         for stream in (p.stdin, p.stdout, p.stderr):
@@ -208,7 +227,15 @@ def process(
 
 
 def decrypt(path, identity, age):
-    encrypted = read_private(path)
+    return decrypt_bytes(read_private(path), identity, age)
+
+
+def decrypt_bytes(encrypted, identity, age):
+    """Decrypt already-read ciphertext without reopening or racing its pathname."""
+    require(
+        type(encrypted) is bytes and len(encrypted) <= MAX_CATALOG * 2,
+        "invalid or oversized encrypted input",
+    )
     fd = open_private(identity)
     try:
         return process(
