@@ -24,6 +24,7 @@ const allowedModules = new Set([
   'config/utils',
   'modules/manager/github-actions/extract',
   'modules/manager/custom/regex/index',
+  'modules/manager/custom/jsonata/index',
   'workers/repository/updates/flatten',
   'workers/repository/update/branch/auto-replace',
 ]);
@@ -41,6 +42,7 @@ GlobalConfig.set({ localDir: process.cwd(), platform: 'github' });
 const { mergeChildConfig } = await moduleAt('config/utils');
 const { extractPackageFile } = await moduleAt('modules/manager/github-actions/extract');
 const { extractPackageFile: extractPins } = await moduleAt('modules/manager/custom/regex/index');
+const { extractPackageFile: extractRuntime } = await moduleAt('modules/manager/custom/jsonata/index');
 const { flattenUpdates } = await moduleAt('workers/repository/updates/flatten');
 const { doAutoReplace } = await moduleAt('workers/repository/update/branch/auto-replace');
 const preset = JSON.parse(await readFile('renovate-ci.json', 'utf8'));
@@ -157,14 +159,79 @@ for (const content of [
 ]) {
   assert.equal(extractPins(content, policyFile, policyManager), null);
 }
+// Parse YAML structurally: foreign inputs and run-block examples are not dependencies.
+const runtimeManager = preset.customManagers.find((manager) => manager.customType === 'jsonata');
+assert.deepEqual(runtimeManager.managerFilePatterns, [String.raw`/^\.github/workflows/[^/]+\.ya?ml$/`]);
+const runtimeFile = '.github/workflows/release-pipeline.yml';
+const runtimeWorkflow = `jobs:
+  foreign:
+    uses: another/team/.github/workflows/fuzz.yml@${old}
+    with:
+      toolkit-ref: ${old}
+  examples:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          uses: victron-venus/venus-os-ci-toolkit/.github/workflows/fuzz.yml@${old}
+          with:
+            toolkit-ref: ${old}
+  fuzz:
+    uses: victron-venus/venus-os-ci-toolkit/.github/workflows/fuzz.yml@${old}
+    with:
+      toolkit-ref: ${old} # runtime one
+      unrelated-ref: ${old}
+  coverage:
+    uses: victron-venus/venus-os-ci-toolkit/.github/workflows/coverage-upload.yml@${old}
+    with: {toolkit-ref: "${old}"} # runtime two
+`;
+const runtimePins = await extractRuntime(runtimeWorkflow, runtimeFile, runtimeManager);
+assert.equal(runtimePins.deps.length, 2);
+for (const dep of runtimePins.deps) {
+  assert.equal(dep.currentDigest, old);
+  assert.equal(dep.depName, policyDep.depName);
+  assert.equal(dep.datasource, policyDep.datasource);
+  assert.equal(dep.currentValue, 'main');
+  dep.updates = [{ updateType: 'digest', newValue: 'main', newDigest: next }];
+}
+const runtimeScratch = await mkdtemp(resolve(tmpdir(), 'renovate-runtime-'));
+try {
+  GlobalConfig.set({ localDir: runtimeScratch, platform: 'github' });
+  for (const content of [runtimeWorkflow, runtimeWorkflow.replaceAll('\n', '\r\n'), runtimeWorkflow.trimEnd()]) {
+    let updated = content;
+    for (let depIndex = 0; depIndex < 2; depIndex += 1) {
+      const result = await extractRuntime(updated, runtimeFile, runtimeManager);
+      updated = await doAutoReplace({
+        ...config, ...result, ...result.deps[depIndex], manager: 'jsonata',
+        packageFile: runtimeFile, depIndex, newValue: 'main', newDigest: next,
+        updateType: 'digest',
+      }, updated, false);
+    }
+    const expected = content.replace(`toolkit-ref: ${old} # runtime one`, `toolkit-ref: ${next} # runtime one`)
+      .replace(`toolkit-ref: "${old}"`, `toolkit-ref: "${next}"`);
+    assert.equal(updated, expected);
+    const after = await extractRuntime(updated, runtimeFile, runtimeManager);
+    assert.ok(after.deps.every((dep) => dep.currentDigest === next));
+  }
+} finally {
+  GlobalConfig.set({ localDir: process.cwd(), platform: 'github' });
+  await rm(runtimeScratch, { recursive: true, force: true });
+}
+for (const content of [
+  runtimeWorkflow.replaceAll(old, 'main'),
+  runtimeWorkflow.replaceAll(old, old + 'a'),
+  runtimeWorkflow.replaceAll(old, old.slice(1)),
+  runtimeWorkflow.replaceAll('victron-venus/venus-os-ci-toolkit/', 'another/team/'),
+  'jobs: {caller: {with: {toolkit-ref: "' + old + '"}}}',
+]) assert.equal(await extractRuntime(content, runtimeFile, runtimeManager), null);
 const updates = await flattenUpdates(config, {
   'github-actions': [{ packageFile: '.github/workflows/ci.yml', deps: actions }],
   regex: [
     { packageFile: '.github/action-pins.json', deps: pins.deps },
     { packageFile: policyFile, deps: policyPins.deps },
   ],
+  jsonata: [{ packageFile: runtimeFile, deps: runtimePins.deps }],
 });
-assert.equal(updates.length, actions.length + pins.deps.length + policyPins.deps.length);
+assert.equal(updates.length, actions.length + pins.deps.length + policyPins.deps.length + runtimePins.deps.length);
 assert.deepEqual([...new Set(updates.map((update) => update.branchName))], ['renovate/ci-workflows']);
 assert.ok(updates.every((update) => update.automerge === false));
 for await (const filename of glob(['.github/workflows/*.{yml,yaml}', 'actions/**/action.{yml,yaml}'])) {
@@ -173,4 +240,4 @@ for await (const filename of glob(['.github/workflows/*.{yml,yaml}', 'actions/**
     assert.notEqual(dep.skipReason, 'unversioned-reference', `${filename}: ${dep.depName} needs a version comment`);
   }
 }
-console.log('Renovate groups CodeQL majors, reusable workflow digests, action patches, generator pins and the coverage policy digest into one PR; the policy updater preserves its immutable SHA.');
+console.log('Renovate groups CodeQL majors, reusable workflow digests, action patches, generator pins, release policy digests and toolkit runtime inputs into one PR; custom updaters preserve immutable SHAs.');

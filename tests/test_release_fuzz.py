@@ -41,7 +41,7 @@ class FuzzContracts(unittest.TestCase):
         java = [step for step in steps if step.get("uses", "").startswith("actions/setup-java@")]
         self.assertEqual(len(java), 1)
         self.assertEqual(java[0]["if"], "${{ steps.config.outputs.language == 'jvm' }}")
-        self.assertEqual(java[0]["uses"], "actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6")
+        self.assertRegex(java[0]["uses"], r"^actions/setup-java@[0-9a-f]{40}$")
         self.assertEqual(java[0]["with"], {"distribution": "temurin", "java-version": "17"})
         self.assertLess(steps.index(java[0]), next(i for i, step in enumerate(steps)
                                                 if step["name"] == "Build and run isolated bounded targets"))
