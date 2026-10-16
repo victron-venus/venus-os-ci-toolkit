@@ -52,7 +52,34 @@ def chain(directory: Path, weak: str | None) -> None:
     (directory / "chain.pem").write_bytes((directory / "leaf.pem").read_bytes() + (directory / INTERMEDIATE_CERTIFICATE).read_bytes())
 
 
-def probe(binary: Path, weak: str | None, version: ssl.TLSVersion) -> None:
+def server_context(directory: Path, version: ssl.TLSVersion) -> ssl.SSLContext:
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    if version == ssl.TLSVersion.TLSv1_3:
+        context.minimum_version = context.maximum_version = ssl.TLSVersion.TLSv1_3
+    elif version == ssl.TLSVersion.TLSv1_2:
+        context.minimum_version = context.maximum_version = ssl.TLSVersion.TLSv1_2
+    else:
+        raise ValueError("The fixture only supports TLS 1.2 and 1.3")
+    # Test-only loopback server must present the deliberately weak chain.
+    # The production Cosign client remains strict and must reject it before HTTP.
+    context.set_ciphers("DEFAULT:@SECLEVEL=0")
+    context.load_cert_chain(directory / "chain.pem", directory / "leaf.key")
+    return context
+
+
+def probe_command(binary: Path, client: str, home: Path, port: int, env: dict) -> list[str]:
+    if client == "gh":
+        # Never send an inherited operator credential, even to loopback.
+        env.update({"GH_TOKEN": "synthetic-fixture-token", "GITHUB_TOKEN": "synthetic-fixture-token",
+                    "GH_ENTERPRISE_TOKEN": "synthetic-fixture-token", "GITHUB_ENTERPRISE_TOKEN": "synthetic-fixture-token",
+                    "GH_CONFIG_DIR": str(home), "GH_HOST": "github.com"})
+        return [str(binary), "api", f"https://localhost:{port}/fixture"]
+    if client == "downloader":
+        return [str(binary), f"https://localhost:{port}/fixture", str(home / "download")]
+    return [str(binary), "initialize", "--mirror", f"https://localhost:{port}"]
+
+
+def probe(binary: Path, weak: str | None, version: ssl.TLSVersion, client: str = "cosign") -> None:
     with tempfile.TemporaryDirectory(prefix="cosign-tls-") as temporary:
         directory = Path(temporary)
         chain(directory, weak)
@@ -68,22 +95,12 @@ def probe(binary: Path, weak: str | None, version: ssl.TLSVersion) -> None:
                 return
 
         server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-        if version == ssl.TLSVersion.TLSv1_3:
-            context.minimum_version = context.maximum_version = ssl.TLSVersion.TLSv1_3
-        elif version == ssl.TLSVersion.TLSv1_2:
-            context.minimum_version = context.maximum_version = ssl.TLSVersion.TLSv1_2
-        else:
-            raise ValueError("The fixture only supports TLS 1.2 and 1.3")
-        # Test-only loopback server must present the deliberately weak chain.
-        # The production Cosign client remains strict and must reject it before HTTP.
-        context.set_ciphers("DEFAULT:@SECLEVEL=0")
-        context.load_cert_chain(directory / "chain.pem", directory / "leaf.key")
+        context = server_context(directory, version)
         server.socket = context.wrap_socket(server.socket, server_side=True)
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         try:
-            for strict in (False, True):
+            for strict in ((True,) if client == "downloader" else (False, True)):
                 home = directory / f"home-{strict}"
                 home.mkdir()
                 roots = directory / "empty-roots"
@@ -93,8 +110,8 @@ def probe(binary: Path, weak: str | None, version: ssl.TLSVersion) -> None:
                        "SSL_CERT_FILE": str(directory / ROOT_CERTIFICATE), "SSL_CERT_DIR": str(roots),
                        "NO_PROXY": "localhost,127.0.0.1"}
                 before = len(requests)
-                result = subprocess.run([str(binary), "initialize", "--mirror",
-                                         f"https://localhost:{server.server_port}"], env=env,
+                command = probe_command(binary, client, home, server.server_port, env)
+                result = subprocess.run(command, env=env,
                                         text=True, capture_output=True, timeout=30)
                 count = len(requests) - before
                 if weak and strict:
@@ -109,12 +126,12 @@ def probe(binary: Path, weak: str | None, version: ssl.TLSVersion) -> None:
             thread.join()
 
 
-def check(binary: Path) -> None:
+def check(binary: Path, client: str = "cosign") -> None:
     if sys.platform not in {"linux", "darwin"}:
         raise RuntimeError("This test supports Linux and macOS")
     for version in (ssl.TLSVersion.TLSv1_2, ssl.TLSVersion.TLSv1_3):
         for weak in (None, "root", "intermediate", "leaf"):
-            probe(binary.resolve(), weak, version)
+            probe(binary.resolve(), weak, version, client)
 
 
 if __name__ == "__main__":

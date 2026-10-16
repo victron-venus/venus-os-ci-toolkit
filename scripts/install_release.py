@@ -28,6 +28,7 @@ from runner_selection import render_consumer, runner_labels  # pylint: disable=w
 import release_validation  # pylint: disable=wrong-import-position
 import release_fuzz  # pylint: disable=wrong-import-position
 import release_signing_workflow  # pylint: disable=wrong-import-position
+import release_gh_workflow  # pylint: disable=wrong-import-position
 from workflow_hardening import harden_jobs  # pylint: disable=wrong-import-position
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -1180,6 +1181,7 @@ def release(policy):
     """Opt declared consumers into early plans without changing legacy contracts."""
     workflow = _legacy_release(policy)
     if not policy.get("versioning"):
+        release_gh_workflow.apply(workflow, ACTION_REFS)
         return workflow
     jobs = workflow["jobs"]
     if release_validation.channel_workflows(policy) is not None:
@@ -1264,6 +1266,7 @@ def release(policy):
     jobs["final"] = final
     release_signing_workflow.apply(workflow, policy, ACTION_REFS)
     configure_fuzzing(workflow, policy)
+    release_gh_workflow.apply(workflow, ACTION_REFS)
     return workflow
 
 
@@ -1530,6 +1533,8 @@ def release_files(directory: Path, policy: dict) -> dict[str, str]:
     if not (directory / RELEASE_BUILD_PATH).is_file():
         raise ValueError("A real release-build.yml adapter is required")
     files = {".github/workflows/release-pipeline.yml": dump(release(policy))}
+    for path in ("scripts/install_release_gh.py", "scripts/download_release_gh.go", ".github/gh/release.json", ".github/gh/LICENSE", "docs/release-github-cli.md"):
+        files[path] = (ROOT / path).read_text()
     files["scripts/release_validation.py"] = (ROOT / "scripts/release_validation.py").read_text()
     if release_fuzz.configuration(policy) is not None:
         files[FUZZ_RUNNER_PATH] = (ROOT / FUZZ_RUNNER_PATH).read_text()
@@ -2182,6 +2187,10 @@ merging. This is an operating policy, not a claim that GitHub prevents every adm
 or branch writer from bypassing it. Deployment approval is an explicit manual
 operation; a second independent reviewer is not enforced by a paid environment.
 """
+    if policy.get("mode", "release") == "release":
+        text += "\n## Qualified GitHub CLI\n\n"
+        text += "Release jobs install and check the exact native GitHub CLI before GitHub API operations. "
+        text += "For local use, follow [the supported CLI installation and TLS profile](release-github-cli.md).\n"
     text += "\n## Project limits and rollout requirements\n\n"
     text += "".join(f"- {note}\n" for note in policy.get("notes", []))
     text += "".join(
