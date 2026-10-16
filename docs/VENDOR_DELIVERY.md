@@ -81,3 +81,13 @@ and `actionlint .github/workflows/vendor-update.yml`. `--stage-only` performs th
 same read-only remote qualification and prepares a signed local Git object, but
 does not push or open a PR; it requires dedicated clean checkouts and configured
 signing just like the workflow.
+
+### Transient workflow status
+
+GitHub can briefly report a running producer as `queued` when its dependent
+delivery job starts. The verifier re-reads that same run at most seven times,
+five seconds apart. Every read revalidates the repository, workflow, source SHA,
+trusted event and exact attempt. A queued snapshot is never qualification: it
+must advance to the existing accepted state and all named qualification jobs
+must still have completed successfully. Terminal failures and identity changes
+fail immediately. The complete verification is repeated before pushing.
