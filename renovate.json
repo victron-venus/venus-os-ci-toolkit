@@ -6,6 +6,7 @@
   "enabledManagers": [
     "github-actions",
     "custom.regex",
+    "custom.jsonata",
     "npm"
   ],
   "packageRules": [

@@ -140,6 +140,14 @@ class DependencyMigrationTests(unittest.TestCase):
 
 
 class CoupledWorkflowTests(unittest.TestCase):
+    def test_repository_allowlist_keeps_shared_custom_managers_enabled(self):
+        preset = json.loads((ROOT / "renovate-ci.json").read_text())
+        repository = json.loads((ROOT / "renovate.json").read_text())
+        # Renovate replaces enabledManagers rather than merging the arrays.
+        enabled = repository.get("enabledManagers", preset["enabledManagers"])
+        for manager in preset["customManagers"]:
+            self.assertIn("custom." + manager["customType"], enabled)
+
     @staticmethod
     def codeql_source(action, comment, quote=""):
         reference = quote + f"github/codeql-action/{action}@" + "a" * 40 + quote
