@@ -264,7 +264,7 @@ jobs:
     # Only the default Linux target may use the already-qualified Linux reserve.
     # Native OS targets must not silently collapse onto that pool.
     runs-on: ${{ fromJSON(matrix.os == 'ubuntu-latest' && (vars.CI_RUNNER_MODE == 'self-hosted' || vars.CI_RUNNER_MODE == 'k3s') && ((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) || (contains(fromJSON('["push","schedule","workflow_dispatch"]'), github.event_name) && github.ref == format('refs/heads/{0}', github.event.repository.default_branch))) && (vars.CI_RUNNER_LABELS || '[]') || format('["{0}"]', matrix.os)) }}
-    timeout-minutes: 25
+    timeout-minutes: 35
     defaults:
       run:
         shell: bash
