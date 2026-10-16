@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="545" viewBox="0 0 1200 545" role="img" aria-labelledby="title desc">
+  <title id="title">Recorded input executions</title>
+  <desc id="desc">Under 1 million: 7 repositories; 1–5 million: 14 repositories; 5–10 million: 9 repositories; 10–25 million: 10 repositories; 25 million or more: 1 repositories</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#475569" />
+    </marker>
+  </defs>
+  <g font-family="DejaVu Sans, Arial, sans-serif">
+    <rect x="0" y="0" width="1200" height="545" rx="0" fill="#f8fafc" stroke="none" />
+    <text x="40" y="55" font-size="29" fill="#10243a" font-weight="700" text-anchor="start">Recorded input executions</text>
+    <text x="40" y="88" font-size="17" fill="#475569" font-weight="400" text-anchor="start">One accepted RC per verified stable release. Counts depend on targets, engine and time budget.</text>
+    <text x="40" y="152" font-size="18" fill="#10243a" font-weight="400" text-anchor="start">Under 1 million</text>
+    <rect x="272" y="124" width="820" height="42" rx="5" fill="#e2e8f0" stroke="none" />
+    <rect x="272" y="124" width="410.0" height="42" rx="5" fill="#0369a1" stroke="none" />
+    <text x="1110" y="152" font-size="21" fill="#10243a" font-weight="700" text-anchor="start">7</text>
+    <text x="40" y="217" font-size="18" fill="#10243a" font-weight="400" text-anchor="start">1–5 million</text>
+    <rect x="272" y="189" width="820" height="42" rx="5" fill="#e2e8f0" stroke="none" />
+    <rect x="272" y="189" width="820.0" height="42" rx="5" fill="#0f766e" stroke="none" />
+    <text x="1110" y="217" font-size="21" fill="#10243a" font-weight="700" text-anchor="start">14</text>
+    <text x="40" y="282" font-size="18" fill="#10243a" font-weight="400" text-anchor="start">5–10 million</text>
+    <rect x="272" y="254" width="820" height="42" rx="5" fill="#e2e8f0" stroke="none" />
+    <rect x="272" y="254" width="527.1428571428571" height="42" rx="5" fill="#6d28d9" stroke="none" />
+    <text x="1110" y="282" font-size="21" fill="#10243a" font-weight="700" text-anchor="start">9</text>
+    <text x="40" y="347" font-size="18" fill="#10243a" font-weight="400" text-anchor="start">10–25 million</text>
+    <rect x="272" y="319" width="820" height="42" rx="5" fill="#e2e8f0" stroke="none" />
+    <rect x="272" y="319" width="585.7142857142857" height="42" rx="5" fill="#0369a1" stroke="none" />
+    <text x="1110" y="347" font-size="21" fill="#10243a" font-weight="700" text-anchor="start">10</text>
+    <text x="40" y="412" font-size="18" fill="#10243a" font-weight="400" text-anchor="start">25 million or more</text>
+    <rect x="272" y="384" width="820" height="42" rx="5" fill="#e2e8f0" stroke="none" />
+    <rect x="272" y="384" width="58.57142857142857" height="42" rx="5" fill="#0f766e" stroke="none" />
+    <text x="1110" y="412" font-size="21" fill="#10243a" font-weight="700" text-anchor="start">1</text>
+    <text x="40" y="482" font-size="18" fill="#10243a" font-weight="600" text-anchor="start">Number of repositories by recorded execution volume</text>
+    <text x="40" y="512" font-size="16" fill="#475569" font-weight="400" text-anchor="start">This distribution describes work performed. It must not be used to rank test quality or completeness.</text>
+  </g>
+</svg>
