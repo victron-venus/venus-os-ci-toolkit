@@ -57,6 +57,13 @@ jobs:
       - name: Rebuild the locked Scorecard adapter for extraction
         working-directory: tools/scorecard-scan
         run: go build -a -mod=readonly -trimpath -o "$RUNNER_TEMP/scorecard-scan" .
+      - name: Rebuild the qualified release downloader for extraction
+        env:
+          GOTOOLCHAIN: local
+          GODEBUG: fips140=on
+          CGO_ENABLED: '0'
+          GOMAXPROCS: '2'
+        run: go build -a -p=2 -trimpath -o "$RUNNER_TEMP/release-gh-downloader" scripts/download_release_gh.go
       - name: Perform Go CodeQL Analysis
         uses: github/codeql-action/analyze@6f2ac81f5cd81fe351a197ba0b00d91d03cd2aee # v4.39.0
         with:

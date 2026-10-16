@@ -52,7 +52,7 @@ def chain(directory: Path, weak: str | None) -> None:
     (directory / "chain.pem").write_bytes((directory / "leaf.pem").read_bytes() + (directory / INTERMEDIATE_CERTIFICATE).read_bytes())
 
 
-def probe(binary: Path, weak: str | None, version: ssl.TLSVersion) -> None:
+def probe(binary: Path, weak: str | None, version: ssl.TLSVersion, client: str = "cosign") -> None:
     with tempfile.TemporaryDirectory(prefix="cosign-tls-") as temporary:
         directory = Path(temporary)
         chain(directory, weak)
@@ -78,7 +78,7 @@ def probe(binary: Path, weak: str | None, version: ssl.TLSVersion) -> None:
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         try:
-            for strict in (False, True):
+            for strict in ((True,) if client == "downloader" else (False, True)):
                 home = directory / f"home-{strict}"
                 home.mkdir()
                 roots = directory / "empty-roots"
@@ -88,8 +88,16 @@ def probe(binary: Path, weak: str | None, version: ssl.TLSVersion) -> None:
                        "SSL_CERT_FILE": str(directory / ROOT_CERTIFICATE), "SSL_CERT_DIR": str(roots),
                        "NO_PROXY": "localhost,127.0.0.1"}
                 before = len(requests)
-                result = subprocess.run([str(binary), "initialize", "--mirror",
-                                         f"https://localhost:{server.server_port}"], env=env,
+                command = [str(binary), "initialize", "--mirror", f"https://localhost:{server.server_port}"]
+                if client == "gh":
+                    # Never send an inherited operator credential, even to loopback.
+                    env.update({"GH_TOKEN": "synthetic-fixture-token", "GITHUB_TOKEN": "synthetic-fixture-token",
+                                "GH_ENTERPRISE_TOKEN": "synthetic-fixture-token", "GITHUB_ENTERPRISE_TOKEN": "synthetic-fixture-token",
+                                "GH_CONFIG_DIR": str(home), "GH_HOST": "github.com"})
+                    command = [str(binary), "api", f"https://localhost:{server.server_port}/fixture"]
+                elif client == "downloader":
+                    command = [str(binary), f"https://localhost:{server.server_port}/fixture", str(home / "download")]
+                result = subprocess.run(command, env=env,
                                         text=True, capture_output=True, timeout=30)
                 count = len(requests) - before
                 if weak and strict:
@@ -104,12 +112,12 @@ def probe(binary: Path, weak: str | None, version: ssl.TLSVersion) -> None:
             thread.join()
 
 
-def check(binary: Path) -> None:
+def check(binary: Path, client: str = "cosign") -> None:
     if sys.platform not in {"linux", "darwin"}:
         raise RuntimeError("This test supports Linux and macOS")
     for version in (ssl.TLSVersion.TLSv1_2, ssl.TLSVersion.TLSv1_3):
         for weak in (None, "root", "intermediate", "leaf"):
-            probe(binary.resolve(), weak, version)
+            probe(binary.resolve(), weak, version, client)
 
 
 if __name__ == "__main__":
