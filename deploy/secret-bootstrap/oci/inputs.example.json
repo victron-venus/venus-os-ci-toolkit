@@ -1,0 +1,14 @@
+{
+  "oci_config_file_profile": "REPLACE_WITH_EXPLICIT_PROFILE",
+  "oci_vault": {
+    "tenancy_id": "ocid1.tenancy.oc1..replacewithtenancy",
+    "region": "us-ashburn-1",
+    "name": "recovery-vault",
+    "key_name": "recovery-key",
+    "create_compartment": {
+      "parent_compartment_id": "ocid1.tenancy.oc1..replacewithparent",
+      "name": "secret-recovery"
+    }
+  },
+  "secret_readers": {}
+}
