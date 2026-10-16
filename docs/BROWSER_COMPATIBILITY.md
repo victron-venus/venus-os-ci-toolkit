@@ -255,6 +255,20 @@ only download bundled engines on the reserve; they do not run branded browser
 installers or system package installation there. An unavailable preinstalled
 channel fails its runtime probe rather than silently changing browser coverage.
 
+The planner has a 15-minute job budget, including checkout and Node 22 setup.
+This allows a newly created reserve runner to populate its tool cache on a slow
+connection; a cold setup has taken about eight minutes before planning could
+start. Warm-cache runs finish sooner, but a replaced runner may need that setup
+again. The release verdict retains five minutes.
+
+Each browser target has a separate 35-minute job budget for toolchain setup,
+browser installation, application acceptance and evidence upload. Measured cold
+stages on a self-hosted runner took about five minutes for Node, thirteen for
+the browser download and extraction, and seven for application acceptance.
+Those stages alone consume the former 25-minute budget. The additional ten
+minutes allow for checkout, runtime validation and artifacts without depending
+on a prewarmed runner. Application assertions and their timeouts are unchanged.
+
 References: [Playwright browser and branded-channel differences](https://playwright.dev/docs/browsers),
 [CI platform setup](https://playwright.dev/docs/ci), and
 [Safari WebDriver](https://developer.apple.com/documentation/webkit/testing-with-webdriver-in-safari).

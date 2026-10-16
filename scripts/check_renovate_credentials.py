@@ -10,6 +10,11 @@ import subprocess
 import tempfile
 import urllib.error
 import urllib.request
+
+if __package__:
+    from .tls_profile import open_url
+else:
+    from tls_profile import open_url
 from pathlib import Path
 
 
@@ -196,7 +201,7 @@ def main() -> None:
         },
     )
     try:
-        with urllib.request.urlopen(request, timeout=30) as response:
+        with open_url(request, timeout=30) as response:
             workflow_scope_verified = validate_scopes(
                 response.headers.get("X-OAuth-Scopes")
             )

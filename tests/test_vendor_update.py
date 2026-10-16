@@ -282,7 +282,8 @@ class QualificationTests(unittest.TestCase):
         )
         self.assertEqual(vu.qualify(source, args)["conclusion"], "success")
 
-    def test_run_state_diagnostics_preserve_the_qualification_truth_table(self):
+    @patch.object(vu.time, "sleep")
+    def test_run_state_diagnostics_preserve_the_qualification_truth_table(self, _sleep):
         statuses = (
             "queued",
             "in_progress",
@@ -326,6 +327,65 @@ class QualificationTests(unittest.TestCase):
                             f"conclusion={conclusion if conclusion is not None else 'null'})",
                         )
 
+    def queued_sequence(self, states):
+        """Return actual fake-API snapshots in order, with all other reads intact."""
+        args = arguments()
+        source = qualified_source(args)
+        snapshots = [run_info(args) | change for change in states]
+        original_request = source.request
+
+        def request(path, **kwargs):
+            if path == f"actions/runs/{args.run_id}":
+                return snapshots.pop(0)
+            return original_request(path, **kwargs)
+
+        source.request = request
+        return source, args
+
+    @patch.object(vu.time, "sleep")
+    def test_queued_snapshot_must_advance_then_pass_all_exact_job_checks(self, sleep):
+        source, args = self.queued_sequence(
+            [{"status": "queued"}, {"status": "queued"}, {}]
+        )
+        self.assertEqual(vu.qualify(source, args)["status"], "in_progress")
+        self.assertEqual(sleep.call_args_list, [((5,),), ((5,),)])
+        self.assertEqual(source.writes, [])
+        source, args = self.queued_sequence([{"status": "queued"}, {}])
+        source.values[f"actions/runs/{args.run_id}/attempts/{args.run_attempt}/jobs"][
+            "jobs"
+        ][0]["conclusion"] = "skipped"
+        with self.assertRaisesRegex(vu.ReleaseError, "Required job did not succeed"):
+            vu.qualify(source, args)
+
+    @patch.object(vu.time, "sleep")
+    def test_queued_snapshot_retry_is_bounded_and_never_accepted(self, sleep):
+        source, args = self.queued_sequence([{"status": "queued"}] * 7)
+        with self.assertRaisesRegex(vu.ReleaseError, "status=queued"):
+            vu.qualify(source, args)
+        self.assertEqual(sleep.call_count, 6)
+        self.assertEqual(source.writes, [])
+
+    @patch.object(vu.time, "sleep")
+    def test_retry_rejects_identity_changes_and_terminal_failure(self, sleep):
+        for changed in (
+            {"run_attempt": 3},
+            {"head_sha": "b" * 40},
+            {"event": "pull_request"},
+            {"status": "completed", "conclusion": "failure"},
+        ):
+            with self.subTest(changed=changed):
+                sleep.reset_mock()
+                source, args = self.queued_sequence([{"status": "queued"}, changed])
+                with self.assertRaises(vu.ReleaseError):
+                    vu.qualify(source, args)
+                self.assertEqual(sleep.call_count, 1)
+                self.assertEqual(source.writes, [])
+        source, args = self.queued_sequence([{"status": "queued", "run_attempt": 3}])
+        sleep.reset_mock()
+        with self.assertRaisesRegex(vu.ReleaseError, "Run identity mismatch"):
+            vu.qualify(source, args)
+        sleep.assert_not_called()
+
     def test_run_state_diagnostic_never_echoes_untrusted_values(self):
         for value in ("secret-fixture\n::error::injected", "x" * 10000, 0, True):
             for field in ("status", "conclusion"):
@@ -359,7 +419,8 @@ class QualificationTests(unittest.TestCase):
                     vu.run_state_label(value, vu.RUN_STATUS_LABELS), "unrecognized"
                 )
 
-    def test_wrong_run_identity_and_untrusted_event(self):
+    @patch.object(vu.time, "sleep")
+    def test_wrong_run_identity_and_untrusted_event(self, _sleep):
         for key, value in [
             ("id", 18),
             ("run_attempt", 1),

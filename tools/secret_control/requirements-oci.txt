@@ -1,0 +1,2 @@
+# Optional: installed only for explicit OCI publishing/fetching.
+oci==2.187.2

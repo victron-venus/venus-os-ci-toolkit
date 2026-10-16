@@ -1,6 +1,12 @@
 # Venus OS CI Toolkit
 
+[![OpenSSF Best Practices](https://www.bestpractices.dev/projects/15552/badge)](https://www.bestpractices.dev/en/projects/15552)
+
 [![Fuzzing: RC only](https://img.shields.io/badge/Fuzzing-RC%20only-blue)](docs/self-release.md)
+
+See [governance](GOVERNANCE.md), [community conduct](CODE_OF_CONDUCT.md) and
+[architecture, security evidence and roadmap](docs/project-assurance.md). The live
+OpenSSF assessment records the currently achieved level and remaining criteria.
 
 The toolkit publishes versioned source candidates with an explicit file inventory
 and acceptance tests against the extracted archive. See [source installation and
@@ -20,7 +26,17 @@ targets and locked build steps; private repositories, PRs, beta, nightly and
 stable runs do not launch fuzz campaigns. Reports bind each result to its source
 and run attempt and become part of the candidate's release inventory.
 
+![Public RC fuzzing process and repair loop](docs/images/rc-fuzzing/process.svg)
+
+Explore the [illustrated release process and verified rollout results](docs/rc-fuzzing-results.md), with SVG diagrams and links to the accepted RC reports.
+
 ## Operator inventories
+
+For encrypted operator inputs and recovery, see the [secret control plane](docs/SECRETS.md).
+It separates public tooling from a local private catalog and explains OCI/HCP
+publication, credential rotation, independent backups, and recovery drills.
+Start with the [offline synthetic recovery exercise](docs/SECRETS_DRILL.md);
+it does not need cloud credentials or production data.
 
 See [public source and operator configuration](docs/OPERATOR_CONFIG.md) before
 updating a local fleet or private-runner operator installation. Public source
@@ -29,7 +45,7 @@ lives outside the checkout. Preparing that configuration does not switch runners
 
 ## Runtime scope
 
-This toolkit runs in GitHub Actions; it is not a service installed on Venus OS.
+The CI workflows run in GitHub Actions; they are not a service installed on Venus OS.
 A green workflow on an x86 Linux runner does not establish compatibility with
 Cerbo GX ARMv7 or Raspberry Pi firmware. Consumers shipping native GX services
 should separately exercise BusyBox/POSIX installers, offline dependency failure,

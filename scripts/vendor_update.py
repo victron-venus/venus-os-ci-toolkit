@@ -16,6 +16,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
 import zipfile
 from datetime import datetime
 from pathlib import Path
@@ -315,7 +316,7 @@ def run_state_label(value, labels):
     return value if type(value) is str and value in labels else "unrecognized"
 
 
-def validate_run(run, repository, args):
+def validate_run_identity(run, repository, args):
     """Require current-attempt trusted default-branch execution, not PR uploads."""
     require(
         repository.get("full_name") == args.source_repo
@@ -340,6 +341,11 @@ def validate_run(run, repository, args):
     require(
         run.get("event") in {"push", "workflow_dispatch"}, "Run event is not trusted"
     )
+
+
+def validate_run(run, repository, args):
+    """Keep the accepted run-state pairs independent from transient polling."""
+    validate_run_identity(run, repository, args)
     require(
         (run.get("status"), run.get("conclusion"))
         in {("in_progress", None), ("completed", "success")},
@@ -349,10 +355,31 @@ def validate_run(run, repository, args):
     )
 
 
+def qualified_run(source, args):
+    """Re-read a same-identity queued snapshot with at most 30 seconds of delay.
+
+    A running dependent job can briefly observe its own workflow as queued.
+    Queued is never accepted; every read revalidates the entire trusted identity.
+    Failure, cancellation, other states and exhausted retries fail immediately.
+    """
+    for attempt in range(7):
+        run = source.request(f"actions/runs/{args.run_id}")
+        repository = source.request("")
+        validate_run_identity(run, repository, args)
+        if (run.get("status"), run.get("conclusion")) == (
+            "queued",
+            None,
+        ) and attempt < 6:
+            time.sleep(5)
+            continue
+        validate_run(run, repository, args)
+        return run
+    raise AssertionError("Unreachable retry state")
+
+
 def qualify(source, args):
     """Re-read the run and exact-attempt jobs, including immediately before push."""
-    run = source.request(f"actions/runs/{args.run_id}")
-    validate_run(run, source.request(""), args)
+    run = qualified_run(source, args)
     workflow = source.request(
         "actions/workflows/" + quote(args.source_workflow, safe="")
     )

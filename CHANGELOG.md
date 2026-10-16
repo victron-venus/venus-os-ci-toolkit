@@ -1,5 +1,30 @@
 # Changelog
 
+## Unreleased
+
+- Allow 35 minutes for each browser target, covering cold toolchain and browser
+  setup plus application acceptance and evidence upload. Planner, release-verdict
+  and application test timeouts are unchanged.
+- Add an offline synthetic recovery drill and independently checkpointed catalog
+  verification, with operator instructions and a recovery-exercise diagram.
+- Reject unsafe path ancestors and dangling HCP state links; bound external
+  process groups and reject incomplete input delivery.
+- Add an opt-in strict OpenSSL 3 transport profile for owned Python HTTPS calls,
+  preserving stricter platform defaults and rejecting credential redirects.
+- Document project governance, complete source-release security scope and
+  OpenSSF evidence with an official live assessment badge.
+
+- Make Ed448 signing-preflight regression tests deterministic with an explicitly
+  public test key, retaining real signing, verification and tamper rejection.
+- Allow 15 minutes for browser planning, including cold Node 22 installation on
+  newly created runners. Browser execution and release-verdict budgets are unchanged.
+- Add an age-encrypted recovery catalog, explicit OCI secret publication with
+  revision and concurrency checks, and immutable verified private-file delivery.
+- Add isolated local Terraform roots for OCI topology and HCP write-only
+  variables; include recovery, rotation and partial-failure runbooks.
+- Test real encryption recovery on Linux and macOS with Python 3.12 and 3.14.
+  Adoption is opt-in: existing consumers and their credentials are unchanged.
+
 ## [0.1.3] - 2026-10-16
 
 - Accept explicitly selected Intel macOS runners in the complete browser release

@@ -40,8 +40,14 @@ class SigningWorkflowTests(unittest.TestCase):
         self.assertNotIn("id-token", jobs["build"]["permissions"])
         self.assertIn("sign", jobs["gate"]["needs"])
         self.assertIn("github.repository == 'example/project'", jobs["sign"]["if"])
-        for name in ("candidate", "stable", "final"):
-            self.assertTrue(any(s.get("uses") == install_release.ACTION_REFS["sigstore/cosign-installer"] for s in jobs[name]["steps"]))
+        for name in ("sign", "candidate", "stable", "final"):
+            steps = jobs[name]["steps"]
+            checkout = next(s for s in steps if s.get("with", {}).get("repository") == "sigstore/cosign")
+            self.assertEqual(checkout["with"]["ref"], release_signing_workflow.COSIGN_SOURCE)
+            self.assertFalse(checkout["with"]["persist-credentials"])
+            builder = next(s for s in steps if s.get("name") == "Build the reviewed patched release signer")
+            self.assertIn('GODEBUG=fips140=on', builder["run"])
+            self.assertFalse(any("cosign-installer" in s.get("uses", "") for s in steps))
 
     def test_generated_collection_executes_and_excludes_previous_signature_artifact(self):
         steps = install_release.release(self.policy)["jobs"]["sign"]["steps"]

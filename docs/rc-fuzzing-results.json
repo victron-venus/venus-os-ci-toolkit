@@ -1,0 +1,691 @@
+{
+  "schema": 1,
+  "as_of_utc": "2026-10-16T16:50:13.574758+00:00",
+  "scope": "Public repositories in the RC fuzzing rollout; verified release snapshot, not a live service.",
+  "repository_count": 43,
+  "verified_stable_count": 41,
+  "pending_repositories": [
+    "open-ott-play/ottplay-foss",
+    "victron-venus/inverter-desktop"
+  ],
+  "verified_rc_fuzz_executions": 328410197,
+  "interpretation": "Execution counters measure exercised inputs, not coverage, bug absence or relative project quality.",
+  "repositories": [
+    {
+      "repository": "4alvit/amazon-echo-home-voice",
+      "source_sha": "362ad59a8ef7bd5ab1a7a0cdd2835338ea0d660f",
+      "stable_tag": "v0.3.2",
+      "stable_url": "https://github.com/4alvit/amazon-echo-home-voice/releases/tag/v0.3.2",
+      "stable_run_url": "https://github.com/4alvit/amazon-echo-home-voice/actions/runs/38626143945",
+      "rc_tag": "v0.3.2-rc.1",
+      "rc_url": "https://github.com/4alvit/amazon-echo-home-voice/releases/tag/v0.3.2-rc.1",
+      "rc_run_url": "https://github.com/4alvit/amazon-echo-home-voice/actions/runs/38624965449",
+      "rc_attempt": 1,
+      "fuzz_executions": 17544260,
+      "target_execution_counts": {
+        "reports": 17544260
+      },
+      "promotion": "promote-bytes"
+    },
+    {
+      "repository": "4alvit/dbus-service-template",
+      "source_sha": "99f80cbd8629491f2f9b7fdb79212d64c5ba6976",
+      "stable_tag": "v0.1.2",
+      "stable_url": "https://github.com/4alvit/dbus-service-template/releases/tag/v0.1.2",
+      "stable_run_url": "https://github.com/4alvit/dbus-service-template/actions/runs/38843832388",
+      "rc_tag": "v0.1.2-rc.2",
+      "rc_url": "https://github.com/4alvit/dbus-service-template/releases/tag/v0.1.2-rc.2",
+      "rc_run_url": "https://github.com/4alvit/dbus-service-template/actions/runs/38843007034",
+      "rc_attempt": 1,
+      "fuzz_executions": 1151719,
+      "target_execution_counts": {
+        "render-context": 1151719
+      },
+      "promotion": "promote-bytes"
+    },
+    {
+      "repository": "4alvit/energy-data-rag-pipeline",
+      "source_sha": "56e5fb791fc258fb41385f7604c4828f710df5de",
+      "stable_tag": "v0.2.14",
+      "stable_url": "https://github.com/4alvit/energy-data-rag-pipeline/releases/tag/v0.2.14",
+      "stable_run_url": "https://github.com/4alvit/energy-data-rag-pipeline/actions/runs/38849397164",
+      "rc_tag": "v0.2.14-rc.1",
+      "rc_url": "https://github.com/4alvit/energy-data-rag-pipeline/releases/tag/v0.2.14-rc.1",
+      "rc_run_url": "https://github.com/4alvit/energy-data-rag-pipeline/actions/runs/38848005047",
+      "rc_attempt": 1,
+      "fuzz_executions": 3645464,
+      "target_execution_counts": {
+        "citations": 3645464
+      },
+      "promotion": "promote-bytes"
+    },
+    {
+      "repository": "4alvit/esphome-ble-sensor-patterns",
+      "source_sha": "996521563694131c2330e92af39e677c6911385e",
+      "stable_tag": "v0.1.2",
+      "stable_url": "https://github.com/4alvit/esphome-ble-sensor-patterns/releases/tag/v0.1.2",
+      "stable_run_url": "https://github.com/4alvit/esphome-ble-sensor-patterns/actions/runs/38844065249",
+      "rc_tag": "v0.1.2-rc.2",
+      "rc_url": "https://github.com/4alvit/esphome-ble-sensor-patterns/releases/tag/v0.1.2-rc.2",
+      "rc_run_url": "https://github.com/4alvit/esphome-ble-sensor-patterns/actions/runs/38843023904",
+      "rc_attempt": 1,
+      "fuzz_executions": 60038032,
+      "target_execution_counts": {
+        "inkbird-internal": 60038032
+      },
+      "promotion": "promote-bytes"
+    },
+    {
+      "repository": "4alvit/fastapi-mqtt-gateway",
+      "source_sha": "67175dbc172db38ad5ad2fc90538f5888f0efd52",
+      "stable_tag": "v0.1.6",
+      "stable_url": "https://github.com/4alvit/fastapi-mqtt-gateway/releases/tag/v0.1.6",
+      "stable_run_url": "https://github.com/4alvit/fastapi-mqtt-gateway/actions/runs/38843657422",
+      "rc_tag": "v0.1.6-rc.2",
+      "rc_url": "https://github.com/4alvit/fastapi-mqtt-gateway/releases/tag/v0.1.6-rc.2",
+      "rc_run_url": "https://github.com/4alvit/fastapi-mqtt-gateway/actions/runs/38841476599",
+      "rc_attempt": 1,
+      "fuzz_executions": 1068823,
+      "target_execution_counts": {
+        "topics": 1068823
+      },
+      "promotion": "promote-bytes"
+    },
+    {
+      "repository": "4alvit/google-home-voice-stats",
+      "source_sha": "f4c039d88ca57d89e51a8ca145c117b856cc2af1",
+      "stable_tag": "v0.3.2",
+      "stable_url": "https://github.com/4alvit/google-home-voice-stats/releases/tag/v0.3.2",
+      "stable_run_url": "https://github.com/4alvit/google-home-voice-stats/actions/runs/38844491674",
+      "rc_tag": "v0.3.2-rc.2",
+      "rc_url": "https://github.com/4alvit/google-home-voice-stats/releases/tag/v0.3.2-rc.2",
+      "rc_run_url": "https://github.com/4alvit/google-home-voice-stats/actions/runs/38843090794",
+      "rc_attempt": 1,
+      "fuzz_executions": 3707986,
+      "target_execution_counts": {
+        "urls": 3707986
+      },
+      "promotion": "promote-bytes"
+    },
+    {
+      "repository": "4alvit/iot-project-builder-profile",
+      "source_sha": "8c3bba2d1dd184460038dd1e850aeb884076b8c5",
+      "stable_tag": "v0.1.4",
+      "stable_url": "https://github.com/4alvit/iot-project-builder-profile/releases/tag/v0.1.4",
+      "stable_run_url": "https://github.com/4alvit/iot-project-builder-profile/actions/runs/38625944121",
+      "rc_tag": "v0.1.4-rc.1",
+      "rc_url": "https://github.com/4alvit/iot-project-builder-profile/releases/tag/v0.1.4-rc.1",
+      "rc_run_url": "https://github.com/4alvit/iot-project-builder-profile/actions/runs/38624571879",
+      "rc_attempt": 1,
+      "fuzz_executions": 393472,
+      "target_execution_counts": {
+        "dbus-source": 393472
+      },
+      "promotion": "promote-bytes"
+    },
+    {
+      "repository": "4alvit/mcp-venus-os",
+      "source_sha": "cac65b99fc4f4059edb8642576c162f0a1ce7e4a",
+      "stable_tag": "v0.2.15",
+      "stable_url": "https://github.com/4alvit/mcp-venus-os/releases/tag/v0.2.15",
+      "stable_run_url": "https://github.com/4alvit/mcp-venus-os/actions/runs/38848131662",
+      "rc_tag": "v0.2.15-rc.1",
+      "rc_url": "https://github.com/4alvit/mcp-venus-os/releases/tag/v0.2.15-rc.1",
+      "rc_run_url": "https://github.com/4alvit/mcp-venus-os/actions/runs/38847096885",
+      "rc_attempt": 1,
+      "fuzz_executions": 5435237,
+      "target_execution_counts": {
+        "contract": 5435237
+      },
+      "promotion": "final-build"
+    },
+    {
+      "repository": "4alvit/mqtt-observability-opentelemetry",
+      "source_sha": "d3b89ed438161b93582b05cf4090ad91246f8f41",
+      "stable_tag": "v0.2.6",
+      "stable_url": "https://github.com/4alvit/mqtt-observability-opentelemetry/releases/tag/v0.2.6",
+      "stable_run_url": "https://github.com/4alvit/mqtt-observability-opentelemetry/actions/runs/38844290914",
+      "rc_tag": "v0.2.6-rc.1",
+      "rc_url": "https://github.com/4alvit/mqtt-observability-opentelemetry/releases/tag/v0.2.6-rc.1",
+      "rc_run_url": "https://github.com/4alvit/mqtt-observability-opentelemetry/actions/runs/38843038436",
+      "rc_attempt": 1,
+      "fuzz_executions": 582897,
+      "target_execution_counts": {
+        "trace-config": 582897
+      },
+      "promotion": "promote-bytes"
+    },
+    {
+      "repository": "4alvit/solar-forecast-langgraph",
+      "source_sha": "c547778d04dba6cfdbe51d4e0f79f83c5bd269fd",
+      "stable_tag": "v0.1.6",
+      "stable_url": "https://github.com/4alvit/solar-forecast-langgraph/releases/tag/v0.1.6",
+      "stable_run_url": "https://github.com/4alvit/solar-forecast-langgraph/actions/runs/38844133830",
+      "rc_tag": "v0.1.6-rc.2",
+      "rc_url": "https://github.com/4alvit/solar-forecast-langgraph/releases/tag/v0.1.6-rc.2",
+      "rc_run_url": "https://github.com/4alvit/solar-forecast-langgraph/actions/runs/38842977539",
+      "rc_attempt": 1,
+      "fuzz_executions": 19916507,
+      "target_execution_counts": {
+        "panels": 19916507
+      },
+      "promotion": "promote-bytes"
+    },
+    {
+      "repository": "ha-homelab/ha-desloc",
+      "source_sha": "b8008d757feabff6ed880a0b63f29bc56a8fab40",
+      "stable_tag": "v0.3.4",
+      "stable_url": "https://github.com/ha-homelab/ha-desloc/releases/tag/v0.3.4",
+      "stable_run_url": "https://github.com/ha-homelab/ha-desloc/actions/runs/38624948735",
+      "rc_tag": "v0.3.4-rc.1",
+      "rc_url": "https://github.com/ha-homelab/ha-desloc/releases/tag/v0.3.4-rc.1",
+      "rc_run_url": "https://github.com/ha-homelab/ha-desloc/actions/runs/38623993884",
+      "rc_attempt": 1,
+      "fuzz_executions": 10361198,
+      "target_execution_counts": {
+        "device": 10361198
+      },
+      "promotion": "promote-bytes"
+    },
+    {
+      "repository": "ha-homelab/ha-desloc-card",
+      "source_sha": "ed3cdfae772df96627579edbd2841932b0e3f9a3",
+      "stable_tag": "v0.1.4",
+      "stable_url": "https://github.com/ha-homelab/ha-desloc-card/releases/tag/v0.1.4",
+      "stable_run_url": "https://github.com/ha-homelab/ha-desloc-card/actions/runs/38623985514",
+      "rc_tag": "v0.1.4-rc.1",
+      "rc_url": "https://github.com/ha-homelab/ha-desloc-card/releases/tag/v0.1.4-rc.1",
+      "rc_run_url": "https://github.com/ha-homelab/ha-desloc-card/actions/runs/38623212194",
+      "rc_attempt": 1,
+      "fuzz_executions": 90200,
+      "target_execution_counts": {
+        "render-state": 45484,
+        "unlock-boundary": 44716
+      },
+      "promotion": "promote-bytes"
+    },
+    {
+      "repository": "ha-homelab/ha-echo-dot",
+      "source_sha": "790cce3add8d330df5b41faf5bb1e997b392cdd5",
+      "stable_tag": "v0.1.1",
+      "stable_url": "https://github.com/ha-homelab/ha-echo-dot/releases/tag/v0.1.1",
+      "stable_run_url": "https://github.com/ha-homelab/ha-echo-dot/actions/runs/38844838976",
+      "rc_tag": "v0.1.1-rc.1",
+      "rc_url": "https://github.com/ha-homelab/ha-echo-dot/releases/tag/v0.1.1-rc.1",
+      "rc_run_url": "https://github.com/ha-homelab/ha-echo-dot/actions/runs/38844159974",
+      "rc_attempt": 1,
+      "fuzz_executions": 4230422,
+      "target_execution_counts": {
+        "model-structure": 1696290,
+        "wav-input": 2534132
+      },
+      "promotion": "promote-bytes"
+    },
+    {
+      "repository": "ha-homelab/ha-echo-show-5",
+      "source_sha": "88fbfcc671532d0f0ba6a2289610adfffbc5c4aa",
+      "stable_tag": "v0.1.1",
+      "stable_url": "https://github.com/ha-homelab/ha-echo-show-5/releases/tag/v0.1.1",
+      "stable_run_url": "https://github.com/ha-homelab/ha-echo-show-5/actions/runs/38624303972",
+      "rc_tag": "v0.1.1-rc.1",
+      "rc_url": "https://github.com/ha-homelab/ha-echo-show-5/releases/tag/v0.1.1-rc.1",
+      "rc_run_url": "https://github.com/ha-homelab/ha-echo-show-5/actions/runs/38623573394",
+      "rc_attempt": 1,
+      "fuzz_executions": 2399910,
+      "target_execution_counts": {
+        "intercom-boundaries": 2399910
+      },
+      "promotion": "promote-bytes"
+    },
+    {
+      "repository": "ha-homelab/ha-lg-tv-capture",
+      "source_sha": "30a9a800efbbcca06bd662098a82dee3b37c0622",
+      "stable_tag": "v0.1.1",
+      "stable_url": "https://github.com/ha-homelab/ha-lg-tv-capture/releases/tag/v0.1.1",
+      "stable_run_url": "https://github.com/ha-homelab/ha-lg-tv-capture/actions/runs/38625228420",
+      "rc_tag": "v0.1.1-rc.2",
+      "rc_url": "https://github.com/ha-homelab/ha-lg-tv-capture/releases/tag/v0.1.1-rc.2",
+      "rc_run_url": "https://github.com/ha-homelab/ha-lg-tv-capture/actions/runs/38623855572",
+      "rc_attempt": 1,
+      "fuzz_executions": 15608111,
+      "target_execution_counts": {
+        "capture-url": 7182586,
+        "thumbnail": 1065765,
+        "paired-certificate": 7359760
+      },
+      "promotion": "promote-bytes"
+    },
+    {
+      "repository": "ha-homelab/home-assistant",
+      "source_sha": "0fe880fdba788bd95b2e14d7d111b7c661beafc6",
+      "stable_tag": "v0.1.1",
+      "stable_url": "https://github.com/ha-homelab/home-assistant/releases/tag/v0.1.1",
+      "stable_run_url": "https://github.com/ha-homelab/home-assistant/actions/runs/38625916058",
+      "rc_tag": "v0.1.1-rc.1",
+      "rc_url": "https://github.com/ha-homelab/home-assistant/releases/tag/v0.1.1-rc.1",
+      "rc_run_url": "https://github.com/ha-homelab/home-assistant/actions/runs/38624216769",
+      "rc_attempt": 1,
+      "fuzz_executions": 42522,
+      "target_execution_counts": {
+        "notification-frames": 42522
+      },
+      "promotion": "promote-bytes"
+    },
+    {
+      "repository": "ha-homelab/home-studio",
+      "source_sha": "852db75cb659ae730814139e177750ea132904ba",
+      "stable_tag": "v0.6.2",
+      "stable_url": "https://github.com/ha-homelab/home-studio/releases/tag/v0.6.2",
+      "stable_run_url": "https://github.com/ha-homelab/home-studio/actions/runs/38622812442",
+      "rc_tag": "v0.6.2-rc.1",
+      "rc_url": "https://github.com/ha-homelab/home-studio/releases/tag/v0.6.2-rc.1",
+      "rc_run_url": "https://github.com/ha-homelab/home-studio/actions/runs/38621294677",
+      "rc_attempt": 1,
+      "fuzz_executions": 2598120,
+      "target_execution_counts": {
+        "project-validation": 1406344,
+        "wall-geometry": 1191776
+      },
+      "promotion": "promote-bytes"
+    },
+    {
+      "repository": "ha-homelab/k3s-self-healing",
+      "source_sha": "55a4dbf68db6a47910c6865a77ff1f9ad717c043",
+      "stable_tag": "v0.1.4",
+      "stable_url": "https://github.com/ha-homelab/k3s-self-healing/releases/tag/v0.1.4",
+      "stable_run_url": "https://github.com/ha-homelab/k3s-self-healing/actions/runs/38865621714",
+      "rc_tag": "v0.1.4-rc.1",
+      "rc_url": "https://github.com/ha-homelab/k3s-self-healing/releases/tag/v0.1.4-rc.1",
+      "rc_run_url": "https://github.com/ha-homelab/k3s-self-healing/actions/runs/38865111145",
+      "rc_attempt": 1,
+      "fuzz_executions": 24191531,
+      "target_execution_counts": {
+        "recorder-metadata": 14011892,
+        "runtime-contract": 10179639
+      },
+      "promotion": "promote-bytes"
+    },
+    {
+      "repository": "ha-homelab/slzb-06-recovery",
+      "source_sha": "dfabda74d3c1931f9dbf757f2affd45d77c328e6",
+      "stable_tag": "v0.1.2",
+      "stable_url": "https://github.com/ha-homelab/slzb-06-recovery/releases/tag/v0.1.2",
+      "stable_run_url": "https://github.com/ha-homelab/slzb-06-recovery/actions/runs/38624370139",
+      "rc_tag": "v0.1.2-rc.1",
+      "rc_url": "https://github.com/ha-homelab/slzb-06-recovery/releases/tag/v0.1.2-rc.1",
+      "rc_run_url": "https://github.com/ha-homelab/slzb-06-recovery/actions/runs/38623608246",
+      "rc_attempt": 1,
+      "fuzz_executions": 8631402,
+      "target_execution_counts": {
+        "backup": 4903212,
+        "identity": 3728190
+      },
+      "promotion": "promote-bytes"
+    },
+    {
+      "repository": "open-ott-play/ottplay-control-server",
+      "source_sha": "675004d00afb8af066ea53fd79f63d62a27b8811",
+      "stable_tag": "v0.1.2",
+      "stable_url": "https://github.com/open-ott-play/ottplay-control-server/releases/tag/v0.1.2",
+      "stable_run_url": "https://github.com/open-ott-play/ottplay-control-server/actions/runs/38845782968",
+      "rc_tag": "v0.1.2-rc.1",
+      "rc_url": "https://github.com/open-ott-play/ottplay-control-server/releases/tag/v0.1.2-rc.1",
+      "rc_run_url": "https://github.com/open-ott-play/ottplay-control-server/actions/runs/38844308604",
+      "rc_attempt": 1,
+      "fuzz_executions": 2381115,
+      "target_execution_counts": {
+        "inspection-result-binding": 518230,
+        "android-manifest": 1125927,
+        "native-parameters": 736958
+      },
+      "promotion": "promote-bytes"
+    },
+    {
+      "repository": "open-ott-play/ottplay-core",
+      "source_sha": "d1d69b06eb4ec0c0c5834377a869ce76720133a8",
+      "stable_tag": "v0.1.1",
+      "stable_url": "https://github.com/open-ott-play/ottplay-core/releases/tag/v0.1.1",
+      "stable_run_url": "https://github.com/open-ott-play/ottplay-core/actions/runs/38856766426",
+      "rc_tag": "v0.1.1-rc.2",
+      "rc_url": "https://github.com/open-ott-play/ottplay-core/releases/tag/v0.1.1-rc.2",
+      "rc_run_url": "https://github.com/open-ott-play/ottplay-core/actions/runs/38855119006",
+      "rc_attempt": 1,
+      "fuzz_executions": 862662,
+      "target_execution_counts": {
+        "playlist": 107413,
+        "guide-timeline": 755249
+      },
+      "promotion": "promote-bytes"
+    },
+    {
+      "repository": "open-ott-play/ottplay-swop",
+      "source_sha": "150ea446b65fa6ba809c8003beb8ad0008be31be",
+      "stable_tag": "v0.1.1",
+      "stable_url": "https://github.com/open-ott-play/ottplay-swop/releases/tag/v0.1.1",
+      "stable_run_url": "https://github.com/open-ott-play/ottplay-swop/actions/runs/38625133782",
+      "rc_tag": "v0.1.1-rc.1",
+      "rc_url": "https://github.com/open-ott-play/ottplay-swop/releases/tag/v0.1.1-rc.1",
+      "rc_run_url": "https://github.com/open-ott-play/ottplay-swop/actions/runs/38624411868",
+      "rc_attempt": 1,
+      "fuzz_executions": 3881630,
+      "target_execution_counts": {
+        "installation-auth": 1111362,
+        "wire-contracts": 2770268
+      },
+      "promotion": "promote-bytes"
+    },
+    {
+      "repository": "victron-venus/dbus-emporia-vue",
+      "source_sha": "94a56599afe186805efd3489aa406d0a8ed2aed9",
+      "stable_tag": "v1.0.11",
+      "stable_url": "https://github.com/victron-venus/dbus-emporia-vue/releases/tag/v1.0.11",
+      "stable_run_url": "https://github.com/victron-venus/dbus-emporia-vue/actions/runs/38851508010",
+      "rc_tag": "v1.0.11-rc.1",
+      "rc_url": "https://github.com/victron-venus/dbus-emporia-vue/releases/tag/v1.0.11-rc.1",
+      "rc_run_url": "https://github.com/victron-venus/dbus-emporia-vue/actions/runs/38847825958",
+      "rc_attempt": 1,
+      "fuzz_executions": 12999812,
+      "target_execution_counts": {
+        "ha": 12999812
+      },
+      "promotion": "promote-bytes"
+    },
+    {
+      "repository": "victron-venus/dbus-esphome-grid-sensor",
+      "source_sha": "4b368d6524b26d8fa2349479f6a23cf7bed3f571",
+      "stable_tag": "v1.0.6",
+      "stable_url": "https://github.com/victron-venus/dbus-esphome-grid-sensor/releases/tag/v1.0.6",
+      "stable_run_url": "https://github.com/victron-venus/dbus-esphome-grid-sensor/actions/runs/38851168482",
+      "rc_tag": "v1.0.6-rc.1",
+      "rc_url": "https://github.com/victron-venus/dbus-esphome-grid-sensor/releases/tag/v1.0.6-rc.1",
+      "rc_run_url": "https://github.com/victron-venus/dbus-esphome-grid-sensor/actions/runs/38847804786",
+      "rc_attempt": 1,
+      "fuzz_executions": 8847442,
+      "target_execution_counts": {
+        "samples": 8847442
+      },
+      "promotion": "promote-bytes"
+    },
+    {
+      "repository": "victron-venus/dbus-ev",
+      "source_sha": "71295e5739a3106e11afb97099c58d427efeeb78",
+      "stable_tag": "v0.2.9",
+      "stable_url": "https://github.com/victron-venus/dbus-ev/releases/tag/v0.2.9",
+      "stable_run_url": "https://github.com/victron-venus/dbus-ev/actions/runs/38853397615",
+      "rc_tag": "v0.2.9-rc.2",
+      "rc_url": "https://github.com/victron-venus/dbus-ev/releases/tag/v0.2.9-rc.2",
+      "rc_run_url": "https://github.com/victron-venus/dbus-ev/actions/runs/38852043410",
+      "rc_attempt": 1,
+      "fuzz_executions": 501962,
+      "target_execution_counts": {
+        "vehicle-telemetry": 177148,
+        "provider-retry-policy": 175957,
+        "oauth-state-boundary": 148857
+      },
+      "promotion": "promote-bytes"
+    },
+    {
+      "repository": "victron-venus/dbus-event-log",
+      "source_sha": "0e7a23bb146515c439a2911fc8cca5d6b66d016d",
+      "stable_tag": "v0.2.3",
+      "stable_url": "https://github.com/victron-venus/dbus-event-log/releases/tag/v0.2.3",
+      "stable_run_url": "https://github.com/victron-venus/dbus-event-log/actions/runs/38853143003",
+      "rc_tag": "v0.2.3-rc.1",
+      "rc_url": "https://github.com/victron-venus/dbus-event-log/releases/tag/v0.2.3-rc.1",
+      "rc_run_url": "https://github.com/victron-venus/dbus-event-log/actions/runs/38849432521",
+      "rc_attempt": 1,
+      "fuzz_executions": 11281361,
+      "target_execution_counts": {
+        "event": 11281361
+      },
+      "promotion": "promote-bytes"
+    },
+    {
+      "repository": "victron-venus/dbus-mqtt-battery",
+      "source_sha": "c1362f03f0923c8f8623b1a26fbd33cf635e3672",
+      "stable_tag": "v2.7.9",
+      "stable_url": "https://github.com/victron-venus/dbus-mqtt-battery/releases/tag/v2.7.9",
+      "stable_run_url": "https://github.com/victron-venus/dbus-mqtt-battery/actions/runs/38852093932",
+      "rc_tag": "v2.7.9-rc.1",
+      "rc_url": "https://github.com/victron-venus/dbus-mqtt-battery/releases/tag/v2.7.9-rc.1",
+      "rc_run_url": "https://github.com/victron-venus/dbus-mqtt-battery/actions/runs/38850852817",
+      "rc_attempt": 1,
+      "fuzz_executions": 5119982,
+      "target_execution_counts": {
+        "telemetry": 5119982
+      },
+      "promotion": "promote-bytes"
+    },
+    {
+      "repository": "victron-venus/dbus-pump",
+      "source_sha": "e829056e1a496d5764fc8e18c8dd37e8bada6af6",
+      "stable_tag": "v0.1.8",
+      "stable_url": "https://github.com/victron-venus/dbus-pump/releases/tag/v0.1.8",
+      "stable_run_url": "https://github.com/victron-venus/dbus-pump/actions/runs/38851752349",
+      "rc_tag": "v0.1.8-rc.1",
+      "rc_url": "https://github.com/victron-venus/dbus-pump/releases/tag/v0.1.8-rc.1",
+      "rc_run_url": "https://github.com/victron-venus/dbus-pump/actions/runs/38850238318",
+      "rc_attempt": 1,
+      "fuzz_executions": 456583,
+      "target_execution_counts": {
+        "control": 456583
+      },
+      "promotion": "promote-bytes"
+    },
+    {
+      "repository": "victron-venus/dbus-tasmota-pv",
+      "source_sha": "8546d6849a39ab36764bc930c9e3f06bffbbe06a",
+      "stable_tag": "v3.1.2",
+      "stable_url": "https://github.com/victron-venus/dbus-tasmota-pv/releases/tag/v3.1.2",
+      "stable_run_url": "https://github.com/victron-venus/dbus-tasmota-pv/actions/runs/38851531495",
+      "rc_tag": "v3.1.2-rc.1",
+      "rc_url": "https://github.com/victron-venus/dbus-tasmota-pv/releases/tag/v3.1.2-rc.1",
+      "rc_run_url": "https://github.com/victron-venus/dbus-tasmota-pv/actions/runs/38850125308",
+      "rc_attempt": 1,
+      "fuzz_executions": 7446883,
+      "target_execution_counts": {
+        "energy": 7446883
+      },
+      "promotion": "promote-bytes"
+    },
+    {
+      "repository": "victron-venus/dbus-virtual-battery",
+      "source_sha": "4ac4e3ab32af7aff8afc57f18d0f3001f911de14",
+      "stable_tag": "v2.7.11",
+      "stable_url": "https://github.com/victron-venus/dbus-virtual-battery/releases/tag/v2.7.11",
+      "stable_run_url": "https://github.com/victron-venus/dbus-virtual-battery/actions/runs/38852305553",
+      "rc_tag": "v2.7.11-rc.1",
+      "rc_url": "https://github.com/victron-venus/dbus-virtual-battery/releases/tag/v2.7.11-rc.1",
+      "rc_run_url": "https://github.com/victron-venus/dbus-virtual-battery/actions/runs/38850642695",
+      "rc_attempt": 1,
+      "fuzz_executions": 7023563,
+      "target_execution_counts": {
+        "calculator": 7023563
+      },
+      "promotion": "promote-bytes"
+    },
+    {
+      "repository": "victron-venus/integration-tests",
+      "source_sha": "ed70cd945ad919152a9ea0a68d15497537022a6c",
+      "stable_tag": "v0.1.2",
+      "stable_url": "https://github.com/victron-venus/integration-tests/releases/tag/v0.1.2",
+      "stable_run_url": "https://github.com/victron-venus/integration-tests/actions/runs/38850593150",
+      "rc_tag": "v0.1.2-rc.1",
+      "rc_url": "https://github.com/victron-venus/integration-tests/releases/tag/v0.1.2-rc.1",
+      "rc_run_url": "https://github.com/victron-venus/integration-tests/actions/runs/38847810588",
+      "rc_attempt": 1,
+      "fuzz_executions": 10675111,
+      "target_execution_counts": {
+        "release-binding": 9884841,
+        "release-archive": 790270
+      },
+      "promotion": "promote-bytes"
+    },
+    {
+      "repository": "victron-venus/inverter-climate",
+      "source_sha": "38100411ad7b5e9e0759485fcc05b777b7bca591",
+      "stable_tag": "v0.4.2",
+      "stable_url": "https://github.com/victron-venus/inverter-climate/releases/tag/v0.4.2",
+      "stable_run_url": "https://github.com/victron-venus/inverter-climate/actions/runs/38850507467",
+      "rc_tag": "v0.4.2-rc.1",
+      "rc_url": "https://github.com/victron-venus/inverter-climate/releases/tag/v0.4.2-rc.1",
+      "rc_run_url": "https://github.com/victron-venus/inverter-climate/actions/runs/38847583595",
+      "rc_attempt": 1,
+      "fuzz_executions": 17029487,
+      "target_execution_counts": {
+        "climate": 17029487
+      },
+      "promotion": "promote-bytes"
+    },
+    {
+      "repository": "victron-venus/inverter-control",
+      "source_sha": "35cc31a70856bb48e5f31d2922c298f6cde410a6",
+      "stable_tag": "v1.23.6",
+      "stable_url": "https://github.com/victron-venus/inverter-control/releases/tag/v1.23.6",
+      "stable_run_url": "https://github.com/victron-venus/inverter-control/actions/runs/38852152552",
+      "rc_tag": "v1.23.6-rc.1",
+      "rc_url": "https://github.com/victron-venus/inverter-control/releases/tag/v1.23.6-rc.1",
+      "rc_run_url": "https://github.com/victron-venus/inverter-control/actions/runs/38851157757",
+      "rc_attempt": 1,
+      "fuzz_executions": 2378211,
+      "target_execution_counts": {
+        "tariff": 2378211
+      },
+      "promotion": "promote-bytes"
+    },
+    {
+      "repository": "victron-venus/inverter-dashboard",
+      "source_sha": "188ba93be2598d34a25a1cff4f945323e7d6aae0",
+      "stable_tag": "v1.8.28",
+      "stable_url": "https://github.com/victron-venus/inverter-dashboard/releases/tag/v1.8.28",
+      "stable_run_url": "https://github.com/victron-venus/inverter-dashboard/actions/runs/38869325537",
+      "rc_tag": "v1.8.28-rc.1",
+      "rc_url": "https://github.com/victron-venus/inverter-dashboard/releases/tag/v1.8.28-rc.1",
+      "rc_run_url": "https://github.com/victron-venus/inverter-dashboard/actions/runs/38866075738",
+      "rc_attempt": 1,
+      "fuzz_executions": 9389550,
+      "target_execution_counts": {
+        "commands": 9389550
+      },
+      "promotion": "promote-bytes"
+    },
+    {
+      "repository": "victron-venus/inverter-dashboard-go",
+      "source_sha": "97065181ba1c4ca8c9bfd7bfc74b93e8210a9eb5",
+      "stable_tag": "v1.9.12",
+      "stable_url": "https://github.com/victron-venus/inverter-dashboard-go/releases/tag/v1.9.12",
+      "stable_run_url": "https://github.com/victron-venus/inverter-dashboard-go/actions/runs/38868808263",
+      "rc_tag": "v1.9.12-rc.1",
+      "rc_url": "https://github.com/victron-venus/inverter-dashboard-go/releases/tag/v1.9.12-rc.1",
+      "rc_run_url": "https://github.com/victron-venus/inverter-dashboard-go/actions/runs/38866178159",
+      "rc_attempt": 1,
+      "fuzz_executions": 7841270,
+      "target_execution_counts": {
+        "endpoint-normalization": 4731661,
+        "same-origin-policy": 751877,
+        "controller-command-envelope": 2357732
+      },
+      "promotion": "promote-bytes"
+    },
+    {
+      "repository": "victron-venus/inverter-dashboard-vue",
+      "source_sha": "ff3865d373cc3819b83db0328d9855a2bdec9859",
+      "stable_tag": "v2.2.8",
+      "stable_url": "https://github.com/victron-venus/inverter-dashboard-vue/releases/tag/v2.2.8",
+      "stable_run_url": "https://github.com/victron-venus/inverter-dashboard-vue/actions/runs/38862977209",
+      "rc_tag": "v2.2.8-rc.1",
+      "rc_url": "https://github.com/victron-venus/inverter-dashboard-vue/releases/tag/v2.2.8-rc.1",
+      "rc_run_url": "https://github.com/victron-venus/inverter-dashboard-vue/actions/runs/38861405495",
+      "rc_attempt": 1,
+      "fuzz_executions": 3307140,
+      "target_execution_counts": {
+        "ess-mode": 2169434,
+        "telemetry": 1137706
+      },
+      "promotion": "promote-bytes"
+    },
+    {
+      "repository": "victron-venus/inverter-gateway",
+      "source_sha": "468eb9b473e2b1e9abe75e1eefce12722e76695c",
+      "stable_tag": "v0.4.3",
+      "stable_url": "https://github.com/victron-venus/inverter-gateway/releases/tag/v0.4.3",
+      "stable_run_url": "https://github.com/victron-venus/inverter-gateway/actions/runs/38850259333",
+      "rc_tag": "v0.4.3-rc.1",
+      "rc_url": "https://github.com/victron-venus/inverter-gateway/releases/tag/v0.4.3-rc.1",
+      "rc_run_url": "https://github.com/victron-venus/inverter-gateway/actions/runs/38847675693",
+      "rc_attempt": 1,
+      "fuzz_executions": 17245877,
+      "target_execution_counts": {
+        "energy-sources": 10092321,
+        "command-payload": 7090809,
+        "certificate-policy": 62747
+      },
+      "promotion": "promote-bytes"
+    },
+    {
+      "repository": "victron-venus/inverter-monitoring",
+      "source_sha": "1abdbf9b5d526e50200fc9a8dfaae2fb5b27d2f4",
+      "stable_tag": "v1.3.7",
+      "stable_url": "https://github.com/victron-venus/inverter-monitoring/releases/tag/v1.3.7",
+      "stable_run_url": "https://github.com/victron-venus/inverter-monitoring/actions/runs/38851684244",
+      "rc_tag": "v1.3.7-rc.1",
+      "rc_url": "https://github.com/victron-venus/inverter-monitoring/releases/tag/v1.3.7-rc.1",
+      "rc_run_url": "https://github.com/victron-venus/inverter-monitoring/actions/runs/38849771276",
+      "rc_attempt": 1,
+      "fuzz_executions": 4361171,
+      "target_execution_counts": {
+        "signature": 4361171
+      },
+      "promotion": "promote-bytes"
+    },
+    {
+      "repository": "victron-venus/venus-os-ci-toolkit",
+      "source_sha": "2149218f2b98dd1ccab0960690a39ab998c92ba9",
+      "stable_tag": "v0.1.3",
+      "stable_url": "https://github.com/victron-venus/venus-os-ci-toolkit/releases/tag/v0.1.3",
+      "stable_run_url": "https://github.com/victron-venus/venus-os-ci-toolkit/actions/runs/38870703941",
+      "rc_tag": "v0.1.3-rc.1",
+      "rc_url": "https://github.com/victron-venus/venus-os-ci-toolkit/releases/tag/v0.1.3-rc.1",
+      "rc_run_url": "https://github.com/victron-venus/venus-os-ci-toolkit/actions/runs/38869757913",
+      "rc_attempt": 1,
+      "fuzz_executions": 4248875,
+      "target_execution_counts": {
+        "oci-metadata": 3577752,
+        "version-policy": 671123
+      },
+      "promotion": "promote-bytes"
+    },
+    {
+      "repository": "victron-venus/venus-os-integration-patterns",
+      "source_sha": "21d6073f28347ba0fb9c65ca864bdd71a11a080b",
+      "stable_tag": "v0.1.3",
+      "stable_url": "https://github.com/victron-venus/venus-os-integration-patterns/releases/tag/v0.1.3",
+      "stable_run_url": "https://github.com/victron-venus/venus-os-integration-patterns/actions/runs/38850833523",
+      "rc_tag": "v0.1.3-rc.1",
+      "rc_url": "https://github.com/victron-venus/venus-os-integration-patterns/releases/tag/v0.1.3-rc.1",
+      "rc_run_url": "https://github.com/victron-venus/venus-os-integration-patterns/actions/runs/38849076897",
+      "rc_attempt": 1,
+      "fuzz_executions": 2544890,
+      "target_execution_counts": {
+        "conversion": 2544890
+      },
+      "promotion": "promote-bytes"
+    },
+    {
+      "repository": "victron-venus/venus-os-observability",
+      "source_sha": "6889e147b3cb32a654f08dc1eec20a1ed896480b",
+      "stable_tag": "v0.1.9",
+      "stable_url": "https://github.com/victron-venus/venus-os-observability/releases/tag/v0.1.9",
+      "stable_run_url": "https://github.com/victron-venus/venus-os-observability/actions/runs/38851439460",
+      "rc_tag": "v0.1.9-rc.1",
+      "rc_url": "https://github.com/victron-venus/venus-os-observability/releases/tag/v0.1.9-rc.1",
+      "rc_run_url": "https://github.com/victron-venus/venus-os-observability/actions/runs/38847826472",
+      "rc_attempt": 1,
+      "fuzz_executions": 6947807,
+      "target_execution_counts": {
+        "correlation": 6947807
+      },
+      "promotion": "promote-bytes"
+    }
+  ]
+}

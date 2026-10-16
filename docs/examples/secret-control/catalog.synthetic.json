@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "catalog_id": "88d248d5-0aba-4248-9039-5cc150448788",
+  "generation": 1,
+  "entries": [
+    {
+      "id": "example-service",
+      "revision": 1,
+      "value": "EXAMPLE_ONLY_NOT_A_CREDENTIAL",
+      "targets": [
+        {
+          "type": "oci",
+          "region": "eu-frankfurt-1",
+          "compartment_id": "ocid1.compartment.oc1..examplecompartment",
+          "vault_id": "ocid1.vault.oc1.eu-frankfurt-1.examplevault",
+          "key_id": "ocid1.key.oc1.eu-frankfurt-1.examplekey",
+          "name": "example-service"
+        },
+        {
+          "type": "hcp",
+          "workspace_id": "ws-ExampleOnly12345",
+          "key": "EXAMPLE_SERVICE_VALUE",
+          "category": "env"
+        }
+      ]
+    },
+    {
+      "id": "example-shared-setting",
+      "revision": 1,
+      "value": "synthetic demonstration value",
+      "targets": [
+        {
+          "type": "hcp",
+          "variable_set_id": "varset-ExampleOnly12345",
+          "key": "example_shared_setting",
+          "category": "terraform"
+        }
+      ]
+    }
+  ]
+}
