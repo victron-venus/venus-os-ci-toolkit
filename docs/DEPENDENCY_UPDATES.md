@@ -19,6 +19,14 @@ workflows that disagree with it. Regeneration preserves version comments, so
 Renovate can continue resolving pinned actions. The SHA remains the executable
 reference; the comment identifies the upstream release or branch to track.
 
+The same update group includes `.release-policy.json` toolkit digests and the
+`with.toolkit-ref` input of jobs that call this toolkit. The runtime input manager
+parses YAML structurally: it updates literal 40-character digests only for actual
+toolkit callers, leaving other workflows and examples inside shell scripts intact.
+The contract suite exercises extraction and replacement with the pinned Renovate
+release, including multiple callers in one file. This keeps the invoked workflow,
+its runtime source and the release policy on the same revision.
+
 Every CodeQL `uses` line needs an inline full release comment such as
 `# v4.38.3`, including separate workflow-analysis jobs and SARIF uploads. Bare
 SHAs can be skipped by Renovate while annotated steps move to a new release.
