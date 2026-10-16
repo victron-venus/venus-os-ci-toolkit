@@ -10,8 +10,8 @@ sign a mutable registry tag.
 
 ## Recipient verification
 
-Install [Cosign 3.1.3 or newer from Sigstore](https://docs.sigstore.dev/cosign/system_config/installation/)
-on a trusted workstation. Obtain a reviewed checkout of the project and the
+Build the [reviewed patched Cosign profile](release-signer.md)
+on a trusted workstation. Keep `GODEBUG=fips140=on` set for verification. Obtain a reviewed checkout of the project and the
 expected 40-character source commit through its reviewed release record,
 independently of the downloaded release metadata. Download all release assets
 into an otherwise empty directory. Do not extract or execute them yet.
