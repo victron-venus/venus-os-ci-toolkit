@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.1.3] - 2026-10-16
+
+- Accept explicitly selected Intel macOS runners in the complete browser release
+  matrix while preserving all 35 targets, the five required targets and exact
+  browser-generation pins.
+- Treat ARM and Intel macOS runners as the same operating-system slot when
+  detecting duplicate coverage; reject Intel targets on a non-x64 runner.
+
+### Upgrade
+
+Consumer workflow pins remain unchanged until explicitly updated. A consumer
+that requires Intel for a browser generation must review its inventory override
+and qualify the same application scenarios on that runner. Regenerating the
+default inventory does not preserve custom runner choices automatically.
+
+### Security
+
+This corrects release admission for an already supported runner label without
+allowing duplicate macOS entries to replace missing Linux or Windows coverage.
+Candidate identity, complete browser evidence and existing release gates remain
+required. No deployment or physical-device compatibility is implied.
+
 ## [0.1.2] - 2026-10-14
 
 - Require positive engine execution counts and retained instrumentation evidence

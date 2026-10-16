@@ -157,6 +157,42 @@ class BrowserCompatibilityTests(unittest.TestCase):
         self.assertNotEqual(self.plan(rows, BROWSER_RELEASE_CHANNEL="rc",
                                      BROWSER_EXTENDED="true").returncode, 0)
 
+    def test_release_inventory_accepts_reviewed_intel_macos_targets_without_rewriting_runners(self):
+        for all_macos in (False, True):
+            rows = self.release_targets()
+            for row in rows:
+                if row["os"] == "macos-15" and (all_macos or (
+                    row["engine"] == "webkit" and row["playwright"] != "1.64.0"
+                )):
+                    row["os"] = "macos-15-intel"
+                    row["id"] = row["id"].replace("macos-15-", "macos-15-intel-")
+            for channel in ("nightly", "beta", "rc", "stable"):
+                with self.subTest(all_macos=all_macos, channel=channel):
+                    full = channel in ("rc", "stable")
+                    output = self.root / "output"
+                    output.unlink(missing_ok=True)
+                    result = self.plan(rows, BROWSER_RELEASE_CHANNEL=channel,
+                                       BROWSER_EXTENDED=str(full).lower())
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    selected = json.loads(output.read_text().split("=", 1)[1])["include"]
+                    expected = [row | {"channel": row.get("channel", "")}
+                                for row in rows if full or row["tier"] == "required"]
+                    self.assertEqual(selected, expected)
+                    self.assertEqual(len(selected), 35 if full else 5)
+
+    def test_release_inventory_rejects_intel_alias_duplicates_and_missing_os_coverage(self):
+        rows = self.release_targets()
+        mac = next(row for row in rows if row["os"] == "macos-15" and row["engine"] == "webkit")
+        windows_index = next(index for index, row in enumerate(rows)
+                             if row["os"] == "windows-2022" and row["engine"] == mac["engine"]
+                             and row["playwright"] == mac["playwright"])
+        rows[windows_index] = mac | {"id": "intel-alias", "os": "macos-15-intel",
+                                     "tier": rows[windows_index]["tier"]}
+        result = self.plan(rows, BROWSER_RELEASE_CHANNEL="rc", BROWSER_EXTENDED="true")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("must not repeat", result.stderr)
+        self.assertFalse((self.root / "output").exists())
+
     def verdict(self, rows, directory, channel="rc", **env):
         return self.execute("browser-verdict", "Verify the exact release target set and evidence identity",
                             BROWSER_MATRIX=json.dumps({"include": rows}),
@@ -355,6 +391,25 @@ class BrowserCompatibilityTests(unittest.TestCase):
             self.assertNotEqual(self.lock().returncode, 0)
         (directory / "package-lock.json").write_text(json.dumps(original))
         self.assertNotEqual(self.lock(os="windows-2022" if sys.platform != "win32" else "macos-15").returncode, 0)
+
+    def test_intel_macos_lock_admission_requires_actual_x64_platform(self):
+        self.make_lock()
+        body = script("browser", "Validate the isolated lock and actual runner platform")
+        for platform, architecture, accepted in (
+            ("darwin", "x64", True), ("darwin", "arm64", False),
+            ("darwin", "ia32", False), ("linux", "x64", False),
+        ):
+            with self.subTest(platform=platform, architecture=architecture):
+                prelude = (
+                    "Object.defineProperty(process, 'platform', {value: " + json.dumps(platform) + "});"
+                    "Object.defineProperty(process, 'arch', {value: " + json.dumps(architecture) + "});"
+                )
+                result = subprocess.run(
+                    ["node", "-e", prelude + body], cwd=self.root,
+                    env=self.env | {"CI_BROWSER_TARGET": json.dumps(TARGET | {"os": "macos-15-intel"})},
+                    capture_output=True, text=True, check=False,
+                )
+                self.assertEqual(result.returncode == 0, accepted, result.stderr)
 
     def test_generator_inventory_keeps_three_real_generations_and_five_required_rows(self):
         spec = importlib.util.spec_from_file_location("browser_generator", ROOT / "scripts/prepare_browser_compatibility.py")

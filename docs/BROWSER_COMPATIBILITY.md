@@ -12,9 +12,9 @@ their current adapters.
 ![PR and beta use five targets; RC requires all 35; stable either copies accepted RC bytes or qualifies a fresh build](assets/browser-release-process.svg)
 
 The diagrams describe the configured qualification policy. They do not certify
-that a consumer has passed a complete 35-target run. During this rollout, full
-RC qualification is still pending; assess each candidate from its own completed
-workflow and evidence. A smaller local or PR run is not a substitute.
+that a consumer has passed a complete 35-target run; assess each candidate from
+its own completed workflow and evidence. A smaller local or PR run is not a
+substitute.
 
 ## Prepare a consumer
 
@@ -46,6 +46,20 @@ the workflow rejects changed versions before running application tests. Browser
 binary installation follows Playwright's pinned revision catalog. Branded Stable
 and Beta channels follow the vendor's installed current release and record its
 actual version; they are not advertised as historically pinned Chrome/Edge builds.
+
+An application may explicitly select `macos-15-intel` instead of `macos-15` for
+an individual target when its browser generation needs the Intel environment.
+Use a distinct target ID that identifies that runner and keep the engine,
+generation, browser pin and tier unchanged. The actual runner remains Intel and
+must report `process.arch === 'x64'`; admission treats both runner labels as one
+macOS operating-system slot. An ARM and Intel entry for the same engine,
+generation and channel cannot replace a missing Linux or Windows target.
+
+Qualify the same application assertions on the selected runner and document the
+measured reason in the consumer. This selection does not claim coverage of both
+architectures or native Safari. Preserve intentional overrides when reviewing
+generated inventory updates: the generator continues to emit the default
+`macos-15` matrix, and its `--check` reports customization as drift.
 
 ![Three operating systems times three engines times three pinned generations, plus eight branded-channel targets; five current targets form the fast subset](assets/browser-compatibility-topology.svg)
 
