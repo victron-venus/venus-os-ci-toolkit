@@ -211,13 +211,15 @@ def process(
         require(sent == len(data), "external tool did not consume its input")
         return bytes(output)
     finally:
-        # The leader may have exited while descendants retain its streams.
-        # Bound the entire session even when the leader is already reaped.
-        try:
-            os.killpg(p.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
-        p.wait()
+        # An exited but unreaped leader still reserves its PID while descendants
+        # retain streams. After wait() reaps it, never signal a potentially reused
+        # process-group ID. Do not poll() here: that would also reap the leader.
+        if p.returncode is None:
+            try:
+                os.killpg(p.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            p.wait()
         sel.close()
         for stream in (p.stdin, p.stdout, p.stderr):
             if not stream.closed:

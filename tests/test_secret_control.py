@@ -233,6 +233,17 @@ class PrivateIOTests(unittest.TestCase):
                 [sys.executable, "-c", "import os; os.close(0)"], b"x" * (1024 * 1024)
             )
 
+    def test_reaped_process_group_is_not_signalled(self):
+        for code in (0, 1):
+            with self.subTest(code=code), patch.object(private_io.os, "killpg", wraps=os.killpg) as kill:
+                argv = [sys.executable, "-c", f"raise SystemExit({code})"]
+                if code:
+                    with self.assertRaises(catalog.ControlError):
+                        private_io.process(argv)
+                else:
+                    self.assertEqual(private_io.process(argv), b"")
+                kill.assert_not_called()
+
     def test_timeout_reaps_descendants_after_leader_exit(self):
         pid_file = self.root / "child.pid"
         ready = self.root / "ready"

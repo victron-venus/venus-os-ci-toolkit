@@ -183,8 +183,8 @@ permissions, quotas and consumers before relying on them.
 
 ## Recovery follow-up — 2026-10-16
 
-The updated local suite passed **99 tests**, using real age, the real Terraform
-environment-variable parser and the actual OCI SDK in offline tests. The 99
+The updated local suite passed **100 tests**, using real age, the real Terraform
+environment-variable parser and the actual OCI SDK in offline tests. The 100
 include the focused recovery tests below; they are not added to that total.
 The chart above remains the earlier 80-test baseline. Its separate 18 Terraform
 mock tests describe the unchanged baseline qualification, not a new mock run.
