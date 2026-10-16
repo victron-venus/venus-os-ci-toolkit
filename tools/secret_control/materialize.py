@@ -7,6 +7,8 @@ from pathlib import Path
 import re
 import secrets
 import stat
+from .catalog import ControlError
+from .private_io import private_parent
 
 
 class MaterializationError(ValueError):
@@ -14,20 +16,11 @@ class MaterializationError(ValueError):
 
 
 def _parent_fd(parent):
-    """Walk using directory descriptors: no symlink component can be followed."""
-    fd = os.open('/', os.O_RDONLY | os.O_DIRECTORY)
+    """Use the same trusted ancestor and private leaf contract as catalog I/O."""
     try:
-        for part in parent.parts[1:]:
-            next_fd = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
-            os.close(fd)
-            fd = next_fd
-        info = os.fstat(fd)
-        if info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) != 0o700:
-            raise MaterializationError('output parent must be owned mode 0700')
-        return fd
-    except BaseException:
-        os.close(fd)
-        raise
+        return private_parent(parent / '.materialize-parent')[1]
+    except ControlError:
+        raise MaterializationError('output path requires trusted ancestors and an owned mode 0700 parent') from None
 
 
 def _existing_matches(parent, name, payload):

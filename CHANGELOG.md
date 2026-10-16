@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Add an offline synthetic recovery drill and independently checkpointed catalog
+  verification, with operator instructions and a recovery-exercise diagram.
+- Reject unsafe path ancestors and dangling HCP state links; bound external
+  process groups and reject incomplete input delivery.
 - Allow 15 minutes for browser planning, including cold Node 22 installation on
   newly created runners. Browser execution and release-verdict budgets are unchanged.
 - Add an age-encrypted recovery catalog, explicit OCI secret publication with

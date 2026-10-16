@@ -21,6 +21,12 @@ Install a checksum-verified pinned binary in an owned `0700` private `bin`
 directory instead, and supply its explicit `--age` or `--terraform` path. The
 examples honor preselected `AGE_BIN`, `AGE_KEYGEN_BIN` and `TERRAFORM_BIN` values.
 
+To start without an existing catalog or key, run the
+[offline synthetic drill](SECRETS_DRILL.md). For a restored catalog with an
+independently recorded digest and generation, use the separate
+[recovery-check procedure](SECRETS_DRILL.md#check-a-restored-synthetic-catalog).
+Neither command publishes cloud values.
+
 ## Local example: encrypt, validate, plan
 
 Complete the [bootstrap storage and age identity steps](SECRETS_BOOTSTRAP.md)

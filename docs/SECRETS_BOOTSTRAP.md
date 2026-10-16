@@ -6,6 +6,27 @@ Bootstrap has three independent parts: a recoverable encryption identity,
 administrative access to the destination accounts, and reviewed public tooling.
 None can be recovered solely from a Vault that does not yet exist.
 
+## Choose the smallest starting path
+
+For the [offline synthetic exercise](SECRETS_DRILL.md), use Python 3.12 or newer,
+a reviewed toolkit checkout, and verified `age` / `age-keygen` binaries. No OCI
+SDK, Terraform provider, cloud credentials or existing decryption identity is
+needed. Install and verify dependencies before going offline; the drill does
+not download or initialize anything.
+
+For a local catalog, add an owned private operator directory and an age identity.
+For HCP publication, additionally prepare the separate HCP Terraform root,
+locked provider and narrowly scoped HCP access. For OCI publication, additionally
+install the [locked SDK dependencies](../tools/secret_control/requirements-oci-lock.txt)
+and select explicit OCI authentication. OCI topology provisioning uses its own
+Terraform root and credentials. Do not provision either cloud merely to try the
+local exercise.
+
+Before using production values, name the recovery-key custodian, agree who can
+retrieve the independent backup, and exercise both paths. A second directory on
+the same laptop is useful for a drill but shares the laptop's failure domain.
+Until those prerequisites are complete, keep examples and drills synthetic.
+
 ## 1. Choose storage and recovery custodians
 
 Use a private directory outside every source checkout and public Git repository.
@@ -110,9 +131,10 @@ observed readiness rather than a fixed sleep as evidence that retrying is safe.
 ## 5. Create and review the first catalog
 
 Follow the [local catalog workflow](SECRETS_HOWTO.md) with the synthetic example
-first. Then prepare real values only in the protected operator environment. For
-each entry, establish its owner, intended consumers, expiry/revocation process
-and rotation authority in your encrypted operational records.
+first. Only after the recovery prerequisites and a production migration are
+separately approved should real values be prepared in the protected operator
+environment. For each entry, establish its owner, intended consumers,
+expiry/revocation process and rotation authority in encrypted operational records.
 
 Before first production publication, a second review should confirm that the
 targets are the intended accounts and resources, the recovery copy decrypts,

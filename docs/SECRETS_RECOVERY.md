@@ -84,22 +84,28 @@ must distinguish a deliberate rollback from an accidental stale restore.
 
 ## Practice without a production dependency
 
-Run a drill with the [synthetic example](examples/secret-control/README.md), a
-fresh test identity and a separate protected directory. Copy only the encrypted
-catalog and independent recovery key to the drill environment. Validate from
-the copy, deliberately try the wrong key and a damaged copy, and verify that
-neither can produce a usable catalog.
+Start with the [offline synthetic recovery exercise](SECRETS_DRILL.md). The
+`drill` command generates disposable identities and catalog generations; it
+accepts no production catalog, existing key or cloud account. Its success means
+only that its local synthetic scenarios passed.
 
-An **offline drill** proves local decryption and validation. A **test-account
-drill** additionally creates or imports disposable cloud resources, publishes
-synthetic values and verifies a test consumer; it requires separately approved
-credentials and cloud writes. Neither is proof of production recovery until
-the production dependencies and account-recovery paths are exercised safely.
+Use `recovery-check` separately when you have an approved encrypted catalog,
+recovery identity, ciphertext digest and expected generation. The digest and
+generation must come from a trusted inventory that is independent of the copy
+being checked. A matching hash from a file stored next to an attacker-controlled
+catalog is not independent approval.
 
-Record the drill date, source/tool versions, ciphertext digest, generation,
-scenarios attempted, outcomes, elapsed time and unresolved dependencies. Keep
-the record private if it contains target identifiers. Agree a recovery time and
-maximum acceptable data loss, then measure them rather than promising them.
+An **offline drill** proves local decryption, validation and selected refusal
+behavior. An **off-device restore** additionally proves retrieval from a backup
+location and custody path that survive loss of the original device. A
+**test-account drill** additionally exercises disposable cloud resources and a
+test consumer with separately authorized credentials. None establishes
+production recovery merely by completing the previous stage.
+
+Record the date, source/tool versions, approved generation, scenarios, outcomes,
+elapsed time and remaining dependencies. Store real-catalog records privately.
+Agree a recovery time and maximum acceptable data loss, then measure them;
+do not interpret a fast local drill as a complete account-recovery estimate.
 
 ## What a cloud backup cannot replace
 

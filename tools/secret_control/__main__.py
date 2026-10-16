@@ -21,27 +21,39 @@ class Parser(argparse.ArgumentParser):
 def parser():
     p = Parser(prog="python3 -m tools.secret_control", allow_abbrev=False)
     sub = p.add_subparsers(dest="command", required=True, parser_class=Parser)
-    for name in (
-        "encrypt",
-        "validate",
-        "plan",
-        "oci-publish",
-        "hcp-prepare",
-        "hcp-plan",
-        "hcp-apply",
-        "fetch",
-    ):
-        cmd = sub.add_parser(name, allow_abbrev=False)
+    descriptions = {
+        "encrypt": "Validate a catalog from stdin and encrypt it to a new private file.",
+        "validate": "Decrypt and validate a catalog locally; print counts only.",
+        "plan": "Summarize catalog destinations locally without contacting a service.",
+        "oci-publish": "Compare OCI destinations; publish only with --apply and --generation.",
+        "hcp-prepare": "Copy the reviewed HCP Terraform template into a new private directory.",
+        "hcp-plan": "Plan HCP changes using the isolated Terraform root.",
+        "hcp-apply": "Apply an explicitly selected catalog generation to HCP.",
+        "fetch": "Fetch an explicit OCI secret version and verify its independent digest.",
+        "drill": "Exercise offline recovery using only disposable synthetic keys and values.",
+        "recovery-check": "Verify a catalog against an independently approved ciphertext digest and generation.",
+    }
+    for name, description in descriptions.items():
+        cmd = sub.add_parser(
+            name, allow_abbrev=False, help=description, description=description
+        )
         if name == "encrypt":
             cmd.add_argument("--output", required=True)
             cmd.add_argument("--recipient", action="append", required=True)
             cmd.add_argument("--previous")
             cmd.add_argument("--identity")
-        if name in ("validate", "plan", "oci-publish", "hcp-plan", "hcp-apply"):
+        if name in (
+            "validate", "plan", "oci-publish", "hcp-plan", "hcp-apply", "recovery-check"
+        ):
             cmd.add_argument("--catalog", required=True)
             cmd.add_argument("--identity", required=True)
         if name not in ("fetch", "hcp-prepare"):
             cmd.add_argument("--age", default="age")
+        if name == "drill":
+            cmd.add_argument("--age-keygen", default="age-keygen")
+        if name == "recovery-check":
+            cmd.add_argument("--expected-sha256", required=True)
+            cmd.add_argument("--generation", type=int, required=True)
         if name.startswith("hcp-"):
             cmd.add_argument("--terraform-dir", required=True)
         if name in ("hcp-plan", "hcp-apply"):
@@ -75,6 +87,21 @@ def execute(args):
         from .hcp import prepare
 
         return prepare(args.terraform_dir)
+    if args.command == "drill":
+        from .drill import run_drill
+
+        return run_drill(tool(args.age), tool(args.age_keygen))
+    if args.command == "recovery-check":
+        from .recovery import check
+
+        # Do not resolve the tool or open an identity until the ciphertext matches.
+        return check(
+            args.catalog,
+            args.identity,
+            args.age,
+            expected_sha256=args.expected_sha256,
+            generation=args.generation,
+        )
     if args.command == "fetch":
         # Reject malformed requests before any credential or network access.
         require(

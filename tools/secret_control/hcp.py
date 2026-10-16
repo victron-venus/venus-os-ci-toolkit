@@ -130,12 +130,12 @@ def verify_state(root, metadata):
         "custom state location refused",
     )
     environment = root / ".terraform/environment"
-    if environment.exists():
+    if os.path.lexists(environment):
         require(
             internal_file(root, ".terraform/environment").strip() == b"default",
             "custom Terraform workspace refused",
         )
-    if (root / "terraform.tfstate").exists():
+    if os.path.lexists(root / "terraform.tfstate"):
         state = json.loads(
             internal_file(root, "terraform.tfstate"), object_pairs_hook=_pairs
         )
@@ -227,17 +227,17 @@ def verify_root(directory):
 def record_intent(root, catalog, metadata, values, apply):
     """An append-only private local revision ledger also survives partial applies."""
     key_path = root / ".secret-control-ledger-key"
-    if not key_path.exists():
+    if not os.path.lexists(key_path):
         require(
             not list(root.glob(".secret-control-intent-*.json")),
             "HCP ledger key missing",
         )
         if apply:
             new_private(key_path, os.urandom(32))
-    key = read_private(key_path, 32) if key_path.exists() else None
+    key = read_private(key_path, 32) if os.path.lexists(key_path) else None
     if key is None:
         require(
-            not (root / "terraform.tfstate").exists(),
+            not os.path.lexists(root / "terraform.tfstate"),
             "existing HCP state has no ownership ledger",
         )
         return
@@ -257,7 +257,7 @@ def record_intent(root, catalog, metadata, values, apply):
     }
     histories = sorted(root.glob(".secret-control-intent-*.json"))
     require(
-        histories or not (root / "terraform.tfstate").exists(),
+        histories or not os.path.lexists(root / "terraform.tfstate"),
         "existing HCP state has no ownership ledger",
     )
     for path in histories:
@@ -279,7 +279,7 @@ def record_intent(root, catalog, metadata, values, apply):
         if prior["generation"] == document["generation"]:
             require(prior == document, "same HCP generation has different input")
     target = root / (".secret-control-intent-" + str(catalog["generation"]) + ".json")
-    if apply and not target.exists():
+    if apply and not os.path.lexists(target):
         new_private(target, json.dumps(document, sort_keys=True).encode())
 
 

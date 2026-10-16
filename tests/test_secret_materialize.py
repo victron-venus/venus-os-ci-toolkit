@@ -65,6 +65,16 @@ class MaterializeTests(unittest.TestCase):
             self.put()
         self.assertFalse(self.dest.exists())
 
+    def test_private_leaf_under_writable_ancestor_is_rejected(self):
+        ancestor = self.root / 'shared'
+        ancestor.mkdir(mode=0o777)
+        ancestor.chmod(0o777)
+        leaf = ancestor / 'private'
+        leaf.mkdir(mode=0o700)
+        with self.assertRaises(MaterializationError):
+            self.put(destination=leaf / 'bundle')
+        self.assertEqual(list(leaf.iterdir()), [])
+
     def test_insecure_existing_output_is_rejected(self):
         self.dest.write_bytes(self.payload)
         self.dest.chmod(0o644)

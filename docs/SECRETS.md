@@ -12,6 +12,7 @@ identity, credentials, Terraform state, plans, publication receipts or backups.
 
 ## Start here
 
+- [Offline recovery exercise](SECRETS_DRILL.md): practice with disposable synthetic data.
 - [Bootstrap](SECRETS_BOOTSTRAP.md): establish keys, private storage and cloud access.
 - [How to use the catalog](SECRETS_HOWTO.md): validate, plan and publish explicitly.
 - [Recovery](SECRETS_RECOVERY.md): restore independently of either destination cloud.
@@ -19,6 +20,14 @@ identity, credentials, Terraform state, plans, publication receipts or backups.
 - [Synthetic examples](examples/secret-control/README.md): learn the format without real credentials.
 
 ![Normal flow: public code reads an encrypted catalog in a private operator environment and publishes selected values separately to OCI and HCP. An independent backup retains the encrypted catalog.](images/secrets-flow.svg)
+
+## Start with synthetic data
+
+The qualified examples and cloud experiments use synthetic values. Production
+migration is paused until recovery-key custody and an independently retrievable
+backup are established and tested. The local drill creates its own disposable
+keys; it neither uses an operator's recovery identity nor proves an off-device
+restore. No Dropbox or other remote-backup restore is claimed.
 
 ## One source of recovery, explicit owners of rotation
 
@@ -110,9 +119,9 @@ OCI's native vault backup does **not** back up secret contents. Replication is a
 availability feature and does not replace an independent, versioned backup.
 [OCI vault and key backups](https://docs.oracle.com/en-us/iaas/Content/KeyManagement/Tasks/backingupvaultsandkeys.htm)
 
-## Initial qualification — 2026-10-16
+## Merged baseline qualification — 2026-10-16
 
-![Local passing check counts on 2026-10-16: 59 CLI, SDK and installer checks (49 CLI, 3 offline SDK and 7 installer boundary), 10 private materialization, 3 real age recovery and 8 Terraform contract checks (6 static and 2 real Terraform parser tests), totaling 80 Python checks; separately, 18 Terraform mocks. Counts are not coverage percentages; current-head hosted CI is pending.](images/secrets-verification.svg)
+![Local passing check counts on 2026-10-16: 59 CLI, SDK and installer checks (49 CLI, 3 offline SDK and 7 installer boundary), 10 private materialization, 3 real age recovery and 8 Terraform contract checks (6 static and 2 real Terraform parser tests), totaling 80 Python checks; separately, 18 Terraform mocks. Counts are not coverage percentages; these are the merged baseline results, not a count of the new drill scenarios.](images/secrets-verification.svg)
 
 The focused local qualification passed **80 Python checks**: 49 CLI/catalog/OCI/HCP
 contract checks, 10 private-file materialization checks, three real age
@@ -159,10 +168,10 @@ an extra write. After the service settled, a fresh read-only reconciliation
 allowed the no-op repeat. The conflict guard remained enabled; the successful
 experiment does not promise that cloud updates are immediately consistent.
 
-The hosted CI configuration adds Ubuntu/macOS coverage on Python 3.12 and 3.14
-with real pinned age binaries. All four platform/Python combinations passed on
-an earlier revision; that does not qualify the final source. Hosted results for the current revision
-remain pending at this qualification point.
+The baseline merged in PR #164 after all **35 hosted CI jobs passed**, including
+the four Ubuntu/macOS and Python 3.12/3.14 secret-control combinations using
+real pinned age binaries. Those results qualify that merged baseline. The chart remains a baseline
+snapshot; the recovery follow-up below records its own measured results.
 
 All live experiments use synthetic values. Recovery-key handoff to a password
 manager remains a later operator step; it is not claimed as completed here.
@@ -171,3 +180,26 @@ These results establish the scenarios actually exercised, not production
 migration, workload federation, application rollout or disaster recovery for an
 operator's accounts. Use the runbooks to verify your own account recovery,
 permissions, quotas and consumers before relying on them.
+
+## Recovery follow-up — 2026-10-16
+
+The updated local suite passed **99 tests**, using real age, the real Terraform
+environment-variable parser and the actual OCI SDK in offline tests. The 99
+include the focused recovery tests below; they are not added to that total.
+The chart above remains the earlier 80-test baseline. Its separate 18 Terraform
+mock tests describe the unchanged baseline qualification, not a new mock run.
+Hosted CI for this follow-up is recorded separately from these local results.
+
+The local synthetic implementation in [drill.py](../tools/secret_control/drill.py)
+and [recovery.py](../tools/secret_control/recovery.py) passed **11 focused tests**
+on Python 3.12 with real age 1.3.2: five
+[drill tests](../tests/test_secret_drill.py) and six
+[recovery-check tests](../tests/test_secret_recovery.py).
+The operational drill separately reported **11 successful checks** across its
+two synthetic generations. A drill check is not an additional unit test; these
+figures are not a new aggregate coverage total.
+
+This verifies local recovery mechanics, expected refusals and temporary-file
+cleanup. It does not verify remote backup retrieval, custody of an operator's
+key, production accounts or live consumers. The baseline chart above is not a
+claim that the follow-up's hosted CI has completed.
