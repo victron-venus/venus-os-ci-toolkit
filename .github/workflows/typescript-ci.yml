@@ -79,6 +79,14 @@ on:
         description: 'Prepare the application and synthetic fixtures in each browser job'
         type: string
         default: 'npm ci --ignore-scripts'
+      browser-artifact-id:
+        description: 'Optional exact artifact ID produced earlier in this workflow run'
+        type: string
+        default: ''
+      browser-artifact-path:
+        description: 'Checkout-relative destination for the exact candidate artifact'
+        type: string
+        default: ''
       browser-test-command:
         description: 'Application acceptance command using CI_PLAYWRIGHT_MODULE and writing CI_BROWSER_EVIDENCE'
         type: string
@@ -159,6 +167,8 @@ jobs:
           BROWSER_MATRIX_FILE: ${{ inputs.browser-matrix-file }}
           BROWSER_EXTENDED: ${{ inputs.browser-extended }}
           BROWSER_COMMAND: ${{ inputs.browser-test-command }}
+          BROWSER_ARTIFACT_ID: ${{ inputs.browser-artifact-id }}
+          BROWSER_ARTIFACT_PATH: ${{ inputs.browser-artifact-path }}
         run: |
           node <<'NODE'
           const fs = require('node:fs');
@@ -170,6 +180,11 @@ jobs:
             const file = fs.realpathSync(path.resolve(root, process.env.BROWSER_MATRIX_FILE));
             if (!file.startsWith(root + path.sep)) throw new Error('Matrix file escapes the checkout');
             source = fs.readFileSync(file, 'utf8');
+          }
+          const artifactId = process.env.BROWSER_ARTIFACT_ID || '';
+          const artifactPath = process.env.BROWSER_ARTIFACT_PATH || '';
+          if (artifactId || artifactPath) {
+            if (!/^[1-9][0-9]*$/.test(artifactId) || !/^(?:[a-zA-Z0-9_-]+\/)*[a-zA-Z0-9_-]+$/.test(artifactPath)) throw new Error('Candidate artifact requires one exact numeric ID and a relative directory without traversal');
           }
           const rows = JSON.parse(source);
           const fail = message => { throw new Error(message); };
@@ -196,7 +211,8 @@ jobs:
           NODE
   browser:
     name: Browser (${{ matrix.id }})
-    needs: browser-plan
+    needs: [change-scope, browser-plan]
+    if: ${{ needs.change-scope.outputs.run != 'false' || needs.change-scope.outputs.reason != 'documentation-only' }}
     strategy:
       fail-fast: false
       max-parallel: 4
@@ -253,6 +269,36 @@ jobs:
           }
           fs.writeFileSync(path.join(output, 'target.json'), JSON.stringify(row, null, 2));
           NODE
+      - name: Validate candidate artifact destination
+        if: ${{ inputs.browser-artifact-id != '' }}
+        env:
+          BROWSER_ARTIFACT_PATH: ${{ inputs.browser-artifact-path }}
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const path = require('node:path');
+          const root = fs.realpathSync(process.env.GITHUB_WORKSPACE);
+          const relative = process.env.BROWSER_ARTIFACT_PATH;
+          if (!/^(?:[a-zA-Z0-9_-]+\/)*[a-zA-Z0-9_-]+$/.test(relative)) throw new Error('Invalid artifact destination');
+          let current = root;
+          for (const component of relative.split('/')) {
+            current = path.join(current, component);
+            try {
+              const stat = fs.lstatSync(current);
+              if (stat.isSymbolicLink() || !stat.isDirectory()) throw new Error('Artifact destination contains a link or non-directory');
+              if (!fs.realpathSync(current).startsWith(root + path.sep)) throw new Error('Artifact destination escapes checkout');
+            } catch (error) {
+              if (error.code !== 'ENOENT') throw error;
+            }
+          }
+          NODE
+      - name: Download the exact candidate artifact from this workflow run
+        if: ${{ inputs.browser-artifact-id != '' }}
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ inputs.browser-artifact-id }}
+          path: ${{ inputs.browser-artifact-path }}
+          merge-multiple: true
       - name: Prepare application acceptance fixtures
         env:
           PREPARE_COMMAND: ${{ inputs.browser-prepare-command }}

@@ -70,6 +70,16 @@ the required Quality gate so a failed selected target blocks that gate. Schedule
 failures must be fixed before promoting a candidate; no target uses
 `continue-on-error` and an existing red check is not waived by a smaller rerun.
 
+When browser tests qualify a compiled candidate produced by an earlier job, make
+this reusable call depend on that build and pass `browser-artifact-id` from the
+build's upload output plus `browser-artifact-path` for its checkout-relative
+destination. Both inputs are required together. The workflow downloads that one
+exact artifact from the current run before the application preparation command;
+it never searches a latest run or an artifact name. Stage and verify the candidate
+in the preparation command so the matrix tests the new compiler output rather
+than an older committed vendor copy. Existing native or codec-specific candidate
+checks remain required alongside this browser matrix.
+
 ## Application acceptance contract
 
 The consumer must adapt real user-flow tests to the provided toolchain rather than
@@ -114,6 +124,36 @@ evidence before invoking the application command. Write screenshots, traces and
 logs under `CI_BROWSER_DIAGNOSTICS`; the workflow uploads that target's directory
 even on failure. Use synthetic data: artifacts must not include personal accounts,
 access tokens, production pages or private fixture contents.
+
+## Public consumer scope
+
+Adoption is based on the application surface, not the repository's primary
+language. Track the actual consumer workflow and required gate when reviewing a
+rollout; this list is not evidence that every consumer already runs all targets.
+
+- `inverter-dashboard-vue` and `ha-desloc-card`: use application DOM acceptance
+  adapters for this matrix. Keep their existing unit, packaging and integration
+  checks alongside the browser gate.
+- `inverter-dashboard` and `inverter-dashboard-go`: the Python static dashboard
+  and Go embedded HTML/Vue interface also need real browser acceptance. Their
+  existing Python/Go tests alone do not cover these interfaces.
+- `inverter-desktop`: qualify its Vue interface with a controlled Tauri IPC
+  fixture; retain separate native Tauri, Rust and installer checks. Browser
+  emulation cannot replace those platform checks.
+- `ottplay-core`: adapt its existing CJS browser scenarios to the selected
+  isolated module and engine, retaining their real playback and UI assertions.
+- `ottplay-foss`: retain its specialized Playwright Test and media fixtures.
+  Its test runner and selected browser must use the same reviewed generation;
+  changing only an environment variable does not migrate a hardcoded runner.
+  Keep native media, codec and device qualification separate.
+- `home-studio`: retain its dedicated current/historical browser and native
+  Safari/Firefox qualification. Consolidate only where a shared adapter
+  preserves the stronger existing assertions and platform coverage.
+- `ha-access-session`: include `gateway/web/index.html` in the owning
+  application's browser acceptance; Python protocol tests do not qualify the
+  gateway's login interface.
+- `ottplay-control-server`: its backend has no browser interface. Keep its Go
+  operating-system matrix; do not add an empty browser suite.
 
 ## Coverage boundaries and runners
 

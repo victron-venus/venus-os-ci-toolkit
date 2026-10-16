@@ -88,6 +88,38 @@ class BrowserCompatibilityTests(unittest.TestCase):
         result = self.plan([target])
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_candidate_artifact_is_one_exact_id_and_a_relative_destination(self):
+        result = self.plan([TARGET], BROWSER_ARTIFACT_ID="12345", BROWSER_ARTIFACT_PATH="shared-core/dist")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for artifact_id, destination in (
+            ("latest", "shared-core/dist"), ("123,456", "shared-core/dist"),
+            ("0", "shared-core/dist"), ("123", "../outside"),
+            ("123", "/absolute"), ("123", ""), ("", "shared-core/dist"),
+        ):
+            with self.subTest(artifact_id=artifact_id, destination=destination):
+                self.assertNotEqual(self.plan([TARGET], BROWSER_ARTIFACT_ID=artifact_id,
+                                             BROWSER_ARTIFACT_PATH=destination).returncode, 0)
+        step = next(step for step in WORKFLOW["jobs"]["browser"]["steps"]
+                    if step.get("name") == "Download the exact candidate artifact from this workflow run")
+        self.assertEqual(step["with"]["artifact-ids"], "${{ inputs.browser-artifact-id }}")
+        self.assertNotIn("run-id", step["with"])
+        self.assertNotIn("name", step["with"])
+
+    def test_artifact_destination_rejects_existing_symlinks_and_files_on_actual_runner(self):
+        def verify(destination):
+            return self.execute("browser", "Validate candidate artifact destination",
+                                GITHUB_WORKSPACE=str(self.root), BROWSER_ARTIFACT_PATH=destination)
+
+        self.assertEqual(verify("build/dist").returncode, 0)
+        (self.root / "build").mkdir()
+        self.assertEqual(verify("build/dist").returncode, 0)
+        (self.root / "outside").symlink_to(ROOT, target_is_directory=True)
+        self.assertNotEqual(verify("outside/dist").returncode, 0)
+        (self.root / "build/link").symlink_to(self.root / "missing", target_is_directory=True)
+        self.assertNotEqual(verify("build/link/dist").returncode, 0)
+        (self.root / "plain").write_text("not a directory")
+        self.assertNotEqual(verify("plain/dist").returncode, 0)
+
     def test_matrix_file_cannot_escape_checkout(self):
         matrix = self.root / "targets.json"
         matrix.write_text(json.dumps([TARGET]))
