@@ -29,7 +29,8 @@ Put `/trusted/bin` first in PATH before the verification command. The builder
 rejects an incorrect or dirty source checkout and any other Go version. It
 restores the upstream module files after building, retains Go's module checksum
 verification, uses HTTPS-only module downloads and limits compilation to two
-workers. It does not sign, publish, install system files or alter credentials.
+workers. It selects the native Linux/macOS amd64/arm64 target, disables CGO,
+removes ambient Go/compiler overrides and verifies final build metadata. It does not sign, publish, install system files or alter credentials.
 
 Generated signing and publication jobs perform this same build from an immutable
 checkout and keep `GODEBUG=fips140=on` for all subsequent steps, including Cosign

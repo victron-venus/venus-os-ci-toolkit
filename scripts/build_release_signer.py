@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import argparse
 import os
+import platform
 from pathlib import Path
 import subprocess
+import sys
 
 SOURCE = "11926fa5bbbbde47e88fc006b625a17769b743b2"
 GO_VERSION = "go1.27.2"
@@ -14,10 +16,18 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def build_environment() -> dict[str, str]:
     """Use authenticated module downloads and bound compiler concurrency."""
-    return {**os.environ, "GOTOOLCHAIN": "local", "GODEBUG": "fips140=on",
-            "GOMAXPROCS": "2", "GOFLAGS": "-p=2", "GOENV": "off", "GOWORK": "off",
-            "GOPROXY": "https://proxy.golang.org", "GOSUMDB": "sum.golang.org",
-            "GONOSUMDB": "", "GONOPROXY": "", "GOPRIVATE": "", "GOVCS": "*:off"}
+    architecture = {"arm64": "arm64", "aarch64": "arm64", "x86_64": "amd64", "AMD64": "amd64"}.get(platform.machine())
+    operating_system = {"linux": "linux", "darwin": "darwin"}.get(sys.platform)
+    if architecture is None or operating_system is None:
+        raise ValueError("Only native Linux/macOS amd64/arm64 builds are qualified")
+    env = {key: value for key, value in os.environ.items()
+           if not key.startswith(("GO", "CGO_")) and key not in {"CC", "CXX", "PKG_CONFIG"}}
+    env.update({"GOTOOLCHAIN": "local", "GODEBUG": "fips140=on", "GOFIPS140": "latest",
+                "GOOS": operating_system, "GOARCH": architecture, "CGO_ENABLED": "0",
+                "GOMAXPROCS": "2", "GOFLAGS": "-p=2", "GOENV": "off", "GOWORK": "off",
+                "GOPROXY": "https://proxy.golang.org", "GOSUMDB": "sum.golang.org",
+                "GONOSUMDB": "", "GONOPROXY": "", "GOPRIVATE": "", "GOVCS": "*:off"})
+    return env
 
 
 def run(args: list[str], source: Path, env: dict[str, str]) -> str:
@@ -48,7 +58,13 @@ def build(source: Path, output: Path) -> None:
         output.parent.mkdir(parents=True, exist_ok=True)
         subprocess.run(["go", "build", "-mod=readonly", "-trimpath", "-o", str(output),
                         "./cmd/cosign"], cwd=source, env=env, check=True)
-        subprocess.run(["go", "version", "-m", str(output)], env=env, check=True)
+        metadata = run(["go", "version", "-m", str(output)], source, env)
+        if metadata.splitlines()[0] != f"{output}: {GO_VERSION}":
+            raise ValueError("Built signer reports an unexpected Go toolchain")
+        for name in ("GOOS", "GOARCH", "CGO_ENABLED"):
+            if f"\tbuild\t{name}={env[name]}" not in metadata.splitlines():
+                raise ValueError(f"Built signer reports unexpected {name}")
+        print(metadata)
         subprocess.run([str(output), "version"], env=env, check=True)
     finally:
         for name, data in original.items():

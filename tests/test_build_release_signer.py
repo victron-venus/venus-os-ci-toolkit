@@ -13,7 +13,7 @@ import build_release_signer as builder
 
 class BuildSignerTests(unittest.TestCase):
     def test_environment_requires_verification_and_limits_workers(self):
-        with patch.dict(os.environ, {"GONOSUMDB": "*", "GOPROXY": "http://example.invalid", "GODEBUG": "fips140=off"}):
+        with patch.dict(os.environ, {"GONOSUMDB": "*", "GOPROXY": "http://example.invalid", "GODEBUG": "fips140=off", "GOOS": "windows", "GOARCH": "386", "CGO_ENABLED": "1", "CC": "/bad/compiler", "GOEXPERIMENT": "bad"}):
             env = builder.build_environment()
         self.assertEqual(env["GOSUMDB"], "sum.golang.org")
         self.assertEqual(env["GONOSUMDB"], "")
@@ -22,6 +22,11 @@ class BuildSignerTests(unittest.TestCase):
         self.assertEqual(env["GODEBUG"], "fips140=on")
         self.assertEqual(env["GOMAXPROCS"], "2")
         self.assertEqual(env["GOFLAGS"], "-p=2")
+        self.assertNotIn("CC", env)
+        self.assertNotIn("GOEXPERIMENT", env)
+        self.assertNotEqual(env["GOOS"], "windows")
+        self.assertNotEqual(env["GOARCH"], "386")
+        self.assertEqual(env["CGO_ENABLED"], "0")
 
     def test_bad_source_and_toolchain_never_execute_build(self):
         for responses, reason in [(["wrong"], "source commit"),
@@ -49,6 +54,22 @@ class BuildSignerTests(unittest.TestCase):
                 builder.build(source, root / "out/cosign")
             for name in ("go.mod", "go.sum"):
                 self.assertEqual((source / name).read_text(), "original " + name)
+
+    def test_download_must_not_rewrite_reviewed_lock(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            source = root / "source"
+            source.mkdir()
+            for name in ("go.mod", "go.sum"):
+                (source / name).write_text("original " + name)
+            def mutate(_args, **_kwargs):
+                (source / "go.sum").write_text("unreviewed download")
+            with patch.object(builder, "run", side_effect=[builder.SOURCE, "", builder.GO_VERSION]), \
+                 patch.object(builder.subprocess, "run", side_effect=mutate), \
+                 self.assertRaisesRegex(ValueError, "changed the reviewed lock"):
+                builder.build(source, root / "out/cosign")
+            self.assertFalse((root / "out").exists())
+            self.assertEqual((source / "go.sum").read_text(), "original go.sum")
 
     def test_output_inside_source_is_rejected(self):
         with tempfile.TemporaryDirectory() as d, self.assertRaisesRegex(ValueError, "outside"):

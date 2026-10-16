@@ -35,6 +35,7 @@ def chain(directory: Path, weak: str | None) -> None:
         openssl(directory, "x509", "-req", "-in", f"{name}.csr", *signer, "-set_serial",
                 str({"root": 1, "intermediate": 2, "leaf": 3}[name]), "-days", "1", "-sha256",
                 "-extfile", f"{name}.ext", "-out", f"{name}.pem")
+    openssl(directory, "verify", "-CAfile", "root.pem", "-untrusted", "intermediate.pem", "leaf.pem")
     (directory / "chain.pem").write_bytes((directory / "leaf.pem").read_bytes() + (directory / "intermediate.pem").read_bytes())
 
 
