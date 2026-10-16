@@ -40,6 +40,7 @@ class BrowserCompatibilityTests(unittest.TestCase):
             **os.environ, "GITHUB_OUTPUT": str(self.root / "output"),
             "GITHUB_ENV": str(self.root / "env"), "RUNNER_TEMP": str(self.root),
             "BROWSER_MATRIX_FILE": "", "BROWSER_EXTENDED": "false",
+            "BROWSER_EVIDENCE_PREFIX": "browser-compatibility",
             "BROWSER_COMMAND": "node scripts/application-acceptance.cjs",
         }
 
@@ -129,6 +130,15 @@ class BrowserCompatibilityTests(unittest.TestCase):
         self.assertEqual(hosted["if"], "runner.environment == 'github-hosted'")
         self.assertEqual(reserve["if"], "${{ runner.environment == 'self-hosted' && matrix.channel == '' }}")
         self.assertNotIn("sudo", reserve["run"])
+
+    def test_distinct_calls_can_namespace_artifacts_without_changing_inventory(self):
+        self.assertEqual(self.plan([TARGET], BROWSER_EVIDENCE_PREFIX="browser-release").returncode, 0)
+        for prefix in ("", "../escape", "two words", "x" * 65):
+            self.assertNotEqual(self.plan([TARGET], BROWSER_EVIDENCE_PREFIX=prefix).returncode, 0)
+        upload = next(step for step in WORKFLOW["jobs"]["browser"]["steps"]
+                      if step.get("uses", "").startswith("actions/upload-artifact@"))
+        self.assertEqual(upload["with"]["name"],
+                         "${{ inputs.browser-evidence-prefix }}-${{ matrix.id }}-${{ github.run_attempt }}")
 
     def test_matrix_file_cannot_escape_checkout(self):
         matrix = self.root / "targets.json"

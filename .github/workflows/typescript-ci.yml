@@ -79,6 +79,10 @@ on:
         description: 'Prepare the application and synthetic fixtures in each browser job'
         type: string
         default: 'npm ci --ignore-scripts'
+      browser-evidence-prefix:
+        description: 'Unique artifact namespace when this workflow is called more than once per run'
+        type: string
+        default: 'browser-compatibility'
       browser-artifact-id:
         description: 'Optional exact artifact ID produced earlier in this workflow run'
         type: string
@@ -168,6 +172,7 @@ jobs:
           BROWSER_EXTENDED: ${{ inputs.browser-extended }}
           BROWSER_COMMAND: ${{ inputs.browser-test-command }}
           BROWSER_ARTIFACT_ID: ${{ inputs.browser-artifact-id }}
+          BROWSER_EVIDENCE_PREFIX: ${{ inputs.browser-evidence-prefix }}
           BROWSER_ARTIFACT_PATH: ${{ inputs.browser-artifact-path }}
         run: |
           node <<'NODE'
@@ -181,6 +186,7 @@ jobs:
             if (!file.startsWith(root + path.sep)) throw new Error('Matrix file escapes the checkout');
             source = fs.readFileSync(file, 'utf8');
           }
+          if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(process.env.BROWSER_EVIDENCE_PREFIX)) throw new Error('Artifact evidence prefix must be a safe unique identifier');
           const artifactId = process.env.BROWSER_ARTIFACT_ID || '';
           const artifactPath = process.env.BROWSER_ARTIFACT_PATH || '';
           if (artifactId || artifactPath) {
@@ -357,7 +363,7 @@ jobs:
         if: ${{ always() && steps.lock.outcome == 'success' }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: browser-compatibility-${{ matrix.id }}-${{ github.run_attempt }}
+          name: ${{ inputs.browser-evidence-prefix }}-${{ matrix.id }}-${{ github.run_attempt }}
           path: ${{ inputs.working-directory }}/.compatibility/${{ matrix.id }}/
           include-hidden-files: true
           if-no-files-found: error

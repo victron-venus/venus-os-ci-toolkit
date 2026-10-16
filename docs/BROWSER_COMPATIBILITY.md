@@ -78,7 +78,10 @@ exact artifact from the current run before the application preparation command;
 it never searches a latest run or an artifact name. Stage and verify the candidate
 in the preparation command so the matrix tests the new compiler output rather
 than an older committed vendor copy. Existing native or codec-specific candidate
-checks remain required alongside this browser matrix.
+checks remain required alongside this browser matrix. If source CI and packaged
+candidate qualification call the workflow within the same run, give the latter
+a distinct `browser-evidence-prefix` such as `browser-release` to prevent their
+artifact names from colliding. The inventory and assertions can remain identical.
 
 ## Application acceptance contract
 
