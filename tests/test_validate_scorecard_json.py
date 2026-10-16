@@ -104,6 +104,14 @@ class ScorecardJSONTests(unittest.TestCase):
             ("repo", {"name": "github.com/other/repo", "commit": SHA}),
             ("repo", {"name": f"github.com/{REPO}", "commit": "b" * 40}),
             ("scorecard", {"version": "v9.0.0", "commit": "b" * 40}),
+            ("scorecard", {"version": "v5.6.0", "commit": "b" * 40}),
+            (
+                "scorecard",
+                {
+                    "version": "v5.5.0",
+                    "commit": "c395761df6afe1a69e476bc60a013a94bcbc153f",
+                },
+            ),
         ):
             with self.subTest(field=field, value=value):
                 result = complete()
