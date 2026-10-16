@@ -69,7 +69,12 @@ def probe(binary: Path, weak: str | None, version: ssl.TLSVersion, client: str =
 
         server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-        context.minimum_version = context.maximum_version = version
+        if version == ssl.TLSVersion.TLSv1_3:
+            context.minimum_version = context.maximum_version = ssl.TLSVersion.TLSv1_3
+        elif version == ssl.TLSVersion.TLSv1_2:
+            context.minimum_version = context.maximum_version = ssl.TLSVersion.TLSv1_2
+        else:
+            raise ValueError("The fixture only supports TLS 1.2 and 1.3")
         # Test-only loopback server must present the deliberately weak chain.
         # The production Cosign client remains strict and must reject it before HTTP.
         context.set_ciphers("DEFAULT:@SECLEVEL=0")
