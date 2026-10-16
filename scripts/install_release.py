@@ -1557,6 +1557,12 @@ def release_files(directory: Path, policy: dict) -> dict[str, str]:
             marker, "RELEASE_SIGNATURES_REQUIRED = True"
         )
         files["scripts/release_signing.py"] = (ROOT / "scripts/release_signing.py").read_text()
+        for name in ("go.mod", "go.sum", "LICENSE", "README.md"):
+            path = f".github/cosign/{name}"
+            files[path] = (ROOT / path).read_text()
+        for path in ("scripts/build_release_signer.py", "docs/release-signer.md"):
+            files[path] = (ROOT / path).read_text()
+
         from release_provenance import policy_pairs  # pylint: disable=import-outside-toplevel
 
         provenance_source = (ROOT / "scripts/release_provenance.py").read_text()

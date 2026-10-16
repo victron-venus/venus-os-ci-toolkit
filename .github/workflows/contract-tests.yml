@@ -140,5 +140,42 @@ jobs:
         run: python -m unittest discover -s tests -p 'test_*.py' -v
   python-action-contracts:
     uses: ./.github/workflows/python-action-tests.yml
+  release-signer-contract:
+    name: Patched release signer and TLS contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+    - name: Harden the runner (Audit all outbound calls)
+      uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25
+      with:
+        egress-policy: audit
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        persist-credentials: false
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      with:
+        repository: sigstore/cosign
+        ref: 11926fa5bbbbde47e88fc006b625a17769b743b2
+        path: .release-cosign-source
+        persist-credentials: false
+    - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+      with:
+        go-version: 1.27.2
+        cache-dependency-path: .github/cosign/go.sum
+    - name: Build the reviewed patched release signer
+      run: 'python3 scripts/build_release_signer.py --source .release-cosign-source
+        --output "$RUNNER_TEMP/release-signer/cosign"
+
+        echo "$RUNNER_TEMP/release-signer" >> "$GITHUB_PATH"
+
+        echo "GODEBUG=fips140=on" >> "$GITHUB_ENV"
+
+        '
+    - name: Verify upstream signature and tamper rejection
+      run: python3 scripts/check_release_signer.py "$RUNNER_TEMP/release-signer/cosign"
+    - name: Test the actual binary against weak and strong certificate chains
+      run: python3 scripts/check_release_signer_tls.py "$RUNNER_TEMP/release-signer/cosign"
 'on':
   workflow_call: {}

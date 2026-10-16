@@ -6,7 +6,7 @@ import fnmatch
 
 from release_signing import trust
 
-COSIGN_VERSION = "v3.1.3"
+COSIGN_SOURCE = "11926fa5bbbbde47e88fc006b625a17769b743b2"
 ARTIFACT = "release-assets-signature"
 
 
@@ -27,8 +27,20 @@ def enabled(policy: dict) -> bool:
     return value
 
 
-def installer(ref: str) -> dict:
-    return {"uses": ref, "with": {"cosign-release": COSIGN_VERSION}}
+def installer(pins: dict) -> list[dict]:
+    """All signer/verifier jobs use identical source, dependency and TLS policy."""
+    return [
+        {"uses": pins["actions/checkout"], "with": {
+            "repository": "sigstore/cosign", "ref": COSIGN_SOURCE,
+            "path": ".release-cosign-source", "persist-credentials": False}},
+        {"uses": pins["actions/setup-go"], "with": {
+            "go-version": "1.27.2", "cache-dependency-path": ".github/cosign/go.sum"}},
+        {"name": "Build the reviewed patched release signer", "run": (
+            'python3 scripts/build_release_signer.py --source .release-cosign-source '
+            '--output "$RUNNER_TEMP/release-signer/cosign"\n'
+            'echo "$RUNNER_TEMP/release-signer" >> "$GITHUB_PATH"\n'
+            'echo "GODEBUG=fips140=on" >> "$GITHUB_ENV"\n')},
+    ]
 
 
 def apply(workflow: dict, policy: dict, pins: dict) -> None:
@@ -49,7 +61,7 @@ def apply(workflow: dict, policy: dict, pins: dict) -> None:
         "steps": [
             {"uses": pins["actions/checkout"], "with": {"persist-credentials": False}},
             {"uses": pins["actions/setup-python"], "with": {"python-version": "3.12"}},
-            installer(pins["sigstore/cosign-installer"]),
+            *installer(pins),
             {"uses": pins["actions/download-artifact"], "with": {
                 "name": "${{ needs.prepare.outputs.plan_artifact }}", "path": "."}},
             {"name": "Apply the reviewed frozen version plan", "run":
@@ -95,4 +107,4 @@ def apply(workflow: dict, policy: dict, pins: dict) -> None:
     # Verification, including old-RC promotion, needs no signing identity/token.
     for name in ("candidate", "stable", "final"):
         if name in jobs:
-            jobs[name]["steps"].insert(1, installer(pins["sigstore/cosign-installer"]))
+            jobs[name]["steps"][1:1] = installer(pins)
