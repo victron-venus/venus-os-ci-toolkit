@@ -33,8 +33,10 @@ workers. It selects the native Linux/macOS amd64/arm64 target, disables CGO,
 removes ambient Go/compiler overrides and verifies final build metadata. It does not sign, publish, install system files or alter credentials.
 
 Generated signing and publication jobs perform this same build from an immutable
-checkout and keep `GODEBUG=fips140=on` for all subsequent steps, including Cosign
-and GitHub CLI. The verified Go runtime restricts every certificate in a verified
+checkout and keep `GODEBUG=fips140=on` for all subsequent steps. The setting is
+also inherited by GitHub CLI, but this installer does not pin or qualify the
+runner-provided GitHub CLI; that client requires its own verified toolchain.
+Cosign's verified Go runtime restricts every certificate in a verified
 TLS chain to supported modern keys (including RSA of at least 2048 bits), preserves
 host and trust verification and permits TLS 1.2/1.3 with ephemeral key exchange.
 This runtime setting is not a FIPS certificate. Default public Sigstore services
