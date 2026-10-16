@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Allow 35 minutes for each browser target, covering cold toolchain and browser
+  setup plus application acceptance and evidence upload. Planner, release-verdict
+  and application test timeouts are unchanged.
 - Add an offline synthetic recovery drill and independently checkpointed catalog
   verification, with operator instructions and a recovery-exercise diagram.
 - Reject unsafe path ancestors and dangling HCP state links; bound external
