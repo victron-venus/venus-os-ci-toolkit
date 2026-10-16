@@ -51,6 +51,10 @@ with:
   browser-extended: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
 ```
 
+When a consumer already has its ordinary Node checks in another required job,
+set `run-node-ci: false` for this browser-only call to avoid a redundant install
+and lint/build/test job. The default is `true`, preserving existing callers.
+
 Alternatively pass a JSON target array with `browser-matrix`; do not supply both.
 The matrix file is relative to the checkout root. Toolchain paths and test commands
 are relative to `working-directory`. A monorepo should prepare the lock directories
