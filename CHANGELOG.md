@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Allow 15 minutes for browser planning, including cold Node 22 installation on
+  newly created runners. Browser execution and release-verdict budgets are unchanged.
 - Add an age-encrypted recovery catalog, explicit OCI secret publication with
   revision and concurrency checks, and immutable verified private-file delivery.
 - Add isolated local Terraform roots for OCI topology and HCP write-only
