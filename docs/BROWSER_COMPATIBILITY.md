@@ -61,6 +61,24 @@ architectures or native Safari. Preserve intentional overrides when reviewing
 generated inventory updates: the generator continues to emit the default
 `macos-15` matrix, and its `--check` reports customization as drift.
 
+An application may similarly select the explicit `ubuntu-26.04` runner for a
+Linux target after qualifying that browser generation and its native dependencies.
+Keep its engine, version, browser pin and tier, and give the target a distinct ID
+such as `ubuntu-26-04-webkit-1-64-0`. This runner always uses GitHub's
+[hosted Ubuntu 26.04 x64 image](https://docs.github.com/en/actions/reference/runners/github-hosted-runners);
+it does not inherit the default Linux reserve. Admission checks
+the actual distribution version and architecture before installing dependencies,
+and records them in the runtime and application evidence. The release verdict
+requires those identities to agree.
+
+`ubuntu-latest` and `ubuntu-26.04` occupy the same Linux topology slot. They cannot
+duplicate one engine/version/channel combination or replace Windows or macOS
+coverage. The default generator remains unchanged, so maintain explicit overrides
+when reviewing generated updates. This option qualifies the selected browser
+runtime; it does not establish compatibility of packaged native applications on
+older Linux distributions. Preserve the original application assertions and
+record comparative runtime evidence in the consumer's documentation.
+
 ![Three operating systems times three engines times three pinned generations, plus eight branded-channel targets; five current targets form the fast subset](assets/browser-compatibility-topology.svg)
 
 Each cell covers three browser generations. Amber markers identify the current
