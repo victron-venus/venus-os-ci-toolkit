@@ -33,7 +33,7 @@ CHECKS = frozenset(
 )
 # Preserve the pinned upstream action policy: these checks are not reported.
 DISABLED = frozenset({"Contributors", "Signed-Releases"})
-VERSION = {"version": "v5.5.0", "commit": "c395761df6afe1a69e476bc60a013a94bcbc153f"}
+VERSION = {"version": "v5.6.0", "commit": "61e84743356275f6ffca23b1b2f2cb945e19eb96"}
 PACKAGING_ABSENT = "packaging workflow not detected"
 
 
@@ -51,7 +51,7 @@ def validate_check_score(check: dict, name: str) -> None:
         and check.get("error") is None
     ):
         return
-    # In pinned v5.5.0 every runtime-error constructor sets score=-1;
+    # In pinned v5.6.0 every runtime-error constructor sets score=-1;
     # JSON2 retains that score even though it omits CheckResult.Error.
     if name not in DISABLED and (
         not isinstance(score, int)
