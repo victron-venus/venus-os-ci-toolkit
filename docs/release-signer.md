@@ -54,7 +54,9 @@ The same binary is tested against synthetic loopback TLS 1.2 and TLS 1.3 servers
 Ordinary mode establishes HTTP over valid 2048-bit chains and over deliberately
 weak 1024-bit root, intermediate and leaf variants. Strict mode retains the strong
 connection and rejects each weak-chain variant before any HTTP request. A 404
-response is the positive transport calibration; this test does not weaken a live
+response is the positive transport calibration. On macOS the fixture explicitly
+sets Go 1.27 `x509sslcertoverrideplatform=1` to load only its temporary root file;
+it does not modify the keychain or change production trust. This test does not weaken a live
 service or publish anything.
 
 On 2026-10-16 binary vulnerability analysis reported 27 reachable-symbol findings

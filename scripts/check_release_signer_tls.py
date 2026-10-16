@@ -83,7 +83,8 @@ def probe(binary: Path, weak: str | None, version: ssl.TLSVersion) -> None:
                 home.mkdir()
                 roots = directory / "empty-roots"
                 roots.mkdir(exist_ok=True)
-                env = {**os.environ, "HOME": str(home), "GODEBUG": f"fips140={'on' if strict else 'off'}",
+                # Go 1.27 fixture-only trust override avoids modifying the macOS keychain.
+                env = {**os.environ, "HOME": str(home), "GODEBUG": f"fips140={'on' if strict else 'off'},x509sslcertoverrideplatform=1",
                        "SSL_CERT_FILE": str(directory / ROOT_CERTIFICATE), "SSL_CERT_DIR": str(roots),
                        "NO_PROXY": "localhost,127.0.0.1"}
                 before = len(requests)
@@ -92,7 +93,7 @@ def probe(binary: Path, weak: str | None, version: ssl.TLSVersion) -> None:
                                         text=True, capture_output=True, timeout=30)
                 count = len(requests) - before
                 if weak and strict:
-                    if count or result.returncode == 0 or "x509" not in result.stderr:
+                    if count or result.returncode == 0 or "no FIPS compatible certificate chains found" not in result.stderr:
                         raise RuntimeError(f"Weak {weak} chain was not rejected before HTTP: {result.stderr}")
                 elif not count or "404" not in result.stderr:
                     raise RuntimeError(f"Positive transport calibration failed: {result.stderr}")
@@ -104,8 +105,8 @@ def probe(binary: Path, weak: str | None, version: ssl.TLSVersion) -> None:
 
 
 def check(binary: Path) -> None:
-    if sys.platform != "linux":
-        raise RuntimeError("This test requires Linux: Go on macOS uses the system trust store")
+    if sys.platform not in {"linux", "darwin"}:
+        raise RuntimeError("This test supports Linux and macOS")
     for version in (ssl.TLSVersion.TLSv1_2, ssl.TLSVersion.TLSv1_3):
         for weak in (None, "root", "intermediate", "leaf"):
             probe(binary.resolve(), weak, version)
