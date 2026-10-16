@@ -224,7 +224,9 @@ jobs:
             const full = ['rc', 'stable'].includes(releaseChannel);
             if (rows.length !== 35 || rows.filter(row => row.tier === 'required').length !== 5) fail('Release qualification requires the reviewed 35-target inventory with 5 required targets');
             if ((process.env.BROWSER_EXTENDED === 'true') !== full || selected.length !== (full ? 35 : 5)) fail('Release channel does not match the required qualification breadth');
-            const identities = new Set(rows.map(row => JSON.stringify([row.os, row.engine, row.playwright, row.channel])));
+            const platformIdentity = os => os === 'macos-15-intel' ? 'macos-15' : os;
+            const identity = row => JSON.stringify([platformIdentity(row.os), row.engine, row.playwright, row.channel]);
+            const identities = new Set(rows.map(identity));
             if (identities.size !== rows.length) fail('Release inventory must not repeat a browser/platform/version identity');
             const bundled = rows.filter(row => !row.channel);
             const versions = [...new Set(bundled.map(row => row.playwright))].sort((a, b) => {
@@ -236,7 +238,6 @@ jobs:
             const platforms = ['ubuntu-latest', 'windows-2022', 'macos-15'];
             const engines = ['chromium', 'firefox', 'webkit'];
             const expected = new Map();
-            const identity = row => JSON.stringify([row.os, row.engine, row.playwright, row.channel]);
             for (const version of versions) for (const os of platforms) for (const engine of engines) {
               const required = version === current && (os === 'ubuntu-latest' || (os === 'windows-2022' && engine === 'chromium') || (os === 'macos-15' && engine === 'webkit'));
               expected.set(identity({os, engine, playwright: version, channel: ''}), required ? 'required' : 'extended');
@@ -293,6 +294,7 @@ jobs:
           const row = JSON.parse(process.env.CI_BROWSER_TARGET);
           const expected = row.os.startsWith('ubuntu-') ? 'linux' : row.os.startsWith('windows-') ? 'win32' : 'darwin';
           if (process.platform !== expected) throw new Error('Runner platform does not match the reviewed target');
+          if (row.os === 'macos-15-intel' && process.arch !== 'x64') throw new Error('Intel macOS target requires an x64 runner');
           const root = fs.realpathSync(process.cwd());
           const directory = fs.realpathSync(path.resolve(root, row.toolchain));
           if (!directory.startsWith(root + path.sep)) throw new Error('Toolchain escapes the application directory');
