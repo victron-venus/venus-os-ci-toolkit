@@ -95,6 +95,18 @@ class CatalogTests(unittest.TestCase):
                         with self.assertRaises(catalog.ControlError):
                             catalog.validate(value)
 
+    def test_optional_hcp_description_validation(self):
+        for description in ("", "Keep the existing description", "Unicode café\nsecond line"):
+            value = fixture()
+            value["entries"][0]["targets"][1]["description"] = description
+            catalog.validate(value)
+        for description in (None, True, [], "x" * 513, "nul\x00byte", "\ud800"):
+            with self.subTest(description=repr(description)):
+                value = fixture()
+                value["entries"][0]["targets"][1]["description"] = description
+                with self.assertRaises(catalog.ControlError):
+                    catalog.validate(value)
+
     def test_newline_empty_unicode_and_varset(self):
         for value in ("", "\n", "ユニコード"):
             c = fixture()
@@ -791,6 +803,89 @@ class HCPTests(unittest.TestCase):
         self.assertEqual(len(m), 2)
         self.assertTrue(all(len(k) <= 64 for k in m))
         self.assertTrue(all(x == "synthetic-value" for x in v.values()))
+
+    def test_description_preserved_without_changing_resource_identity(self):
+        value = fixture()
+        legacy_metadata, _ = hcp.mappings(value)
+        index = next(iter(legacy_metadata))
+        self.assertNotIn("description", legacy_metadata[index])
+        description = "Existing café description\nKeep whitespace  "
+        value["entries"][0]["targets"][1]["description"] = description
+        metadata, _ = hcp.mappings(value)
+        self.assertEqual(set(metadata), set(legacy_metadata))
+        self.assertEqual(metadata[index]["description"], description)
+        attributes = dict(metadata[index], value_wo_version=0)
+        attributes.pop("revision")
+        state = {
+            "version": 4,
+            "resources": [{"mode": "managed", "type": "tfe_variable", "name": "secret",
+                           "instances": [{"index_key": index, "attributes": attributes}]}],
+        }
+        path = self.dest / "terraform.tfstate"
+        path.write_text(json.dumps(state))
+        hcp.verify_state(self.dest, metadata)
+        attributes["value_wo_version"] = None
+        path.write_text(json.dumps(state))
+        hcp.verify_state(self.dest, metadata)
+        for malformed in (True, -1, "1"):
+            attributes["value_wo_version"] = malformed
+            path.write_text(json.dumps(state))
+            with self.assertRaises(catalog.ControlError):
+                hcp.verify_state(self.dest, metadata)
+        attributes["description"] = "changed remotely"
+        attributes["value_wo_version"] = 1
+        path.write_text(json.dumps(state))
+        with self.assertRaises(catalog.ControlError):
+            hcp.verify_state(self.dest, metadata)
+        # Omitting the field cannot silently erase an existing description.
+        with self.assertRaises(catalog.ControlError):
+            hcp.verify_state(self.dest, legacy_metadata)
+        # An explicit new revision can intentionally update the metadata.
+        revised = copy.deepcopy(metadata)
+        revised[index]["revision"] = 2
+        hcp.verify_state(self.dest, revised)
+        for absent in (None, ""):
+            attributes["description"] = absent
+            path.write_text(json.dumps(state))
+            hcp.verify_state(self.dest, legacy_metadata)
+
+    def test_description_transport_does_not_change_ledger_or_mapping(self):
+        value = fixture()
+        description = 'Literal ${name} %{ if true } $${escaped} %%{escaped} 🙂'
+        value["entries"][0]["targets"][1]["description"] = description
+        before = copy.deepcopy(value)
+        metadata, _ = hcp.mappings(value)
+        index = next(iter(metadata))
+        with patch.object(hcp, "trusted_tool", return_value="/trusted/terraform"), patch.object(hcp, "process") as process:
+            hcp.run(value, self.dest, "tf", apply=True, generation=1)
+        transported = json.loads(process.call_args.kwargs["env"]["TF_VAR_hcp_variables"])
+        self.assertEqual(transported[index]["description"],
+                         'Literal $${name} %%{ if true } $$${escaped} %%%{escaped} 🙂')
+        intent = json.loads((self.dest / ".secret-control-intent-1.json").read_bytes())
+        self.assertEqual(intent["entries"][index]["metadata"]["description"], description)
+        self.assertEqual(metadata[index]["description"], description)
+        self.assertEqual(value, before)
+
+    def test_description_revision_is_enforced_by_intent_ledger(self):
+        value = fixture()
+        metadata, values = hcp.mappings(value)
+        hcp.record_intent(self.dest, value, metadata, values, True)
+        value["generation"] = 2
+        value["entries"][0]["targets"][1]["description"] = "Intentional update"
+        metadata, values = hcp.mappings(value)
+        with self.assertRaises(catalog.ControlError):
+            hcp.record_intent(self.dest, value, metadata, values, False)
+        value["entries"][0]["revision"] = 2
+        metadata, values = hcp.mappings(value)
+        hcp.record_intent(self.dest, value, metadata, values, False)
+
+    def test_decomposed_description_refused_before_terraform(self):
+        value = fixture()
+        value["entries"][0]["targets"][1]["description"] = "Cafe\u0301"
+        with patch.object(hcp, "process") as process:
+            with self.assertRaises(catalog.ControlError):
+                hcp.run(value, self.dest, "tf")
+        process.assert_not_called()
 
     def test_fixed_action_scrub_and_no_output(self):
         c = fixture()

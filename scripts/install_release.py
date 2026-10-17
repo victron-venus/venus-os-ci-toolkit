@@ -658,6 +658,8 @@ def release_contract_job(policy, directory):
     canonical = directory is not None and directory.resolve() == ROOT.resolve()
     tests = "tests" if canonical else ".github/release-tests"
     requirements = ".github/requirements-generator.txt" if canonical else CONTRACT_REQUIREMENTS
+    if canonical:
+        requirements += " -r tools/secret_control/requirements-github-lock.txt"
     job = {
         "name": "Release tooling contracts",
         "runs-on": runner_labels(),

@@ -13,6 +13,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from tools.secret_control import hcp
+
 ROOT = Path(__file__).resolve().parents[1] / "deploy" / "secret-bootstrap"
 
 
@@ -193,6 +195,31 @@ class TerraformSecretTransportTests(unittest.TestCase):
         if "hcp_secret_values_json" in plan.get("variables", {}):
             self.assertEqual(plan["variables"]["hcp_secret_values_json"], {"value": "{}"})
         self.assertNotIn("HCP_VECTOR_", shown.stdout)
+        self.assertFalse(list(self.root.glob("*.tfstate*")))
+
+    def test_description_environment_transport_preserves_literal_bytes(self):
+        descriptions = {
+            "interpolation": "Literal ${missing}",
+            "directive": "%{ if true }literal%{ endif }",
+            "escaped": "$${literal} %%{literal}",
+            "repeated": "$$${literal} %%%{literal}",
+            "unicode": "Café 雪 🙂",
+            "whitespace": 'line1\nline2\r\n\t"quote"\\path  ',
+            "controls": "backspace\bformfeed\f",
+            "literal_controls": r"literal\b\f and \\b\\f",
+            "empty": "",
+        }
+        self.inputs({key: "synthetic-only" for key in descriptions})
+        metadata = json.loads(self.env["TF_VAR_hcp_variables"])
+        for key, description in descriptions.items():
+            metadata[key]["description"] = description
+        self.env["TF_VAR_hcp_variables"] = hcp._metadata_json(metadata)
+        self.tf("plan", "-input=false", "-no-color", "-out=description.tfplan")
+        shown = self.tf("show", "-json", "description.tfplan")
+        actual = json.loads(shown.stdout)["variables"]["hcp_variables"]["value"]
+        for key, expected in descriptions.items():
+            self.assertEqual(actual[key]["description"].encode(), expected.encode())
+        self.assertNotIn("synthetic-only", shown.stdout)
         self.assertFalse(list(self.root.glob("*.tfstate*")))
 
     def test_invalid_json_shapes_and_value_types_are_rejected(self):

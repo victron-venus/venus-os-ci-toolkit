@@ -3,6 +3,7 @@ resource "tfe_variable" "secret" {
 
   key              = each.value.key
   category         = each.value.category
+  description      = each.value.description
   workspace_id     = each.value.workspace_id
   variable_set_id  = each.value.variable_set_id
   value_wo         = lookup(local.hcp_secret_values, each.key, null)

@@ -488,6 +488,8 @@ jobs:
         self.assertIn("python3 -m unittest discover -s tests -p 'test_*.py' -v", commands)
         self.assertTrue(any("--require-hashes --only-binary=:all: -r .github/requirements-generator.txt" in command
                             for command in commands))
+        self.assertTrue(any("-r tools/secret_control/requirements-github-lock.txt" in command
+                            for command in commands))
         setup_uv = [step for step in workflow["jobs"]["release-contracts"]["steps"]
                     if step.get("uses", "").startswith("astral-sh/setup-uv@")]
         self.assertEqual(len(setup_uv), 1)
@@ -499,6 +501,7 @@ jobs:
         commands = [step.get("run", "") for step in consumer["steps"]]
         self.assertIn("python3 -m unittest discover -s .github/release-tests -p 'test_*.py' -v", commands)
         self.assertTrue(any(installer.CONTRACT_REQUIREMENTS in command for command in commands))
+        self.assertFalse(any("requirements-github-lock.txt" in command for command in commands))
 
     def test_exported_workflow_tests_run_without_the_generator(self):
         """A consumer's mandatory regression suite is self-contained after rendering."""

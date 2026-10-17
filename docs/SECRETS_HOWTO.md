@@ -82,7 +82,14 @@ positive integer. Each entry has a stable `id`, positive `revision`, string
 An OCI target names `type: "oci"`, region, compartment, vault, key and secret
 name. An HCP target names `type: "hcp"`, variable key and category, plus exactly
 one of `workspace_id` or `variable_set_id`. The [synthetic example](examples/secret-control/catalog.synthetic.json)
-shows both HCP binding shapes. A variable-set binding uses an existing selected
+shows both HCP binding shapes. An optional `description` preserves an existing
+HCP variable description during adoption; copy it exactly from the selected
+variable. Omission means an empty description. Descriptions must be valid UTF-8,
+NFC-normalized, contain no NUL, and have at most 512 characters. The protected
+state check refuses to omit an existing nonempty description. Intentional
+changes require an explicit description and a higher entry revision, verified
+by the intent ledger and reviewed plan. Descriptions do not change resource addresses.
+A variable-set binding uses an existing selected
 set; it does not grant the publisher authority to create a global set.
 
 The implementation limits each value to 16 KiB and the catalog to 2 MiB. These

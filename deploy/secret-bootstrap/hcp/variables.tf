@@ -4,6 +4,7 @@ variable "hcp_variables" {
     key             = string
     category        = string
     revision        = number
+    description     = optional(string, "")
     workspace_id    = optional(string)
     variable_set_id = optional(string)
   }))
@@ -16,7 +17,8 @@ variable "hcp_variables" {
       can(regex("^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$", id)) &&
       contains(["env", "terraform"], entry.category) &&
       can(regex(entry.category == "env" ? "^[A-Za-z_][A-Za-z0-9_]*$" : "^[A-Za-z_][A-Za-z0-9_-]*$", entry.key)) &&
-      entry.revision >= 1 && entry.revision == floor(entry.revision)
+      entry.revision >= 1 && entry.revision == floor(entry.revision) &&
+      length(entry.description) <= 512
     ])
     error_message = "Use opaque entry IDs, valid variable keys/categories and positive integer revisions."
   }

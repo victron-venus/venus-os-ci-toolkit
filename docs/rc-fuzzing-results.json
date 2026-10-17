@@ -1,14 +1,11 @@
 {
   "schema": 1,
-  "as_of_utc": "2026-10-16T16:50:13.574758+00:00",
+  "as_of_utc": "2026-10-17T03:23:23.780562+00:00",
   "scope": "Public repositories in the RC fuzzing rollout; verified release snapshot, not a live service.",
   "repository_count": 43,
-  "verified_stable_count": 41,
-  "pending_repositories": [
-    "open-ott-play/ottplay-foss",
-    "victron-venus/inverter-desktop"
-  ],
-  "verified_rc_fuzz_executions": 328410197,
+  "verified_stable_count": 43,
+  "pending_repositories": [],
+  "verified_rc_fuzz_executions": 337087912,
   "interpretation": "Execution counters measure exercised inputs, not coverage, bug absence or relative project quality.",
   "repositories": [
     {
@@ -358,6 +355,102 @@
       "promotion": "promote-bytes"
     },
     {
+      "repository": "open-ott-play/ottplay-foss",
+      "source_sha": "a9eab3594b1be4bb713aa4da2610fa43029f008b",
+      "stable_tag": "v1.1.55",
+      "stable_url": "https://github.com/open-ott-play/ottplay-foss/releases/tag/v1.1.55",
+      "stable_run_url": "https://github.com/open-ott-play/ottplay-foss/actions/runs/38998136329",
+      "rc_tag": "v1.1.55-rc.4",
+      "rc_url": "https://github.com/open-ott-play/ottplay-foss/releases/tag/v1.1.55-rc.4",
+      "rc_run_url": "https://github.com/open-ott-play/ottplay-foss/actions/runs/38992291032",
+      "rc_attempt": 1,
+      "fuzz_executions": 1917747,
+      "target_execution_counts": {
+        "xmltv": 489,
+        "portal-request": 1917258
+      },
+      "promotion": "promote-bytes",
+      "acceptance_scope": {
+        "scope": "Recorded package acceptance, separate from browser and build checks.",
+        "native": {
+          "architecture": "aarch64",
+          "combination_count": 10,
+          "combinations": [
+            {
+              "runtime": "fedora-44",
+              "package_format": "rpm",
+              "media_mode": "fmp4-mse"
+            },
+            {
+              "runtime": "fedora-44",
+              "package_format": "rpm",
+              "media_mode": "ts-auto"
+            },
+            {
+              "runtime": "ubuntu-24.04",
+              "package_format": "AppImage",
+              "media_mode": "fmp4-mse"
+            },
+            {
+              "runtime": "ubuntu-24.04",
+              "package_format": "AppImage",
+              "media_mode": "ts-auto"
+            },
+            {
+              "runtime": "ubuntu-24.04",
+              "package_format": "deb",
+              "media_mode": "fmp4-mse"
+            },
+            {
+              "runtime": "ubuntu-24.04",
+              "package_format": "deb",
+              "media_mode": "ts-auto"
+            },
+            {
+              "runtime": "ubuntu-26.04",
+              "package_format": "AppImage",
+              "media_mode": "fmp4-mse"
+            },
+            {
+              "runtime": "ubuntu-26.04",
+              "package_format": "AppImage",
+              "media_mode": "ts-auto"
+            },
+            {
+              "runtime": "ubuntu-26.04",
+              "package_format": "deb",
+              "media_mode": "fmp4-mse"
+            },
+            {
+              "runtime": "ubuntu-26.04",
+              "package_format": "deb",
+              "media_mode": "ts-auto"
+            }
+          ]
+        },
+        "browser": {
+          "target_count": 35,
+          "scenario_executions": 166,
+          "hls_target_count": 32,
+          "ui_only_target_count": 3
+        },
+        "linux_playback_compat": {
+          "receipt_url": "https://github.com/open-ott-play/ottplay-foss/releases/download/v1.1.55-rc.4/release-inputs-desktop-ubuntu-24.04-arm-aarch64-unknown-linux-gnu.json",
+          "receipt_sha256": "c3747d3fc4e1179239ab0d86d8756786ced05f2158da5928b5e120fe78c1ba9e",
+          "runtime_manifest_sha256": "e748315b3c92924eb9dabf813deef802276c8ff58dec22465f93c83326f02288",
+          "source_build_sha256": "3be7087b1d1e0c14121e975bcf01618f2bcc17dcadba52146a6c7cd523762247",
+          "package_verification_sha256": "53275dcdd28d012e46b08d9b8a334c19eb45944f844da2136ec93d25a375e66f",
+          "source_package_version": "1.24.2-1ubuntu0.5",
+          "corresponding_source_sha256": "b586c5d6ed43cc5b6d88d2992547150ffd6a1f65876adf1772e117d919ca77f6",
+          "source_documentation_url": "https://github.com/open-ott-play/ottplay-foss/blob/a9eab3594b1be4bb713aa4da2610fa43029f008b/docs/linux-media-packaging.md"
+        },
+        "limitations": [
+          "Native package tests cover aarch64 only; not native x86_64, Windows or macOS.",
+          "No claim of physical TV/STB, live-provider, DRM or audible-output acceptance."
+        ]
+      }
+    },
+    {
       "repository": "open-ott-play/ottplay-swop",
       "source_sha": "150ea446b65fa6ba809c8003beb8ad0008be31be",
       "stable_tag": "v0.1.1",
@@ -603,6 +696,24 @@
         "telemetry": 1137706
       },
       "promotion": "promote-bytes"
+    },
+    {
+      "repository": "victron-venus/inverter-desktop",
+      "source_sha": "04e6c920d39d2a33d1a70f05880a278c9e4ca6f1",
+      "stable_tag": "v2.5.49",
+      "stable_url": "https://github.com/victron-venus/inverter-desktop/releases/tag/v2.5.49",
+      "stable_run_url": "https://github.com/victron-venus/inverter-desktop/actions/runs/38978855773",
+      "rc_tag": "v2.5.49-rc.2",
+      "rc_url": "https://github.com/victron-venus/inverter-desktop/releases/tag/v2.5.49-rc.2",
+      "rc_run_url": "https://github.com/victron-venus/inverter-desktop/actions/runs/38971254060",
+      "rc_attempt": 1,
+      "fuzz_executions": 6759968,
+      "target_execution_counts": {
+        "worker-frames": 356657,
+        "camera-topics": 4923870,
+        "live-urls": 1479441
+      },
+      "promotion": "final-build"
     },
     {
       "repository": "victron-venus/inverter-gateway",

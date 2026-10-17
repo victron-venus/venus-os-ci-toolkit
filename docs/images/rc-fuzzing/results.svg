@@ -1,15 +1,15 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="530" viewBox="0 0 1200 530" role="img" aria-labelledby="title desc">
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="570" viewBox="0 0 1200 570" role="img" aria-labelledby="title desc">
   <title id="title">RC fuzzing rollout: verified results</title>
-  <desc id="desc">Snapshot with 43 public repositories, 41 verified stable releases and 2 pending. Accepted RC reports for the verified releases contain 328410197 fuzz executions. See accompanying JSON and linked run inventory.</desc>
+  <desc id="desc">Snapshot with 43 public repositories, 43 verified stable releases and 0 pending. Accepted RC reports for the verified releases contain 337087912 fuzz executions. See accompanying JSON and linked run inventory.</desc>
   <defs>
     <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
       <path d="M 0 0 L 10 5 L 0 10 z" fill="#475569" />
     </marker>
   </defs>
   <g font-family="DejaVu Sans, Arial, sans-serif">
-    <rect x="0" y="0" width="1200" height="530" rx="0" fill="#f8fafc" stroke="none" />
+    <rect x="0" y="0" width="1200" height="570" rx="0" fill="#f8fafc" stroke="none" />
     <text x="40" y="55" font-size="29" fill="#10243a" font-weight="700" text-anchor="start">RC fuzzing rollout: verified results</text>
-    <text x="40" y="88" font-size="17" fill="#475569" font-weight="400" text-anchor="start">Snapshot: 2026-10-16 16:50:13 UTC · public rollout only</text>
+    <text x="40" y="88" font-size="17" fill="#475569" font-weight="400" text-anchor="start">Snapshot: 2026-10-17 03:23:23 UTC · public rollout only</text>
     <rect x="40" y="116" width="360" height="132" rx="16" fill="#ffffff" stroke="#cbd5e1" />
     <rect x="58" y="134" width="78" height="78" rx="16" fill="#e0f2fe" stroke="none" />
     <text x="97" y="188" font-size="38" fill="#0369a1" font-weight="700" text-anchor="middle">43</text>
@@ -17,21 +17,22 @@
     <text x="154" y="198" font-size="14" fill="#475569" font-weight="400" text-anchor="start">At this snapshot</text>
     <rect x="420" y="116" width="360" height="132" rx="16" fill="#ffffff" stroke="#cbd5e1" />
     <rect x="438" y="134" width="78" height="78" rx="16" fill="#ccfbf1" stroke="none" />
-    <text x="477" y="188" font-size="38" fill="#0f766e" font-weight="700" text-anchor="middle">41</text>
+    <text x="477" y="188" font-size="38" fill="#0f766e" font-weight="700" text-anchor="middle">43</text>
     <text x="534" y="167" font-size="17" fill="#10243a" font-weight="600" text-anchor="start">Verified stable releases</text>
     <text x="534" y="198" font-size="14" fill="#475569" font-weight="400" text-anchor="start">At this snapshot</text>
     <rect x="800" y="116" width="360" height="132" rx="16" fill="#ffffff" stroke="#cbd5e1" />
     <rect x="818" y="134" width="78" height="78" rx="16" fill="#fef3c7" stroke="none" />
-    <text x="857" y="188" font-size="38" fill="#b45309" font-weight="700" text-anchor="middle">2</text>
+    <text x="857" y="188" font-size="38" fill="#b45309" font-weight="700" text-anchor="middle">0</text>
     <text x="914" y="167" font-size="17" fill="#10243a" font-weight="600" text-anchor="start">Still in validation</text>
     <text x="914" y="198" font-size="14" fill="#475569" font-weight="400" text-anchor="start">At this snapshot</text>
     <text x="40" y="288" font-size="20" fill="#10243a" font-weight="700" text-anchor="start">Release completion</text>
     <rect x="40" y="311" width="1120" height="38" rx="0" fill="#fef3c7" stroke="none" />
-    <rect x="40" y="311" width="1067.906976744186" height="38" rx="0" fill="#0f766e" stroke="none" />
-    <text x="40" y="380" font-size="18" fill="#0f766e" font-weight="700" text-anchor="start">41 verified / 43 total</text>
-    <text x="1160" y="380" font-size="18" fill="#b45309" font-weight="700" text-anchor="end">2 pending</text>
-    <text x="40" y="432" font-size="29" fill="#10243a" font-weight="700" text-anchor="start">328,410,197 recorded fuzz executions</text>
+    <rect x="40" y="311" width="1120.0" height="38" rx="0" fill="#0f766e" stroke="none" />
+    <text x="40" y="380" font-size="18" fill="#0f766e" font-weight="700" text-anchor="start">43 verified / 43 total</text>
+    <text x="1160" y="380" font-size="18" fill="#b45309" font-weight="700" text-anchor="end">0 pending</text>
+    <text x="40" y="432" font-size="29" fill="#10243a" font-weight="700" text-anchor="start">337,087,912 recorded fuzz executions</text>
     <text x="40" y="460" font-size="16" fill="#475569" font-weight="400" text-anchor="start">Sum of accepted RC reports for verified stable releases; not a coverage or security score.</text>
-    <text x="40" y="494" font-size="15" fill="#b45309" font-weight="400" text-anchor="start">Pending: open-ott-play/ottplay-foss, victron-venus/inverter-desktop</text>
+    <text x="40" y="494" font-size="15" fill="#b45309" font-weight="400" text-anchor="start">Every repository in this snapshot has a verified stable release.</text>
+    <text x="40" y="534" font-size="15" fill="#475569" font-weight="400" text-anchor="start">FOSS: 10 aarch64 native cases · 35 browser targets · 166 scenarios; separate evidence.</text>
   </g>
 </svg>
