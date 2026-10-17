@@ -13,7 +13,7 @@ run "explicit_workspace_and_set" {
   variables {
     hcp_variables = {
       first  = { key = "SERVICE_TOKEN", category = "env", revision = 2, workspace_id = "ws-0000000000000001" }
-      second = { key = "other_token", category = "terraform", revision = 3, variable_set_id = "varset-0000000000000001" }
+      second = { key = "other_token", category = "terraform", revision = 3, variable_set_id = "varset-0000000000000001", description = "Existing café description\nKeep whitespace  " }
     }
     hcp_secret_values_json = jsonencode({ first = "synthetic-only", second = "synthetic-only-too" })
   }
@@ -24,7 +24,9 @@ run "explicit_workspace_and_set" {
       tfe_variable.secret["first"].value_wo_version == 2 &&
       tfe_variable.secret["second"].value_wo_version == 3 &&
       tfe_variable.secret["first"].sensitive &&
-      !tfe_variable.secret["first"].hcl
+      !tfe_variable.secret["first"].hcl &&
+      tfe_variable.secret["first"].description == "" &&
+      tfe_variable.secret["second"].description == "Existing café description\nKeep whitespace  "
     )
     error_message = "Explicit destinations/revisions and sensitive non-HCL delivery must survive projection."
   }
@@ -92,6 +94,17 @@ run "reject_environment_key_injection" {
   command = plan
   variables {
     hcp_variables          = { one = { key = "TOKEN\nOTHER", category = "env", revision = 1, workspace_id = "ws-0000000000000001" } }
+    hcp_secret_values_json = jsonencode({ one = "synthetic-only" })
+  }
+  expect_failures = [var.hcp_variables]
+}
+
+run "reject_overlong_description" {
+  command = plan
+  variables {
+    hcp_variables = {
+      one = { key = "TOKEN", category = "env", revision = 1, workspace_id = "ws-0000000000000001", description = join("", [for i in range(513) : "x"]) }
+    }
     hcp_secret_values_json = jsonencode({ one = "synthetic-only" })
   }
   expect_failures = [var.hcp_variables]

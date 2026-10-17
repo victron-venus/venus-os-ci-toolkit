@@ -168,8 +168,17 @@ def validate(catalog):
                 keys(
                     target,
                     {"type", "key", "category"},
-                    {"workspace_id", "variable_set_id"},
+                    {"workspace_id", "variable_set_id", "description"},
                 )
+                description = target.get("description", "")
+                require(
+                    text(description, r"[^\x00]*", 512),
+                    "invalid HCP variable description",
+                )
+                try:
+                    description.encode("utf-8")
+                except UnicodeError:
+                    raise ControlError("invalid HCP description encoding") from None
                 require(
                     ("workspace_id" in target) != ("variable_set_id" in target),
                     "one HCP scope required",
