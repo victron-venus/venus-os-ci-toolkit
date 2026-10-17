@@ -23,6 +23,10 @@ class ToolkitReleaseNotesTests(unittest.TestCase):
             for directory in ("scripts", "tests", "fuzz", "tools")
             for path in (root / directory).rglob("*.py")
         }
+        required.update({
+            ".github/requirements-generator.txt",
+            "tools/secret_control/requirements-github-lock.txt",
+        })
         self.assertFalse(required - declared, f"Unshipped Python source: {sorted(required - declared)}")
 
     def test_checkout_changelog_supports_beta_and_rc(self):
@@ -71,6 +75,28 @@ class ToolkitSourceTests(unittest.TestCase):
 
     def git(self, *args):
         return subprocess.check_output(["git", *args], cwd=self.root, text=True).strip()
+
+    def test_acceptance_installs_shipped_secret_test_dependencies_before_discovery(self):
+        source = self.root / "extracted"
+        with (
+            patch.object(toolkit_source, "extract_verified", return_value=source),
+            patch.object(toolkit_source.subprocess, "run") as run,
+        ):
+            toolkit_source.acceptance(self.root, self.root / "source.tar.gz")
+        commands = [call.args[0] for call in run.call_args_list]
+        install_index = next(i for i, command in enumerate(commands) if "pip" in command)
+        discover_index = next(i for i, command in enumerate(commands) if "discover" in command)
+        install = commands[install_index]
+        requirements = {install[i + 1] for i, value in enumerate(install) if value == "-r"}
+        self.assertEqual(requirements, {
+            str(source / ".github/requirements-generator.txt"),
+            str(source / "tools/secret_control/requirements-github-lock.txt"),
+        })
+        self.assertIn("--require-hashes", install)
+        self.assertIn("--only-binary=:all:", install)
+        self.assertLess(install_index, discover_index)
+        self.assertEqual(run.call_args_list[discover_index].kwargs["cwd"], source)
+        self.assertTrue(all(call.kwargs["check"] for call in run.call_args_list))
 
     def test_beta_and_rc_versions_are_frozen_and_reproducible(self):
         for channel in ("beta", "rc"):
