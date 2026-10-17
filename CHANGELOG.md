@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## [0.1.4] - 2026-10-17
 
 - Add operator-controlled GitHub secret delivery with explicit organization and
   repository ownership, preserved organization visibility, pinned source bytes,
@@ -31,6 +31,30 @@
   variables; include recovery, rotation and partial-failure runbooks.
 - Test real encryption recovery on Linux and macOS with Python 3.12 and 3.14.
   Adoption is opt-in: existing consumers and their credentials are unchanged.
+
+
+- Install both shipped dependency locks before source-archive acceptance so the
+  secret adapter contracts run in the isolated test environment.
+- Qualify the native GitHub CLI and patched Cosign release tooling; validate the
+  current Scorecard report and explicit Ubuntu 26.04 browser targets.
+- Preserve literal HCP variable descriptions and explicitly bind repository
+  Dependabot secret delivery to its configured destination.
+
+### Upgrade
+
+Download the source archive and run its documented acceptance checks. Workflow
+consumers retain their existing immutable pins until a separate reviewed update.
+Secret-control adoption is explicit: preserve an independently recoverable key,
+verify the encrypted backup and review exact destinations before publication.
+Existing services and infrastructure are not deployed by this source release.
+
+### Security
+
+Secret delivery now validates destination ownership, ciphertext provenance and
+partial-write receipts. The TLS and release-signing changes retain verification
+and fail closed on mismatched evidence. Archive acceptance includes the real
+secret-adapter contracts. No deployment, device or remote backup acceptance is
+claimed by these source checks.
 
 ## [0.1.3] - 2026-10-16
 
