@@ -5,6 +5,7 @@
 
 import copy
 import json
+import shutil
 # Subprocess calls below use argument vectors with shell=False.
 import subprocess  # nosec B404
 import sys
@@ -28,6 +29,7 @@ class PreparationTest(unittest.TestCase):  # pylint: disable=too-many-instance-a
         self.git("init", "-b", "main")
         self.git("config", "user.name", "Release Fixture")
         self.git("config", "user.email", "release@example.invalid")
+        self.git("config", "commit.gpgSign", "false")
         self.git("init", "--bare", str(self.origin))
         self.git("remote", "add", "origin", str(self.origin))
         self.policy = {
@@ -160,6 +162,55 @@ class PreparationTest(unittest.TestCase):  # pylint: disable=too-many-instance-a
         self.assertEqual(self.git("show", f"{old}:version"), "1.2.4")
         package = json.loads(self.git("show", f"{old}:package.json"))
         self.assertEqual(package, {"version": "1.2.4", "dependency": "9.8.7"})
+
+    @unittest.skipUnless(shutil.which("ssh-keygen"), "OpenSSH key generation is required")
+    def test_preparation_honors_signing_for_new_and_updated_commits(self):
+        key = self.root.parent / "synthetic-signing-key"
+        # This ephemeral fixture never uses the operator's signing identity.
+        subprocess.run(  # nosec B603, B607
+            ["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(key)],
+            check=True, capture_output=True,
+        )
+        allowed = self.root.parent / "allowed-signers"
+        allowed.write_text(
+            'release@example.invalid namespaces="git" ' +
+            key.with_suffix(".pub").read_text(), encoding="utf-8",
+        )
+        self.git("config", "extensions.worktreeConfig", "true")
+        self.git("config", "--worktree", "gpg.format", "ssh")
+        self.git("config", "--worktree", "user.signingkey", str(key))
+        self.git("config", "--worktree", "gpg.ssh.allowedSignersFile", str(allowed))
+        self.git("config", "--worktree", "commit.gpgSign", "true")
+        preparation.prepare(self.root, pull_request=True)
+        first = self.topic()
+        self.git("verify-commit", first)
+        self.assertEqual(self.git("show", "-s", "--format=%G?", first), "G")
+        self.write("application.txt", "new reviewed source\n")
+        self.commit("advance signed source")
+        self.git("push", "origin", "main")
+        preparation.prepare(self.root, pull_request=True)
+        current = self.topic()
+        self.assertNotEqual(current, first)
+        self.git("verify-commit", current)
+        self.assertEqual(self.git("show", "-s", "--format=%G?", current), "G")
+        self.assertEqual(self.git("status", "--porcelain"), "")
+
+    def test_requested_signing_failure_leaves_refs_and_worktrees_unchanged(self):
+        self.git("config", "gpg.format", "ssh")
+        self.git("config", "user.signingkey", str(self.root.parent / "missing-key"))
+        self.git("config", "commit.gpgSign", "true")
+        before_refs = self.git("show-ref")
+        before_worktrees = self.git("worktree", "list", "--porcelain")
+        with self.assertRaises(subprocess.CalledProcessError):
+            preparation.prepare(self.root, pull_request=True)
+        self.assertEqual(self.git("show-ref"), before_refs)
+        self.assertEqual(self.git("worktree", "list", "--porcelain"), before_worktrees)
+        self.assertEqual(self.pushes, [])
+        self.assertEqual(self.creates, [])
+
+    def test_explicitly_disabled_signing_keeps_unsigned_preparation(self):
+        preparation.prepare(self.root, pull_request=True)
+        self.assertNotIn("gpgsig ", self.git("cat-file", "commit", self.topic()))
 
     def test_nonancestor_remote_tag_is_occupied_without_changing_release_train(self):
         self.git("checkout", "-b", "legacy-release")

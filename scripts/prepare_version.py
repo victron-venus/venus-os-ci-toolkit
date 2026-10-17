@@ -361,10 +361,18 @@ def prepare(
                     if topic_sha and topic_sha != head
                     else ["-p", head]
                 )
+                # commit-tree does not honor commit.gpgSign automatically.
+                # Preserve the caller's effective signing policy and fail before
+                # pushing when an explicitly requested signature cannot be made.
+                signing = run(
+                    root, "git", "config", "--type=bool", "--default=false",
+                    "--get", "commit.gpgSign",
+                ) == "true"
                 commit = run(
-                    checkout,
+                    root,
                     "git",
                     "commit-tree",
+                    *(["-S"] if signing else []),
                     tree,
                     *parents,
                     "-m",
