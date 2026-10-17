@@ -55,6 +55,20 @@ def expectation(target):
 
 
 class CatalogSchemaTests(unittest.TestCase):
+    def test_actions_and_dependabot_are_distinct_destinations(self):
+        value = document()
+        target = dict(repository(), secret_store="dependabot")
+        value["entries"][0]["targets"].append(target)
+        catalog.validate(value)
+        self.assertNotEqual(catalog.github_target(repository()), catalog.github_target(target))
+        self.assertEqual(catalog.github_target(repository()),
+                         catalog.github_target(dict(repository(), secret_store="actions")))
+        for invalid in ("environment", "../actions", True, None):
+            with self.subTest(store=invalid), self.assertRaises(catalog.ControlError):
+                catalog.github_target(dict(repository(), secret_store=invalid))
+        with self.assertRaises(catalog.ControlError):
+            catalog.github_target(dict(organization(), secret_store="dependabot"))
+
     def test_mixed_destination_catalog_and_plan_redaction(self):
         value = document()
         catalog.validate(value)
@@ -290,6 +304,21 @@ class CatalogPublicationTests(EncryptedFixture):
         self.assertNotIn(b"source_sha256", records)
         self.assertFalse(result["consumer_verified"])
 
+    def test_dependabot_target_is_pinned_in_catalog_and_journal(self):
+        target = dict(repository(), secret_store="dependabot")
+        self.value["entries"][0]["targets"].append(target)
+        self.encrypt()
+        self.binding["catalog"]["sha256"] = self.digest
+        self.binding["secrets"] = [{"entry_id": "bot", "revision": 1,
+                                    "target": target, "expected": expectation(target)}]
+        self.apis = [ScopedFake(target, self.binding["actor"])]
+        result = self.publish(True)
+        self.assertEqual(result["metadata_observed"], 1)
+        self.assertEqual(self.apis[0].writes, [self.value["entries"][0]["value"].encode()])
+        records = b"".join(p.read_bytes() for p in self.journal.iterdir())
+        self.assertIn(b"dependabot", records)
+        self.assertNotIn(b"synthetic-bot-not-a-token", records)
+
     def test_manifest_size_limit_precedes_json_parser(self):
         with patch.object(github_api, "decode") as decode:
             with self.assertRaisesRegex(catalog.ControlError, "size limit"):
@@ -407,6 +436,28 @@ class CatalogTransportTests(unittest.TestCase):
                            "/orgs/example-user/actions/secrets/CORE_DELIVERY_SIGNING_KEY"):
             with self.subTest(path=disallowed), self.assertRaises(catalog.ControlError):
                 api.validate_request("PUT", disallowed, {"encrypted_value": "encrypted", "key_id": "key"})
+
+    def test_dependabot_transport_cannot_cross_into_actions(self):
+        target = dict(repository(), secret_store="dependabot")
+        api = self.api(target)
+        base = "/repos/example-user/project/dependabot/secrets"
+        body = {"encrypted_value": "encrypted", "key_id": "key"}
+        api.validate_request("GET", base + "/public-key", None)
+        api.validate_request("GET", base + "/BOT_PAT", None)
+        api.validate_request("PUT", base + "/BOT_PAT", body)
+        for suffix in ("/public-key", "/BOT_PAT"):
+            with self.assertRaises(catalog.ControlError):
+                api.validate_request("GET", base.replace("dependabot", "actions") + suffix, None)
+        with self.assertRaises(catalog.ControlError):
+            api.validate_request("PUT", base.replace("dependabot", "actions") + "/BOT_PAT", body)
+        with self.assertRaises(catalog.ControlError):
+            api.secret_path(repository())
+        with patch.object(api, "request", return_value=204) as request:
+            api.write({**target, "expected": expectation(target)}, "encrypted", "key")
+            request.assert_called_once_with("PUT", base + "/BOT_PAT", body)
+        with patch.object(api, "request", return_value={"key_id": "key"}) as request:
+            api.public_key(target)
+            request.assert_called_once_with("GET", base + "/public-key")
 
     def test_visibility_and_selection_are_fixed_even_at_transport_boundary(self):
         api = self.api(organization())

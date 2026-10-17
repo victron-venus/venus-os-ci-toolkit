@@ -5,7 +5,7 @@ import uuid
 
 from . import catalog_delivery
 from .catalog import github_target, integer, keys, require, text
-from .github_api import API, PUBLIC_KEY_PATH, deliver, metadata, seal
+from .github_api import API, deliver, metadata, seal
 from .private_io import read_private
 
 
@@ -75,13 +75,19 @@ class CatalogAPI(API):
 
     def prefix(self, item):
         require(item["name"] == self.target["name"]
-                and item["scope"] == self.target["scope"], "unapproved GitHub destination")
+                and item["scope"] == self.target["scope"]
+                and item.get("secret_store", "actions") == self.target.get("secret_store", "actions"),
+                "unapproved GitHub destination")
         return self.org if self.target["scope"] == "organization" else self.repo
+
+    def secret_path(self, item):
+        return self.prefix(item) + "/" + self.target.get("secret_store", "actions") + "/secrets"
 
     def validate_request(self, method, path, body):
         prefix = self.prefix(self.target)
-        secret = prefix + "/actions/secrets/" + self.target["name"]
-        allowed = {"/user", prefix, prefix + PUBLIC_KEY_PATH, secret}
+        namespace = self.secret_path(self.target)
+        secret = namespace + "/" + self.target["name"]
+        allowed = {"/user", prefix, namespace + "/public-key", secret}
         organization = self.target["scope"] == "organization"
         if organization:
             allowed.add(self.membership)
