@@ -104,6 +104,7 @@ first collect a real report in their existing test job.
 |---|---|---|
 | `.github/workflows/ci.yml` | `python-ci.yml` | Python lint, type check, test, coverage |
 | `.github/workflows/ci.yml` | `go-ci.yml` | Go lint, vulncheck, test, coverage |
+| `.github/workflows/ci.yml` | `typescript-ci.yml` | TypeScript lint, type check, build; optional tests and browser matrix |
 | `.github/workflows/ci.yml` | `rust-ci.yml` | Rust fmt, clippy, test, optional frontend |
 | `.github/workflows/ci.yml` | `terraform-ci.yml` | Terraform fmt, init, validate, tflint |
 | `.github/workflows/security.yml` | `security-scan.yml` | CodeQL, Trivy, dependency review |
