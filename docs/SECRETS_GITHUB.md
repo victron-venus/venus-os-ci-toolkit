@@ -1,14 +1,17 @@
 # Deliver recovered secrets to GitHub Actions
 
-`github-publish` delivers approved private files to existing GitHub Actions
-secrets. It supports an organization's `BOT_PAT` and its repository's
-`RENOVATE_SIGNING_KEY`. The operator supplies the exact destination bindings;
-the tool does not discover recipients or distribute a token across repositories.
+`github-publish` delivers selected values to existing GitHub Actions secrets.
+Catalog schema 2 supports organization secrets and repository secrets, including
+personal repositories. The original file-source manifest schema 1 remains
+compatible with its two scoped destinations: organization `BOT_PAT` and repository
+`RENOVATE_SIGNING_KEY`. The operator supplies exact destination bindings; the tool
+does not discover recipients or broaden access automatically.
 Actions continue using their native GitHub secrets. They do not receive an OCI
 administration credential or the recovery key.
 
-The encrypted recovery catalog remains the source of recovery. Materialize a
-selected recovered value into a protected file before delivery. A publication
+The encrypted recovery catalog remains the source of recovery. Schema 2 reads
+selected values directly from the pinned ciphertext into memory. Schema 1 uses
+selected recovered values in protected files. A publication
 manifest records approved destinations and byte digests, **not secret values**;
 it is not a second secret database. Keep the manifest, sources and journal in
 private operator storage, outside Git. Never place source digests in public logs:
@@ -50,8 +53,8 @@ break. Signing-key bytes, including line breaks, are preserved exactly.
 
 ## Review a private manifest
 
-This synthetic example describes both supported destinations; either entry can
-be omitted. Replace the synthetic IDs, timestamps and digests with separately
+This synthetic schema 1 example describes its two supported destinations;
+either entry can be omitted. Replace the synthetic IDs, timestamps and digests with separately
 reviewed metadata. Generate a new UUID for each new publication operation.
 
 ```json
@@ -168,3 +171,109 @@ through the value's owner when necessary.
 References: [GitHub Actions secrets API](https://docs.github.com/en/rest/actions/secrets),
 [GitHub secret encryption](https://docs.github.com/en/rest/guides/encrypting-secrets-for-the-rest-api),
 [organization membership API](https://docs.github.com/en/rest/orgs/members).
+
+
+## Catalog delivery (schema 2)
+
+Each catalog entry still has an ID, revision, UTF-8 value and explicit targets.
+An upgrade from catalog schema 1 to 2 advances the generation by one. Preserve all
+existing entries; advance an entry's revision whenever its value or targets change.
+Downgrades and removing entries during an upgrade are refused.
+
+A GitHub target records the owner's immutable ID and type. Repository targets
+also record the repository's immutable ID and full name. Organization targets
+include their existing visibility and exact selected repository IDs:
+
+```json
+{
+  "type": "github",
+  "scope": "repository",
+  "name": "BOT_PAT",
+  "owner": {"login": "example-user", "id": 21, "type": "User"},
+  "repository": {"full_name": "example-user/project", "id": 22}
+}
+```
+
+For an organization target use `scope: "organization"`, an owner of type
+`Organization`, and `visibility` plus `selected_repository_ids` instead of
+`repository`. Only the exact existing policy is accepted. The tool neither creates
+new secrets nor creates repository overrides for inherited secrets. It preserves
+existing overrides when they are explicitly selected; removing one requires a
+separate, reviewed operation after verifying the inherited value.
+
+A private schema 2 publication manifest selects entries from that catalog:
+
+```json
+{
+  "schema_version": 2,
+  "operation_id": "6b5b6a90-f1af-4be7-8926-57e295617a88",
+  "actor": {"login": "example-user", "id": 21},
+  "catalog": {
+    "catalog_id": "f89dc70c-6ee5-4c29-9927-179924824ac2",
+    "generation": 1,
+    "sha256": "REPLACE_WITH_INDEPENDENTLY_REVIEWED_CIPHERTEXT_SHA256"
+  },
+  "secrets": [{
+    "entry_id": "automation-bot",
+    "revision": 1,
+    "target": {
+      "type": "github", "scope": "repository", "name": "BOT_PAT",
+      "owner": {"login": "example-user", "id": 21, "type": "User"},
+      "repository": {"full_name": "example-user/project", "id": 22}
+    },
+    "expected": {
+      "created_at": "2026-01-01T00:00:00Z",
+      "updated_at": "2026-01-02T00:00:00Z"
+    }
+  }]
+}
+```
+
+The target must exactly match one in the selected entry; names alone cannot
+redirect a value. The catalog UUID, generation, ciphertext digest and entry
+revision must all match. Keep this manifest private because it describes your
+infrastructure. Approve its finished bytes independently before preflight:
+
+```sh
+python -m tools.secret_control github-publish \
+  --catalog /private/operator/catalog.age \
+  --identity /private/operator/operator.agekey \
+  --manifest /private/operator/github-manifest.json \
+  --manifest-sha256 "$APPROVED_MANIFEST_SHA256" \
+  --token-file /private/operator/publisher-token
+```
+
+After reviewing the zero-write preflight, repeat with `--apply` and
+`--journal-dir /private/operator/github-journal`. The same transaction safeguards
+apply to both schemas: all-target preflight, a fresh ownership/key/metadata check
+before each write, immutable intent and receipts, and refusal to retry an
+attempted operation ID. A batch is **not atomic**. If an operation stops, reconcile
+its per-destination receipts before preparing a new manifest for the remaining
+work. Metadata confirms accepted delivery; test the intended consumer separately.
+
+Limits remain conservative: 16 KiB UTF-8 per value, 2 MiB plaintext catalog,
+100 targets per entry and 100 destinations per publication. Binary keys must be
+represented in the exact encoding their consumer expects. Large private assets
+belong in encrypted archives. Environment secrets and Dependabot's separate secret
+store are not supported by this publisher and must be tracked separately.
+
+## Materialize one revision for an existing consumer
+
+Use this only where an existing local tool needs a file. It emits exactly one
+entry's UTF-8 bytes, preserves line endings, and refuses to replace different
+existing bytes or follow a symlink:
+
+```sh
+python -m tools.secret_control catalog-materialize \
+  --catalog /private/operator/catalog.age \
+  --identity /private/operator/operator.agekey \
+  --expected-sha256 "$APPROVED_CIPHERTEXT_SHA256" \
+  --generation 1 --entry automation-bot --revision 1 \
+  --output /private/operator/materialized/BOT_PAT
+```
+
+The output directory must be owned mode `0700`; the file is mode `0600`. Do not
+materialize the complete catalog into a CI workspace. GitHub jobs continue using
+native secret expressions, `GITHUB_TOKEN` and existing OIDC where applicable.
+The operator publishing credential, OCI administration credentials and recovery
+identity never belong in a reusable workflow's inputs.
