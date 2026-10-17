@@ -249,7 +249,8 @@ apply to both schemas: all-target preflight, a fresh ownership/key/metadata chec
 before each write, immutable intent and receipts, and refusal to retry an
 attempted operation ID. A batch is **not atomic**. If an operation stops, reconcile
 its per-destination receipts before preparing a new manifest for the remaining
-work. Metadata confirms accepted delivery; test the intended consumer separately.
+work. HTTP 204 records API acceptance; later metadata observations do not prove
+stored-value equality. Test the intended consumer separately.
 
 Limits remain conservative: 16 KiB UTF-8 per value, 2 MiB plaintext catalog,
 100 targets per entry and 100 destinations per publication. Binary keys must be
