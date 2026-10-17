@@ -6,6 +6,7 @@ import hmac
 import json
 import os
 from pathlib import Path
+import re
 import stat
 import unicodedata
 from .catalog import require, _pairs
@@ -72,6 +73,21 @@ def mappings(catalog):
             metadata[name]["revision"] = entry["revision"]
             values[name] = entry["value"]
     return metadata, values
+
+
+def _metadata_json(metadata):
+    # Complex TF_VAR inputs are parsed as HCL, including templates inside JSON
+    # strings. Escape only the transport copy; state and ledger compare originals.
+    transported = {name: dict(item) for name, item in metadata.items()}
+    for item in transported.values():
+        if "description" in item:
+            item["description"] = item["description"].replace("${", "$${").replace("%{", "%%{")
+    # HCL does not combine JSON's surrogate-pair escapes for non-BMP characters.
+    encoded = json.dumps(transported, ensure_ascii=False, separators=(",", ":"))
+    # HCL accepts Unicode escapes, but not JSON's backspace/form-feed escapes.
+    # Match each escape once so literal backslash-b/f remains literal.
+    escapes = {r"\b": r"\u0008", r"\f": r"\u000c"}
+    return re.sub(r"\\.", lambda match: escapes.get(match.group(), match.group()), encoded)
 
 
 def internal_file(root, relative, limit=4 * 1024 * 1024):
@@ -322,7 +338,7 @@ def run(catalog, directory, terraform, *, apply=False, generation=None):
         env = clean_env()
         if "TFE_TOKEN" in os.environ:
             env["TFE_TOKEN"] = os.environ["TFE_TOKEN"]
-        env["TF_VAR_hcp_variables"] = json.dumps(metadata, separators=(",", ":"))
+        env["TF_VAR_hcp_variables"] = _metadata_json(metadata)
         env["TF_VAR_hcp_secret_values_json"] = json.dumps(values, separators=(",", ":"))
         require(
             len(env["TF_VAR_hcp_secret_values_json"].encode()) < 120000
