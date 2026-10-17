@@ -2,7 +2,7 @@
 
 Keep reusable code public and operator data recoverable. The control plane reads
 one local, age-encrypted JSON catalog and publishes selected entries to OCI
-Secrets or HCP Terraform. The catalog's contents, including its names, target
+Secrets, HCP Terraform or existing GitHub Actions secrets. The catalog's contents, including its names, target
 bindings and generation metadata, are encrypted together. This design does not
 require SOPS.
 
@@ -20,20 +20,27 @@ identity, credentials, Terraform state, plans, publication receipts or backups.
 - [Rotation and outages](SECRETS_OPERATIONS.md): handle changes, partial publication and compromise.
 - [Synthetic examples](examples/secret-control/README.md): learn the format without real credentials.
 
-![Normal flow: public code reads an encrypted catalog in a private operator environment and publishes selected values separately to OCI and HCP. An independent backup retains the encrypted catalog.](images/secrets-flow.svg)
+![Normal flow: public code reads an encrypted catalog in a private operator environment and publishes selected values separately to OCI, HCP and existing GitHub Actions secrets. An independent backup retains the encrypted catalog.](images/secrets-flow.svg)
 
-## Start with synthetic data
+## Qualify recovery before each production migration
 
-The qualified examples and cloud experiments use synthetic values. Production
-migration is paused until recovery-key custody and an independently retrievable
-backup are established and tested. The local drill creates its own disposable
-keys; it neither uses an operator's recovery identity nor proves an off-device
-restore. No Dropbox or other remote-backup restore is claimed.
+Use synthetic data for the first exercise. Before moving a real value, establish
+custody of a separate recovery key and verify its encrypted backup. Record local
+restore testing separately from independent retrieval of a remote backup: a file
+in a synchronizing directory alone does not prove off-device recovery.
+
+Production readiness belongs to each entry and destination, not to the tool as a
+whole. Keep a private inventory of source provenance, approved consumers, delivery
+receipts, issuer checks and remaining gaps. A successful migration of one token
+must not be reported as completion for every project. The local drill uses its
+own disposable keys; it does not verify an operator's remote backup or account.
 
 ## One source of recovery, explicit owners of rotation
 
 The encrypted catalog is the recovery source for operator-managed values and
-their approved target bindings. It is not proof that a credential remains valid.
+their approved target bindings. Catalog schema 2 adds explicit GitHub repository
+and organization destinations while preserving schema 1 for existing OCI/HCP
+catalogs. See [GitHub delivery](SECRETS_GITHUB.md#catalog-delivery-schema-2). It is not proof that a credential remains valid.
 The service that issued a token or password still determines validity; an expired
 or revoked credential must be reissued. Record its owner, expiry and recovery
 procedure in a separate encrypted operator runbook.
@@ -174,8 +181,9 @@ the four Ubuntu/macOS and Python 3.12/3.14 secret-control combinations using
 real pinned age binaries. Those results qualify that merged baseline. The chart remains a baseline
 snapshot; the recovery follow-up below records its own measured results.
 
-All live experiments use synthetic values. Recovery-key handoff to a password
-manager remains a later operator step; it is not claimed as completed here.
+The live experiments in this baseline used synthetic values. They did not
+include an operator recovery-key handoff or production migration; later operator
+work must be recorded separately in private receipts.
 
 These results establish the scenarios actually exercised, not production
 migration, workload federation, application rollout or disaster recovery for an

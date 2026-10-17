@@ -27,6 +27,7 @@ def parser():
         "plan": "Summarize catalog destinations locally without contacting a service.",
         "oci-publish": "Compare OCI destinations; publish only with --apply and --generation.",
         "github-publish": "Preflight explicitly approved GitHub secrets; write only with --apply.",
+        "catalog-materialize": "Materialize one explicit revision from an independently pinned catalog.",
         "hcp-prepare": "Copy the reviewed HCP Terraform template into a new private directory.",
         "hcp-plan": "Plan HCP changes using the isolated Terraform root.",
         "hcp-apply": "Apply an explicitly selected catalog generation to HCP.",
@@ -44,17 +45,25 @@ def parser():
             cmd.add_argument("--previous")
             cmd.add_argument("--identity")
         if name in (
-            "validate", "plan", "oci-publish", "hcp-plan", "hcp-apply", "recovery-check"
+            "validate", "plan", "oci-publish", "hcp-plan", "hcp-apply", "recovery-check",
+            "catalog-materialize"
         ):
             cmd.add_argument("--catalog", required=True)
             cmd.add_argument("--identity", required=True)
-        if name not in ("fetch", "hcp-prepare", "github-publish"):
+        if name not in ("fetch", "hcp-prepare"):
             cmd.add_argument("--age", default="age")
         if name == "github-publish":
             for flag in ("manifest", "manifest-sha256", "token-file"):
                 cmd.add_argument("--" + flag, required=True)
             cmd.add_argument("--journal-dir")
             cmd.add_argument("--apply", action="store_true")
+            cmd.add_argument("--catalog")
+            cmd.add_argument("--identity")
+        if name == "catalog-materialize":
+            for flag in ("expected-sha256", "entry", "output"):
+                cmd.add_argument("--" + flag, required=True)
+            cmd.add_argument("--generation", type=int, required=True)
+            cmd.add_argument("--revision", type=int, required=True)
         if name == "drill":
             cmd.add_argument("--age-keygen", default="age-keygen")
         if name == "recovery-check":
@@ -93,7 +102,14 @@ def execute(args):
         from .github_api import publish
 
         return publish(args.manifest, args.manifest_sha256, args.token_file,
-                       apply=args.apply, journal=args.journal_dir)
+                       apply=args.apply, journal=args.journal_dir,
+                       catalog_file=args.catalog, identity=args.identity, age=args.age)
+    if args.command == "catalog-materialize":
+        from .catalog_delivery import materialize
+
+        return materialize(args.catalog, args.identity, args.age,
+                           expected_sha256=args.expected_sha256, generation=args.generation,
+                           name=args.entry, revision=args.revision, output=args.output)
     if args.command == "hcp-prepare":
         from .hcp import prepare
 

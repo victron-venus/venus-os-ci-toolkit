@@ -16,13 +16,15 @@ import stat
 import time
 import uuid
 
-from .catalog import ControlError, MAX_VALUE, _pairs, integer, keys, require, text
+from .catalog import ControlError, MAX_CATALOG, MAX_VALUE, _pairs, integer, keys, require, text
 from .private_io import new_private, private_parent, read_private
 
 SECRET_NAMES = frozenset(("BOT_PAT", "RENOVATE_SIGNING_KEY"))
 PYNACL_VERSION = "1.6.2"
 # Selected-repository pages contain full repository objects, not just IDs.
 MAX_RESPONSE = 2 * 1024 * 1024
+# A 16 KiB value after sealed-box/base64 plus 1,000 immutable repository IDs.
+MAX_REQUEST = 64 * 1024
 PUBLIC_KEY_PATH = "/actions/secrets/public-key"
 
 
@@ -58,7 +60,13 @@ def metadata(value, name, scope="repository"):
 
 
 def manifest(raw):
+    require(type(raw) is bytes and len(raw) <= MAX_CATALOG, "GitHub manifest size limit")
     value = decode(raw)
+    if type(value) is dict and value.get("schema_version") == 2:
+        from .github_catalog import validate_manifest
+
+        return validate_manifest(value)
+    require(len(raw) <= 65536, "GitHub manifest size limit")
     keys(value, {"schema_version", "operation_id", "actor", "organization", "repository", "secrets"})
     require(type(value["schema_version"]) is int and value["schema_version"] == 1,
             "unsupported GitHub publication schema")
@@ -170,7 +178,7 @@ class API:
         deadline = time.monotonic() + 45
         try:
             payload = None if body is None else json.dumps(body, separators=(",", ":")).encode()
-            require(payload is None or len(payload) <= 32 * 1024, "GitHub request size limit")
+            require(payload is None or len(payload) <= MAX_REQUEST, "GitHub request size limit")
             connection.request(method, path, body=payload, headers={
                 "Authorization": "Bearer " + self.token,
                 "Accept": "application/vnd.github+json",
@@ -328,13 +336,22 @@ def record(root, operation, suffix, value):
 
 
 def publish(manifest_file, expected_sha256, token_file, *, apply=False,
-            journal=None, api_factory=API, encrypt=seal):
+            journal=None, api_factory=API, encrypt=seal, catalog_file=None,
+            identity=None, age="age"):
     """Preflight every destination before writes; opaque values cannot be read back."""
     require(text(expected_sha256, r"[0-9a-f]{64}", 64), "approved manifest digest required")
-    raw = read_private(manifest_file, 65536)
+    raw = read_private(manifest_file, MAX_CATALOG)
     require(hmac.compare_digest(hashlib.sha256(raw).hexdigest(), expected_sha256),
             "approved GitHub manifest digest mismatch")
     value = manifest(raw)
+    if value["schema_version"] == 2:
+        from .github_catalog import publish_catalog
+
+        return publish_catalog(value, expected_sha256, token_file, catalog_file=catalog_file,
+                               identity=identity, age=age, apply=apply, journal=journal,
+                               encrypt=encrypt)
+    require(catalog_file is None and identity is None,
+            "file-source manifest does not accept catalog arguments")
     payloads = []
     for item in value["secrets"]:
         payload = read_private(item["source"], MAX_VALUE)
@@ -344,16 +361,29 @@ def publish(manifest_file, expected_sha256, token_file, *, apply=False,
         require(hmac.compare_digest(hashlib.sha256(payload).hexdigest(), item["source_sha256"]),
                 "approved GitHub source digest mismatch")
         payloads.append(payload)
+    def prepare():
+        api = api_factory(token_file, value)
+        return [(api, item, lambda: ownership(api, value)) for item in value["secrets"]]
+
+    return deliver(value, payloads, prepare, expected_sha256, apply=apply,
+                   journal=journal, encrypt=encrypt,
+                   context={"repository_id": value["repository"]["id"]})
+
+
+def deliver(value, payloads, prepare, expected_sha256, *, apply, journal, encrypt, context):
+    """One transaction protocol for both legacy file and catalog delivery."""
     require(not apply or journal is not None, "private GitHub publication journal required")
     with journal_lock(journal) if apply else nullcontext(None) as root:
         operation = value["operation_id"]
         if apply:
             require(not os.path.lexists(root / (operation + ".intent.json")),
                     "GitHub operation already attempted; reconcile before retry")
-        api = api_factory(token_file, value)
-        ownership(api, value)
-        public_keys = [public_key(api.public_key(item)) for item in value["secrets"]]
-        for item in value["secrets"]:
+        operations = prepare()
+        require(len(operations) == len(payloads), "GitHub delivery count mismatch")
+        public_keys = []
+        for api, item, verify_owner in operations:
+            verify_owner()
+            public_keys.append(public_key(api.public_key(item)))
             require(api.secret(item) == item["expected"],
                     "GitHub secret metadata drift or unapproved collision")
         # Bind exact approved bytes in memory before the first network mutation.
@@ -362,14 +392,13 @@ def publish(manifest_file, expected_sha256, token_file, *, apply=False,
             return {"status": "planned", "secrets": len(payloads), "writes": 0,
                     "values": "redacted", "consumer_verified": False}
         record(root, operation, "intent", {"status": "pending", "manifest_sha256": expected_sha256,
-               "repository_id": value["repository"]["id"],
-               "secrets": [item["name"] for item in value["secrets"]]})
+               **context, "secrets": [item["name"] for _, item, _ in operations]})
         accepted, observed = 0, 0
         phase = "revalidation"
         try:
-            for index, item in enumerate(value["secrets"]):
+            for index, (api, item, verify_owner) in enumerate(operations):
                 phase = "revalidation"
-                ownership(api, value)
+                verify_owner()
                 key_id, key = public_keys[index]
                 require(public_key(api.public_key(item)) == (key_id, key),
                         "GitHub encryption key changed during preflight")

@@ -55,8 +55,16 @@ def mappings(catalog):
                 or not any(char in entry["value"] for char in "\r\n"),
                 "HCP environment variable values cannot contain CR or LF",
             )
+            description = target.get("description", "")
+            require(
+                unicodedata.normalize("NFC", description) == description,
+                "HCP descriptions must already be NFC-normalized",
+            )
+            # Descriptions are mutable metadata, not destination identity. Keep
+            # legacy resource addresses stable when adopting a description.
+            destination = {k: v for k, v in target.items() if k != "description"}
             digest = hashlib.sha256(
-                json.dumps(target, sort_keys=True, separators=(",", ":")).encode()
+                json.dumps(destination, sort_keys=True, separators=(",", ":")).encode()
             ).hexdigest()
             name = entry["id"][:40] + "_" + digest[:16]
             require(name not in metadata, "duplicate HCP resource identity")
@@ -171,8 +179,26 @@ def verify_state(root, metadata):
                     ),
                     "Terraform variable destination mismatch",
                 )
+                # Import leaves the optional write-only revision null until
+                # the first publication. It represents an unmanaged revision.
+                stored_revision = attributes.get("value_wo_version")
+                stored_revision = 0 if stored_revision is None else stored_revision
                 require(
-                    attributes.get("value_wo_version", 0) <= metadata[name]["revision"],
+                    type(stored_revision) is int and stored_revision >= 0,
+                    "invalid stored variable revision",
+                )
+                description = attributes.get("description")
+                description = "" if description is None else description
+                require(type(description) is str, "invalid state description")
+                if description != metadata[name].get("description", ""):
+                    require(
+                        "description" in metadata[name]
+                        and metadata[name]["revision"]
+                        > stored_revision,
+                        "description change needs an explicit higher revision",
+                    )
+                require(
+                    stored_revision <= metadata[name]["revision"],
                     "Terraform variable revision would decrease",
                 )
 
