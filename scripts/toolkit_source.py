@@ -110,6 +110,7 @@ def acceptance(root, archive):
         subprocess.run([
             str(python), "-I", "-m", "pip", "--isolated", "install", "--require-hashes",
             "--only-binary=:all:", "-r", str(source / ".github/requirements-generator.txt"),
+            "-r", str(source / "tools/secret_control/requirements-github-lock.txt"),
         ], check=True)
         subprocess.run([str(python), "-m", "unittest", "discover", "-s", "tests", "-p", "test_*.py", "-v"], cwd=source, check=True)
 
