@@ -31,12 +31,12 @@ CI and fixed regression tests keep their normal schedule. See the
 
 ![Four distinct evidence layers feeding the release decision](images/rc-fuzzing/evidence.svg)
 
-## Results at 2026-10-16 16:50:13 UTC
+## Results at 2026-10-17 00:17:30 UTC
 
 ![Dated rollout completion and recorded execution totals](images/rc-fuzzing/results.svg)
 
-**41 of 43 repositories have a verified stable release in this snapshot.**
-Their accepted RC reports record **328,410,197 fuzz executions**. Counts describe
+**42 of 43 repositories have a verified stable release in this snapshot.**
+Their accepted RC reports record **335,170,165 fuzz executions**. Counts describe
 inputs exercised by the selected targets, not unique inputs, total program
 coverage, vulnerability absence, or relative project quality.
 
@@ -85,27 +85,39 @@ records; it does not expose local paths, credentials or device data.
 | [victron-venus/inverter-dashboard](https://github.com/victron-venus/inverter-dashboard) | [v1.8.28](https://github.com/victron-venus/inverter-dashboard/releases/tag/v1.8.28) | [v1.8.28-rc.1](https://github.com/victron-venus/inverter-dashboard/actions/runs/38866075738) | 9,389,550 |
 | [victron-venus/inverter-dashboard-go](https://github.com/victron-venus/inverter-dashboard-go) | [v1.9.12](https://github.com/victron-venus/inverter-dashboard-go/releases/tag/v1.9.12) | [v1.9.12-rc.1](https://github.com/victron-venus/inverter-dashboard-go/actions/runs/38866178159) | 7,841,270 |
 | [victron-venus/inverter-dashboard-vue](https://github.com/victron-venus/inverter-dashboard-vue) | [v2.2.8](https://github.com/victron-venus/inverter-dashboard-vue/releases/tag/v2.2.8) | [v2.2.8-rc.1](https://github.com/victron-venus/inverter-dashboard-vue/actions/runs/38861405495) | 3,307,140 |
+| [victron-venus/inverter-desktop](https://github.com/victron-venus/inverter-desktop) | [v2.5.49](https://github.com/victron-venus/inverter-desktop/releases/tag/v2.5.49) | [v2.5.49-rc.2](https://github.com/victron-venus/inverter-desktop/actions/runs/38971254060) | 6,759,968 |
 | [victron-venus/inverter-gateway](https://github.com/victron-venus/inverter-gateway) | [v0.4.3](https://github.com/victron-venus/inverter-gateway/releases/tag/v0.4.3) | [v0.4.3-rc.1](https://github.com/victron-venus/inverter-gateway/actions/runs/38847675693) | 17,245,877 |
 | [victron-venus/inverter-monitoring](https://github.com/victron-venus/inverter-monitoring) | [v1.3.7](https://github.com/victron-venus/inverter-monitoring/releases/tag/v1.3.7) | [v1.3.7-rc.1](https://github.com/victron-venus/inverter-monitoring/actions/runs/38849771276) | 4,361,171 |
 | [victron-venus/venus-os-ci-toolkit](https://github.com/victron-venus/venus-os-ci-toolkit) | [v0.1.3](https://github.com/victron-venus/venus-os-ci-toolkit/releases/tag/v0.1.3) | [v0.1.3-rc.1](https://github.com/victron-venus/venus-os-ci-toolkit/actions/runs/38869757913) | 4,248,875 |
 | [victron-venus/venus-os-integration-patterns](https://github.com/victron-venus/venus-os-integration-patterns) | [v0.1.3](https://github.com/victron-venus/venus-os-integration-patterns/releases/tag/v0.1.3) | [v0.1.3-rc.1](https://github.com/victron-venus/venus-os-integration-patterns/actions/runs/38849076897) | 2,544,890 |
 | [victron-venus/venus-os-observability](https://github.com/victron-venus/venus-os-observability) | [v0.1.9](https://github.com/victron-venus/venus-os-observability/releases/tag/v0.1.9) | [v0.1.9-rc.1](https://github.com/victron-venus/venus-os-observability/actions/runs/38847826472) | 6,947,807 |
 
+For `inverter-desktop` v2.5.49, the initial final-package capture was blank at
+60 seconds. A separate 120-second observation under AMD64 emulation showed
+the Setup form at 90 seconds and the same rendered form at 120 seconds.
+The [release acceptance notes](https://github.com/victron-venus/inverter-desktop/releases/tag/v2.5.49)
+retain this limitation; these are software first-launch observations, not a
+native startup-performance measurement or a 60-second startup guarantee.
+
 ### Still in validation
 
 - [open-ott-play/ottplay-foss](https://github.com/open-ott-play/ottplay-foss): not counted as a verified stable release in this snapshot.
-- [victron-venus/inverter-desktop](https://github.com/victron-venus/inverter-desktop): not counted as a verified stable release in this snapshot.
 
-For `inverter-desktop`, the RC completed its fuzzing and package checks, but the
-[final build](https://github.com/victron-venus/inverter-desktop/actions/runs/38872064427)
-used a different macOS runner image and Node.js version. It cannot inherit the
-RC's toolchain qualification. A new consistent candidate/final cycle is required.
+For `ottplay-foss`, native diagnostics confirmed an intermittent GStreamer
+stream-start/flush stall on Ubuntu 24.04 (Noble). A backport of the upstream
+[stream-synchronization fix](https://github.com/GStreamer/gstreamer/commit/03febb5048d0612157fad0ddadeaaeed924aadf0)
+passed the isolated regression and a bounded native playback diagnostic.
+Unpatched native runs can also pass; one successful run does not establish
+that the race is absent. Corrected RC packages still require full acceptance.
 
-For `ottplay-foss`, strict end-of-stream playback checks expose native multimedia
-crashes on the tested Linux runtime. A controlled
-[stock-versus-patched runtime comparison](https://github.com/open-ott-play/ottplay-foss/actions/runs/38875308184)
-still recorded crashes in both arms. That experiment did not qualify a fix;
-the release remains pending while playback and packaged-runtime checks continue.
+Separately, a hosted Ubuntu 26.04 (Resolute) WebKit
+[reload hang](https://github.com/open-ott-play/ottplay-foss/actions/runs/38980707356/job/117241012644)
+was not reproduced in an
+[isolated diagnostic](https://github.com/open-ott-play/ottplay-foss/actions/runs/38982549063)
+and remains under investigation. The earlier
+[browser comparison](https://github.com/open-ott-play/ottplay-foss/actions/runs/38962201111)
+passed 20/20 scenarios on Resolute and 19/20 on Noble for that source and run;
+those results do not qualify the current native release packages.
 
 ### Reading the limits correctly
 
