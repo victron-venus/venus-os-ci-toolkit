@@ -179,6 +179,14 @@ def verify_state(root, metadata):
                     ),
                     "Terraform variable destination mismatch",
                 )
+                # Import leaves the optional write-only revision null until
+                # the first publication. It represents an unmanaged revision.
+                stored_revision = attributes.get("value_wo_version")
+                stored_revision = 0 if stored_revision is None else stored_revision
+                require(
+                    type(stored_revision) is int and stored_revision >= 0,
+                    "invalid stored variable revision",
+                )
                 description = attributes.get("description")
                 description = "" if description is None else description
                 require(type(description) is str, "invalid state description")
@@ -186,11 +194,11 @@ def verify_state(root, metadata):
                     require(
                         "description" in metadata[name]
                         and metadata[name]["revision"]
-                        > attributes.get("value_wo_version", 0),
+                        > stored_revision,
                         "description change needs an explicit higher revision",
                     )
                 require(
-                    attributes.get("value_wo_version", 0) <= metadata[name]["revision"],
+                    stored_revision <= metadata[name]["revision"],
                     "Terraform variable revision would decrease",
                 )
 

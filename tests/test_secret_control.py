@@ -824,6 +824,14 @@ class HCPTests(unittest.TestCase):
         path = self.dest / "terraform.tfstate"
         path.write_text(json.dumps(state))
         hcp.verify_state(self.dest, metadata)
+        attributes["value_wo_version"] = None
+        path.write_text(json.dumps(state))
+        hcp.verify_state(self.dest, metadata)
+        for malformed in (True, -1, "1"):
+            attributes["value_wo_version"] = malformed
+            path.write_text(json.dumps(state))
+            with self.assertRaises(catalog.ControlError):
+                hcp.verify_state(self.dest, metadata)
         attributes["description"] = "changed remotely"
         attributes["value_wo_version"] = 1
         path.write_text(json.dumps(state))
