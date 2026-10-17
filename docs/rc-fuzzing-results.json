@@ -1,14 +1,13 @@
 {
   "schema": 1,
-  "as_of_utc": "2026-10-16T16:50:13.574758+00:00",
+  "as_of_utc": "2026-10-17T00:17:30.358156+00:00",
   "scope": "Public repositories in the RC fuzzing rollout; verified release snapshot, not a live service.",
   "repository_count": 43,
-  "verified_stable_count": 41,
+  "verified_stable_count": 42,
   "pending_repositories": [
-    "open-ott-play/ottplay-foss",
-    "victron-venus/inverter-desktop"
+    "open-ott-play/ottplay-foss"
   ],
-  "verified_rc_fuzz_executions": 328410197,
+  "verified_rc_fuzz_executions": 335170165,
   "interpretation": "Execution counters measure exercised inputs, not coverage, bug absence or relative project quality.",
   "repositories": [
     {
@@ -603,6 +602,24 @@
         "telemetry": 1137706
       },
       "promotion": "promote-bytes"
+    },
+    {
+      "repository": "victron-venus/inverter-desktop",
+      "source_sha": "04e6c920d39d2a33d1a70f05880a278c9e4ca6f1",
+      "stable_tag": "v2.5.49",
+      "stable_url": "https://github.com/victron-venus/inverter-desktop/releases/tag/v2.5.49",
+      "stable_run_url": "https://github.com/victron-venus/inverter-desktop/actions/runs/38978855773",
+      "rc_tag": "v2.5.49-rc.2",
+      "rc_url": "https://github.com/victron-venus/inverter-desktop/releases/tag/v2.5.49-rc.2",
+      "rc_run_url": "https://github.com/victron-venus/inverter-desktop/actions/runs/38971254060",
+      "rc_attempt": 1,
+      "fuzz_executions": 6759968,
+      "target_execution_counts": {
+        "worker-frames": 356657,
+        "camera-topics": 4923870,
+        "live-urls": 1479441
+      },
+      "promotion": "final-build"
     },
     {
       "repository": "victron-venus/inverter-gateway",
