@@ -23,12 +23,13 @@ SECRET_NAMES = frozenset(("BOT_PAT", "RENOVATE_SIGNING_KEY"))
 PYNACL_VERSION = "1.6.2"
 # Selected-repository pages contain full repository objects, not just IDs.
 MAX_RESPONSE = 2 * 1024 * 1024
+PUBLIC_KEY_PATH = "/actions/secrets/public-key"
 
 
 def decode(raw):
     try:
         return json.loads(raw, object_pairs_hook=_pairs)
-    except (ValueError, UnicodeError, RecursionError):
+    except (ValueError, RecursionError):
         raise ControlError("invalid GitHub publication JSON") from None
 
 
@@ -141,10 +142,10 @@ class API:
         self.org = "/orgs/" + binding["organization"]["login"]
         self.membership = "/user/memberships/orgs/" + binding["organization"]["login"]
 
-    def request(self, method, path, body=None, *, absent=False):
+    def validate_request(self, method, path, body):
         allowed = {"/user", self.repo, self.org, self.membership,
-                   self.repo + "/actions/secrets/public-key",
-                   self.org + "/actions/secrets/public-key"}
+                   self.repo + PUBLIC_KEY_PATH,
+                   self.org + PUBLIC_KEY_PATH}
         repo_secret = self.repo + "/actions/secrets/RENOVATE_SIGNING_KEY"
         org_secret = self.org + "/actions/secrets/BOT_PAT"
         selected_pages = {org_secret + "/repositories?per_page=100&page=" + str(i)
@@ -157,9 +158,14 @@ class API:
                 ({"selected_repository_ids"} if body.get("visibility") == "selected" else set())))
         require((method == "GET" and path in allowed | {repo_secret, org_secret} | selected_pages
                  and body is None) or valid_put, "unapproved GitHub API operation")
-        connection = http.client.HTTPSConnection(
-            "api.github.com", timeout=15, context=ssl.create_default_context()
-        )
+
+    def request(self, method, path, body=None, *, absent=False):
+        self.validate_request(method, path, body)
+        context = ssl.create_default_context(purpose=ssl.Purpose.SERVER_AUTH)
+        # Explicit as well as default: authentication must never use an unchecked peer.
+        context.verify_mode = ssl.CERT_REQUIRED
+        context.check_hostname = True
+        connection = http.client.HTTPSConnection("api.github.com", timeout=15, context=context)
         connection.set_debuglevel(0)
         deadline = time.monotonic() + 45
         try:
@@ -217,33 +223,34 @@ class API:
         return self.org if item["scope"] == "organization" else self.repo
 
     def public_key(self, item):
-        return self.request("GET", self.prefix(item) + "/actions/secrets/public-key")
+        return self.request("GET", self.prefix(item) + PUBLIC_KEY_PATH)
 
     def secret(self, item):
         path = self.prefix(item) + "/actions/secrets/" + item["name"]
         value = metadata(self.request("GET", path, absent=True), item["name"], item["scope"])
         if value is not None and item["scope"] == "organization":
-            ids = []
-            if value["visibility"] == "selected":
-                count = None
-                for page in range(1, 11):
-                    result = self.request("GET", path + "/repositories?per_page=100&page=" + str(page))
-                    total = result.get("total_count")
-                    require(type(total) is int and 0 <= total <= 1000
-                            and (count is None or count == total), "GitHub selection changed")
-                    count = total
-                    repos = result.get("repositories")
-                    require(type(repos) is list and len(repos) <= 100
-                            and all(type(repo) is dict and integer(repo.get("id")) for repo in repos),
-                            "invalid GitHub selection")
-                    ids.extend(repo.get("id") for repo in repos if type(repo) is dict)
-                    require(len(repos) == 100 or len(ids) == total, "incomplete GitHub selection")
-                    if len(ids) == total:
-                        break
-                require(len(ids) == count and len(set(ids)) == count, "incomplete GitHub selection")
-                ids.sort()
+            ids = self.selected_repositories(path) if value["visibility"] == "selected" else []
             value["selected_repository_ids"] = selection(ids, value["visibility"])
         return value
+
+    def selected_repositories(self, path):
+        ids, count = [], None
+        for page in range(1, 11):
+            result = self.request("GET", path + "/repositories?per_page=100&page=" + str(page))
+            total = result.get("total_count")
+            require(type(total) is int and 0 <= total <= 1000
+                    and (count is None or count == total), "GitHub selection changed")
+            count = total
+            repos = result.get("repositories")
+            require(type(repos) is list and len(repos) <= 100
+                    and all(type(repo) is dict and integer(repo.get("id")) for repo in repos),
+                    "invalid GitHub selection")
+            ids.extend(repo["id"] for repo in repos)
+            require(len(repos) == 100 or len(ids) == total, "incomplete GitHub selection")
+            if len(ids) == total:
+                break
+        require(len(ids) == count and len(set(ids)) == count, "incomplete GitHub selection")
+        return sorted(ids)
 
     def write(self, item, encrypted, key_id):
         body = {"encrypted_value": encrypted, "key_id": key_id}

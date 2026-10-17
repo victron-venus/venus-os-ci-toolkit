@@ -4,6 +4,7 @@ import copy
 import hashlib
 import json
 import re
+import ssl
 from pathlib import Path
 import tempfile
 from types import SimpleNamespace
@@ -227,8 +228,9 @@ class PublicationTests(unittest.TestCase):
         for mutate in mutations:
             value = copy.deepcopy(self.value)
             mutate(value)
+            raw = json.dumps(value).encode()
             with self.subTest(value=value), self.assertRaises(ControlError):
-                gh.manifest(json.dumps(value).encode())
+                gh.manifest(raw)
 
     def test_unsafe_source_permissions_and_journal_lock(self):
         source = Path(self.value["secrets"][0]["source"])
@@ -311,6 +313,15 @@ class TransportTests(unittest.TestCase):
                 self.api.actor()
         with self.transport(204, b"not json"):
             self.assertEqual(self.api.write(self.bot, "encrypted", "key"), 204)
+
+    def test_tls_always_validates_certificate_and_hostname(self):
+        with patch.object(gh.http.client, "HTTPSConnection") as connection:
+            connection.return_value.getresponse.return_value.status = 204
+            self.assertEqual(self.api.write(self.bot, "encrypted", "key"), 204)
+        self.assertEqual(connection.call_args.args, ("api.github.com",))
+        context = connection.call_args.kwargs["context"]
+        self.assertEqual(context.verify_mode, ssl.CERT_REQUIRED)
+        self.assertTrue(context.check_hostname)
 
     def test_full_repository_page_fits_bounded_transport(self):
         page = {"total_count": 100, "repositories": [
