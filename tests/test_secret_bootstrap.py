@@ -205,6 +205,8 @@ class TerraformSecretTransportTests(unittest.TestCase):
             "repeated": "$$${literal} %%%{literal}",
             "unicode": "Café 雪 🙂",
             "whitespace": 'line1\nline2\r\n\t"quote"\\path  ',
+            "controls": "backspace\bformfeed\f",
+            "literal_controls": r"literal\b\f and \\b\\f",
             "empty": "",
         }
         self.inputs({key: "synthetic-only" for key in descriptions})
