@@ -20,7 +20,7 @@ identity, credentials, Terraform state, plans, publication receipts or backups.
 - [Rotation and outages](SECRETS_OPERATIONS.md): handle changes, partial publication and compromise.
 - [Synthetic examples](examples/secret-control/README.md): learn the format without real credentials.
 
-![Normal flow: public code reads an encrypted catalog in a private operator environment and publishes selected values separately to OCI and HCP. An independent backup retains the encrypted catalog.](images/secrets-flow.svg)
+![Normal flow: public code reads an encrypted catalog in a private operator environment and publishes selected values separately to OCI, HCP and existing GitHub Actions secrets. An independent backup retains the encrypted catalog.](images/secrets-flow.svg)
 
 ## Qualify recovery before each production migration
 
