@@ -849,6 +849,23 @@ class HCPTests(unittest.TestCase):
             path.write_text(json.dumps(state))
             hcp.verify_state(self.dest, legacy_metadata)
 
+    def test_description_transport_does_not_change_ledger_or_mapping(self):
+        value = fixture()
+        description = 'Literal ${name} %{ if true } $${escaped} %%{escaped} 🙂'
+        value["entries"][0]["targets"][1]["description"] = description
+        before = copy.deepcopy(value)
+        metadata, _ = hcp.mappings(value)
+        index = next(iter(metadata))
+        with patch.object(hcp, "trusted_tool", return_value="/trusted/terraform"), patch.object(hcp, "process") as process:
+            hcp.run(value, self.dest, "tf", apply=True, generation=1)
+        transported = json.loads(process.call_args.kwargs["env"]["TF_VAR_hcp_variables"])
+        self.assertEqual(transported[index]["description"],
+                         'Literal $${name} %%{ if true } $$${escaped} %%%{escaped} 🙂')
+        intent = json.loads((self.dest / ".secret-control-intent-1.json").read_bytes())
+        self.assertEqual(intent["entries"][index]["metadata"]["description"], description)
+        self.assertEqual(metadata[index]["description"], description)
+        self.assertEqual(value, before)
+
     def test_description_revision_is_enforced_by_intent_ledger(self):
         value = fixture()
         metadata, values = hcp.mappings(value)
