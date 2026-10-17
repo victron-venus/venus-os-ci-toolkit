@@ -160,3 +160,9 @@ For a newly created vault whose management endpoint is not yet resolvable,
 follow the [bootstrap readiness procedure](SECRETS_BOOTSTRAP.md#if-the-new-vault-endpoint-is-not-ready).
 Preserve partial Terraform state and check the next plan; recreating the vault
 can turn a temporary readiness delay into a different recovery problem.
+
+## GitHub Actions delivery
+
+Use the [GitHub publication runbook](SECRETS_GITHUB.md) for existing organization
+BOT_PAT and repository RENOVATE_SIGNING_KEY destinations. Preserve the journal
+after partial or uncertain writes and verify consumers before completing rotation.

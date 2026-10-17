@@ -15,6 +15,7 @@ identity, credentials, Terraform state, plans, publication receipts or backups.
 - [Offline recovery exercise](SECRETS_DRILL.md): practice with disposable synthetic data.
 - [Bootstrap](SECRETS_BOOTSTRAP.md): establish keys, private storage and cloud access.
 - [How to use the catalog](SECRETS_HOWTO.md): validate, plan and publish explicitly.
+- [GitHub Actions delivery](SECRETS_GITHUB.md): publish recovered values to approved existing secrets.
 - [Recovery](SECRETS_RECOVERY.md): restore independently of either destination cloud.
 - [Rotation and outages](SECRETS_OPERATIONS.md): handle changes, partial publication and compromise.
 - [Synthetic examples](examples/secret-control/README.md): learn the format without real credentials.

@@ -1,0 +1,2 @@
+# Optional: installed only for explicit Actions secret publication.
+PyNaCl==1.6.2

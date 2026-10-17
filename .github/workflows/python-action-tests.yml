@@ -26,9 +26,10 @@ jobs:
           python-version: ${{ matrix.python }}
       - name: Install pinned age for synthetic recovery tests
         run: python scripts/install-age-for-tests.py
-      - name: Install hash-locked OCI SDK for offline contract tests
+      - name: Install hash-locked secret publisher dependencies for offline contract tests
         run: >-
           python -m pip install --require-hashes --only-binary=:all: -r tools/secret_control/requirements-oci-lock.txt
+          -r tools/secret_control/requirements-github-lock.txt
       - name: Set up Terraform for mocked bootstrap contracts
         if: matrix.os == 'ubuntu-latest' && matrix.python == '3.12'
         uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1

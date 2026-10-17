@@ -26,6 +26,7 @@ def parser():
         "validate": "Decrypt and validate a catalog locally; print counts only.",
         "plan": "Summarize catalog destinations locally without contacting a service.",
         "oci-publish": "Compare OCI destinations; publish only with --apply and --generation.",
+        "github-publish": "Preflight explicitly approved GitHub secrets; write only with --apply.",
         "hcp-prepare": "Copy the reviewed HCP Terraform template into a new private directory.",
         "hcp-plan": "Plan HCP changes using the isolated Terraform root.",
         "hcp-apply": "Apply an explicitly selected catalog generation to HCP.",
@@ -47,8 +48,13 @@ def parser():
         ):
             cmd.add_argument("--catalog", required=True)
             cmd.add_argument("--identity", required=True)
-        if name not in ("fetch", "hcp-prepare"):
+        if name not in ("fetch", "hcp-prepare", "github-publish"):
             cmd.add_argument("--age", default="age")
+        if name == "github-publish":
+            for flag in ("manifest", "manifest-sha256", "token-file"):
+                cmd.add_argument("--" + flag, required=True)
+            cmd.add_argument("--journal-dir")
+            cmd.add_argument("--apply", action="store_true")
         if name == "drill":
             cmd.add_argument("--age-keygen", default="age-keygen")
         if name == "recovery-check":
@@ -83,6 +89,11 @@ def tool(name):
 
 def execute(args):
     require(sys.version_info >= (3, 12), "Python 3.12 or newer required")
+    if args.command == "github-publish":
+        from .github_api import publish
+
+        return publish(args.manifest, args.manifest_sha256, args.token_file,
+                       apply=args.apply, journal=args.journal_dir)
     if args.command == "hcp-prepare":
         from .hcp import prepare
 
