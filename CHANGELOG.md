@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Add operator-controlled GitHub secret delivery with explicit organization and
+  repository ownership, preserved organization visibility, pinned source bytes,
+  sealed-box encryption and durable journals for partial or uncertain writes.
+
 - Report whether an HCP secret plan has changes without exposing Terraform
   output, and document convergence checks before consumer cutover.
 
