@@ -33,6 +33,8 @@
   Adoption is opt-in: existing consumers and their credentials are unchanged.
 
 
+- Honor configured Git commit signing in automatic version-preparation PRs,
+  failing before publication if the requested signature cannot be created.
 - Install both shipped dependency locks before source-archive acceptance so the
   secret adapter contracts run in the isolated test environment.
 - Qualify the native GitHub CLI and patched Cosign release tooling; validate the
