@@ -74,6 +74,17 @@ def mappings(catalog):
     return metadata, values
 
 
+def _metadata_json(metadata):
+    # Complex TF_VAR inputs are parsed as HCL, including templates inside JSON
+    # strings. Escape only the transport copy; state and ledger compare originals.
+    transported = {name: dict(item) for name, item in metadata.items()}
+    for item in transported.values():
+        if "description" in item:
+            item["description"] = item["description"].replace("${", "$${").replace("%{", "%%{")
+    # HCL does not combine JSON's surrogate-pair escapes for non-BMP characters.
+    return json.dumps(transported, ensure_ascii=False, separators=(",", ":"))
+
+
 def internal_file(root, relative, limit=4 * 1024 * 1024):
     """Read Terraform metadata inside the private root, rejecting link traversal."""
     parts = Path(relative).parts
@@ -322,7 +333,7 @@ def run(catalog, directory, terraform, *, apply=False, generation=None):
         env = clean_env()
         if "TFE_TOKEN" in os.environ:
             env["TFE_TOKEN"] = os.environ["TFE_TOKEN"]
-        env["TF_VAR_hcp_variables"] = json.dumps(metadata, separators=(",", ":"))
+        env["TF_VAR_hcp_variables"] = _metadata_json(metadata)
         env["TF_VAR_hcp_secret_values_json"] = json.dumps(values, separators=(",", ":"))
         require(
             len(env["TF_VAR_hcp_secret_values_json"].encode()) < 120000
