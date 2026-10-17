@@ -231,10 +231,13 @@ class API:
         return self.org if item["scope"] == "organization" else self.repo
 
     def public_key(self, item):
-        return self.request("GET", self.prefix(item) + PUBLIC_KEY_PATH)
+        return self.request("GET", self.secret_path(item) + "/public-key")
+
+    def secret_path(self, item):
+        return self.prefix(item) + "/actions/secrets"
 
     def secret(self, item):
-        path = self.prefix(item) + "/actions/secrets/" + item["name"]
+        path = self.secret_path(item) + "/" + item["name"]
         value = metadata(self.request("GET", path, absent=True), item["name"], item["scope"])
         if value is not None and item["scope"] == "organization":
             ids = self.selected_repositories(path) if value["visibility"] == "selected" else []
@@ -266,7 +269,7 @@ class API:
             body["visibility"] = item["expected"]["visibility"]
             if body["visibility"] == "selected":
                 body["selected_repository_ids"] = item["expected"]["selected_repository_ids"]
-        return self.request("PUT", self.prefix(item) + "/actions/secrets/" + item["name"], body)
+        return self.request("PUT", self.secret_path(item) + "/" + item["name"], body)
 
 
 def ownership(api, value):

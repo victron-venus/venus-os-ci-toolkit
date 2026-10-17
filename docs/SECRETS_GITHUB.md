@@ -255,8 +255,23 @@ stored-value equality. Test the intended consumer separately.
 Limits remain conservative: 16 KiB UTF-8 per value, 2 MiB plaintext catalog,
 100 targets per entry and 100 destinations per publication. Binary keys must be
 represented in the exact encoding their consumer expects. Large private assets
-belong in encrypted archives. Environment secrets and Dependabot's separate secret
-store are not supported by this publisher and must be tracked separately.
+belong in encrypted archives. Environment secrets are not supported by this
+publisher and must be tracked separately.
+
+### Dependabot repository secrets
+
+Dependabot has a separate secret store. An Actions secret with the same name does
+not update it. For an existing repository destination, explicitly set
+`"secret_store": "dependabot"` in both the catalog target and manifest target.
+Omitting this field retains the Actions store; `"actions"` is also accepted.
+Organization Dependabot secrets are not supported.
+
+The store forms part of the destination identity. Public-key retrieval, metadata
+checks and the sealed-box update all stay in that selected store; the publisher
+cannot redirect an approved Actions destination into Dependabot. Keep the same
+source revision for unchanged values, advancing it when adding this target.
+The publishing credential must have permission to update Dependabot secrets;
+Actions-secret permissions alone do not establish that access.
 
 ## Materialize one revision for an existing consumer
 
