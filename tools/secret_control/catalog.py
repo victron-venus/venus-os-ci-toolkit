@@ -54,7 +54,10 @@ def github_target(target):
             "unsupported GitHub target scope")
     organization = target["scope"] == "organization"
     keys(target, common | ({"visibility", "selected_repository_ids"}
-                          if organization else {"repository"}))
+                          if organization else {"repository"}), {"secret_store"})
+    store = target.get("secret_store", "actions")
+    require(store in ("actions", "dependabot") and (not organization or store == "actions"),
+            "unsupported GitHub secret store")
     require(text(target["name"], r"[A-Z_][A-Z0-9_]{0,99}", 100)
             and not target["name"].startswith("GITHUB_"), "invalid GitHub secret name")
     owner = target["owner"]
@@ -81,7 +84,8 @@ def github_target(target):
                 and repo["full_name"].split("/")[1] not in (".", ".."),
                 "invalid GitHub repository binding")
         scope_id = repo["id"]
-    return ("github", target["scope"], scope_id, target["name"])
+    identity = ("github", target["scope"], scope_id, target["name"])
+    return identity if store == "actions" else (*identity, store)
 
 
 def decode(raw):
