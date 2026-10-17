@@ -27,29 +27,34 @@ Full SHA pinning prevents silent breakage when this toolkit is updated. GitHub A
 
 `@main` is a branch ref. GitHub resolves it to a commit SHA at run time. Any change merged to `main` (bug fix, input rename, step reordering) silently propagates to every consumer the next time their CI runs. This has caused broken pipelines across the fleet in this org.
 
-### Tags Exist But Are Not Used
+### Source releases and workflow pins
 
-This toolkit currently has **no `v*` tags**. Tags were never cut. All consumers pin to commit SHAs — that is the established convention and it is the correct one.
-
-If tags are added in the future, the same pinning discipline applies: pin to the tag's commit SHA, not the tag name. The tag is only a human-readable alias for a SHA.
+The toolkit publishes versioned source releases and `v*` tags. See
+[source installation and qualification](self-release.md) for their contents and
+[the release strategy](../RELEASING.md) for the channel policy. A source release
+does not update consumer workflow references: continue to pin a reviewed full
+commit SHA, including when selecting a revision from a release tag.
 
 ### When to Update Your Pin
 
-Update the pinned SHA when you want to adopt a new toolkit feature or security fix. The toolkit maintains **backwards compatibility** within the SHA: inputs added after you pinned will use their defaults, so your workflow will not break if you do not update. But you will not get new inputs until you bump the SHA.
+Update the pinned SHA when adopting a toolkit feature or security fix. A pinned
+revision keeps its own input definitions and implementation; inputs added in a
+later revision are unavailable until you update. Review the diff, migration
+notes and consumer checks before changing the pin. Pinning does not guarantee
+compatibility with future runner images or external services.
 
 ### How to Find the Current SHA
 
 ```bash
-git ls-remote git@github.com:victron-venus/venus-os-ci-toolkit HEAD
+git ls-remote https://github.com/victron-venus/venus-os-ci-toolkit.git refs/heads/main
 ```
 
 Or from a local clone:
 
 ```bash
-cd /path/to/your-project
-# After pulling latest toolkit
-git fetch git@github.com:victron-venus/venus-os-ci-toolkit main
-git log --oneline -1 origin/main  # shows SHA
+# Run in a local clone; FETCH_HEAD identifies this explicit fetch.
+git fetch https://github.com/victron-venus/venus-os-ci-toolkit.git main
+git rev-parse FETCH_HEAD
 ```
 
 ### Security Implications
@@ -62,7 +67,9 @@ git log --oneline -1 origin/main  # shows SHA
 
 ## Compatibility Matrix
 
-All reusable workflows in this toolkit are called via `workflow_call`. A calling workflow uses `uses: ...@<sha>` with `secrets: inherit` or explicit secret forwarding.
+Reusable entry points declare `workflow_call`; some other workflow files are
+repository-owned callers. A consumer uses `uses: ...@<sha>` with explicit caller
+permissions and forwards only the secrets declared by the selected entry point.
 
 Local validation jobs containing shell steps must declare `permissions` at the
 job or workflow level before the generator can narrow their caller token.
@@ -100,13 +107,11 @@ first collect a real report in their existing test job.
 | `.github/workflows/ci.yml` | `rust-ci.yml` | Rust fmt, clippy, test, optional frontend |
 | `.github/workflows/ci.yml` | `terraform-ci.yml` | Terraform fmt, init, validate, tflint |
 | `.github/workflows/security.yml` | `security-scan.yml` | CodeQL, Trivy, dependency review |
-| `.github/workflows/scorecard.yml` | `scorecard.yml` | OpenSSF Scorecard |
-| `.github/workflows/docker.yml` | `docker-build.yml` | Multi-platform Docker build & push |
-| `.github/workflows/release.yml` | `release.yml` | GitHub release from tag push |
-| `.github/workflows/auto-approve.yml` | `auto-approve.yml` | Auto-approve bot PRs (direct trigger) |
+| Existing legacy caller | `docker-build.yml` | Retired; migrate to a build-only adapter and release policy |
+| Existing legacy caller | `release.yml` | Retired; migrate to gated release channels |
 | `.github/workflows/auto-approve.yml` | `auto-approve-reusable.yml` | Trusted approval via reusable |
 | `.github/workflows/auto-merge.yml` | `auto-merge.yml` | Auto-merge when checks pass |
-| `.github/workflows/nightly.yml` | `nightly.yml` | Scheduled trigger of another workflow |
+| Existing legacy caller | `nightly.yml` | Retired; use the generated per-repository schedule |
 
 ### Composite Actions
 
@@ -273,9 +278,11 @@ Plugin versions and signing policy remain the consuming project's responsibility
 | `run-dependency-review` | boolean | `true` | No |
 | `trivy-severity` | string | `'HIGH,CRITICAL'` | No |
 
-#### `scorecard.yml`
+#### Scorecard
 
-No inputs. Requires `GITHUB_TOKEN` (provided automatically by GitHub Actions).
+This revision has no reusable `scorecard.yml`. The maintained scanner is the
+[Scorecard adapter](../tools/scorecard-scan/README.md); its guide covers build,
+credentials, output and failure handling.
 
 #### `docker-build.yml` (retired)
 
@@ -374,17 +381,15 @@ their validation/build gates. This legacy dispatcher fails with a migration mess
 
 ---
 
-## Verifying Your Workflow Locally
+## Verifying Your Workflow
 
-Before committing, validate YAML syntax and the reusable workflow contract with [act](https://github.com/nektos/act):
+Run the toolkit's local checks as described in [CONTRIBUTING](../CONTRIBUTING.md).
+The [contract-test workflow](../.github/workflows/contract-tests.yml) calls the
+current Python and Go validators using `./.github/workflows/...` and the
+projects in [`tests/fixtures`](../tests/fixtures/README.md).
 
-```bash
-# Install act (macOS)
-brew install act
-
-# Run the python-ci workflow on a minimal Python fixture
-cd tests/fixtures/python-minimal
-act -W .github/workflows/ci.yml --container-architecture linux/amd64
-```
-
-The `tests/fixtures/` directory contains minimal consumer-side workflow files that exercise the toolkit. See `tests/fixtures/README.md` for details.
+The fixture directories also retain standalone consumers pinned to historical
+toolkit revisions. Running those with `act` exercises their pinned code, not
+uncommitted changes or the current toolkit branch. A local run does not establish
+hosted permissions, artifact publication or Codecov delivery; verify the proposed
+consumer revision with its actual GitHub Actions checks before adoption.

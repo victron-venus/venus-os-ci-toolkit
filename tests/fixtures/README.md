@@ -4,7 +4,14 @@ Minimal consumer-side workflow files + fixture repos for validating toolkit reus
 
 ## Purpose
 
-These fixtures exercise the toolkit's `workflow_call` contracts without needing a live GitHub Actions runner. Use [act](https://github.com/nektos/act) to run them locally.
+The toolkit's [contract-test workflow](../../.github/workflows/contract-tests.yml)
+calls the current Python and Go reusable workflows against these fixture projects.
+Local Python tests also exercise individual contracts; see
+[CONTRIBUTING](../../CONTRIBUTING.md) for dependencies and commands.
+
+Standalone `.github/workflows/ci.yml` files inside `python-minimal` and
+`go-minimal` retain historical toolkit pins. They exercise that older revision,
+not the current checkout. Their results do not qualify current toolkit changes.
 
 ## Fixtures
 
@@ -12,7 +19,8 @@ These fixtures exercise the toolkit's `workflow_call` contracts without needing 
 
 Minimal Python project: one module, one test, `pyproject.toml` with `[project.optional-dependencies]` dev/test extras.
 
-**Validates:** `python-ci.yml` — lint, type-check, test, coverage upload.
+**Validates in the current contract workflow:** `python-ci.yml` — lint, type-check,
+tests and coverage artifacts. Hosted publication requires its own evidence.
 
 ### `python-type-error/`
 
@@ -22,25 +30,21 @@ An intentionally invalid return annotation used by `tests/test_python_typecheck.
 
 Minimal Go module: one package, one test, `go.mod`.
 
-**Validates:** `go-ci.yml` — lint, vulncheck, test, coverage upload.
+**Validates in the current contract workflow:** `go-ci.yml` — lint, vulnerability
+checks, tests and coverage artifacts.
 
-## How to Update the Toolkit SHA
+## Updating a standalone consumer
 
-The consumer workflow files in each fixture pin the toolkit to a commit SHA. When the toolkit changes and you want the fixture to exercise the new version, update the SHA:
+Changing only a historical SHA is insufficient: review the new workflow's inputs,
+permissions, supported toolchains and dependency installation mode as well. The
+old Go consumer selects Go 1.23, and the old Python consumer omits the current
+packaged-project lock opt-in. Neither is a current starter template. Use
+[the starter guide](../../templates/starter-workflows.md) for new consumers.
 
-```bash
-# Find current toolkit HEAD SHA
-cd /path/to/venus-os-ci-toolkit
-git rev-parse HEAD
+The toolkit's current contract workflow uses local reusable references and needs
+no SHA replacement to test the checked-out implementation.
 
-# Replace the old SHA with the new one in all fixture workflow files
-sed -i 's/@<old-sha>/@<new-sha>/g' tests/fixtures/python-minimal/.github/workflows/ci.yml
-sed -i 's/@<old-sha>/@<new-sha>/g' tests/fixtures/go-minimal/.github/workflows/ci.yml
-```
-
-The fixture project source files rarely need changes — they exist only to provide something for the CI steps to run against.
-
-## Running with act
+## Running historical consumers with act
 
 ```bash
 # Install act (macOS)
@@ -64,4 +68,6 @@ act -W .github/workflows/ci.yml --container-architecture linux/amd64
 | `python-minimal` | checkout, setup-python, install-deps, ruff check, ruff format --check, mypy, pytest, upload-coverage | ruff errors, test failures, coverage below threshold |
 | `go-minimal` | checkout, setup-go, go mod download, golangci-lint, govulncheck, go test, check coverage, upload-coverage | lint errors, test failures, coverage below threshold |
 
-A passing `act` run means the workflow's inputs are wired correctly and the steps execute without syntax errors. It does not substitute for a full GitHub Actions run (no Codecov upload will succeed without a real repo context).
+A passing `act` run covers only the selected historical pin and the steps that
+actually executed. It does not substitute for current contract checks or a full
+GitHub Actions run with real permissions, artifact storage and Codecov context.
