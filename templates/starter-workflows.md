@@ -1,300 +1,61 @@
-# Venus OS CI Toolkit - Starter Workflows
+# Starter workflows
 
-Copy these workflow files to your project's `.github/workflows/` directory and customize as needed.
+Use this guide to choose the maintained CI entry points for a new consumer.
+Read the [consumer guide](../docs/CONSUMER_GUIDE.md) for inputs, permissions and
+compatibility before copying a workflow.
 
-## For Python Projects
+## CI validation
 
-### `.github/workflows/ci.yml`
-```yaml
-name: CI
-on:
-  push:
-    branches: [main]
-    paths-ignore:
-      - '**.md'
-      - 'docs/**'
-      - '**.json'
-      - '**.yaml'
-      - '**.yml'
-  pull_request:
-    branches: [main]
-    paths-ignore:
-      - '**.md'
-      - 'docs/**'
-      - '**.json'
-      - '**.yaml'
-      - '**.yml'
+Choose the reusable validator matching the project: `python-ci.yml`, `go-ci.yml`,
+`typescript-ci.yml`, `rust-ci.yml` or `terraform-ci.yml` in
+[`.github/workflows`](../.github/workflows). Pin each external `uses:` reference
+to a reviewed full 40-character toolkit commit SHA.
 
-jobs:
-  ci:
-    uses: victron-venus/venus-os-ci-toolkit/.github/workflows/python-ci.yml@main
-    with:
-      python-version: '3.12'
-      working-directory: '.'
-      install-dependencies: true
-      run-lint: true
-      run-type-check: true
-      run-tests: true
-      test-args: '-v'
-      coverage-threshold: 80
-    secrets:
-      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-```
+- Declare the caller's permissions explicitly and forward only the secrets
+  required by the selected workflow. `GITHUB_TOKEN` is provided automatically;
+  do not create or pass it as a custom workflow secret.
+- Python packages need `use-uv-lock: true` and a committed, current `uv.lock`.
+  Script-only projects can use the documented hash-locked requirements mode.
+- Choose toolchain versions supported by the validator and the project. Use the
+  selected toolkit revision's input definitions as the source of truth.
+- Keep test execution and the project's coverage threshold enabled.
+- Run validation on pull requests and default-branch pushes. Do not exclude
+  dependency files or workflow YAML through `paths-ignore`. For lighter
+  documentation checks, use the supported [change-scope policy](../docs/CHANGE_SCOPE.md).
 
-### `.github/workflows/security.yml`
-```yaml
-name: Security
-on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
-  schedule:
-    - cron: '0 6 * * 1'  # Weekly on Monday
+The toolkit's [contract-test workflow](../.github/workflows/contract-tests.yml)
+shows current Python and Go calls against local fixtures. Those `./` references
+are for toolkit self-tests; external consumers need the full repository path and
+reviewed SHA.
 
-jobs:
-  security:
-    uses: victron-venus/venus-os-ci-toolkit/.github/workflows/security-scan.yml@main
-    with:
-      languages: 'python'
-      working-directory: '.'
-      run-codeql: true
-      run-trivy: true
-      run-dependency-review: true
-      trivy-severity: 'HIGH,CRITICAL'
-    secrets:
-      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-```
+## Security and repository automation
 
-### `.github/workflows/scorecard.yml`
-```yaml
-name: Scorecard
-on:
-  push:
-    branches: [main]
-  schedule:
-    - cron: '0 6 * * 0'  # Weekly on Sunday
+Use [security-scan.yml](../.github/workflows/security-scan.yml) for its documented
+CodeQL, Trivy and dependency-review checks, with the corresponding caller
+permissions. There is no reusable `scorecard.yml` in this revision; see the
+[Scorecard adapter](../tools/scorecard-scan/README.md) for the maintained scanner.
 
-jobs:
-  scorecard:
-    uses: victron-venus/venus-os-ci-toolkit/.github/workflows/scorecard.yml@main
-    with:
-      working-directory: '.'
-    secrets:
-      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-```
+Copy the maintained [approval caller](../docs/examples/auto-approve.yml) and
+[merge caller](../docs/examples/auto-merge.yml) when those features are wanted.
+Replace `TOOLKIT_COMMIT_SHA` with a reviewed full commit SHA and follow the
+[approval and merge requirements](../docs/AUTO_MERGE.md). The examples include
+credential forwarding and event handling; approval alone does not enable merging.
 
-### `.github/workflows/auto-approve.yml`
+## Releases and container builds
 
-Copy the [approval caller example](../docs/examples/auto-approve.yml), replacing
-`TOOLKIT_COMMIT_SHA` with a reviewed immutable toolkit commit. It invokes
-`auto-approve-reusable.yml` and forwards `BOT_PAT` and optional `APPROVAL_PAT` for
-an independent reviewer. Ready PRs from trusted authors targeting the default
-branch receive approval regardless of labels. The `automerge` label controls
-automatic merging separately. See the [consumer guide](../docs/CONSUMER_GUIDE.md#auto-approve-reusableyml)
-for event handling, author configuration, and token requirements.
+Install the reviewed per-repository release policy and build-only adapters using
+[the fleet rollout guide](../docs/FLEET_ROLLOUT.md). Review the generated files and
+complete the documented checks before enabling publication.
 
-### `.github/workflows/auto-merge.yml`
-```yaml
-name: Auto Merge
-on:
-  pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
-  pull_request_review:
-    types: [submitted]
+The legacy reusable `release.yml`, `docker-build.yml` and `nightly.yml` entry
+points are retired and fail with migration instructions. Do not create new
+callers for them. Current channel, container-publication and promotion commands
+are documented in [release operations](../docs/APPLICATION_RELEASES.md).
 
-jobs:
-  auto-merge:
-    uses: victron-venus/venus-os-ci-toolkit/.github/workflows/auto-merge.yml@main
-    with:
-      pr-author: 'dependabot[bot],renovate[bot]'
-      merge-method: 'squash'
-      required-status-checks: 'CI,codeql,trivy'
-    secrets:
-      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-```
+## Validation before adoption
 
-### `.github/workflows/release.yml`
-```yaml
-name: Release
-on:
-  push:
-    tags:
-      - 'v*'
-
-jobs:
-  release:
-    uses: victron-venus/venus-os-ci-toolkit/.github/workflows/release.yml@main
-    with:
-      tag-pattern: '^v[0-9]+\\.[0-9]+\\.[0-9]+$'
-      release-name: 'Release ${{ github.ref_name }}'
-      generate-notes: true
-    secrets:
-      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-```
-
-### `.github/workflows/docker.yml`
-```yaml
-name: Docker
-on:
-  push:
-    branches: [main]
-    tags: ['v*']
-  pull_request:
-    branches: [main]
-
-jobs:
-  docker:
-    uses: victron-venus/venus-os-ci-toolkit/.github/workflows/docker-build.yml@main
-    with:
-      image-name: 'your-project-name'
-      dockerfile: 'Dockerfile'
-      context: '.'
-      platforms: 'linux/amd64,linux/arm64'
-      push: ${{ github.event_name != 'pull_request' }}
-    secrets:
-      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-```
-
----
-
----
-
-## For TypeScript Projects
-
-### `.github/workflows/ci.yml`
-```yaml
-name: CI
-on:
-  push:
-    branches: [main]
-    paths-ignore:
-      - '**.md'
-      - 'docs/**'
-      - '**.json'
-      - '**.yaml'
-      - '**.yml'
-  pull_request:
-    branches: [main]
-    paths-ignore:
-      - '**.md'
-      - 'docs/**'
-      - '**.json'
-      - '**.yaml'
-      - '**.yml'
-
-jobs:
-  ci:
-    uses: victron-venus/venus-os-ci-toolkit/.github/workflows/typescript-ci.yml@main
-    with:
-      node-version: '22'
-      working-directory: '.'
-      install-dependencies: true
-      run-lint: true
-      lint-command: 'npm run lint'
-      run-type-check: true
-      typecheck-command: 'npm run typecheck'
-      run-build: true
-      build-command: 'npm run build'
-      run-tests: false
-    secrets:
-      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-```
-
----
-
-## For Go Projects
-
-### `.github/workflows/ci.yml`
-```yaml
-name: CI
-on:
-  push:
-    branches: [main]
-    paths-ignore:
-      - '**.md'
-      - 'docs/**'
-      - '**.json'
-      - '**.yaml'
-      - '**.yml'
-  pull_request:
-    branches: [main]
-    paths-ignore:
-      - '**.md'
-      - 'docs/**'
-      - '**.json'
-      - '**.yaml'
-      - '**.yml'
-
-jobs:
-  ci:
-    uses: victron-venus/venus-os-ci-toolkit/.github/workflows/go-ci.yml@main
-    with:
-      go-version: '1.23'
-      working-directory: '.'
-      run-lint: true
-      run-tests: true
-      test-args: '-race -coverprofile=coverage.out -covermode=atomic'
-      coverage-threshold: 70
-      run-vulncheck: true
-    secrets:
-      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-```
-
-### `.github/workflows/security.yml`
-```yaml
-name: Security
-on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
-  schedule:
-    - cron: '0 6 * * 1'
-
-jobs:
-  security:
-    uses: victron-venus/venus-os-ci-toolkit/.github/workflows/security-scan.yml@main
-    with:
-      languages: 'go'
-      working-directory: '.'
-      run-codeql: true
-      run-trivy: true
-      run-dependency-review: true
-    secrets:
-      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-```
-
-### `.github/workflows/nightly.yml`
-```yaml
-name: Nightly
-on:
-  schedule:
-    - cron: '0 2 * * *'  # 2 AM UTC daily
-  workflow_dispatch:
-
-jobs:
-  nightly:
-    uses: victron-venus/venus-os-ci-toolkit/.github/workflows/nightly.yml@main
-    with:
-      cron: '0 2 * * *'
-      workflow-to-trigger: 'ci.yml'
-      workflow-inputs: '{}'
-    secrets:
-      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-```
-
----
-
-## Required Setup
-
-1. **Enable GitHub Actions** in your repository settings
-2. **Enable "Allow GitHub Actions to create and approve pull requests"** in Settings → Actions → General → Workflow permissions
-3. **Add `GITHUB_TOKEN` secret** (automatically available)
-4. **For CodeQL**: Enable "Code scanning alerts" in Settings → Security → Code scanning
-
-## Customization
-
-Override any input by changing the `with:` values in your workflow files.
-
-For project-specific needs, copy the reusable workflow to your repo and modify directly.
+Validate the proposed consumer's YAML, reusable-workflow inputs, permissions and
+immutable references, then run its actual GitHub Actions checks. Local checks
+help diagnose configuration errors but do not prove hosted token permissions,
+artifact uploads or release readiness. See [CONTRIBUTING](../CONTRIBUTING.md) for
+changes to the toolkit itself.
