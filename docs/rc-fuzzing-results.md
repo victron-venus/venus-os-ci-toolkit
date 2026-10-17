@@ -31,12 +31,12 @@ CI and fixed regression tests keep their normal schedule. See the
 
 ![Four distinct evidence layers feeding the release decision](images/rc-fuzzing/evidence.svg)
 
-## Results at 2026-10-17 00:17:30 UTC
+## Results at 2026-10-17 03:23:23 UTC
 
 ![Dated rollout completion and recorded execution totals](images/rc-fuzzing/results.svg)
 
-**42 of 43 repositories have a verified stable release in this snapshot.**
-Their accepted RC reports record **335,170,165 fuzz executions**. Counts describe
+**43 of 43 repositories have a verified stable release in this snapshot.**
+Their accepted RC reports record **337,087,912 fuzz executions**. Counts describe
 inputs exercised by the selected targets, not unique inputs, total program
 coverage, vulnerability absence, or relative project quality.
 
@@ -70,6 +70,7 @@ records; it does not expose local paths, credentials or device data.
 | [ha-homelab/slzb-06-recovery](https://github.com/ha-homelab/slzb-06-recovery) | [v0.1.2](https://github.com/ha-homelab/slzb-06-recovery/releases/tag/v0.1.2) | [v0.1.2-rc.1](https://github.com/ha-homelab/slzb-06-recovery/actions/runs/38623608246) | 8,631,402 |
 | [open-ott-play/ottplay-control-server](https://github.com/open-ott-play/ottplay-control-server) | [v0.1.2](https://github.com/open-ott-play/ottplay-control-server/releases/tag/v0.1.2) | [v0.1.2-rc.1](https://github.com/open-ott-play/ottplay-control-server/actions/runs/38844308604) | 2,381,115 |
 | [open-ott-play/ottplay-core](https://github.com/open-ott-play/ottplay-core) | [v0.1.1](https://github.com/open-ott-play/ottplay-core/releases/tag/v0.1.1) | [v0.1.1-rc.2](https://github.com/open-ott-play/ottplay-core/actions/runs/38855119006) | 862,662 |
+| [open-ott-play/ottplay-foss](https://github.com/open-ott-play/ottplay-foss) | [v1.1.55](https://github.com/open-ott-play/ottplay-foss/releases/tag/v1.1.55) | [v1.1.55-rc.4](https://github.com/open-ott-play/ottplay-foss/actions/runs/38992291032) | 1,917,747 |
 | [open-ott-play/ottplay-swop](https://github.com/open-ott-play/ottplay-swop) | [v0.1.1](https://github.com/open-ott-play/ottplay-swop/releases/tag/v0.1.1) | [v0.1.1-rc.1](https://github.com/open-ott-play/ottplay-swop/actions/runs/38624411868) | 3,881,630 |
 | [victron-venus/dbus-emporia-vue](https://github.com/victron-venus/dbus-emporia-vue) | [v1.0.11](https://github.com/victron-venus/dbus-emporia-vue/releases/tag/v1.0.11) | [v1.0.11-rc.1](https://github.com/victron-venus/dbus-emporia-vue/actions/runs/38847825958) | 12,999,812 |
 | [victron-venus/dbus-esphome-grid-sensor](https://github.com/victron-venus/dbus-esphome-grid-sensor) | [v1.0.6](https://github.com/victron-venus/dbus-esphome-grid-sensor/releases/tag/v1.0.6) | [v1.0.6-rc.1](https://github.com/victron-venus/dbus-esphome-grid-sensor/actions/runs/38847804786) | 8,847,442 |
@@ -99,25 +100,37 @@ The [release acceptance notes](https://github.com/victron-venus/inverter-desktop
 retain this limitation; these are software first-launch observations, not a
 native startup-performance measurement or a 60-second startup guarantee.
 
-### Still in validation
+### OttPlay FOSS package acceptance
 
-- [open-ott-play/ottplay-foss](https://github.com/open-ott-play/ottplay-foss): not counted as a verified stable release in this snapshot.
+For `ottplay-foss` v1.1.55, the accepted RC passed **10 aarch64
+package/runtime/media combinations**: DEB and AppImage on Ubuntu 24.04 and
+26.04, plus RPM on Fedora 44, each with TS/Auto and fMP4/MSE playback.
+The checks covered decoded frames, pause/seek/resume, natural end, a second
+film and playback after reload. Forced hls.js cases checked the attached
+engine and media requests; screenshots were reviewed separately.
 
-For `ottplay-foss`, native diagnostics confirmed an intermittent GStreamer
-stream-start/flush stall on Ubuntu 24.04 (Noble). A backport of the upstream
-[stream-synchronization fix](https://github.com/GStreamer/gstreamer/commit/03febb5048d0612157fad0ddadeaaeed924aadf0)
-passed the isolated regression and a bounded native playback diagnostic.
-Unpatched native runs can also pass; one successful run does not establish
-that the race is absent. Corrected RC packages still require full acceptance.
+The release also keeps the exact source revision in diagnostics, fails release
+builds if the source cannot be verified against the frozen plan, and preserves
+pinned media bytes on Windows checkouts. Explicit debug v2 requests report the
+attached playback engine while default v1 replies remain compatible. See the
+[source-bound changelog](https://github.com/open-ott-play/ottplay-foss/blob/a9eab3594b1be4bb713aa4da2610fa43029f008b/CHANGELOG.md).
 
-Separately, a hosted Ubuntu 26.04 (Resolute) WebKit
-[reload hang](https://github.com/open-ott-play/ottplay-foss/actions/runs/38980707356/job/117241012644)
-was not reproduced in an
-[isolated diagnostic](https://github.com/open-ott-play/ottplay-foss/actions/runs/38982549063)
-and remains under investigation. The earlier
-[browser comparison](https://github.com/open-ott-play/ottplay-foss/actions/runs/38962201111)
-passed 20/20 scenarios on Resolute and 19/20 on Noble for that source and run;
-those results do not qualify the current native release packages.
+The separate browser qualification passed **35 targets and
+166 scenario executions** (32 HLS targets and
+3 with UI-only coverage). Browser results do not extend the native
+package tests to other architectures or operating systems.
+
+The [immutable Linux build receipt](https://github.com/open-ott-play/ottplay-foss/releases/download/v1.1.55-rc.4/release-inputs-desktop-ubuntu-24.04-arm-aarch64-unknown-linux-gnu.json) binds the private
+playback plugin's source build, runtime manifest and final package verification.
+Acceptance checked the actual loaded plugin: the private backport for the
+reviewed Ubuntu 24.04 DEB runtime, the bundled plugin for AppImage, and the
+distribution runtime for Ubuntu 26.04 DEB and Fedora RPM. System libraries were
+not replaced. See the [source-bound packaging details](https://github.com/open-ott-play/ottplay-foss/blob/a9eab3594b1be4bb713aa4da2610fa43029f008b/docs/linux-media-packaging.md)
+and [release acceptance notes](https://github.com/open-ott-play/ottplay-foss/releases/tag/v1.1.55).
+
+These are bounded software checks, not a claim that all races or defects are
+absent. They do not establish native x86_64/Windows/macOS, physical TV/STB,
+live-provider, DRM or audible-output acceptance.
 
 ### Reading the limits correctly
 
