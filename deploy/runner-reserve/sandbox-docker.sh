@@ -20,10 +20,23 @@ wait_for_service() {
 }
 
 cleanup_startup() {
-  local pid
+  local pid alive deadline=$((SECONDS + 5))
   for pid in "${sandbox_docker_pid:-}" "${sandbox_containerd_pid:-}"; do
     if [[ -n "$pid" ]]; then
       kill "$pid" 2>/dev/null || true
+    fi
+  done
+  while ((SECONDS < deadline)); do
+    alive=false
+    for pid in "${sandbox_docker_pid:-}" "${sandbox_containerd_pid:-}"; do
+      if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then alive=true; fi
+    done
+    "$alive" || break
+    sleep 0.1
+  done
+  for pid in "${sandbox_docker_pid:-}" "${sandbox_containerd_pid:-}"; do
+    if [[ -n "$pid" ]]; then
+      kill -KILL "$pid" 2>/dev/null || true
       wait "$pid" 2>/dev/null || true
     fi
   done
@@ -55,12 +68,12 @@ TOML
   containerd --config "$runtime/containerd.toml" > /tmp/containerd.log 2>&1 &
   sandbox_containerd_pid=$!
   wait_for_service "$sandbox_containerd_pid" 180 /tmp/containerd.log \
-    timeout 6s ctr --address "$socket" --connect-timeout 5s --timeout 5s version
+    timeout --signal=KILL 6s ctr --address "$socket" --connect-timeout 5s --timeout 5s version
   dockerd --containerd="$socket" --iptables=false --ip6tables=false \
-    --feature containerd-snapshotter=false --storage-driver=vfs \
+    --feature embedded-containerd=false --feature containerd-snapshotter=false --storage-driver=vfs \
     --mtu="$mtu" --group=runner > /tmp/dockerd.log 2>&1 &
   sandbox_docker_pid=$!
-  wait_for_service "$sandbox_docker_pid" 180 /tmp/dockerd.log timeout 6s docker info
+  wait_for_service "$sandbox_docker_pid" 180 /tmp/dockerd.log timeout --signal=KILL 6s docker info
   # The pod owns both healthy children from here; pod deletion reaps them.
   trap - EXIT INT TERM
 }

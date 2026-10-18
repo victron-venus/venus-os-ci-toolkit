@@ -59,6 +59,19 @@ cleanup_startup
 ''')
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_cleanup_kills_a_daemon_which_ignores_term(self):
+        result = self.run_shell('''
+ready=$(dirname "$log")/ready
+python3 -c 'import signal,sys,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); open(sys.argv[1], "w").close(); time.sleep(60)' "$ready" &
+sandbox_containerd_pid=$!
+while [[ ! -e "$ready" ]]; do sleep 0.01; done
+started=$SECONDS
+cleanup_startup
+((SECONDS - started <= 6))
+! kill -0 "$sandbox_containerd_pid" 2>/dev/null
+''')
+        self.assertEqual(result.returncode, 0, result.stderr)
+
 
 if __name__ == '__main__':
     unittest.main()
