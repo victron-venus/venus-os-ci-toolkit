@@ -341,6 +341,7 @@ class StandbyPoolTests(unittest.TestCase):
         self.assertIn("e.valueFrom.secretKeyRef.key == 'jitToken'", expressions)
         self.assertIn("o.kind == 'EphemeralRunner'", expressions)
         self.assertIn('!e.valueFrom.secretKeyRef.optional', expressions)
+        self.assertIn("size(c.env.filter(e, e.name == 'ACTIONS_RUNNER_INPUT_JITCONFIG')) <= 1", expressions)
         binding = next(d for d in docs if d['kind'] == 'ValidatingAdmissionPolicyBinding')
         self.assertEqual(binding['spec']['validationActions'], ['Deny'])
 

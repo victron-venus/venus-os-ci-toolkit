@@ -114,7 +114,7 @@ def foundations(profiles, image, node_ip):
         ("(!has(object.spec.initContainers) || size(object.spec.initContainers) == 0) && (!has(object.spec.ephemeralContainers) || size(object.spec.ephemeralContainers) == 0)", 'Only the admitted worker may execute'),
         ("size(object.spec.containers) == 1 && object.spec.containers[0].name == 'runner' && object.spec.containers[0].image == " + json.dumps(image), 'Only the reviewed pinned worker image is allowed'),
         ("object.spec.containers.all(c, has(c.command) && c.command == ['/opt/victron-ci-reserve/start-runner.sh'] && (!has(c.args) || size(c.args) == 0) && (!has(c.envFrom) || size(c.envFrom) == 0) && (!has(c.lifecycle)) && has(c.securityContext) && (!has(c.securityContext.privileged) || !c.securityContext.privileged))", 'Bootstrap cannot be replaced or made host-privileged'),
-        ("object.spec.containers.all(c, !has(c.env) || c.env.all(e, !has(e.valueFrom) || (!has(e.valueFrom.configMapKeyRef) && (!has(e.valueFrom.secretKeyRef) || (" + jit_reference + ")))))", 'Only the structurally matched ARC job JIT Secret may be referenced by environment'),
+        ("object.spec.containers.all(c, !has(c.env) || (size(c.env.filter(e, e.name == 'ACTIONS_RUNNER_INPUT_JITCONFIG')) <= 1 && c.env.all(e, !has(e.valueFrom) || (!has(e.valueFrom.configMapKeyRef) && (!has(e.valueFrom.secretKeyRef) || (" + jit_reference + "))))))", 'Only the structurally matched ARC job JIT Secret may be referenced by environment'),
         ("object.spec.containers.all(c, !has(c.ports) || c.ports.all(p, !has(p.hostPort) || p.hostPort == 0))", 'Host ports are forbidden'),
     ]
     resources += [

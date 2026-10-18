@@ -188,7 +188,8 @@ container and tests a PostgreSQL published port.
 
 Private sandbox profiles select Docker `overlay2` on one fresh disk-backed
 `docker-data` emptyDir mounted only at `/var/lib/docker`. The mount is limited to
-16Gi within the existing 20Gi per-pod ephemeral-storage limit; these are kubelet
+16Gi within the existing per-pod ephemeral-storage limits (20Gi standard,
+30Gi heavy CI); these are kubelet
 accounting and eviction limits, not synchronous filesystem quotas or guaranteed
 ENOSPC boundaries. No data is reused between jobs. Public reserve templates keep
 their volume-free VFS configuration. CPU and memory budgets are unchanged.
