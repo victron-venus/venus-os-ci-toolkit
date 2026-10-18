@@ -53,7 +53,7 @@ jobs:
       - name: Approve the current head as an independent reviewer
         shell: python3 -I {0}
         env:
-          GITHUB_TOKEN: ${{ (github.event.pull_request.user.login == 'dependabot[bot]' || (github.event.pull_request.user.login == 'californiantiramisu' && github.event.pull_request.head.repo.full_name == github.repository)) && github.token || '' }}
+          GITHUB_TOKEN: ${{ (github.event_name == 'workflow_dispatch' || github.event.pull_request.user.login == 'dependabot[bot]' || (github.event.pull_request.user.login == 'californiantiramisu' && github.event.pull_request.head.repo.full_name == github.repository)) && github.token || '' }}
           BOT_PAT: ${{ github.event.pull_request.user.login != 'dependabot[bot]' && secrets.BOT_PAT || '' }}
           APPROVAL_PAT: ${{ github.event.pull_request.user.login != 'dependabot[bot]' && secrets.APPROVAL_PAT || '' }}
           PR_AUTHOR: ${{ github.event.pull_request.user.login }}
@@ -121,8 +121,12 @@ jobs:
                       or os.environ.get("PR_NUMBER") != explicit):
                   raise RuntimeError("Manual recovery requires workflow_dispatch, a PR number and an exact head SHA")
               dependabot = not recovery and os.environ.get("PR_AUTHOR") == "dependabot[bot]"
-              token = (os.environ.get("GITHUB_TOKEN") if dependabot else
+              token = (os.environ.get("GITHUB_TOKEN") if dependabot or recovery else
                        os.environ.get("BOT_PAT") or os.environ.get("APPROVAL_PAT"))
+              # Recovery has no event author. Read trusted metadata before selecting
+              # the approval identity; PATs are never a Dependabot review fallback.
+              if recovery and not token:
+                  token = os.environ.get("BOT_PAT") or os.environ.get("APPROVAL_PAT")
               if not token:
                   if dependabot:
                       raise RuntimeError("GITHUB_TOKEN is missing for Dependabot approval")
@@ -139,6 +143,14 @@ jobs:
               if not eligible(pr, authors, repository, default_branch):
                   print("Pull request is not eligible for automatic approval")
                   return
+              if recovery:
+                  dependabot = pr["user"]["login"] == "dependabot[bot]"
+                  token = (os.environ.get("GITHUB_TOKEN") if dependabot else
+                           os.environ.get("BOT_PAT") or os.environ.get("APPROVAL_PAT"))
+                  if not token:
+                      if dependabot:
+                          raise RuntimeError("GITHUB_TOKEN is missing for Dependabot approval")
+                      raise RuntimeError("Configure BOT_PAT or APPROVAL_PAT with pull request write permission")
               if dependabot != (pr["user"]["login"] == "dependabot[bot]"):
                   raise RuntimeError("Pull request author does not match the selected credential")
               # Installation tokens cannot call the user-token-only GET /user endpoint.
@@ -186,6 +198,7 @@ jobs:
               current_base = api(base_endpoint, token)["object"]["sha"]
               if (current["head"]["sha"] != head or current_base != base
                       or current["base"]["sha"] != pr["base"]["sha"]
+                      or current["user"]["login"] != pr["user"]["login"]
                       or not eligible(current, authors, repository, default_branch)
                       or (actions_fallback and not same_repository_bot(current, repository))
                       or (recovery and (
