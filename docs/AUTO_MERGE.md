@@ -191,3 +191,15 @@ actual bot review references the requested head, then merge only after the norma
 checks pass. After migration, run the ordinary approval workflow on another ready
 PR to verify the new runner path. A dispatch from an unreviewed branch is not an
 acceptable bootstrap procedure.
+
+## Dependabot event context
+
+Dependabot `pull_request` runs cannot read repository Actions secrets. The shared
+caller examples route its metadata jobs through `pull_request_target` only when
+the base is the repository default branch; they never check out or execute PR
+code. Approval still uses the automatic `GITHUB_TOKEN`, while merge automation
+receives the explicitly forwarded `BOT_PAT`. Other trusted same-repository
+writers retain their existing `pull_request` path.
+
+Update the caller condition as well as the pinned reusable revision. A pin-only
+update cannot change event selection. See [GitHub's Dependabot Actions restrictions](https://docs.github.com/en/code-security/reference/supply-chain-security/dependabot-on-actions).
