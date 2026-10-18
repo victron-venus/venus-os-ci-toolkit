@@ -107,12 +107,17 @@ reviewed snapshot:
 ```sh
 python3 deploy/arc-private/compose_exclusive_template.py \
   --input /private/operator/config.toml.tmpl.snapshot \
-  --expected-sha256 REVIEWED_SNAPSHOT_SHA256 \
-  --output /private/operator/config.toml.tmpl.candidate
+  --expected-sha256 REVIEWED_SNAPSHOT_SHA256
 ```
 
-The composer checks the input hash, rejects an existing private handler and
-refuses to overwrite its output. Review that the sole appended block is
+The composer always writes `config.toml.tmpl.candidate` beside the snapshot;
+there is no arbitrary output-path option. Its directory must be owned by the
+invoking user with mode `0700`. It anchors both file operations to the opened
+directory descriptor, refuses a symlink directory or input, and requires a
+regular input file. It checks the input hash, rejects an existing private
+handler, and creates output exclusively with mode `0600`; an existing file or
+symlink is never overwritten. These are local operator CLI safeguards, not an
+HTTP input boundary. Review that the sole appended block is
 `containerd-exclusive-runtime.toml.fragment`, and that the named handler is not
 also emitted by a dynamic runtime discovery block. The composer does not render
 or validate the Go template. Save the candidate hash and preserve source file

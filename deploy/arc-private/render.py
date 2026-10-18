@@ -21,6 +21,7 @@ SCOPE = re.compile(r'^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$')
 RUNNER_HOME = '/home/runner'
 TOOL_CACHE = '/opt/hostedtoolcache'
 PRIVATE_ADMISSION = 'private-ephemeral-workers'
+HOSTNAME_LABEL = 'kubernetes.io/hostname'
 SHARED_RUNTIME = 'victron-reserve'
 EXCLUSIVE_RUNTIME = 'victron-private-exclusive'
 SANDBOX_RUNTIMES = (SHARED_RUNTIME, EXCLUSIVE_RUNTIME)
@@ -106,7 +107,7 @@ def values(row, profile, sandbox_image, native_image, node_ip, arm_node='h7', li
     listener = result['listenerTemplate']['spec']['containers'][0]
     result['listenerTemplate']['spec']['securityContext'] = {
         'seccompProfile': {'type': 'RuntimeDefault'}}
-    result['listenerTemplate']['spec']['nodeSelector'] = {'kubernetes.io/hostname': listener_node}
+    result['listenerTemplate']['spec']['nodeSelector'] = {HOSTNAME_LABEL: listener_node}
     listener['resources'] = {'requests': {'cpu': '5m', 'memory': '32Mi'},
                              'limits': {'cpu': '100m', 'memory': '192Mi'}}
     spec = result['template']['spec']
@@ -135,7 +136,7 @@ def values(row, profile, sandbox_image, native_image, node_ip, arm_node='h7', li
         return result
     spec.pop('runtimeClassName')
     result['template']['metadata']['labels'].pop(RESERVE.LABEL)
-    spec['nodeSelector'] = {'kubernetes.io/hostname': arm_node if profile == 'arm64' else 'mp',
+    spec['nodeSelector'] = {HOSTNAME_LABEL: arm_node if profile == 'arm64' else 'mp',
                             'kubernetes.io/arch': 'arm64' if profile == 'arm64' else 'amd64'}
     spec['securityContext'] = {'runAsUser': 1001, 'runAsGroup': 121, 'fsGroup': 121,
                                'seccompProfile': {'type': 'RuntimeDefault'}}
@@ -234,7 +235,7 @@ def exclusive_runtime_resources(private_policy):
         'apiVersion': 'node.k8s.io/v1', 'kind': 'RuntimeClass',
         'metadata': {'name': EXCLUSIVE_RUNTIME}, 'handler': EXCLUSIVE_RUNTIME,
         'overhead': {'podFixed': {'cpu': '100m', 'memory': '128Mi'}},
-        'scheduling': {'nodeSelector': {'kubernetes.io/hostname': 'mp',
+        'scheduling': {'nodeSelector': {HOSTNAME_LABEL: 'mp',
                                         'kubernetes.io/arch': 'amd64'}}}
     binding = {
         'apiVersion': 'admissionregistration.k8s.io/v1',
