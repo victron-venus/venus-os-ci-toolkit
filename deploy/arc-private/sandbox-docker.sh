@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+# Private image wrapper; the public image keeps the original Docker bootstrap.
+set -euo pipefail
+
+private_tmpfs_storage() {
+  local data=$1 filesystem entries stats block_size blocks inodes extra
+  # Return explicitly: the shared daemon launcher invokes this gate inside
+  # command substitution, where Bash may disable errexit.
+  [[ "${RUNNER_PRIVATE_DOCKER_STORAGE:-}" == ci-tmpfs-2gi &&
+     "${RUNNER_DOCKER_STORAGE_DRIVER:-}" == overlay2 &&
+     "$(id -u)" == 0 && "$(uname -r)" == *-gvisor &&
+     "${RUNNER_PRIVATE_NAMESPACE:-}" == arc-private-ci &&
+     "${RUNNER_PRIVATE_PROFILE:-}" == ci &&
+     "${RUNNER_PRIVATE_MEMORY_LIMIT:-}" == 6442450944 &&
+     "${RUNNER_PRIVATE_MEMORY_REQUEST:-}" =~ ^[1-9][0-9]{0,10}$ ]] || {
+    printf 'Private tmpfs context or memory contract rejected\n' >&2; return 1;
+  }
+  ((RUNNER_PRIVATE_MEMORY_REQUEST >= 3221225472 && RUNNER_PRIVATE_MEMORY_REQUEST <= 6442450944)) || {
+    printf 'Private tmpfs memory reservation is outside the admitted range\n' >&2; return 1;
+  }
+  [[ -d "$data" && ! -L "$data" ]] || return 1
+  filesystem=$(findmnt --noheadings --output FSTYPE --mountpoint "$data") || return 1
+  [[ "$filesystem" == 9p ]] || {
+    printf 'Private tmpfs requires a fresh 9p Docker mount\n' >&2; return 1;
+  }
+  entries=$(find "$data" -mindepth 1 -maxdepth 1 -print -quit) || return 1
+  [[ -z "$entries" ]] || {
+    printf 'Private tmpfs refuses to hide existing Docker data\n' >&2; return 1;
+  }
+  # This is a guest mount, not a host tmpfs or an extra OCI/Kubernetes mount.
+  # The cgroup memory limit remains authoritative, including inode metadata.
+  mount -t tmpfs -o size=2147483648,nr_inodes=262144,mode=0710 tmpfs "$data" || return 1
+  filesystem=$(findmnt --noheadings --output FSTYPE --mountpoint "$data") || return 1
+  [[ "$filesystem" == tmpfs ]] || {
+    printf 'Private tmpfs mount type verification failed\n' >&2; return 1;
+  }
+  stats=$(stat --file-system --format='%S %b %c' "$data") || return 1
+  [[ "$stats" != *$'\n'* ]] || return 1
+  read -r block_size blocks inodes extra <<< "$stats"
+  [[ "$block_size" =~ ^[1-9][0-9]{0,9}$ && "$blocks" =~ ^[1-9][0-9]{0,9}$ &&
+     "$inodes" == 262144 && -z "$extra" ]] || return 1
+  ((block_size <= 2147483648 && blocks <= 2147483648 && block_size * blocks == 2147483648)) || {
+    printf 'Private tmpfs capacity verification failed\n' >&2; return 1;
+  }
+  printf 'PRIVATE_DOCKER_TMPFS_READY filesystem=tmpfs bytes=2147483648 inodes=262144 memory_request=%s memory_limit=%s\n' \
+    "$RUNNER_PRIVATE_MEMORY_REQUEST" "$RUNNER_PRIVATE_MEMORY_LIMIT" >&2
+  printf '%s' overlay2
+}
+
+private_start_docker() {
+  case "${RUNNER_PRIVATE_DOCKER_STORAGE:-disk}" in
+    disk) exec /opt/victron-ci-reserve/sandbox-docker-base.sh "$@" ;;
+    ci-tmpfs-2gi)
+      # Reuse readiness, lifecycle and daemon configuration without modifying
+      # the public helper. Only this private mode replaces its storage gate.
+      # shellcheck source-path=SCRIPTDIR
+      # shellcheck source=../runner-reserve/sandbox-docker.sh
+      source /opt/victron-ci-reserve/sandbox-docker-base.sh
+      docker_storage_driver() { private_tmpfs_storage /var/lib/docker; }
+      start_sandbox_docker "$@"
+      ;;
+    *) printf 'Unsupported private Docker storage mode\n' >&2; return 1 ;;
+  esac
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  private_start_docker "$@"
+fi

@@ -64,6 +64,17 @@ def validate_profiles(row):
         raise ValueError('Duplicate worker profile')
     if {'lan', 'release'} <= set(profiles):
         raise ValueError('Choose one release route: sandbox release or LAN')
+    validate_ci_storage(row)
+
+
+def validate_ci_storage(row):
+    storage = row.get('ci_storage', 'disk')
+    if storage not in ('disk', 'tmpfs-2gi'):
+        raise ValueError('Unknown private CI storage mode')
+    if storage == 'tmpfs-2gi' and (
+            'ci' not in row['profiles'] or row.get('ci_resource_class', 'standard') != 'standard'):
+        raise ValueError('The tmpfs candidate supports only standard CI')
+    return storage
 
 
 def validate_lan(row):
@@ -92,6 +103,9 @@ def validate_inventory(inventory):
 
 def values(row, profile, sandbox_image, native_image, node_ip, arm_node='h7', listener_node='mp',
            sandbox_runtime=SHARED_RUNTIME):
+    storage = validate_ci_storage(row)
+    if storage == 'tmpfs-2gi' and sandbox_runtime != SHARED_RUNTIME:
+        raise ValueError('The tmpfs candidate requires the unchanged shared runtime')
     if sandbox_runtime not in SANDBOX_RUNTIMES:
         raise ValueError('Unknown private sandbox runtime')
     scope = row['name']
@@ -133,6 +147,18 @@ def values(row, profile, sandbox_image, native_image, node_ip, arm_node='h7', li
         spec['volumes'] = [{'name': 'docker-data', 'emptyDir': {'sizeLimit': DOCKER_SCRATCH_SIZE}}]
         spec['containers'][0]['volumeMounts'] = [{'name': 'docker-data', 'mountPath': DOCKER_DATA}]
         spec['containers'][0]['env'].append({'name': 'RUNNER_DOCKER_STORAGE_DRIVER', 'value': 'overlay2'})
+        if profile == 'ci' and storage == 'tmpfs-2gi':
+            runner = spec['containers'][0]
+            runner['resources']['requests']['memory'] = '3Gi'
+            runner['env'] += [
+                {'name': 'RUNNER_PRIVATE_DOCKER_STORAGE', 'value': 'ci-tmpfs-2gi'},
+                {'name': 'RUNNER_PRIVATE_NAMESPACE', 'valueFrom': {'fieldRef': {'fieldPath': 'metadata.namespace'}}},
+                {'name': 'RUNNER_PRIVATE_PROFILE', 'valueFrom': {'fieldRef': {
+                    'fieldPath': "metadata.labels['private-runners.github.io/profile']"}}},
+                *[{'name': 'RUNNER_PRIVATE_MEMORY_' + suffix, 'valueFrom': {'resourceFieldRef': {
+                    'containerName': 'runner', 'resource': resource + '.memory', 'divisor': '1'}}}
+                  for suffix, resource in [('LIMIT', 'limits'), ('REQUEST', 'requests')]],
+            ]
         return result
     spec.pop('runtimeClassName')
     result['template']['metadata']['labels'].pop(RESERVE.LABEL)
@@ -257,6 +283,8 @@ def private_scratch_validations(validations):
                 "dyn(v.emptyDir).sizeLimit == '16Gi')")
             rule['message'] = 'Only the bounded private Docker emptyDir is allowed'
     validations.extend([
+        {'expression': "object.spec.containers.all(c, !has(c.env) || (size(c.env.filter(e, e.name == 'RUNNER_PRIVATE_DOCKER_STORAGE')) <= 1 && c.env.all(e, e.name != 'RUNNER_PRIVATE_DOCKER_STORAGE' || (has(e.value) && e.value == 'ci-tmpfs-2gi' && !has(e.valueFrom) && object.metadata.namespace == 'arc-private-ci' && object.spec.runtimeClassName == 'victron-reserve' && has(object.metadata.labels) && object.metadata.labels['private-runners.github.io/profile'] == 'ci' && has(c.resources) && has(c.resources.requests) && has(c.resources.limits) && 'memory' in c.resources.requests && 'memory' in c.resources.limits && c.resources.requests['memory'] == '3Gi' && c.resources.limits['memory'] == '6Gi'))))",
+         'message': 'The tmpfs candidate is limited to standard private CI with reserved memory'},
         {'expression': "object.spec.containers.all(c, has(c.volumeMounts) && size(c.volumeMounts) == 1 && c.volumeMounts.all(m, m.name == 'docker-data' && m.mountPath == '/var/lib/docker' && !has(m.subPath) && !has(m.subPathExpr) && !has(m.mountPropagation) && (!has(m.readOnly) || !m.readOnly)))",
          'message': 'Docker scratch cannot be redirected, shared or mounted elsewhere'},
         {'expression': "object.spec.containers.all(c, has(c.env) && size(c.env.filter(e, e.name == 'RUNNER_DOCKER_STORAGE_DRIVER')) == 1 && c.env.exists(e, e.name == 'RUNNER_DOCKER_STORAGE_DRIVER' && has(e.value) && e.value == 'overlay2' && !has(e.valueFrom)))",
