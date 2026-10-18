@@ -89,9 +89,10 @@ def values(row, profile, sandbox_image, native_image, node_ip, arm_node='h7'):
     spec['serviceAccountName'] = 'reserve-worker' if profile in ('ci', 'automation', 'release') else 'private-worker'
     spec['containers'][0]['resources'] = {
         'requests': {'cpu': '250m' if profile == 'ci' else '50m',
-                     'memory': '1Gi' if profile == 'ci' else '512Mi', 'ephemeral-storage': '1Gi'},
+                     'memory': '1Gi' if profile in ('ci', 'automation') else '512Mi', 'ephemeral-storage': '1Gi'},
         'limits': {'cpu': '4' if profile == 'ci' else '1',
-                   'memory': '6Gi' if profile == 'ci' else '4Gi', 'ephemeral-storage': '20Gi'}}
+                   'memory': '6Gi' if profile == 'ci' else ('4Gi' if profile == 'automation' else '2Gi'),
+                   'ephemeral-storage': '20Gi'}}
     if profile in ('ci', 'automation', 'release'):
         return result
     spec.pop('runtimeClassName')
@@ -161,11 +162,13 @@ def foundations(rows, sandbox_image, node_ip):
         else:
             meta['namespace'] = meta['namespace'].replace('runner-reserve-', 'arc-private-')
         if item['kind'] == 'ResourceQuota':
-            # Listeners are persistent, workers are bounded in aggregate even if
-            # many repositories queue simultaneously. Scheduler retains node limits.
-            item['spec']['hard'] = {'pods': '30', 'requests.cpu': '2500m', 'requests.memory': '8Gi',
-                                    'limits.cpu': '40', 'limits.memory': '48Gi',
-                                    'requests.ephemeral-storage': '12Gi', 'limits.ephemeral-storage': '160Gi'}
+            # ARC puts listeners in the controller namespace. Bound workers in
+            # aggregate here, even when all repositories queue at the same time.
+            profile = meta['namespace'].removeprefix('arc-private-')
+            budget = {'ci': ('8200m', '13Gi'), 'automation': ('2200m', '9Gi'), 'release': ('2200m', '5Gi')}[profile]
+            item['spec']['hard'] = {'pods': '2', 'requests.cpu': '1000m', 'requests.memory': '3Gi',
+                                    'limits.cpu': budget[0], 'limits.memory': budget[1],
+                                    'requests.ephemeral-storage': '2Gi', 'limits.ephemeral-storage': '40Gi'}
         resources.append(item)
     for profile in ('lan', 'arm64'):
         if not any(profile in r['profiles'] for r in rows):
