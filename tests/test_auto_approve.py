@@ -643,6 +643,52 @@ class ManualApprovalRecoveryTests(unittest.TestCase):
         self.execute()
         self.assert_posts(1)
 
+    def test_dependabot_dispatch_uses_actions_without_pat(self):
+        """Recovery derives the author from API metadata and needs no PAT."""
+        self.environment.pop("BOT_PAT")
+        self.environment.update({
+            "GITHUB_TOKEN": "test-actions-token",
+            "TRUSTED_AUTHORS": '["dependabot[bot]"]',
+        })
+        self.pr["user"]["login"] = "dependabot[bot]"
+        self.current["user"]["login"] = "dependabot[bot]"
+        self.execute()
+        self.assert_posts(1)
+        self.assertNotIn("user", [command[2] for command, _ in self.harness.calls])
+        self.assertTrue(all(kwargs["env"]["GH_TOKEN"] == "test-actions-token"
+                            for _, kwargs in self.harness.calls))
+
+    def test_dependabot_dispatch_never_falls_back_to_pat(self):
+        """A metadata read using a PAT must not authorize a PAT review."""
+        self.environment["TRUSTED_AUTHORS"] = '["dependabot[bot]"]'
+        self.pr["user"]["login"] = "dependabot[bot]"
+        with self.assertRaisesRegex(RuntimeError, "GITHUB_TOKEN is missing"):
+            self.execute()
+        self.assert_posts(0)
+
+    def test_human_dispatch_keeps_independent_pat(self):
+        """Discovery may use Actions, but human reviews retain their PAT identity."""
+        self.environment["GITHUB_TOKEN"] = "test-actions-token"
+        self.execute()
+        self.assert_posts(1)
+        for command, kwargs in self.harness.calls:
+            if command[2] == f"{ENDPOINT}/reviews":
+                self.assertEqual(kwargs["env"]["GH_TOKEN"], "test-bot-token")
+
+    def test_human_dispatch_requires_independent_pat(self):
+        """Recovery must not silently use Actions to replace a missing reviewer."""
+        self.environment.pop("BOT_PAT")
+        self.environment["GITHUB_TOKEN"] = "test-actions-token"
+        with self.assertRaisesRegex(RuntimeError, "Configure BOT_PAT or APPROVAL_PAT"):
+            self.execute()
+        self.assert_posts(0)
+
+    def test_recovery_rejects_author_change_before_review(self):
+        """Final author metadata must agree with the selected approval identity."""
+        self.current["user"]["login"] = "4alvit"
+        self.execute()
+        self.assert_posts(0)
+
     def test_recovery_requires_complete_dispatch_inputs(self):
         """No partial selector, shell payload or non-dispatch trigger is accepted."""
         for changes in (
