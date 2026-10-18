@@ -103,27 +103,29 @@ findmnt() { if [[ -e "$state" ]]; then printf '9p\\ntmpfs'; else printf 9p; fi; 
                 self.assertIsNotNone(mounted)
 
     def test_failed_storage_gate_stops_shared_launcher_before_any_daemon(self):
-        for failure in ['mount() { return 1; }',
-                        'stat() { printf "v9fs 4096 524288 262144"; }',
-                        'stat() { printf "tmpfs 4096 1 1"; }']:
-            result, _ = self.gate('''
-base=$4
-source() {
-  [[ "$1" == /opt/victron-ci-reserve/sandbox-docker-base.sh ]] || return 1
-  builtin source "$base"
-}
-mkdir() { printf UNEXPECTED_PRE_DAEMON_WRITE >&2; return 1; }
-containerd() { printf UNEXPECTED_DAEMON >&2; return 1; }
-dockerd() { printf UNEXPECTED_DAEMON >&2; return 1; }
-''' + failure, invoke='''
-# Source the real shared helper: its main guard must not start either daemon.
-source /opt/victron-ci-reserve/sandbox-docker-base.sh
-docker_storage_driver() { private_tmpfs_storage "$data"; }
-start_sandbox_docker 1500
-''')
-            self.assertNotEqual(result.returncode, 0)
-            self.assertNotIn('UNEXPECTED_', result.stderr)
-            self.assertNotIn('PRIVATE_DOCKER_TMPFS_READY', result.stderr)
+        for setup in ['', self.new_mode_setup('ci-heavy-tmpfs-6gi'),
+                      self.new_mode_setup('automation-tmpfs-3gi')]:
+            for failure in ['mount() { return 1; }',
+                            'stat() { printf "v9fs 4096 524288 262144"; }',
+                            'stat() { printf "tmpfs 4096 1 1"; }']:
+                result, _ = self.gate('''
+    base=$4
+    source() {
+      [[ "$1" == /opt/victron-ci-reserve/sandbox-docker-base.sh ]] || return 1
+      builtin source "$base"
+    }
+    mkdir() { printf UNEXPECTED_PRE_DAEMON_WRITE >&2; return 1; }
+    containerd() { printf UNEXPECTED_DAEMON >&2; return 1; }
+    dockerd() { printf UNEXPECTED_DAEMON >&2; return 1; }
+    ''' + setup + failure, invoke='''
+    # Source the real shared helper: its main guard must not start either daemon.
+    source /opt/victron-ci-reserve/sandbox-docker-base.sh
+    docker_storage_driver() { private_tmpfs_storage "$data"; }
+    start_sandbox_docker 1500
+    ''')
+                self.assertNotEqual(result.returncode, 0)
+                self.assertNotIn('UNEXPECTED_', result.stderr)
+                self.assertNotIn('PRIVATE_DOCKER_TMPFS_READY', result.stderr)
 
     def test_failed_statfs_diagnostics_are_limited_and_shell_quoted(self):
         result, _ = self.gate('stat() { printf "v9fs;bad 4096 524288 262144 ignored-extra"; }')
@@ -190,6 +192,146 @@ start_sandbox_docker 1500
             self.assertIn(guard, rule)
         self.assertNotIn('c.resources.requests', rule)
         self.assertNotIn('c.resources.limits', rule)
+
+    def new_mode_setup(self, mode):
+        if mode == 'ci-heavy-tmpfs-6gi':
+            return """
+RUNNER_PRIVATE_DOCKER_STORAGE=ci-heavy-tmpfs-6gi
+RUNNER_PRIVATE_MEMORY_REQUEST=13958643712
+RUNNER_PRIVATE_MEMORY_LIMIT=17179869184
+stat() { printf 'tmpfs 4096 1572864 524288'; }
+"""
+        return """
+RUNNER_PRIVATE_DOCKER_STORAGE=automation-tmpfs-3gi
+RUNNER_PRIVATE_NAMESPACE=arc-private-automation
+RUNNER_PRIVATE_PROFILE=automation
+RUNNER_PRIVATE_MEMORY_REQUEST=5368709120
+RUNNER_PRIVATE_MEMORY_LIMIT=6442450944
+stat() { printf 'tmpfs 4096 786432 262144'; }
+"""
+
+    def test_fixed_new_modes_mount_only_their_exact_caps(self):
+        for mode, capacity, inodes in [('ci-heavy-tmpfs-6gi', 6442450944, 524288),
+                                      ('automation-tmpfs-3gi', 3221225472, 262144)]:
+            with self.subTest(mode=mode):
+                result, mounted = self.gate(self.new_mode_setup(mode))
+                self.assertEqual((result.returncode, result.stdout), (0, 'overlay2'), result.stderr)
+                self.assertIn(f'size={capacity},nr_inodes={inodes},mode=0710', mounted)
+                self.assertIn(f'bytes={capacity} inodes={inodes}', result.stderr)
+
+    def test_new_modes_reject_cross_profile_and_resource_spoofing_before_mount(self):
+        for mode in ['ci-heavy-tmpfs-6gi', 'automation-tmpfs-3gi']:
+            for mutation in ['RUNNER_PRIVATE_NAMESPACE=arc-private-release',
+                             'RUNNER_PRIVATE_NAMESPACE=runner-reserve-ci',
+                             'RUNNER_PRIVATE_PROFILE=release',
+                             'RUNNER_PRIVATE_MEMORY_REQUEST=3221225472',
+                             'RUNNER_PRIVATE_MEMORY_REQUEST=17179869184',
+                             'RUNNER_PRIVATE_MEMORY_REQUEST=05368709120',
+                             'RUNNER_PRIVATE_MEMORY_LIMIT=2147483648',
+                             'RUNNER_DOCKER_STORAGE_DRIVER=vfs',
+                             'uname() { printf 6.12; }', 'id() { printf 1001; }']:
+                with self.subTest(mode=mode, mutation=mutation):
+                    result, mounted = self.gate(self.new_mode_setup(mode) + mutation)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertEqual(result.stdout, '')
+                    self.assertIsNone(mounted)
+
+    def test_new_modes_never_accept_wrong_visible_capacity_or_inode_limit(self):
+        for mode in ['ci-heavy-tmpfs-6gi', 'automation-tmpfs-3gi']:
+            for mutation in ["stat() { printf 'tmpfs 4096 524288 262144'; }",
+                             "stat() { printf 'tmpfs 4096 1572864 999999'; }",
+                             "stat() { printf 'tmpfs 9999999999 9999999999 524288'; }",
+                             'mount() { return 1; }']:
+                with self.subTest(mode=mode, mutation=mutation):
+                    result, _ = self.gate(self.new_mode_setup(mode) + mutation)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertEqual(result.stdout, '')
+                    self.assertNotIn('PRIVATE_DOCKER_TMPFS_READY', result.stderr)
+
+    def test_new_inventory_modes_require_private_exact_profiles_and_resource_class(self):
+        invalid = [
+            {**ROW, 'ci_storage': 'tmpfs-6gi-heavy'},
+            {**ROW, 'ci_storage': 'tmpfs-6gi-heavy', 'ci_resource_class': 'heavy', 'profiles': ['automation']},
+            {**ROW, 'automation_storage': 'tmpfs-3gi', 'profiles': ['ci']},
+            {**ROW, 'automation_storage': 'tmpfs-2gi'},
+            {**ROW, 'ci_storage': 'tmpfs-3gi'},
+            {**ROW, 'ci_storage': 'tmpfs-6gi-heavy', 'ci_resource_class': 'heavy', 'visibility': 'public'},
+            {**ROW, 'automation_storage': 'tmpfs-3gi', 'visibility': 'public'},
+        ]
+        for row in invalid:
+            with self.subTest(row=row), self.assertRaises(ValueError):
+                arc.validate_inventory({'repositories': [row]})
+        for row in [{**ROW, 'ci_storage': 'tmpfs-6gi-heavy', 'ci_resource_class': 'heavy'},
+                    {**ROW, 'automation_storage': 'tmpfs-3gi'}]:
+            with self.subTest(row=row), self.assertRaises(ValueError):
+                arc.values(row, 'ci', IMAGE, IMAGE, '192.0.2.1', sandbox_runtime=arc.EXCLUSIVE_RUNTIME)
+
+    def test_explicit_modes_change_only_selected_profile_memory_and_storage(self):
+        for selected, row, expected, cpu in [
+                ('ci', {**ROW, 'ci_resource_class': 'heavy', 'ci_storage': 'tmpfs-6gi-heavy'},
+                 ('13Gi', '16Gi', 'ci-heavy-tmpfs-6gi'), ('1500m', '3')),
+                ('automation', {**ROW, 'automation_storage': 'tmpfs-3gi'},
+                 ('5Gi', '6Gi', 'automation-tmpfs-3gi'), ('50m', '1'))]:
+            baseline = {k: v for k, v in row.items() if k not in ('ci_storage', 'automation_storage')}
+            for profile in ROW['profiles']:
+                old = arc.values(baseline, profile, IMAGE, IMAGE, '192.0.2.1')
+                new = arc.values(row, profile, IMAGE, IMAGE, '192.0.2.1')
+                if profile != selected:
+                    self.assertEqual(old, new)
+                    continue
+                runner = new['template']['spec']['containers'][0]
+                self.assertEqual((runner['resources']['requests']['memory'],
+                                  runner['resources']['limits']['memory']), expected[:2])
+                self.assertEqual((runner['resources']['requests']['cpu'],
+                                  runner['resources']['limits']['cpu']), cpu)
+                self.assertIn({'name': 'RUNNER_PRIVATE_DOCKER_STORAGE', 'value': expected[2]}, runner['env'])
+                self.assertEqual(new['template']['spec']['volumes'], old['template']['spec']['volumes'])
+
+    def test_automation_quota_is_opt_in_and_excludes_heavy_plus_standard(self):
+        def quotas(row):
+            return {r['metadata']['namespace']: r['spec']['hard']
+                    for r in arc.foundations([row], IMAGE, '192.0.2.1')['items']
+                    if r['kind'] == 'ResourceQuota'}
+        base = quotas(ROW)
+        self.assertEqual(base, quotas({**ROW, 'automation_storage': 'disk'}))
+        self.assertEqual(base, quotas({**ROW, 'ci_resource_class': 'heavy', 'ci_storage': 'tmpfs-6gi-heavy'}))
+        changed = quotas({**ROW, 'automation_storage': 'tmpfs-3gi'})
+        expected = {k: dict(v) for k, v in base.items()}
+        expected['arc-private-automation']['requests.memory'] = '6Gi'
+        self.assertEqual(changed, expected)
+        def mib(value):
+            return int(value[:-2]) * (1024 if value.endswith('Gi') else 1)
+        overhead = yaml.safe_load((ROOT / 'deploy/runner-reserve/runtime-class.yaml').read_text())['overhead']['podFixed']
+        def memory(row, kind):
+            pod = arc.values(row, 'automation', IMAGE, IMAGE, '192.0.2.1')['template']['spec']
+            return mib(pod['containers'][0]['resources'][kind]['memory']) + mib(overhead['memory'])
+        heavy = {**ROW, 'automation_storage': 'tmpfs-3gi'}
+        quota = changed['arc-private-automation']
+        self.assertEqual(quota['limits.memory'], '9Gi')
+        for kind in ('requests', 'limits'):
+            budget = mib(quota[kind + '.memory'])
+            self.assertLessEqual(memory(heavy, kind), budget)
+            self.assertGreater(memory(heavy, kind) + memory(ROW, kind), budget)
+            self.assertLessEqual(2 * memory(ROW, kind), budget)
+            self.assertGreater(2 * memory(heavy, kind), budget)
+
+    def test_admission_contains_only_named_exact_new_tuples(self):
+        expression = arc.private_tmpfs_validation()
+        for mode, profile, request, limit, cpu_request, cpu_limit in [
+                ('ci-heavy-tmpfs-6gi', 'ci', '13Gi', '16Gi', '1500m', '3'),
+                ('automation-tmpfs-3gi', 'automation', '5Gi', '6Gi', '50m', '1')]:
+            branch = next(part for part in expression.split(' || ') if f"e.value == '{mode}'" in part)
+            for value in [f"object.metadata.namespace == 'arc-private-{profile}'",
+                          f"object.metadata.labels['private-runners.github.io/profile'] == '{profile}'",
+                          f"dyn(c.resources).requests['memory'] == '{request}'",
+                          f"dyn(c.resources).limits['memory'] == '{limit}'",
+                          f"dyn(c.resources).requests['cpu'] == '{cpu_request}'",
+                          f"dyn(c.resources).limits['cpu'] == '{cpu_limit}'"]:
+                self.assertIn(value, branch)
+        self.assertIn("size(c.env.filter(e, e.name == 'RUNNER_PRIVATE_DOCKER_STORAGE')) <= 1", expression)
+        self.assertIn("object.spec.runtimeClassName == 'victron-reserve'", expression)
+        self.assertIn('!has(e.valueFrom)', expression)
+
 
     def test_only_private_image_installs_wrapper_and_default_remains_disk(self):
         self.assertNotIn('arc-private/sandbox-docker.sh', (ROOT / 'deploy/runner-reserve/Dockerfile').read_text())

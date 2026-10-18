@@ -174,6 +174,33 @@ the non-root user. Public reserve and private sandbox pods both use this setting
 guest root remains inside gVisor and the host/network admission boundaries stay
 in force. Native private LAN/ARM profiles retain their separate runtime policy.
 
+The `release-20261012.0` package pins and versioned `binary_name` are a canary
+candidate; runtime qualification and promotion remain pending. This release
+includes the fix for the spinning-queue overlap reported in
+[gVisor issue 15572](https://github.com/google/gvisor/issues/15572).
+That report is a diagnostic lead, not a confirmed explanation for the local
+PostgreSQL qualification timeout. The failed qualification remains recorded.
+
+The `gvisor` fields in `versions.json` pin the published `.tar.bz2` packages;
+they do not describe the installed containerd shim. This canary retains the
+existing `release-20260928.0` shim and records its resolved path, version and
+SHA256 separately; the reviewed x64 shim has SHA256
+`2f78211c0726d5dc80601b3eff39a071839a19eeb2f3e43c013e13edebb44713`.
+It selects only the new runsc frontend and its matching
+`gvisor-bin` sidecars from `/opt/victron-ci-reserve/gvisor-20261012/`.
+Preserve the complete extracted bundle and the old version directory; do not
+replace a runsc symlink beside old sidecars or repoint an existing version path.
+The archive's new shim is not selected through PATH or the runtime resolver.
+See the [upstream installation contract](https://gvisor.dev/docs/user_guide/install/).
+
+After successful qualification, promotion changes only the reviewed
+`binary_name` in the existing `runsc.toml`, atomically, without a host-service
+restart or a handler/template change. It affects newly created public and
+private sandboxes using this shared handler. Verify that affected workers are
+absent before switching, retain the original file for rollback, and verify the
+actual frontend, Sentry and retained shim together. Package checksums alone do
+not qualify this combination or prove that private application CI passes.
+
 `node_guard.py` is a node service, not code supplied to a job. Install the pinned
 CRI client at `/opt/victron-ci-reserve/crictl`; `versions.json` records its checksum.
 Its root-owned configuration supplies `node_ip`, `dns_ip` and `extra_denied`

@@ -65,15 +65,30 @@ def validate_profiles(row):
     if {'lan', 'release'} <= set(profiles):
         raise ValueError('Choose one release route: sandbox release or LAN')
     validate_ci_storage(row)
+    validate_automation_storage(row)
 
 
 def validate_ci_storage(row):
     storage = row.get('ci_storage', 'disk')
-    if storage not in ('disk', 'tmpfs-2gi'):
+    if storage not in ('disk', 'tmpfs-2gi', 'tmpfs-6gi-heavy'):
         raise ValueError('Unknown private CI storage mode')
     if storage == 'tmpfs-2gi' and (
             'ci' not in row['profiles'] or row.get('ci_resource_class', 'standard') != 'standard'):
-        raise ValueError('The tmpfs candidate supports only standard CI')
+        raise ValueError('The 2Gi tmpfs candidate supports only standard CI')
+    if storage == 'tmpfs-6gi-heavy' and (
+            row.get('visibility') != 'private' or 'ci' not in row['profiles']
+            or row.get('ci_resource_class') != 'heavy'):
+        raise ValueError('The 6Gi tmpfs candidate requires explicitly private heavy CI')
+    return storage
+
+
+def validate_automation_storage(row):
+    storage = row.get('automation_storage', 'disk')
+    if storage not in ('disk', 'tmpfs-3gi'):
+        raise ValueError('Unknown private automation storage mode')
+    if storage == 'tmpfs-3gi' and (
+            row.get('visibility') != 'private' or 'automation' not in row['profiles']):
+        raise ValueError('The 3Gi tmpfs candidate requires explicitly private automation')
     return storage
 
 
@@ -104,7 +119,8 @@ def validate_inventory(inventory):
 def values(row, profile, sandbox_image, native_image, node_ip, arm_node='h7', listener_node='mp',
            sandbox_runtime=SHARED_RUNTIME):
     storage = validate_ci_storage(row)
-    if storage == 'tmpfs-2gi' and sandbox_runtime != SHARED_RUNTIME:
+    automation_storage = validate_automation_storage(row)
+    if (storage != 'disk' or automation_storage != 'disk') and sandbox_runtime != SHARED_RUNTIME:
         raise ValueError('The tmpfs candidate requires the unchanged shared runtime')
     if sandbox_runtime not in SANDBOX_RUNTIMES:
         raise ValueError('Unknown private sandbox runtime')
@@ -147,11 +163,20 @@ def values(row, profile, sandbox_image, native_image, node_ip, arm_node='h7', li
         spec['volumes'] = [{'name': 'docker-data', 'emptyDir': {'sizeLimit': DOCKER_SCRATCH_SIZE}}]
         spec['containers'][0]['volumeMounts'] = [{'name': 'docker-data', 'mountPath': DOCKER_DATA}]
         spec['containers'][0]['env'].append({'name': 'RUNNER_DOCKER_STORAGE_DRIVER', 'value': 'overlay2'})
+        mode = None
+        runner = spec['containers'][0]
         if profile == 'ci' and storage == 'tmpfs-2gi':
-            runner = spec['containers'][0]
+            mode = 'ci-tmpfs-2gi'
             runner['resources']['requests']['memory'] = '3Gi'
+        elif profile == 'ci' and storage == 'tmpfs-6gi-heavy':
+            mode = 'ci-heavy-tmpfs-6gi'
+        elif profile == 'automation' and automation_storage == 'tmpfs-3gi':
+            mode = 'automation-tmpfs-3gi'
+            runner['resources']['requests']['memory'] = '5Gi'
+            runner['resources']['limits']['memory'] = '6Gi'
+        if mode:
             runner['env'] += [
-                {'name': 'RUNNER_PRIVATE_DOCKER_STORAGE', 'value': 'ci-tmpfs-2gi'},
+                {'name': 'RUNNER_PRIVATE_DOCKER_STORAGE', 'value': mode},
                 {'name': 'RUNNER_PRIVATE_NAMESPACE', 'valueFrom': {'fieldRef': {'fieldPath': 'metadata.namespace'}}},
                 {'name': 'RUNNER_PRIVATE_PROFILE', 'valueFrom': {'fieldRef': {
                     'fieldPath': "metadata.labels['private-runners.github.io/profile']"}}},
@@ -201,17 +226,18 @@ def values(row, profile, sandbox_image, native_image, node_ip, arm_node='h7', li
     return result
 
 
-def sandbox_quota(profile):
+def sandbox_quota(profile, automation_tmpfs=False):
     # ARC keeps listeners in its controller namespace. This bounds aggregate
     # worker demand, including RuntimeClass overhead, across all repositories.
     budget = {'ci': ('8200m', '17Gi'), 'automation': ('2200m', '9Gi'), 'release': ('2200m', '5Gi')}[profile]
     return {'pods': '2', 'requests.cpu': '2000m' if profile == 'ci' else '1000m',
-            'requests.memory': '14Gi' if profile == 'ci' else '3Gi',
+            'requests.memory': ('14Gi' if profile == 'ci' else
+                                '6Gi' if profile == 'automation' and automation_tmpfs else '3Gi'),
             'limits.cpu': budget[0], 'limits.memory': budget[1],
             'requests.ephemeral-storage': '3Gi', 'limits.ephemeral-storage': '40Gi'}
 
 
-def private_sandbox_foundation(source, sandbox_runtime=SHARED_RUNTIME):
+def private_sandbox_foundation(source, sandbox_runtime=SHARED_RUNTIME, automation_tmpfs=False):
     item = copy.deepcopy(source)
     meta = item['metadata']
     if item['kind'] == 'ValidatingAdmissionPolicy':
@@ -241,7 +267,7 @@ def private_sandbox_foundation(source, sandbox_runtime=SHARED_RUNTIME):
     else:
         meta['namespace'] = meta['namespace'].replace('runner-reserve-', 'arc-private-')
         if item['kind'] == 'ResourceQuota':
-            item['spec']['hard'] = sandbox_quota(meta['namespace'].removeprefix('arc-private-'))
+            item['spec']['hard'] = sandbox_quota(meta['namespace'].removeprefix('arc-private-'), automation_tmpfs)
     return item
 
 
@@ -271,6 +297,44 @@ def exclusive_runtime_resources(private_policy):
     return [runtime, guard, binding]
 
 
+def private_tmpfs_validation():
+    """Exact opt-in tuples; dynamic Quantity access also supports Kubernetes 1.31."""
+    def memory(request, limit):
+        return (f"dyn(c.resources).requests['memory'] == '{request}' && "
+                f"dyn(c.resources).limits['memory'] == '{limit}'")
+
+    def cpu(request, limit):
+        return ("'cpu' in dyn(c.resources).requests && 'cpu' in dyn(c.resources).limits && "
+                "type(dyn(c.resources).requests['cpu']) == string && "
+                "type(dyn(c.resources).limits['cpu']) == string && "
+                f"dyn(c.resources).requests['cpu'] == '{request}' && "
+                f"dyn(c.resources).limits['cpu'] == '{limit}'")
+
+    def context(mode, profile):
+        return (f"e.value == '{mode}' && object.metadata.namespace == 'arc-private-{profile}' && "
+                f"object.metadata.labels['private-runners.github.io/profile'] == '{profile}'")
+
+    cases = [
+        context('ci-tmpfs-2gi', 'ci') + ' && ' + memory('3Gi', '6Gi'),
+        context('ci-heavy-tmpfs-6gi', 'ci') + ' && ' + memory('13Gi', '16Gi')
+        + ' && ' + cpu('1500m', '3'),
+        context('automation-tmpfs-3gi', 'automation') + ' && ' + memory('5Gi', '6Gi')
+        + ' && ' + cpu('50m', '1'),
+    ]
+    return (
+        "object.spec.containers.all(c, !has(c.env) || ("
+        "size(c.env.filter(e, e.name == 'RUNNER_PRIVATE_DOCKER_STORAGE')) <= 1 && "
+        "c.env.all(e, e.name != 'RUNNER_PRIVATE_DOCKER_STORAGE' || ("
+        "has(e.value) && !has(e.valueFrom) && object.spec.runtimeClassName == 'victron-reserve' && "
+        "has(object.metadata.labels) && 'private-runners.github.io/profile' in object.metadata.labels && "
+        "has(c.resources) && has(dyn(c.resources).requests) && has(dyn(c.resources).limits) && "
+        "type(dyn(c.resources).requests) == map && type(dyn(c.resources).limits) == map && "
+        "'memory' in dyn(c.resources).requests && 'memory' in dyn(c.resources).limits && "
+        "type(dyn(c.resources).requests['memory']) == string && "
+        "type(dyn(c.resources).limits['memory']) == string && ("
+        + ' || '.join('(' + case + ')' for case in cases) + ')))))')
+
+
 def private_scratch_validations(validations):
     """Permit only one disposable disk mount, preserving the public no-volume rule."""
     for rule in validations:
@@ -285,8 +349,8 @@ def private_scratch_validations(validations):
     # Kubernetes 1.31 omits Quantity maps from its advisory CEL schema.
     # Dynamic access retains explicit presence, map, string and exact-value guards.
     validations.extend([
-        {'expression': "object.spec.containers.all(c, !has(c.env) || (size(c.env.filter(e, e.name == 'RUNNER_PRIVATE_DOCKER_STORAGE')) <= 1 && c.env.all(e, e.name != 'RUNNER_PRIVATE_DOCKER_STORAGE' || (has(e.value) && e.value == 'ci-tmpfs-2gi' && !has(e.valueFrom) && object.metadata.namespace == 'arc-private-ci' && object.spec.runtimeClassName == 'victron-reserve' && has(object.metadata.labels) && object.metadata.labels['private-runners.github.io/profile'] == 'ci' && has(c.resources) && has(dyn(c.resources).requests) && has(dyn(c.resources).limits) && type(dyn(c.resources).requests) == map && type(dyn(c.resources).limits) == map && 'memory' in dyn(c.resources).requests && 'memory' in dyn(c.resources).limits && type(dyn(c.resources).requests['memory']) == string && type(dyn(c.resources).limits['memory']) == string && dyn(c.resources).requests['memory'] == '3Gi' && dyn(c.resources).limits['memory'] == '6Gi'))))",
-         'message': 'The tmpfs candidate is limited to standard private CI with reserved memory'},
+        {'expression': private_tmpfs_validation(),
+         'message': 'The tmpfs candidate requires its exact private profile and resource tuple'},
         {'expression': "object.spec.containers.all(c, has(c.volumeMounts) && size(c.volumeMounts) == 1 && c.volumeMounts.all(m, m.name == 'docker-data' && m.mountPath == '/var/lib/docker' && !has(m.subPath) && !has(m.subPathExpr) && !has(m.mountPropagation) && (!has(m.readOnly) || !m.readOnly)))",
          'message': 'Docker scratch cannot be redirected, shared or mounted elsewhere'},
         {'expression': "object.spec.containers.all(c, has(c.env) && size(c.env.filter(e, e.name == 'RUNNER_DOCKER_STORAGE_DRIVER')) == 1 && c.env.exists(e, e.name == 'RUNNER_DOCKER_STORAGE_DRIVER' && has(e.value) && e.value == 'overlay2' && !has(e.valueFrom)))",
@@ -330,7 +394,9 @@ def foundations(rows, sandbox_image, node_ip, sandbox_runtime=SHARED_RUNTIME):
         raise ValueError('Unknown private sandbox runtime')
     # Separate policy/image identity preserves the public reserve boundary.
     rendered = RESERVE.foundations(['ci', 'automation', 'release'], sandbox_image, node_ip)
-    resources = [private_sandbox_foundation(item, sandbox_runtime) for item in rendered['items']]
+    automation_tmpfs = any(validate_automation_storage(row) == 'tmpfs-3gi' for row in rows)
+    resources = [private_sandbox_foundation(item, sandbox_runtime, automation_tmpfs)
+                 for item in rendered['items']]
     if sandbox_runtime == EXCLUSIVE_RUNTIME:
         private_policy = next(item for item in resources if item['kind'] == 'ValidatingAdmissionPolicy')
         resources.extend(exclusive_runtime_resources(private_policy))

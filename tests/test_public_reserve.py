@@ -17,7 +17,7 @@ WORKER = {'ip': '10.42.3.250', 'interface': 'vethabc123', 'uid': 'pod-1', 'mac':
 class NetworkAdmissionTests(unittest.TestCase):
     def test_guest_sudo_keeps_the_sandbox_runtime_boundary(self):
         config = tomllib.loads((ROOT / 'deploy/runner-reserve/runsc.toml').read_text())
-        self.assertEqual(config['binary_name'], '/opt/victron-ci-reserve/gvisor-20260928/runsc')
+        self.assertEqual(config['binary_name'], '/opt/victron-ci-reserve/gvisor-20261012/runsc')
         self.assertEqual(config['runsc_config'], {
             'platform': 'systrap', 'net-raw': 'true',
             'allow-packet-socket-write': 'true', 'allow-suid': 'true',
