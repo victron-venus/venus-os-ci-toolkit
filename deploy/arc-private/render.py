@@ -10,6 +10,7 @@ import ipaddress
 import json
 from pathlib import Path
 import re
+from typing import NamedTuple
 
 ROOT = Path(__file__).resolve().parent
 SPEC = importlib.util.spec_from_file_location('reserve_pool', ROOT.parent / 'runner-reserve/render_pool.py')
@@ -25,6 +26,9 @@ HOSTNAME_LABEL = 'kubernetes.io/hostname'
 SHARED_RUNTIME = 'victron-reserve'
 EXCLUSIVE_RUNTIME = 'victron-private-exclusive'
 SANDBOX_RUNTIMES = (SHARED_RUNTIME, EXCLUSIVE_RUNTIME)
+NUC_RUNTIME = 'victron-private-nuc-kvm'
+SCOPE_LABEL = 'private-runners.github.io/scope'
+PROFILE_LABEL = 'private-runners.github.io/profile'
 DOCKER_DATA = '/var/lib/docker'
 DOCKER_SCRATCH_SIZE = '16Gi'
 # Embed the checked startup code; native workers have no ConfigMap dependency.
@@ -48,6 +52,34 @@ fi
 umask 022
 exec ./run.sh
 '''
+
+
+class NucKvmConfig(NamedTuple):
+    """One explicitly selected private CI scope; placement/resources are fixed."""
+    scope: str
+    image: str
+    node_ip: str
+
+
+def validate_nuc_kvm(rows, config, sandbox_runtime, node_ip):
+    if config is None:
+        return
+    if not isinstance(config, NucKvmConfig) or not all(isinstance(x, str) for x in config):
+        raise ValueError('NUC KVM requires a typed scope, image and node address')
+    if not SCOPE.fullmatch(config.scope) or not PINNED.fullmatch(config.image):
+        raise ValueError('NUC KVM requires an exact repository and digest-pinned image')
+    address = ipaddress.IPv4Address(config.node_ip)
+    if address.is_unspecified or address.is_loopback or address.is_multicast or address.is_link_local:
+        raise ValueError('NUC guard requires a unicast node address')
+    if str(address) == node_ip or sandbox_runtime != SHARED_RUNTIME:
+        raise ValueError('NUC must be separate from the existing shared node/runtime')
+    selected = [row for row in rows if row['name'] == config.scope]
+    if len(selected) != 1 or selected[0].get('visibility') != 'private':
+        raise ValueError('NUC KVM scope must exist exactly once as private inventory')
+    row = selected[0]
+    if ('ci' not in row['profiles'] or row.get('ci_resource_class', 'standard') != 'standard'
+            or validate_ci_storage(row) != 'tmpfs-2gi'):
+        raise ValueError('NUC KVM supports only explicit standard CI tmpfs-2gi')
 
 
 def name(scope, profile):
@@ -411,12 +443,191 @@ def foundations(rows, sandbox_image, node_ip, sandbox_runtime=SHARED_RUNTIME):
     return {'apiVersion': 'v1', 'kind': 'List', 'items': resources}
 
 
+def nuc_kvm_value(value, config):
+    """Change only the selected CI worker; keep route, listener and bootstrap."""
+    spec = value['template']['spec']
+    spec['runtimeClassName'] = NUC_RUNTIME
+    spec['nodeSelector'] = {HOSTNAME_LABEL: 'nuc', 'kubernetes.io/arch': 'amd64'}
+    runner = spec['containers'][0]
+    runner['image'] = config.image
+    runner['resources']['requests']['cpu'] = '1250m'
+    runner['resources']['limits']['cpu'] = '2'
+    for env in runner['env']:
+        if env['name'] == 'RUNNER_RESERVE_NODE_IP':
+            env['value'] = config.node_ip
+
+
+def nuc_environment_validation(expected):
+    """Bind bootstrap inputs, ARC 0.15 metadata and the separately checked JIT ref."""
+    clauses = []
+    for env in expected:
+        key = json.dumps(env['name'])
+        if 'value' in env:
+            check = 'has(e.value) && !has(e.valueFrom) && e.value == ' + json.dumps(env['value'])
+        elif 'fieldRef' in env['valueFrom']:
+            field = json.dumps(env['valueFrom']['fieldRef']['fieldPath'])
+            check = ("!has(e.value) && has(e.valueFrom) && has(e.valueFrom.fieldRef) && "
+                     f"e.valueFrom.fieldRef.fieldPath == {field} && "
+                     "(!has(e.valueFrom.fieldRef.apiVersion) || e.valueFrom.fieldRef.apiVersion == 'v1')")
+        else:
+            resource = json.dumps(env['valueFrom']['resourceFieldRef']['resource'])
+            check = ("!has(e.value) && has(e.valueFrom) && has(e.valueFrom.resourceFieldRef) && "
+                     "e.valueFrom.resourceFieldRef.containerName == 'runner' && "
+                     f"e.valueFrom.resourceFieldRef.resource == {resource} && "
+                     "has(dyn(e.valueFrom.resourceFieldRef).divisor) && "
+                     "dyn(e.valueFrom.resourceFieldRef).divisor == '1'")
+        clauses.append(f"size(c.env.filter(e, e.name == {key})) == 1 && "
+                       f"c.env.all(e, e.name != {key} || ({check}))")
+    # ARC 0.15.0 resourcebuilder.go appends these literal metadata fields with
+    # the JIT reference. They are optional for authored Pod dry-runs, but cannot
+    # be duplicated, redirected through valueFrom or repurposed by a caller.
+    metadata = {
+        'GITHUB_ACTIONS_RUNNER_EXTRA_USER_AGENT': 'actions-runner-controller/0.15.0',
+        'ACTIONS_RUNNER_RETURN_VERSION_DEPRECATED_EXIT_CODE': '1',
+    }
+    for name, value in metadata.items():
+        key = json.dumps(name)
+        clauses.append(f"size(c.env.filter(e, e.name == {key})) <= 1 && "
+                       f"c.env.all(e, e.name != {key} || "
+                       f"(has(e.value) && !has(e.valueFrom) && e.value == {json.dumps(value)}))")
+    names = [e['name'] for e in expected] + ['ACTIONS_RUNNER_INPUT_JITCONFIG'] + list(metadata)
+    return ('object.spec.containers.all(c, has(c.env) && c.env.all(e, e.name in '
+            + json.dumps(names) + ') && ' + ' && '.join('(' + x + ')' for x in clauses) + ')')
+
+
+def nuc_kvm_foundations(document, config, value):
+    """Delegate only this runtime to a global exact contract, never a name exception."""
+    items = document['items']
+    private = next(x for x in items if x['kind'] == 'ValidatingAdmissionPolicy'
+                   and x['metadata']['name'] == PRIVATE_ADMISSION)
+    guard = copy.deepcopy(private)
+    guard['metadata']['name'] = NUC_RUNTIME + '-workers'
+    guard['spec']['matchConstraints'].pop('namespaceSelector')
+    runtime_match = "has(object.spec.runtimeClassName) && object.spec.runtimeClassName == " + json.dumps(NUC_RUNTIME)
+    old_runtime_match = ("oldObject != null && has(oldObject.spec.runtimeClassName) && "
+                         "oldObject.spec.runtimeClassName == " + json.dumps(NUC_RUNTIME))
+    runtime_in_request = '(' + runtime_match + ') || (' + old_runtime_match + ')'
+    selected_scope = json.dumps(name(config.scope, 'scope'))
+    scope_matches = []
+    for obj in ('object', 'oldObject'):
+        scope_matches.append(
+            f'({obj} != null && has({obj}.metadata.labels) && '
+            f'{json.dumps(SCOPE_LABEL)} in {obj}.metadata.labels && '
+            f'{obj}.metadata.labels[{json.dumps(SCOPE_LABEL)}] == {selected_scope})')
+    selected_in_request = "request.namespace == 'arc-private-ci' && (" + ' || '.join(scope_matches) + ')'
+    guard['spec']['matchConditions'] = [{
+        'name': 'nuc-runtime-or-selected-scope',
+        'expression': '(' + runtime_in_request + ') || (' + selected_in_request + ')'}]
+    # PodStatusStrategy resets spec/ownerReferences, but leaves labels mutable.
+    # Run the complete contract on status writes, not only ordinary Pod updates.
+    guard['spec']['matchConstraints']['resourceRules'].append({
+        'apiGroups': [''], 'apiVersions': ['v1'], 'operations': ['UPDATE'], 'resources': ['pods/status']})
+    # Existing mp workers retain every original rule. The new global guard also
+    # protects namespaces that do not carry the private admission label.
+    private['spec']['matchConditions'] = [{'name': 'not-nuc-runtime',
+                                          'expression': '!(' + runtime_in_request + ')'}]
+    private['spec']['validations'].append({
+        'expression': "!has(object.metadata.labels) || !('" + SCOPE_LABEL
+                      + "' in object.metadata.labels) || object.metadata.labels['" + SCOPE_LABEL
+                      + "'] != " + selected_scope + " || request.namespace != 'arc-private-ci'",
+        'message': 'The selected NUC CI scope cannot fall back to an mp worker'})
+    runner = value['template']['spec']['containers'][0]
+    for rule in guard['spec']['validations']:
+        if rule['message'] == 'gVisor is mandatory':
+            rule['expression'] = runtime_match
+        elif rule['message'] == 'Only the reviewed pinned worker image is allowed':
+            rule['expression'] = ("size(object.spec.containers) == 1 && object.spec.containers[0].name == 'runner' && "
+                                  "object.spec.containers[0].image == " + json.dumps(config.image))
+        elif rule['message'] == 'The tmpfs candidate requires its exact private profile and resource tuple':
+            # Dynamic Quantity maps retain the Kubernetes 1.31 advisory workaround.
+            rule['expression'] = ("object.spec.containers.all(c, has(c.resources) && "
+                                  "has(dyn(c.resources).requests) && has(dyn(c.resources).limits) && "
+                                  "dyn(c.resources).requests == " + json.dumps(runner['resources']['requests'])
+                                  + " && dyn(c.resources).limits == " + json.dumps(runner['resources']['limits']) + ")")
+            rule['message'] = 'NUC workers require the exact bounded CI resource tuple'
+    guard['spec']['validations'].extend([
+        {'expression': "request.operation != 'UPDATE' || (oldObject != null && "
+                       "has(oldObject.metadata.labels) && has(object.metadata.labels) && "
+                       + ' && '.join(
+                           f'{json.dumps(key)} in oldObject.metadata.labels && '
+                           f'{json.dumps(key)} in object.metadata.labels && '
+                           f'object.metadata.labels[{json.dumps(key)}] == oldObject.metadata.labels[{json.dumps(key)}]'
+                           for key in (SCOPE_LABEL, PROFILE_LABEL, 'runner-reserve.github.io/role'))
+                       + " && (!has(oldObject.spec.nodeName) || oldObject.spec.nodeName == '' || "
+                       "(has(object.spec.nodeName) && object.spec.nodeName == oldObject.spec.nodeName)))",
+         'message': 'NUC updates preserve scope, profile, worker identity and the bound node'},
+        {'expression': "request.namespace == 'arc-private-ci' && object.metadata.namespace == 'arc-private-ci' && "
+                       "has(object.metadata.labels) && object.metadata.labels['" + SCOPE_LABEL + "'] == "
+                       + selected_scope + " && object.metadata.labels['" + PROFILE_LABEL + "'] == 'ci'",
+         'message': 'NUC KVM is restricted to the one selected private CI scope'},
+        {'expression': "has(object.spec.nodeSelector) && object.spec.nodeSelector == "
+                       + json.dumps(value['template']['spec']['nodeSelector'])
+                       + " && (!has(object.spec.nodeName) || object.spec.nodeName == 'nuc') && "
+                       "(!has(object.spec.schedulerName) || object.spec.schedulerName == 'default-scheduler')",
+         'message': 'NUC KVM cannot select another node or scheduler'},
+        {'expression': "has(object.spec.restartPolicy) && object.spec.restartPolicy == 'Never' && "
+                       "has(object.spec.activeDeadlineSeconds) && object.spec.activeDeadlineSeconds == 14400 && "
+                       "has(object.spec.terminationGracePeriodSeconds) && object.spec.terminationGracePeriodSeconds == 30 && "
+                       "has(object.spec.enableServiceLinks) && !object.spec.enableServiceLinks",
+         'message': 'NUC workers keep the bounded single-job lifecycle'},
+        {'expression': "has(dyn(object.spec).overhead) && dyn(object.spec).overhead == {'cpu': '100m', 'memory': '128Mi'}",
+         'message': 'NUC worker overhead must match its RuntimeClass'},
+        {'expression': "object.spec.containers.all(c, c.imagePullPolicy == 'Never' && "
+                       "has(c.securityContext.runAsUser) && c.securityContext.runAsUser == 0 && "
+                       "has(c.securityContext.capabilities) && c.securityContext.capabilities.add == ['ALL'] && "
+                       "(!has(c.securityContext.capabilities.drop) || size(c.securityContext.capabilities.drop) == 0) && "
+                       "(!has(c.terminationMessagePath) || c.terminationMessagePath == '/dev/termination-log') && "
+                       "(!has(c.terminationMessagePolicy) || c.terminationMessagePolicy == 'File'))",
+         'message': 'NUC workers keep the pinned-image and sandbox bootstrap contract'},
+        {'expression': nuc_environment_validation(runner['env']),
+         'message': 'NUC guard, storage and downward API inputs cannot be overridden'},
+    ])
+    runtime = {
+        'apiVersion': 'node.k8s.io/v1', 'kind': 'RuntimeClass',
+        'metadata': {'name': NUC_RUNTIME}, 'handler': NUC_RUNTIME,
+        'overhead': {'podFixed': {'cpu': '100m', 'memory': '128Mi'}},
+        'scheduling': {'nodeSelector': {HOSTNAME_LABEL: 'nuc', 'kubernetes.io/arch': 'amd64'}}}
+    aliases = {
+        'apiVersion': 'admissionregistration.k8s.io/v1', 'kind': 'ValidatingAdmissionPolicy',
+        'metadata': {'name': NUC_RUNTIME + '-class'}, 'spec': {
+            'failurePolicy': 'Fail', 'matchConstraints': {'resourceRules': [{
+                'apiGroups': ['node.k8s.io'], 'apiVersions': ['v1'],
+                'operations': ['CREATE', 'UPDATE'], 'resources': ['runtimeclasses']}]},
+            'matchConditions': [{'name': 'nuc-class-or-handler',
+                                 'expression': f'object.metadata.name == {json.dumps(NUC_RUNTIME)} || object.handler == {json.dumps(NUC_RUNTIME)}'}],
+            'validations': [{'expression': f'object.metadata.name == {json.dumps(NUC_RUNTIME)} && object.handler == {json.dumps(NUC_RUNTIME)} && '
+                             'has(object.overhead) && has(dyn(object.overhead).podFixed) && dyn(object.overhead).podFixed == '
+                             + json.dumps(runtime['overhead']['podFixed']) + ' && has(object.scheduling) && '
+                             'object.scheduling.nodeSelector == ' + json.dumps(runtime['scheduling']['nodeSelector'])
+                             + ' && (!has(object.scheduling.tolerations) || size(object.scheduling.tolerations) == 0)',
+                             'message': 'The NUC handler has one fixed class, node and overhead; aliases are forbidden'}]}}
+    # NetworkPolicies are additive. Remove the selected CI scope from the old
+    # policy so it cannot inherit the mp guard exception alongside the NUC one.
+    network = next(x for x in items if x['kind'] == 'NetworkPolicy'
+                   and x['metadata']['namespace'] == 'arc-private-ci')
+    nuc_network = copy.deepcopy(network)
+    network['spec']['podSelector'] = {'matchExpressions': [
+        {'key': SCOPE_LABEL, 'operator': 'NotIn', 'values': [name(config.scope, 'scope')]}]}
+    nuc_network['metadata']['name'] = NUC_RUNTIME + '-isolation'
+    nuc_network['spec']['podSelector'] = {'matchLabels': {SCOPE_LABEL: name(config.scope, 'scope')}}
+    for rule in nuc_network['spec']['egress']:
+        if rule['ports'][0]['port'] == 19999:
+            rule['to'] = [{'ipBlock': {'cidr': config.node_ip + '/32'}}]
+    for policy in (guard, aliases):
+        items += [policy, {
+            'apiVersion': 'admissionregistration.k8s.io/v1', 'kind': 'ValidatingAdmissionPolicyBinding',
+            'metadata': {'name': policy['metadata']['name']}, 'spec': {
+                'policyName': policy['metadata']['name'], 'validationActions': ['Deny']}}]
+    items += [runtime, nuc_network]
+
+
 def render(inventory, sandbox_image, native_image, node_ip, listener_node='mp',
-           sandbox_runtime=SHARED_RUNTIME):
+           sandbox_runtime=SHARED_RUNTIME, nuc_kvm: NucKvmConfig | None = None):
     rows = validate_inventory(inventory)
     ipaddress.IPv4Address(node_ip)
     if not isinstance(listener_node, str) or not re.fullmatch(r'[a-z0-9](?:[-a-z0-9.]{0,61}[a-z0-9])?', listener_node):
         raise ValueError('Listener node must be a valid hostname label')
+    validate_nuc_kvm(rows, nuc_kvm, sandbox_runtime, node_ip)
     output = {'foundations.json': foundations(rows, sandbox_image, node_ip, sandbox_runtime)}
     index, routing = [], {}
     for row in rows:
@@ -426,6 +637,8 @@ def render(inventory, sandbox_image, native_image, node_ip, listener_node='mp',
             release = name(scope, profile)
             output[release + '.json'] = values(row, profile, sandbox_image, native_image, node_ip,
                                                listener_node=listener_node, sandbox_runtime=sandbox_runtime)
+            if nuc_kvm is not None and scope == nuc_kvm.scope and profile == 'ci':
+                nuc_kvm_value(output[release + '.json'], nuc_kvm)
             index.append({'repository': scope, 'profile': profile, 'namespace': 'arc-private-' + profile,
                           'release': release, 'values': release + '.json'})
             variable = {'ci': 'CI_RUNNER_LABELS', 'automation': 'CI_RUNNER_AUTOMATION_LABELS',
@@ -434,6 +647,9 @@ def render(inventory, sandbox_image, native_image, node_ip, listener_node='mp',
             variables[variable] = json.dumps([release])
         routing[scope] = variables
     output.update({'index.json': index, 'repository-variables.json': routing})
+    if nuc_kvm is not None:
+        nuc_kvm_foundations(output['foundations.json'], nuc_kvm,
+                            output[name(nuc_kvm.scope, 'ci') + '.json'])
     return output
 
 
@@ -447,9 +663,16 @@ def main():
     parser.add_argument('--sandbox-runtime', choices=SANDBOX_RUNTIMES, default=SHARED_RUNTIME,
                         help='Exclusive is an unqualified contingency requiring separate private handler maintenance')
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--nuc-kvm-scope', help='Opt in exactly one existing private standard CI scope')
+    parser.add_argument('--nuc-kvm-image', help='Qualified NUC image including its guard CA, pinned by digest')
+    parser.add_argument('--nuc-kvm-node-ip', help='NUC address covered by its guard TLS certificate')
     args = parser.parse_args()
+    nuc_args = (args.nuc_kvm_scope, args.nuc_kvm_image, args.nuc_kvm_node_ip)
+    if any(x is not None for x in nuc_args) and not all(x is not None for x in nuc_args):
+        parser.error('All three --nuc-kvm-* arguments are required together')
+    nuc_kvm = NucKvmConfig(*nuc_args) if all(x is not None for x in nuc_args) else None
     documents = render(json.loads(args.inventory.read_text()), args.sandbox_image, args.native_image,
-                       args.node_ip, args.listener_node, args.sandbox_runtime)
+                       args.node_ip, args.listener_node, args.sandbox_runtime, nuc_kvm)
     args.output.mkdir(parents=True, exist_ok=False, mode=0o700)
     for filename, document in documents.items():
         target = args.output / filename
