@@ -186,6 +186,20 @@ the exact body `OK`, bypassing HTTP proxies. It avoids the CLI plugin discovery
 performed by `docker info`; the separate qualification still builds and runs a
 container and tests a PostgreSQL published port.
 
+The dedicated `victron-reserve` runtime enables `allow-suid` so the non-root
+runner can use guest `sudo`, including Playwright's Linux dependency installer.
+The pinned [gVisor release defaults this flag to false](https://github.com/google/gvisor/blob/release-20260928.0/runsc/config/flags.go#L126),
+which makes a correctly installed setuid `sudo` fail even without `nosuid` or
+`NoNewPrivs`. This setting applies to future public reserve and private sandbox
+pods using that runtime; native LAN/ARM profiles retain their separate policy.
+Elevation stays inside the existing sandbox, whose bootstrap and Docker daemon
+already run as guest root. It grants no host capabilities, host mounts or API
+credentials, and the node network fence still applies to every sandbox process.
+OCI no-new-privileges continues to block elevation when explicitly requested.
+Install the reviewed `runsc.toml` at the existing shim `ConfigPath`, then qualify
+a fresh pod; changing this shim-read file does not require restarting containerd.
+
+
 ```sh
 python3 deploy/arc-private/render.py \
   --inventory /private/operator/inventory.json \
