@@ -174,8 +174,12 @@ not apply the whole foundations list without reviewing every object.
    requires the shared class. Keep worker creation held and verify both policies
    have been observed without CEL warnings. Run Pod CREATE fixtures with
    `dryRun=All`: a correct private pod must be accepted, and use of this class in
-   public, native and unlabeled namespaces must fail with the intended
+   native and unlabeled namespaces must fail with the intended
    `private-exclusive-runtime-use` policy name and namespace-guard message.
+   In the public reserve namespace, the existing `victron-reserve-workers`
+   policy may reject first with `gVisor is mandatory`. Record that exact result
+   as combined boundary protection, not independent proof of the new global
+   policy. Public pods using the shared class must still pass positive controls.
    Exercise the other applicable CREATE negatives from the existing matrix.
    Unknown-class, quota, authorization or unrelated policy failures do not count
    as proof of the intended validation; record the exact rejecting policy and
@@ -208,7 +212,8 @@ not apply the whole foundations list without reviewing every object.
 7. Reverify that the global guard, recorded class and private policy remain
    unchanged, and repeat the no-Pod/no-alias scan while worker creation remains
    held. Repeat the applicable server-side CREATE fixtures against the loaded
-   configuration, requiring the intended policy name/message for each negative:
+   configuration, requiring the intended policy name/message for each negative
+   (including the explicitly classified public-policy result from step 3):
    correct private pod accepted; same class rejected in public, native and
    unlabeled namespaces; extra/init containers rejected;
    host namespace/volume/port and arbitrary gVisor annotation

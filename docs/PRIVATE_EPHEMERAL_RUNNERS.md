@@ -66,6 +66,11 @@ access. Do not silently map ARM, Windows, macOS, KVM or LAN work to generic x64 
 
 ## Profiles and storage
 
+An opt-in [standard CI tmpfs candidate](../deploy/arc-private/TMPFS_CANDIDATE.md)
+uses 2 GiB of in-guest Docker storage with a 3 GiB memory request / 6 GiB limit
+on the existing shared handler. It remains unqualified until the documented
+runtime and application checks pass; disk storage remains the default.
+
 - **ci:** gVisor, Docker inside the sandbox, no private-network access.
 - **automation:** separate gVisor workers for trusted metadata/bot work; Docker
   remains available for workflows such as Renovate.

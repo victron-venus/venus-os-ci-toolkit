@@ -21,5 +21,8 @@ RUN if [ -d /opt/actions-runner ]; then \
     && test ! -e /home/runner/.runner \
     && chown -R 1001:1001 /home/runner
 COPY deploy/runner-reserve/start-runner.sh deploy/runner-reserve/sandbox-docker.sh deploy/runner-reserve/qualify.sh /opt/victron-ci-reserve/
+RUN mv /opt/victron-ci-reserve/sandbox-docker.sh /opt/victron-ci-reserve/sandbox-docker-base.sh
+COPY deploy/arc-private/sandbox-docker.sh /opt/victron-ci-reserve/sandbox-docker.sh
 RUN chmod 0755 /opt/victron-ci-reserve/start-runner.sh /opt/victron-ci-reserve/sandbox-docker.sh /opt/victron-ci-reserve/qualify.sh
+RUN chmod 0755 /opt/victron-ci-reserve/sandbox-docker-base.sh
 USER 1001:1001
