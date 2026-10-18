@@ -142,6 +142,70 @@ class CandidateValidationTests(unittest.TestCase):
         self.assertNotIn("GITHUB_TOKEN", clean)
         self.assertEqual(clean["GIT_CONFIG_GLOBAL"], "/dev/null")
 
+    def test_owned_tmpdir_reaches_bazel_before_any_command(self):
+        source, build = self.path / "source", self.path / "build"
+        source.mkdir()
+        build.mkdir()
+        public = SCRIPT.parent.parent
+        shutil.copyfile(public / "patches/gvisor/LICENSE", source / "LICENSE")
+        paths = {"/workspace": source, "/build": build,
+                 "/control/vfs-final-symlink.patch": public / "patches/gvisor/vfs-final-symlink.patch"}
+        answers = iter(["f" * 40, candidate.VERSION, "bazel 8.8.1"])
+        seen = []
+
+        def command(argv, **_kwargs):
+            self.assertTrue((build / "tmp").is_dir())
+            self.assertEqual((build / "tmp").stat().st_mode & 0o777, 0o700)
+            seen.append(argv)
+            if len(seen) == 4:
+                raise candidate.BuildError("stop before mocked build")
+            return next(answers)
+
+        supervisor = mock.Mock()
+        supervisor.run.side_effect = command
+        with (
+            mock.patch.dict(candidate.os.environ, {"BUILD_IN_CONTAINER": "1",
+                            "TMPDIR": "/untrusted", "GOTMPDIR": "/untrusted",
+                            "GITHUB_TOKEN": "not-public"}, clear=True),
+            mock.patch.object(candidate.os, "getuid", return_value=1001),
+            mock.patch.object(candidate, "Path", side_effect=lambda value: paths.get(str(value), Path(value))),
+            mock.patch.object(candidate, "Supervisor", return_value=supervisor) as factory,
+            mock.patch.object(candidate.subprocess, "run") as run,
+            mock.patch.object(candidate.subprocess, "Popen") as popen,
+        ):
+            with self.assertRaisesRegex(candidate.BuildError, "stop before mocked build"):
+                candidate.inside()
+        env = factory.call_args.args[0]
+        self.assertEqual(env["TMPDIR"], str(build / "tmp"))
+        self.assertEqual(env["GOMAXPROCS"], "2")
+        self.assertNotIn("GOTMPDIR", env)
+        self.assertNotIn("GITHUB_TOKEN", env)
+        self.assertEqual(seen[-1], candidate.bazel("build", *candidate.build_flags(), *candidate.BUILD_TARGETS))
+        self.assertIn("--repo_env=TMPDIR=/build/tmp", seen[-1])
+        self.assertFalse(any(arg.startswith(("--action_env=", "--test_env=")) for arg in seen[-1]))
+        run.assert_not_called()
+        popen.assert_not_called()
+
+    def test_owned_tmpdir_rejects_existing_directory_and_symlink(self):
+        for symlink in (False, True):
+            with self.subTest(symlink=symlink):
+                build = self.path / ("symlink-case" if symlink else "directory-case")
+                build.mkdir()
+                temporary = build / "tmp"
+                if symlink:
+                    temporary.symlink_to(self.path, target_is_directory=True)
+                else:
+                    temporary.mkdir()
+                with (
+                    mock.patch.dict(candidate.os.environ, {"BUILD_IN_CONTAINER": "1"}, clear=True),
+                    mock.patch.object(candidate.os, "getuid", return_value=1001),
+                    mock.patch.object(candidate, "Path", side_effect=lambda value: build if str(value) == "/build" else Path(value)),
+                    mock.patch.object(candidate, "Supervisor") as factory,
+                ):
+                    with self.assertRaises(FileExistsError):
+                        candidate.inside()
+                factory.assert_not_called()
+
     def test_fixed_container_restrictions(self):
         args = candidate.container_args("owned", "nonce", "/owned/source", "/owned/build",
                                         "/owned/script", "/owned/patch", 1001, 1001)
@@ -152,6 +216,12 @@ class CandidateValidationTests(unittest.TestCase):
         self.assertEqual(args[args.index("--memory") + 1], "12000000000")
         self.assertEqual(args[args.index("--memory-swap") + 1], "12000000000")
         self.assertEqual(args[args.index("--user") + 1], "1001:1001")
+        self.assertEqual(args[args.index("--tmpfs") + 1],
+                         "/tmp:rw,nosuid,nodev,size=1073741824,mode=1777")
+        self.assertEqual(args[args.index("--cpus") + 1], "3")
+        self.assertEqual(args[args.index("--pids-limit") + 1], "1024")
+        self.assertIn("--read-only", args)
+        self.assertEqual(args[args.index("--cap-drop") + 1], "ALL")
         self.assertIn(candidate.IMAGE, args)
         self.assertIn("type=bind,source=/owned/patch,target=/control/vfs-final-symlink.patch,readonly", args)
         with self.assertRaises(candidate.BuildError):
