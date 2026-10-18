@@ -162,8 +162,15 @@ start_sandbox_docker 1500
         for guard in ["size(c.env.filter(e, e.name == 'RUNNER_PRIVATE_DOCKER_STORAGE')) <= 1",
                       "e.value == 'ci-tmpfs-2gi'", "!has(e.valueFrom)",
                       "object.metadata.namespace == 'arc-private-ci'",
-                      "c.resources.requests['memory'] == '3Gi'", "c.resources.limits['memory'] == '6Gi'"]:
+                      "has(c.resources)", "has(dyn(c.resources).requests)", "has(dyn(c.resources).limits)",
+                      "type(dyn(c.resources).requests) == map", "type(dyn(c.resources).limits) == map",
+                      "'memory' in dyn(c.resources).requests", "'memory' in dyn(c.resources).limits",
+                      "type(dyn(c.resources).requests['memory']) == string",
+                      "type(dyn(c.resources).limits['memory']) == string",
+                      "dyn(c.resources).requests['memory'] == '3Gi'", "dyn(c.resources).limits['memory'] == '6Gi'"]:
             self.assertIn(guard, rule)
+        self.assertNotIn('c.resources.requests', rule)
+        self.assertNotIn('c.resources.limits', rule)
 
     def test_only_private_image_installs_wrapper_and_default_remains_disk(self):
         self.assertNotIn('arc-private/sandbox-docker.sh', (ROOT / 'deploy/runner-reserve/Dockerfile').read_text())
