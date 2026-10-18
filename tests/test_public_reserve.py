@@ -2,6 +2,7 @@
 import importlib.util
 import json
 import tempfile
+import tomllib
 from pathlib import Path
 import unittest
 from unittest.mock import patch
@@ -14,6 +15,14 @@ WORKER = {'ip': '10.42.3.250', 'interface': 'vethabc123', 'uid': 'pod-1', 'mac':
 
 
 class NetworkAdmissionTests(unittest.TestCase):
+    def test_guest_sudo_keeps_the_sandbox_runtime_boundary(self):
+        config = tomllib.loads((ROOT / 'deploy/runner-reserve/runsc.toml').read_text())
+        self.assertEqual(config['binary_name'], '/opt/victron-ci-reserve/gvisor-20260928/runsc')
+        self.assertEqual(config['runsc_config'], {
+            'platform': 'systrap', 'net-raw': 'true',
+            'allow-packet-socket-write': 'true', 'allow-suid': 'true',
+        })
+
     def test_fence_checks_l2_and_source_identity_before_service_exceptions(self):
         rules = guard_module.rules([WORKER], '10.66.10.2', '10.43.0.10', ('129.159.41.15/32',), exists=True)
         self.assertTrue(rules.startswith('delete table bridge victron_ci_reserve\n'))
