@@ -171,8 +171,10 @@ slot; establish that its runtime and temporary storage are gone first.
    profile namespaces, after checking quota headroom for each: the admitted
    second Pod remains Pending because of anti-affinity, then starts after the
    first runtime and Pod are fully removed. Separately verify that a second
-   same-namespace CI creation is quota-rejected while the first exists, then
-   succeeds on retry after quota is released. Distinguish API creation errors
+   same-namespace CI creation is quota-rejected while the first remains
+   nonterminal and its usage is charged, then succeeds on retry after quota is
+   released. Keep the synthetic worker active until the rejection is recorded.
+   Distinguish API creation errors
    from scheduler Pending events. Record actual Pod identity, node, image and
    runtime for each admitted worker.
 6. Activate only the reviewed scale sets. Existing queued jobs can claim a new
