@@ -60,6 +60,18 @@ class PrivatePoolTests(unittest.TestCase):
             self.assertEqual(pod['containers'][0]['imagePullPolicy'], 'Never')
             self.assertEqual(pod.get('volumes', []), [])
 
+    def test_listener_placement_does_not_move_workers(self):
+        row = {**ROW, 'profiles': ['ci', 'automation', 'lan', 'arm64']}
+        documents = arc.render({'repositories': [row]}, SANDBOX, NATIVE, '10.66.10.2', listener_node='control-node')
+        for profile in row['profiles']:
+            value = documents[arc.name(ROW['name'], profile) + '.json']
+            self.assertEqual(value['listenerTemplate']['spec']['nodeSelector'],
+                             {'kubernetes.io/hostname': 'control-node'})
+            self.assertEqual(value['template']['spec']['nodeSelector']['kubernetes.io/hostname'],
+                             'h7' if profile == 'arm64' else 'mp')
+        with self.assertRaises(ValueError):
+            arc.render({'repositories': [row]}, SANDBOX, NATIVE, '10.66.10.2', listener_node='')
+
     def test_arm_docker_is_native_sidecar_with_disposable_storage(self):
         pod = arc.values(ROW, 'arm64', SANDBOX, NATIVE, '10.66.10.2')['template']['spec']
         self.assertEqual(pod['nodeSelector']['kubernetes.io/arch'], 'arm64')

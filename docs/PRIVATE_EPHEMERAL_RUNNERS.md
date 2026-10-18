@@ -107,11 +107,15 @@ python3 deploy/arc-private/render.py \
   --sandbox-image REGISTRY/SANDBOX@sha256:DIGEST \
   --native-image REGISTRY/NATIVE@sha256:DIGEST \
   --node-ip PRIVATE_NODE_IP \
+  --listener-node CONTROL_NODE \
   --output /private/operator/rendered
 ```
 
 The output includes foundations, one ARC Helm values document per pool, an index,
 and the exact repository variable values. Rendering performs no deployment.
+`--listener-node` places lightweight listeners independently from workers and
+defaults to `mp` for compatibility. Select a healthy node with GitHub and cluster
+API access; moving listeners does not change worker architecture or placement.
 Install foundations first, then Helm `gha-runner-scale-set` 0.15.0 with the existing
 `runner-reserve-system/victron-reserve-controller` service account. Install the
 updated node guard before creating private gVisor jobs: it explicitly recognizes

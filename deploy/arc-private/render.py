@@ -81,7 +81,7 @@ def validate_inventory(inventory):
     return rows
 
 
-def values(row, profile, sandbox_image, native_image, node_ip, arm_node='h7'):
+def values(row, profile, sandbox_image, native_image, node_ip, arm_node='h7', listener_node='mp'):
     scope = row['name']
     if profile not in row['profiles'] or not all(PINNED.fullmatch(i) for i in (sandbox_image, native_image)):
         raise ValueError('Declared profile and digest-pinned images required')
@@ -95,6 +95,7 @@ def values(row, profile, sandbox_image, native_image, node_ip, arm_node='h7'):
     listener = result['listenerTemplate']['spec']['containers'][0]
     result['listenerTemplate']['spec']['securityContext'] = {
         'seccompProfile': {'type': 'RuntimeDefault'}}
+    result['listenerTemplate']['spec']['nodeSelector'] = {'kubernetes.io/hostname': listener_node}
     listener['resources'] = {'requests': {'cpu': '5m', 'memory': '32Mi'},
                              'limits': {'cpu': '100m', 'memory': '192Mi'}}
     spec = result['template']['spec']
@@ -229,9 +230,11 @@ def foundations(rows, sandbox_image, node_ip):
     return {'apiVersion': 'v1', 'kind': 'List', 'items': resources}
 
 
-def render(inventory, sandbox_image, native_image, node_ip):
+def render(inventory, sandbox_image, native_image, node_ip, listener_node='mp'):
     rows = validate_inventory(inventory)
     ipaddress.IPv4Address(node_ip)
+    if not isinstance(listener_node, str) or not re.fullmatch(r'[a-z0-9](?:[-a-z0-9.]{0,61}[a-z0-9])?', listener_node):
+        raise ValueError('Listener node must be a valid hostname label')
     output = {'foundations.json': foundations(rows, sandbox_image, node_ip)}
     index, routing = [], {}
     for row in rows:
@@ -239,7 +242,8 @@ def render(inventory, sandbox_image, native_image, node_ip):
         variables = {'CI_RUNNER_MODE': 'self-hosted'}
         for profile in row['profiles']:
             release = name(scope, profile)
-            output[release + '.json'] = values(row, profile, sandbox_image, native_image, node_ip)
+            output[release + '.json'] = values(row, profile, sandbox_image, native_image, node_ip,
+                                               listener_node=listener_node)
             index.append({'repository': scope, 'profile': profile, 'namespace': 'arc-private-' + profile,
                           'release': release, 'values': release + '.json'})
             variable = {'ci': 'CI_RUNNER_LABELS', 'automation': 'CI_RUNNER_AUTOMATION_LABELS',
@@ -257,9 +261,11 @@ def main():
     parser.add_argument('--sandbox-image', required=True)
     parser.add_argument('--native-image', required=True)
     parser.add_argument('--node-ip', required=True)
+    parser.add_argument('--listener-node', default='mp', help='Node for lightweight listeners; worker placement is unchanged')
     parser.add_argument('--output', type=Path, required=True)
     args = parser.parse_args()
-    documents = render(json.loads(args.inventory.read_text()), args.sandbox_image, args.native_image, args.node_ip)
+    documents = render(json.loads(args.inventory.read_text()), args.sandbox_image, args.native_image,
+                       args.node_ip, args.listener_node)
     args.output.mkdir(parents=True, exist_ok=False, mode=0o700)
     for filename, document in documents.items():
         target = args.output / filename
