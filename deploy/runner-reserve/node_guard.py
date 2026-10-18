@@ -3,7 +3,7 @@
 
 Runs on the node, never in a runner. Rules match the host veth and source MAC/IP, so a sandbox with Docker
 networking cannot spoof its way out through ARP, IPv6 or source-IP changes.
-Only the dedicated reserve workers are affected; private runners are excluded.
+Only dedicated sandbox workers are affected. Native LAN/ARM workers are excluded.
 """
 from __future__ import annotations
 
@@ -23,7 +23,8 @@ from pathlib import Path
 
 TABLE = "victron_ci_reserve"
 LABEL = "runner-reserve.github.io/role"
-NAMESPACES = {"runner-reserve-ci", "runner-reserve-automation", "runner-reserve-release"}
+NAMESPACES = {"runner-reserve-ci", "runner-reserve-automation", "runner-reserve-release",
+              "arc-private-ci", "arc-private-automation", "arc-private-release"}
 DENIED = tuple(json.loads(Path(__file__).with_name("network-policy.json").read_text())["denied_networks"])
 PORT = 19999
 CNI_RESULTS = Path("/var/lib/cni/results")

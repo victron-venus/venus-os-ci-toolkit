@@ -2,6 +2,12 @@
 
 ## [0.1.4] - 2026-10-17
 
+- Add explicit private runner selection and repository-scoped, disposable ARC
+  worker profiles with bounded capacity, isolated metadata execution and native
+  Docker cgroup admission. Include both switch directions and retirement guidance.
+- Distribute the complete reusable-workflow closure from immutable commits into
+  private callers, retaining provenance hashes and rejecting source collisions.
+
 - Add operator-controlled GitHub secret delivery with explicit organization and
   repository ownership, preserved organization visibility, pinned source bytes,
   sealed-box encryption and durable journals for partial or uncertain writes.

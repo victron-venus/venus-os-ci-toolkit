@@ -1,5 +1,10 @@
 # Optional self-hosted routing
 
+For private consumers spanning multiple owners, use the
+[caller-local workflow distribution](WORKFLOW_DISTRIBUTION.md). It preserves
+immutable shared sources and the explicit `github` / `self-hosted` switch while
+keeping every reusable job definition inside the caller repository.
+
 GitHub-hosted `ubuntu-latest` remains the default. No new runner, bootstrap job,
 secret or Actions variable is created by the toolkit. The existing reusable
 workflows evaluate routing directly when GitHub dispatches each job, including

@@ -37,6 +37,9 @@ for attempt in {1..60}; do
   [[ "$attempt" != 60 ]] || { tail -30 /tmp/dockerd.log; exit 1; }
   sleep 1
 done
+# Checkout/build files must remain readable by non-root users in built images.
+# Bootstrap setup stayed private; each job has its own disposable filesystem.
+umask 022
 if [[ "${RUNNER_RESERVE_QUALIFICATION:-}" == 1 ]]; then
   exec setpriv --reuid=runner --regid=runner --init-groups /opt/victron-ci-reserve/qualify.sh
 fi
