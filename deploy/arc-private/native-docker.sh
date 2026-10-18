@@ -75,11 +75,13 @@ else
   read -r quota period < "$cpu_directory/cpu.max"
   read -r memory < "$memory_directory/memory.max"
 fi
-positive_integer "$quota" && positive_integer "$period" || fail 'finite CPU quota and period are required'
+if ! positive_integer "$quota" || ! positive_integer "$period"; then
+  fail 'finite CPU quota and period are required'
+fi
 # v1's unlimited sentinel is near 2^63; the integer bound also rejects that.
 positive_integer "$memory" || fail 'finite memory limit is required'
 echo "Docker parent: $version $parent; CPU $quota/$period; memory $memory bytes"
 [ "${1:-}" != --check ] || exit 0
 exec dockerd --host=unix:///docker-socket/docker.sock --group=121 \
-  --data-root=/docker-data --storage-driver=vfs --log-level=warn \
+  --data-root=/docker-data --storage-driver=vfs --log-level=warn --mtu=1200 \
   --exec-opt=native.cgroupdriver=cgroupfs --cgroup-parent="$parent"

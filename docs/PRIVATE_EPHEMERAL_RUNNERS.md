@@ -62,6 +62,9 @@ access. Do not silently map ARM, Windows, macOS, KVM or LAN work to generic x64 
 - **arm64:** native ARM64 runner with disposable Docker sidecar; privileged Docker
   is confined to this explicitly trusted architecture profile. It has no host
   socket, host path, persistent registration or Kubernetes service account token.
+  Its Docker daemon refuses unbounded cgroups and keeps child containers below
+  the pod (or a stricter container scope); the retained 1200-byte MTU accommodates
+  the private overlay. Qualify image pulls and resource limits on the native node.
 
 One pod runs one GitHub job, including action post steps. Cross-job state travels
 through explicit artifacts or caches, not a shared workspace/PVC. Each pool has

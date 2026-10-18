@@ -91,7 +91,7 @@ def values(row, profile, sandbox_image, native_image, node_ip, arm_node='h7'):
         'requests': {'cpu': '250m' if profile == 'ci' else '50m',
                      'memory': '1Gi' if profile == 'ci' else '512Mi', 'ephemeral-storage': '1Gi'},
         'limits': {'cpu': '4' if profile == 'ci' else '1',
-                   'memory': '6Gi' if profile == 'ci' else '2Gi', 'ephemeral-storage': '20Gi'}}
+                   'memory': '6Gi' if profile == 'ci' else '4Gi', 'ephemeral-storage': '20Gi'}}
     if profile in ('ci', 'automation', 'release'):
         return result
     spec.pop('runtimeClassName')
