@@ -113,6 +113,16 @@ class PrivatePoolTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             arc.validate_inventory({'repositories': [{**ROW, 'ci_resource_class': 'unbounded'}]})
 
+    def test_returning_to_standard_preserves_route_and_isolation(self):
+        standard = arc.values(ROW, 'ci', SANDBOX, NATIVE, '10.66.10.2')
+        heavy = arc.values({**ROW, 'ci_resource_class': 'heavy'}, 'ci',
+                           SANDBOX, NATIVE, '10.66.10.2')
+        resources = standard['template']['spec']['containers'][0].pop('resources')
+        self.assertEqual(resources['requests']['memory'], '1Gi')
+        self.assertEqual(resources['limits']['memory'], '6Gi')
+        heavy['template']['spec']['containers'][0].pop('resources')
+        self.assertEqual(standard, heavy)
+
     def test_routing_uses_concrete_unique_labels_and_explicit_mode(self):
         row = {**ROW, 'profiles': ['ci', 'automation', 'lan', 'arm64']}
         rendered = arc.render({'repositories': [row]}, SANDBOX, NATIVE, '10.66.10.2')
