@@ -48,8 +48,13 @@ def validate_inventory(inventory):
         if not SCOPE.fullmatch(scope) or scope in seen or row.get('visibility') != 'private':
             raise ValueError('Inventory requires unique explicitly private owner/repository scopes')
         seen.add(scope)
-        if not row['profiles'] or set(row['profiles']) - set(PROFILES):
+        profiles = row['profiles']
+        if not isinstance(profiles, list) or not profiles or any(p not in PROFILES for p in profiles):
             raise ValueError('Unsupported or empty worker profile')
+        if len(set(profiles)) != len(profiles):
+            raise ValueError('Duplicate worker profile')
+        if {'lan', 'release'} <= set(profiles):
+            raise ValueError('Choose one release route: sandbox release or LAN')
         for destination in row.get('lan_egress', []):
             network = ipaddress.ip_network(destination['cidr'])
             if network.version != 4 or network.prefixlen != 32:
@@ -95,7 +100,8 @@ def values(row, profile, sandbox_image, native_image, node_ip, arm_node='h7'):
                                'seccompProfile': {'type': 'RuntimeDefault'}}
     security = {'runAsNonRoot': True, 'allowPrivilegeEscalation': False,
                 'readOnlyRootFilesystem': True, 'capabilities': {'drop': ['ALL']}}
-    mounts = {'home': '/home/runner', 'tools': '/opt/hostedtoolcache', 'tmp': '/tmp'}
+    # A fresh per-pod emptyDir mount, not a host temporary file.
+    mounts = {'home': '/home/runner', 'tools': '/opt/hostedtoolcache', 'tmp': '/tmp'}  # nosec B108
     runner = {'name': 'runner', 'image': native_image, 'imagePullPolicy': 'IfNotPresent',
               'command': ['/bin/bash', '-c'], 'args': [NATIVE_BOOT], 'securityContext': security,
               'env': [{'name': 'HOME', 'value': '/home/runner'},
@@ -205,8 +211,6 @@ def render(inventory, sandbox_image, native_image, node_ip):
                         'release': 'CI_RUNNER_RELEASE_LABELS',
                         'lan': 'CI_RUNNER_RELEASE_LABELS', 'arm64': 'CI_RUNNER_ARM64_LABELS'}[profile]
             variables[variable] = json.dumps([release])
-        if 'CI_RUNNER_RELEASE_LABELS' not in variables:
-            variables['CI_RUNNER_RELEASE_LABELS'] = variables['CI_RUNNER_AUTOMATION_LABELS']
         routing[scope] = variables
     output.update({'index.json': index, 'repository-variables.json': routing})
     return output

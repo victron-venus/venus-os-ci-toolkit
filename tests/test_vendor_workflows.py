@@ -64,6 +64,17 @@ class VendorWorkflowsTests(unittest.TestCase):
         for name, text in second.items():
             self.assertEqual((self.consumer / name).read_text(), text)
 
+    def test_same_stem_extensions_cannot_silently_replace_a_dependency(self):
+        self.write_source("child.yaml", "on: {workflow_call: {}}\njobs: {}\n")
+        self.write_source("parent.yml", "on: {workflow_call: {}}\njobs:\n  first:\n    uses: ./.github/workflows/child.yml\n  second:\n    uses: ./.github/workflows/child.yaml\n")
+        revision = self.commit()
+        self.caller.write_text(self.caller.read_text().replace(self.revision, revision))
+        before = self.caller.read_text()
+        with self.assertRaisesRegex(ValueError, "collision"):
+            vendor.render(self.consumer, self.source)
+        self.assertEqual(self.caller.read_text(), before)
+        self.assertEqual(len(list(self.caller.parent.iterdir())), 1)
+
     def test_refuses_generated_edits(self):
         self.apply()
         path = self.consumer / vendor.WORKFLOWS / vendor.local_name("child.yml", self.revision)

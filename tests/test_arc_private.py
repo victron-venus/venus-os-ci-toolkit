@@ -1,5 +1,4 @@
 """Private ARC rendering keeps scope, lifecycle and network boundaries explicit."""
-import copy
 import importlib.util
 import json
 from pathlib import Path
@@ -79,12 +78,21 @@ class PrivatePoolTests(unittest.TestCase):
                 arc.values(ROW, 'ci', first, second, '10.66.10.2')
 
     def test_routing_uses_concrete_unique_labels_and_explicit_mode(self):
-        rendered = arc.render({'repositories': [ROW]}, SANDBOX, NATIVE, '10.66.10.2')
+        row = {**ROW, 'profiles': ['ci', 'automation', 'lan', 'arm64']}
+        rendered = arc.render({'repositories': [row]}, SANDBOX, NATIVE, '10.66.10.2')
         variables = rendered['repository-variables.json'][ROW['name']]
         self.assertEqual(variables['CI_RUNNER_MODE'], 'self-hosted')
         self.assertEqual(json.loads(variables['CI_RUNNER_LABELS']), [arc.name(ROW['name'], 'ci')])
         self.assertEqual(json.loads(variables['CI_RUNNER_RELEASE_LABELS']), [arc.name(ROW['name'], 'lan')])
-        self.assertEqual(len(rendered['index.json']), 5)
+        self.assertEqual(len(rendered['index.json']), 4)
+
+    def test_minimal_inventory_and_ambiguous_routes(self):
+        row = {**ROW, 'profiles': ['ci']}
+        variables = arc.render({'repositories': [row]}, SANDBOX, NATIVE, '10.66.10.2')['repository-variables.json'][ROW['name']]
+        self.assertEqual(set(variables), {'CI_RUNNER_MODE', 'CI_RUNNER_LABELS'})
+        for profiles in (['ci', 'ci'], ['ci', 'lan', 'release']):
+            with self.subTest(profiles=profiles), self.assertRaises(ValueError):
+                arc.render({'repositories': [{**ROW, 'profiles': profiles}]}, SANDBOX, NATIVE, '10.66.10.2')
 
     def test_guard_namespace_extension_is_explicit_and_excludes_native_workers(self):
         spec = importlib.util.spec_from_file_location('private_guard', ROOT / 'deploy/runner-reserve/node_guard.py')

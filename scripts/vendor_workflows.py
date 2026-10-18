@@ -71,6 +71,9 @@ class WorkflowBundle:
             raise ValueError("Cyclic or excessively nested reusable workflow graph")
         destination = WORKFLOWS + local_name(name, revision)
         if destination in self.files:
+            previous = self.metadata[destination]
+            if previous["source_path"] != WORKFLOWS + name or previous["source_sha"] != revision:
+                raise ValueError("Generated workflow name collision; rename the upstream source")
             return "./" + destination
         executable = shutil.which("git")
         if not executable:
