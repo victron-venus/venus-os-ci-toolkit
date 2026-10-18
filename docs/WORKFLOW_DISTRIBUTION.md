@@ -50,7 +50,14 @@ upstream source SHA.
 For a qualified private repository, set its three label variables to JSON arrays
 containing the actual ARC scale-set name for each role. Do not append generic
 `self-hosted/Linux/X64` labels to an ARC selector unless that exact configuration
-has been explicitly qualified. Then change only the mode:
+has been explicitly qualified. Keep these labels unchanged when changing mode.
+
+First identify the variables' owner. For Terraform-managed variables, change
+the mode in the owning Terraform source or protected inputs, then review and
+apply the plan through its existing workspace. A direct GitHub edit creates
+drift that the next apply can overwrite. The commands below are for unmanaged
+variables or an explicitly temporary override that will be reconciled with its
+owner; see the [routing and ownership contract](PRIVATE_EPHEMERAL_RUNNERS.md#routing-contract).
 
 ```sh
 gh variable set CI_RUNNER_MODE --repo OWNER/REPOSITORY --body self-hosted
