@@ -21,6 +21,9 @@ SCOPE = re.compile(r'^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$')
 RUNNER_HOME = '/home/runner'
 TOOL_CACHE = '/opt/hostedtoolcache'
 PRIVATE_ADMISSION = 'private-ephemeral-workers'
+SHARED_RUNTIME = 'victron-reserve'
+EXCLUSIVE_RUNTIME = 'victron-private-exclusive'
+SANDBOX_RUNTIMES = (SHARED_RUNTIME, EXCLUSIVE_RUNTIME)
 DOCKER_DATA = '/var/lib/docker'
 DOCKER_SCRATCH_SIZE = '16Gi'
 # Embed the checked startup code; native workers have no ConfigMap dependency.
@@ -86,7 +89,10 @@ def validate_inventory(inventory):
     return rows
 
 
-def values(row, profile, sandbox_image, native_image, node_ip, arm_node='h7', listener_node='mp'):
+def values(row, profile, sandbox_image, native_image, node_ip, arm_node='h7', listener_node='mp',
+           sandbox_runtime=SHARED_RUNTIME):
+    if sandbox_runtime not in SANDBOX_RUNTIMES:
+        raise ValueError('Unknown private sandbox runtime')
     scope = row['name']
     if profile not in row['profiles'] or not all(PINNED.fullmatch(i) for i in (sandbox_image, native_image)):
         raise ValueError('Declared profile and digest-pinned images required')
@@ -122,6 +128,7 @@ def values(row, profile, sandbox_image, native_image, node_ip, arm_node='h7', li
             'requests': {'cpu': '1500m', 'memory': '13Gi', 'ephemeral-storage': '2Gi'},
             'limits': {'cpu': '3', 'memory': '16Gi', 'ephemeral-storage': '30Gi'}}
     if profile in ('ci', 'automation', 'release'):
+        spec['runtimeClassName'] = sandbox_runtime
         spec['volumes'] = [{'name': 'docker-data', 'emptyDir': {'sizeLimit': DOCKER_SCRATCH_SIZE}}]
         spec['containers'][0]['volumeMounts'] = [{'name': 'docker-data', 'mountPath': DOCKER_DATA}]
         spec['containers'][0]['env'].append({'name': 'RUNNER_DOCKER_STORAGE_DRIVER', 'value': 'overlay2'})
@@ -177,7 +184,7 @@ def sandbox_quota(profile):
             'requests.ephemeral-storage': '3Gi', 'limits.ephemeral-storage': '40Gi'}
 
 
-def private_sandbox_foundation(source):
+def private_sandbox_foundation(source, sandbox_runtime=SHARED_RUNTIME):
     item = copy.deepcopy(source)
     meta = item['metadata']
     if item['kind'] == 'ValidatingAdmissionPolicy':
@@ -185,6 +192,18 @@ def private_sandbox_foundation(source):
         item['spec']['matchConstraints']['namespaceSelector']['matchLabels'] = {
             'runner-reserve.github.io/admission': 'private-worker'}
         item['spec']['validations'] = private_scratch_validations(item['spec']['validations'])
+        if sandbox_runtime == EXCLUSIVE_RUNTIME:
+            for rule in item['spec']['validations']:
+                if rule['message'] == 'gVisor is mandatory':
+                    rule['expression'] = (
+                        "has(object.spec.runtimeClassName) && object.spec.runtimeClassName == "
+                        + json.dumps(EXCLUSIVE_RUNTIME))
+            item['spec']['validations'].extend([
+                {'expression': "has(object.spec.restartPolicy) && object.spec.restartPolicy == 'Never'",
+                 'message': 'Exclusive bind mounts require one container lifetime'},
+                {'expression': "object.spec.containers.all(c, (!has(c.terminationMessagePath) || c.terminationMessagePath == '/dev/termination-log') && (!has(c.terminationMessagePolicy) || c.terminationMessagePolicy == 'File'))",
+                 'message': 'Exclusive workers use the verified termination log path'},
+            ])
     elif item['kind'] == 'ValidatingAdmissionPolicyBinding':
         meta['name'] = PRIVATE_ADMISSION
         item['spec']['policyName'] = PRIVATE_ADMISSION
@@ -197,6 +216,32 @@ def private_sandbox_foundation(source):
         if item['kind'] == 'ResourceQuota':
             item['spec']['hard'] = sandbox_quota(meta['namespace'].removeprefix('arc-private-'))
     return item
+
+
+def exclusive_runtime_resources(private_policy):
+    """Keep this class private even if a Pod bypasses the namespace label selector."""
+    guard = copy.deepcopy(private_policy)
+    guard['metadata']['name'] = 'private-exclusive-runtime-use'
+    guard['spec']['matchConstraints'].pop('namespaceSelector')
+    guard['spec']['matchConditions'] = [{
+        'name': 'exclusive-runtime',
+        'expression': "has(object.spec.runtimeClassName) && object.spec.runtimeClassName == "
+                      + json.dumps(EXCLUSIVE_RUNTIME)}]
+    guard['spec']['validations'].insert(0, {
+        'expression': "request.namespace in ['arc-private-ci', 'arc-private-automation', 'arc-private-release']",
+        'message': 'The exclusive runtime is restricted to private sandbox namespaces'})
+    runtime = {
+        'apiVersion': 'node.k8s.io/v1', 'kind': 'RuntimeClass',
+        'metadata': {'name': EXCLUSIVE_RUNTIME}, 'handler': EXCLUSIVE_RUNTIME,
+        'overhead': {'podFixed': {'cpu': '100m', 'memory': '128Mi'}},
+        'scheduling': {'nodeSelector': {'kubernetes.io/hostname': 'mp',
+                                        'kubernetes.io/arch': 'amd64'}}}
+    binding = {
+        'apiVersion': 'admissionregistration.k8s.io/v1',
+        'kind': 'ValidatingAdmissionPolicyBinding',
+        'metadata': {'name': 'private-exclusive-runtime-use'},
+        'spec': {'policyName': 'private-exclusive-runtime-use', 'validationActions': ['Deny']}}
+    return [runtime, guard, binding]
 
 
 def private_scratch_validations(validations):
@@ -249,10 +294,15 @@ def lan_policy(row):
                           'ports': [{'port': d['port'], 'protocol': 'TCP'}]} for d in row['lan_egress']]}}
 
 
-def foundations(rows, sandbox_image, node_ip):
+def foundations(rows, sandbox_image, node_ip, sandbox_runtime=SHARED_RUNTIME):
+    if sandbox_runtime not in SANDBOX_RUNTIMES:
+        raise ValueError('Unknown private sandbox runtime')
     # Separate policy/image identity preserves the public reserve boundary.
     rendered = RESERVE.foundations(['ci', 'automation', 'release'], sandbox_image, node_ip)
-    resources = [private_sandbox_foundation(item) for item in rendered['items']]
+    resources = [private_sandbox_foundation(item, sandbox_runtime) for item in rendered['items']]
+    if sandbox_runtime == EXCLUSIVE_RUNTIME:
+        private_policy = next(item for item in resources if item['kind'] == 'ValidatingAdmissionPolicy')
+        resources.extend(exclusive_runtime_resources(private_policy))
     network = next(r for r in resources if r['kind'] == 'NetworkPolicy')
     for profile in ('lan', 'arm64'):
         if any(profile in r['profiles'] for r in rows):
@@ -261,12 +311,13 @@ def foundations(rows, sandbox_image, node_ip):
     return {'apiVersion': 'v1', 'kind': 'List', 'items': resources}
 
 
-def render(inventory, sandbox_image, native_image, node_ip, listener_node='mp'):
+def render(inventory, sandbox_image, native_image, node_ip, listener_node='mp',
+           sandbox_runtime=SHARED_RUNTIME):
     rows = validate_inventory(inventory)
     ipaddress.IPv4Address(node_ip)
     if not isinstance(listener_node, str) or not re.fullmatch(r'[a-z0-9](?:[-a-z0-9.]{0,61}[a-z0-9])?', listener_node):
         raise ValueError('Listener node must be a valid hostname label')
-    output = {'foundations.json': foundations(rows, sandbox_image, node_ip)}
+    output = {'foundations.json': foundations(rows, sandbox_image, node_ip, sandbox_runtime)}
     index, routing = [], {}
     for row in rows:
         scope = row['name']
@@ -274,7 +325,7 @@ def render(inventory, sandbox_image, native_image, node_ip, listener_node='mp'):
         for profile in row['profiles']:
             release = name(scope, profile)
             output[release + '.json'] = values(row, profile, sandbox_image, native_image, node_ip,
-                                               listener_node=listener_node)
+                                               listener_node=listener_node, sandbox_runtime=sandbox_runtime)
             index.append({'repository': scope, 'profile': profile, 'namespace': 'arc-private-' + profile,
                           'release': release, 'values': release + '.json'})
             variable = {'ci': 'CI_RUNNER_LABELS', 'automation': 'CI_RUNNER_AUTOMATION_LABELS',
@@ -293,10 +344,12 @@ def main():
     parser.add_argument('--native-image', required=True)
     parser.add_argument('--node-ip', required=True)
     parser.add_argument('--listener-node', default='mp', help='Node for lightweight listeners; worker placement is unchanged')
+    parser.add_argument('--sandbox-runtime', choices=SANDBOX_RUNTIMES, default=SHARED_RUNTIME,
+                        help='Exclusive is an unqualified contingency requiring separate private handler maintenance')
     parser.add_argument('--output', type=Path, required=True)
     args = parser.parse_args()
     documents = render(json.loads(args.inventory.read_text()), args.sandbox_image, args.native_image,
-                       args.node_ip, args.listener_node)
+                       args.node_ip, args.listener_node, args.sandbox_runtime)
     args.output.mkdir(parents=True, exist_ok=False, mode=0o700)
     for filename, document in documents.items():
         target = args.output / filename
