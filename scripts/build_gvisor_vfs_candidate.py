@@ -297,6 +297,7 @@ def build_flags():
     return ["--config=x86_64", "-c", "opt", "--jobs=2", "--local_resources=cpu=3",
             "--local_resources=memory=8000", "--spawn_strategy=processwrapper-sandbox",
             "--strategy=Genrule=processwrapper-sandbox", "--repository_cache=/build/repository-cache",
+            "--modify_execution_info=^(GoStandardLibraryAnalysis|GoStaticAnalysis)$=-no-sandbox",
             "--repo_env=TMPDIR=/build/tmp",
             "--symlink_prefix=/build/links/", "--lockfile_mode=update", "--color=no", "--curses=no"]
 

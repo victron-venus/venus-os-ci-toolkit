@@ -142,6 +142,24 @@ class CandidateValidationTests(unittest.TestCase):
         self.assertNotIn("GITHUB_TOKEN", clean)
         self.assertEqual(clean["GIT_CONFIG_GLOBAL"], "/dev/null")
 
+    def test_analysis_metadata_override_is_limited_to_two_mnemonics(self):
+        flags = candidate.build_flags()
+        modifiers = [arg for arg in flags if arg.startswith("--modify_execution_info=")]
+        expected = "--modify_execution_info=^(GoStandardLibraryAnalysis|GoStaticAnalysis)$=-no-sandbox"
+        self.assertEqual(modifiers, [expected])
+        expression, change = modifiers[0].removeprefix("--modify_execution_info=").rsplit("=", 1)
+        self.assertEqual(change, "-no-sandbox")
+        for mnemonic in ("GoStandardLibraryAnalysis", "GoStaticAnalysis"):
+            self.assertIsNotNone(candidate.re.fullmatch(expression, mnemonic))
+        for mnemonic in ("Genrule", "GoCompilePkg", "GoLink", "TestRunner", "RunNogo",
+                         "GoStaticAnalysisExtra", "OtherGoStaticAnalysis", "GoStandardLibraryAnalysisExtra"):
+            self.assertIsNone(candidate.re.fullmatch(expression, mnemonic))
+        self.assertEqual([arg for arg in flags if arg.startswith("--spawn_strategy=")],
+                         ["--spawn_strategy=processwrapper-sandbox"])
+        self.assertEqual([arg for arg in flags if arg.startswith("--strategy=")],
+                         ["--strategy=Genrule=processwrapper-sandbox"])
+        self.assertFalse(any("legacy_local_fallback" in arg for arg in flags))
+
     def test_owned_tmpdir_reaches_bazel_before_any_command(self):
         source, build = self.path / "source", self.path / "build"
         source.mkdir()
