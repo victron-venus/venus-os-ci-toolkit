@@ -88,6 +88,10 @@ large runner plus Docker sidecar in one sandbox. The shared CI namespace permits
 one heavy worker or two standard workers, never a mixture while the heavy worker
 is present. Node scheduling must still have the requested memory and CPU free;
 the class does not guarantee performance or bypass capacity checks.
+Reassess the class when large suites move out of a repository. Omitting
+`ci_resource_class` restores the standard worker without changing its route or
+isolation. Drain superseded queued workflows before reducing resources so old
+heavy jobs cannot claim the smaller replacement.
 
 ## Provisioning
 
@@ -154,7 +158,7 @@ read the App secret or a Kubernetes token.
 
 Then remove the old GitHub registration, delete its Deployment/bootstrap secret,
 and commit retirement to the owning deployment and self-healing repositories.
-An admission guard must reject recreation of retired runner pods/controllers;
+An admission guard must reject retired runner pods even if an old controller is restored;
 scaling to zero alone is insufficient. Preserve unrelated application workloads,
 the Codex bridge and recovery data. Never reuse a persistent runner registration
 for an ephemeral pool.
