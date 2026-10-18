@@ -64,10 +64,11 @@ def identity_expression(expression, context):
             if isinstance(node.ops[0], ast.LtE):
                 return left <= right
         if isinstance(node, ast.Call):
-            if isinstance(node.func, ast.Name) and node.func.id == 'dyn' and len(node.args) == 1:
-                return visit(node.args[0], values)
-            if isinstance(node.func, ast.Name) and node.func.id == 'size' and len(node.args) == 1:
-                return len(visit(node.args[0], values))
+            if isinstance(node.func, ast.Name) and len(node.args) == 1:
+                if node.func.id == 'size':
+                    return len(visit(node.args[0], values))
+                if node.func.id == 'dyn':
+                    return visit(node.args[0], values)
             if isinstance(node.func, ast.Name) and node.func.id == 'has' and len(node.args) == 1:
                 try:
                     visit(node.args[0], values)
@@ -126,6 +127,12 @@ class NucKvmTests(unittest.TestCase):
             'limits': {'cpu': '2', 'memory': '6Gi', 'ephemeral-storage': '20Gi'}})
         for field in ['runtimeClassName', 'nodeSelector']:
             spec[field] = before['template']['spec'][field]
+        self.assertEqual(spec.pop('schedulerName'), 'default-scheduler')
+        self.assertEqual(spec.pop('affinity'), {'podAntiAffinity': {
+            'requiredDuringSchedulingIgnoredDuringExecution': [{
+                'labelSelector': {'matchLabels': {arc.SERIAL_LABEL: 'nuc-kvm'}},
+                'namespaceSelector': {}, 'topologyKey': 'kubernetes.io/hostname'}]}})
+        self.assertEqual(after['template']['metadata']['labels'].pop(arc.SERIAL_LABEL), 'nuc-kvm')
         runner, original = spec['containers'][0], before['template']['spec']['containers'][0]
         for field in ['resources', 'image']:
             runner[field] = original[field]
@@ -183,7 +190,7 @@ class NucKvmTests(unittest.TestCase):
         guard = next(x for x in items if x['metadata']['name'] == arc.NUC_RUNTIME + '-workers'
                      and x['kind'] == 'ValidatingAdmissionPolicy')
         self.assertEqual(shared['spec']['validations'][:-1], old['spec']['validations'])
-        self.assertIn("request.namespace != 'arc-private-ci'", shared['spec']['validations'][-1]['expression'])
+        self.assertIn('request.namespace != "arc-private-ci"', shared['spec']['validations'][-1]['expression'])
         self.assertNotIn('namespaceSelector', guard['spec']['matchConstraints'])
         self.assertEqual(guard['spec']['failurePolicy'], 'Fail')
         self.assertEqual(guard['spec']['matchConstraints']['resourceRules'][:-1],
@@ -196,14 +203,15 @@ class NucKvmTests(unittest.TestCase):
         for rule in old['spec']['validations']:
             if rule['message'] not in changed:
                 self.assertEqual(rules[rule['message']], rule['expression'])
-        for text in ["request.namespace == 'arc-private-ci'", arc.name(ROW['name'], 'scope'),
-                     "== 'ci'"]:
-            self.assertIn(text, rules['NUC KVM is restricted to the one selected private CI scope'])
+        tuple_rule = rules['NUC workers require one exact scope, namespace, profile, resource and environment tuple']
+        for text in ['request.namespace == "arc-private-ci"', arc.name(ROW['name'], 'scope'),
+                     '== "ci"']:
+            self.assertIn(text, tuple_rule)
         self.assertIn(json.dumps(NUC), rules['Only the reviewed pinned worker image is allowed'])
-        self.assertIn('1250m', rules['NUC workers require the exact bounded CI resource tuple'])
-        self.assertIn('dyn(c.resources).requests ==', rules['NUC workers require the exact bounded CI resource tuple'])
-        self.assertIn('dyn(c.resources).limits ==', rules['NUC workers require the exact bounded CI resource tuple'])
-        self.assertIn("object.spec.nodeName == 'nuc'", rules['NUC KVM cannot select another node or scheduler'])
+        self.assertIn('1250m', tuple_rule)
+        self.assertIn('dyn(c.resources).requests ==', tuple_rule)
+        self.assertIn('dyn(c.resources).limits ==', tuple_rule)
+        self.assertIn("oldObject.spec.nodeName == 'nuc'", rules['NUC KVM cannot select another node or scheduler'])
         self.assertIn("object.spec.restartPolicy == 'Never'", rules['NUC workers keep the bounded single-job lifecycle'])
         for policy in [guard, next(x for x in items if x['kind'] == 'ValidatingAdmissionPolicy'
                                   and x['metadata']['name'] == arc.NUC_RUNTIME + '-class')]:
@@ -291,7 +299,8 @@ class NucKvmTests(unittest.TestCase):
                    'request': {'operation': 'UPDATE', 'namespace': 'arc-private-ci'}}
         self.assertTrue(identity_expression(match, context))
         for message in ['NUC updates preserve scope, profile, worker identity and the bound node',
-                        'NUC KVM is restricted to the one selected private CI scope',
+                        'NUC workers require one exact scope, namespace, profile, resource and environment tuple',
+                        'NUC workers require cross-namespace serialization',
                         'NUC KVM cannot select another node or scheduler', 'gVisor is mandatory',
                         'Worker network identity is mandatory',
                         'Worker annotations cannot override sandbox filesystem policy']:
@@ -304,7 +313,7 @@ class NucKvmTests(unittest.TestCase):
         old, match, rules = self.identity_policy()
         immutable = rules['NUC updates preserve scope, profile, worker identity and the bound node']
         for subresource in ['', 'status', 'ephemeralcontainers']:
-            for key in [arc.SCOPE_LABEL, arc.PROFILE_LABEL, 'runner-reserve.github.io/role']:
+            for key in [arc.SCOPE_LABEL, arc.PROFILE_LABEL, 'runner-reserve.github.io/role', arc.SERIAL_LABEL]:
                 for replacement in [None, 'other']:
                     with self.subTest(subresource=subresource, label=key, replacement=replacement):
                         new = copy.deepcopy(old)
@@ -366,7 +375,8 @@ class NucKvmTests(unittest.TestCase):
         scope = arc.name(ROW['name'], 'scope')
         self.assertEqual(old['spec']['podSelector'], {'matchExpressions': [
             {'key': arc.SCOPE_LABEL, 'operator': 'NotIn', 'values': [scope]}]})
-        self.assertEqual(new['spec']['podSelector'], {'matchLabels': {arc.SCOPE_LABEL: scope}})
+        self.assertEqual(new['spec']['podSelector'], {'matchExpressions': [
+            {'key': arc.SCOPE_LABEL, 'operator': 'In', 'values': [scope]}]})
         old_egress = copy.deepcopy(old['spec']['egress'])
         for rule in old_egress:
             if rule['ports'][0]['port'] == 19999:
