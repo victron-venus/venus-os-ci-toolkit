@@ -30,13 +30,14 @@ private_tmpfs_storage() {
   # This is a guest mount, not a host tmpfs or an extra OCI/Kubernetes mount.
   # The cgroup memory limit remains authoritative, including inode metadata.
   mount -t tmpfs -o size=2147483648,nr_inodes=262144,mode=0710 tmpfs "$data" || return 1
-  filesystem=$(findmnt --noheadings --output FSTYPE --mountpoint "$data") || return 1
+  # A mount-table query can include the covered 9p mount as well as tmpfs.
+  # Read the visible filesystem type and bounds from one statfs result.
+  stats=$(stat --file-system --format='%T %S %b %c' "$data") || return 1
+  [[ "$stats" != *$'\n'* ]] || return 1
+  read -r filesystem block_size blocks inodes extra <<< "$stats"
   [[ "$filesystem" == tmpfs ]] || {
     printf 'Private tmpfs mount type verification failed\n' >&2; return 1;
   }
-  stats=$(stat --file-system --format='%S %b %c' "$data") || return 1
-  [[ "$stats" != *$'\n'* ]] || return 1
-  read -r block_size blocks inodes extra <<< "$stats"
   [[ "$block_size" =~ ^[1-9][0-9]{0,9}$ && "$blocks" =~ ^[1-9][0-9]{0,9}$ &&
      "$inodes" == 262144 && -z "$extra" ]] || return 1
   ((block_size <= 2147483648 && blocks <= 2147483648 && block_size * blocks == 2147483648)) || {
