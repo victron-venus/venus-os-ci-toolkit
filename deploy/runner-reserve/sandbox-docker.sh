@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+# Both daemons and their sockets remain inside the disposable gVisor sandbox.
+set -euo pipefail
+
+wait_for_service() {
+  local pid=$1 seconds=$2 log=$3
+  shift 3
+  local deadline=$((SECONDS + seconds))
+  while kill -0 "$pid" 2>/dev/null; do
+    if "$@" >/dev/null 2>&1; then
+      return 0
+    fi
+    if ((SECONDS >= deadline)); then
+      break
+    fi
+    sleep 1
+  done
+  tail -40 "$log" >&2
+  return 1
+}
+
+cleanup_startup() {
+  local pid
+  for pid in "${sandbox_docker_pid:-}" "${sandbox_containerd_pid:-}"; do
+    if [[ -n "$pid" ]]; then
+      kill "$pid" 2>/dev/null || true
+      wait "$pid" 2>/dev/null || true
+    fi
+  done
+}
+
+start_sandbox_docker() {
+  local mtu=$1
+  [[ "$mtu" =~ ^[0-9]+$ ]]
+  local runtime=/var/run/docker/containerd
+  local socket="$runtime/containerd.sock"
+  mkdir -p "$runtime"
+  # Match Docker's managed configuration, but allow slow cold startup more than
+  # its hardcoded 15 seconds. No host daemon or Kubernetes socket is used.
+  cat > "$runtime/containerd.toml" <<'TOML'
+version = 2
+root = '/var/lib/docker/containerd/daemon'
+state = '/var/run/docker/containerd/daemon'
+disabled_plugins = ['io.containerd.grpc.v1.cri', 'io.containerd.cri.v1.images', 'io.containerd.cri.v1.runtime', 'io.containerd.podsandbox.controller.v1.podsandbox']
+[grpc]
+address = '/var/run/docker/containerd/containerd.sock'
+max_recv_message_size = 16777216
+max_send_message_size = 16777216
+[debug]
+address = '/var/run/docker/containerd/containerd-debug.sock'
+TOML
+  trap cleanup_startup EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  containerd --config "$runtime/containerd.toml" > /tmp/containerd.log 2>&1 &
+  sandbox_containerd_pid=$!
+  wait_for_service "$sandbox_containerd_pid" 180 /tmp/containerd.log \
+    timeout 6s ctr --address "$socket" --connect-timeout 5s --timeout 5s version
+  dockerd --containerd="$socket" --iptables=false --ip6tables=false \
+    --feature containerd-snapshotter=false --storage-driver=vfs \
+    --mtu="$mtu" --group=runner > /tmp/dockerd.log 2>&1 &
+  sandbox_docker_pid=$!
+  wait_for_service "$sandbox_docker_pid" 180 /tmp/dockerd.log timeout 6s docker info
+  # The pod owns both healthy children from here; pod deletion reaps them.
+  trap - EXIT INT TERM
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  start_sandbox_docker "$@"
+fi
