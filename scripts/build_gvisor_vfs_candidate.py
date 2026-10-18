@@ -326,8 +326,11 @@ def inside():
     require("bazel 8.8.1" in bazel_version, "Unexpected Bazel version")
     flags = build_flags()
     sup.run(bazel("build", *flags, *BUILD_TARGETS), cwd=source)
+    # rules_go 0.63 defaults passing-test detail off; request the named events
+    # its XML reporter needs. Empty/failed/skipped suites still fail validation.
     sup.run(bazel("test", *flags, "--nocache_test_results", "--test_output=errors",
-                  "--local_test_jobs=1", "--test_timeout=300", *TEST_TARGETS), cwd=source)
+                  "--test_env=GO_TEST_WRAP_TESTV=1", "--local_test_jobs=1",
+                  "--test_timeout=300", *TEST_TARGETS), cwd=source)
     bindir = Path(sup.run(bazel("info", *flags, "bazel-bin"), cwd=source, capture=True)).resolve()
     testdir = Path(sup.run(bazel("info", *flags, "bazel-testlogs"), cwd=source, capture=True)).resolve()
     for path in (bindir, testdir):
