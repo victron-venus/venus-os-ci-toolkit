@@ -22,7 +22,7 @@ resources:
     cpu: 500m
     memory: 512Mi
 nodeSelector:
-  kubernetes.io/hostname: mp
+  kubernetes.io/hostname: h5
   kubernetes.io/arch: amd64
 flags:
   logLevel: info
