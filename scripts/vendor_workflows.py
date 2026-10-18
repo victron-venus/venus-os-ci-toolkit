@@ -57,6 +57,7 @@ class WorkflowBundle:
         self.editor = yaml_editor()
         self.files = {}
         self.metadata = {}
+        self.destinations = {}
 
     def dump(self, value):
         output = io.StringIO()
@@ -70,10 +71,11 @@ class WorkflowBundle:
         if identity in chain or len(chain) >= 9:
             raise ValueError("Cyclic or excessively nested reusable workflow graph")
         destination = WORKFLOWS + local_name(name, revision)
+        # Case folding also protects macOS/Windows checkouts before any writes.
+        previous = self.destinations.setdefault(destination.casefold(), identity)
+        if previous != identity:
+            raise ValueError("Generated workflow name collision; rename the upstream source")
         if destination in self.files:
-            previous = self.metadata[destination]
-            if previous["source_path"] != WORKFLOWS + name or previous["source_sha"] != revision:
-                raise ValueError("Generated workflow name collision; rename the upstream source")
             return "./" + destination
         workflow = self.read_source(name, revision)
         self.rewrite_dependencies(workflow, name, revision, (*chain, identity))

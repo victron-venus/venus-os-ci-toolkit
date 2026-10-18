@@ -75,6 +75,12 @@ class VendorWorkflowsTests(unittest.TestCase):
         self.assertEqual(self.caller.read_text(), before)
         self.assertEqual(len(list(self.caller.parent.iterdir())), 1)
 
+    def test_case_only_source_names_fail_before_reading_second_source(self):
+        bundle = vendor.WorkflowBundle(self.source)
+        bundle.add("child.yml", self.revision)
+        with self.assertRaisesRegex(ValueError, "collision"):
+            bundle.add("CHILD.yml", self.revision)
+
     def test_refuses_generated_edits(self):
         self.apply()
         path = self.consumer / vendor.WORKFLOWS / vendor.local_name("child.yml", self.revision)
