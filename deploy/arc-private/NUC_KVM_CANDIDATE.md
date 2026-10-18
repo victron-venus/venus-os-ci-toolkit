@@ -1,5 +1,10 @@
 # Opt-in private NUC KVM candidate
 
+For an explicit set of standard CI, heavy CI and automation profiles, see
+[Multiple private profiles on one NUC](NUC_KVM_PROFILES.md). That interface uses
+one complete target plan and requires scheduler-enforced serialization across
+namespaces. It does not qualify or activate additional workloads automatically.
+
 This renderer option prepares one repository's standard CI pool. It does not
 install a runtime, start a runner, change GitHub routing, qualify an image, or
 declare earlier failed capabilities supported. Keep the candidate unqualified
