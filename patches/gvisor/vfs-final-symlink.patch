@@ -1,0 +1,88 @@
+diff --git a/pkg/sentry/vfs/resolving_path.go b/pkg/sentry/vfs/resolving_path.go
+index 57589cf3a530fc7fb9fb735907752eb7d53246a2..4a6a541ffe0d77a07f58dd03d9c7cddabb2443c0 100644
+--- a/pkg/sentry/vfs/resolving_path.go
++++ b/pkg/sentry/vfs/resolving_path.go
+@@ -87,7 +87,7 @@ type ResolvingPath struct {
+ const (
+ 	rpflagsHaveMountRef       = 1 << iota // do we hold a reference on mount?
+ 	rpflagsHaveStartRef                   // do we hold a reference on start?
+-	rpflagsFollowFinalSymlink             // same as PathOperation.FollowFinalSymlink
++	rpflagsFollowFinalSymlink             // FollowFinalSymlink or a trailing '/'
+ 	rpflagsBeneath                        // same as RESOLVE_BENEATH
+ 	rpflagsInRoot                         // same as RESOLVE_IN_ROOT
+ 	rpflagsNoMagicLinks                   // same as RESOLVE_NO_MAGICLINKS
+@@ -165,7 +165,7 @@ func (vfs *VirtualFilesystem) getResolvingPath(creds *auth.Credentials, pop *Pat
+ 	rp.start = pop.Start.dentry
+ 	rp.pit = pop.Path.Begin
+ 	rp.flags = 0
+-	if pop.FollowFinalSymlink {
++	if pop.FollowFinalSymlink || pop.Path.Dir {
+ 		rp.flags |= rpflagsFollowFinalSymlink
+ 	}
+ 	if resolveBeneath {
+@@ -470,9 +470,8 @@ func (rp *ResolvingPath) CheckMount(ctx context.Context, d *Dentry) error {
+ //
+ // Preconditions: !rp.Done().
+ func (rp *ResolvingPath) ShouldFollowSymlink() bool {
+-	// Non-final symlinks are always followed. Paths terminated with '/' are also
+-	// always followed.
+-	return rp.flags&rpflagsFollowFinalSymlink != 0 || !rp.Final() || rp.MustBeDir()
++	// Non-final symlinks are always followed.
++	return rp.flags&rpflagsFollowFinalSymlink != 0 || !rp.Final()
+ }
+ 
+ // HandleSymlink is called when the current path component is a symbolic link
+diff --git a/runsc/boot/vfs.go b/runsc/boot/vfs.go
+index be831fac5a11633037fc5f031666d1ba1d03fbfa..856077ce069a939509ff54820b75cee5251a2b6e 100644
+--- a/runsc/boot/vfs.go
++++ b/runsc/boot/vfs.go
+@@ -1290,9 +1290,10 @@ func (c *containerMounter) mountTmp(ctx context.Context, spec *specs.Spec, conf
+ 	root := mns.Root(ctx)
+ 	defer root.DecRef(ctx)
+ 	pop := vfs.PathOperation{
+-		Root:  root,
+-		Start: root,
+-		Path:  fspath.Parse("/tmp"),
++		Root:               root,
++		Start:              root,
++		Path:               fspath.Parse("/tmp"),
++		FollowFinalSymlink: true,
+ 	}
+ 	fd, err := c.l.k.VFS().OpenAt(ctx, creds, &pop, &vfs.OpenOptions{Flags: linux.O_RDONLY | linux.O_DIRECTORY})
+ 	switch {
+diff --git a/test/syscalls/linux/open.cc b/test/syscalls/linux/open.cc
+index b663877e8cfb5995941614329323cdec22ccf4ea..7668808f40521b26774677f73c77fff904e816cd 100644
+--- a/test/syscalls/linux/open.cc
++++ b/test/syscalls/linux/open.cc
+@@ -431,6 +431,31 @@ TEST_F(OpenTest, SymlinkDirectory) {
+   ASSERT_NO_ERRNO(Open(link, O_RDONLY | O_DIRECTORY));
+ }
+ 
++TEST_F(OpenTest, SymlinkDirectoryNoFollow) {
++  auto dir = ASSERT_NO_ERRNO_AND_VALUE(TempPath::CreateDir());
++  std::string link = NewTempAbsPath();
++  ASSERT_THAT(symlink(dir.path().c_str(), link.c_str()), SyscallSucceeds());
++  ASSERT_THAT(open(link.c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW),
++              SyscallFailsWithErrno(ENOTDIR));
++  ASSERT_THAT(open(link.c_str(), O_RDONLY | O_NOFOLLOW),
++              SyscallFailsWithErrno(ELOOP));
++  ASSERT_NO_ERRNO(Open(dir.path(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW));
++}
++
++TEST_F(OpenTest, SymlinkDirectoryTrailingSlashNoFollow) {
++  auto dir = ASSERT_NO_ERRNO_AND_VALUE(TempPath::CreateDir());
++  std::string link = NewTempAbsPath();
++  ASSERT_THAT(symlink(dir.path().c_str(), link.c_str()), SyscallSucceeds());
++  struct stat dir_stat;
++  ASSERT_THAT(stat(dir.path().c_str(), &dir_stat), SyscallSucceeds());
++  const FileDescriptor fd = ASSERT_NO_ERRNO_AND_VALUE(
++      Open(link + "/", O_RDONLY | O_DIRECTORY | O_NOFOLLOW));
++  struct stat fd_stat;
++  ASSERT_THAT(fstat(fd.get(), &fd_stat), SyscallSucceeds());
++  EXPECT_EQ(fd_stat.st_ino, dir_stat.st_ino);
++  ASSERT_NO_ERRNO(Open(link + "/", O_RDONLY | O_NOFOLLOW));
++}
++
+ TEST_F(OpenTest, Null) {
+   char c = '\0';
+   ASSERT_THAT(open(&c, O_RDONLY), SyscallFailsWithErrno(ENOENT));
