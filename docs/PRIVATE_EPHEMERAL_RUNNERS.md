@@ -259,6 +259,11 @@ OCI no-new-privileges continues to block elevation when explicitly requested.
 Install the reviewed `runsc.toml` at the existing shim `ConfigPath`, then qualify
 a fresh pod; changing this shim-read file does not require restarting containerd.
 
+An optional [private exclusive-bind contingency](../deploy/arc-private/EXCLUSIVE_CONTINGENCY.md)
+is prepared separately. It is unqualified and disabled by default; it requires
+a new private handler, a maintenance restart and host-readback acceptance.
+Do not enable it by changing this shared/public runtime configuration.
+
 
 ```sh
 python3 deploy/arc-private/render.py \

@@ -1,0 +1,9 @@
+# Contingency only: this file is not the shared public runtime configuration.
+binary_name = "/opt/victron-ci-reserve/gvisor-20260928/runsc"
+[runsc_config]
+  platform = "systrap"
+  net-raw = "true"
+  allow-packet-socket-write = "true"
+  allow-suid = "true"
+  # Changes all bind mounts in this private sandbox; root file-access is unchanged.
+  file-access-mounts = "exclusive"
