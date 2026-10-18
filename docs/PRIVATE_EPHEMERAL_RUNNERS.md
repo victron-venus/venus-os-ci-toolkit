@@ -186,6 +186,30 @@ the exact body `OK`, bypassing HTTP proxies. It avoids the CLI plugin discovery
 performed by `docker info`; the separate qualification still builds and runs a
 container and tests a PostgreSQL published port.
 
+Private sandbox profiles select Docker `overlay2` on one fresh disk-backed
+`docker-data` emptyDir mounted only at `/var/lib/docker`. The mount is limited to
+16Gi within the existing 20Gi per-pod ephemeral-storage limit; these are kubelet
+accounting and eviction limits, not synchronous filesystem quotas or guaranteed
+ENOSPC boundaries. No data is reused between jobs. Public reserve templates keep
+their volume-free VFS configuration. CPU and memory budgets are unchanged.
+
+This follows the pinned gVisor release's support for a
+[9p or tmpfs overlay upper filesystem](https://github.com/google/gvisor/blob/release-20260928.0/pkg/sentry/fsimpl/overlay/overlay.go#L239-L256).
+The default `root:self` configuration leaves ordinary bind submounts as 9p;
+private admission rejects `dev.gvisor.*` annotations that could change that
+behavior. Bootstrap checks that the exact Docker mount reports 9p before
+starting the selected driver. VFS copies each parent layer, which can make cold
+multilayer images much slower. Overlay must still pass a fresh bounded runtime
+qualification, including deletion/opaque-directory layers and PostgreSQL, before
+activating a new image; source support alone does not establish compatibility.
+Admission allows only this single emptyDir and mount. It rejects credential
+volumes and ConfigMap environment references. The sole Secret environment
+exception matches ARC 0.15's job-scoped `ACTIONS_RUNNER_INPUT_JITCONFIG`, key
+`jitToken`, Secret name equal to Pod name and an explicit EphemeralRunner
+controller owner reference. This is a structural check; CEL cannot verify the
+referenced Secret's actual owner. Controller RBAC governs its creation. GitHub
+App credential Secrets never match this exception.
+
 The dedicated `victron-reserve` runtime enables `allow-suid` so the non-root
 runner can use guest `sudo`, including Playwright's Linux dependency installer.
 The pinned [gVisor release defaults this flag to false](https://github.com/google/gvisor/blob/release-20260928.0/runsc/config/flags.go#L126),

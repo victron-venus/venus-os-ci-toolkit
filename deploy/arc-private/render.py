@@ -21,6 +21,8 @@ SCOPE = re.compile(r'^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$')
 RUNNER_HOME = '/home/runner'
 TOOL_CACHE = '/opt/hostedtoolcache'
 PRIVATE_ADMISSION = 'private-ephemeral-workers'
+DOCKER_DATA = '/var/lib/docker'
+DOCKER_SCRATCH_SIZE = '16Gi'
 # Embed the checked startup code; native workers have no ConfigMap dependency.
 NATIVE_DOCKER_BOOT = (ROOT / 'native-docker.sh').read_text()
 NATIVE_BOOT = '''set -euo pipefail
@@ -120,6 +122,9 @@ def values(row, profile, sandbox_image, native_image, node_ip, arm_node='h7', li
             'requests': {'cpu': '1500m', 'memory': '13Gi', 'ephemeral-storage': '2Gi'},
             'limits': {'cpu': '3', 'memory': '16Gi', 'ephemeral-storage': '30Gi'}}
     if profile in ('ci', 'automation', 'release'):
+        spec['volumes'] = [{'name': 'docker-data', 'emptyDir': {'sizeLimit': DOCKER_SCRATCH_SIZE}}]
+        spec['containers'][0]['volumeMounts'] = [{'name': 'docker-data', 'mountPath': DOCKER_DATA}]
+        spec['containers'][0]['env'].append({'name': 'RUNNER_DOCKER_STORAGE_DRIVER', 'value': 'overlay2'})
         return result
     spec.pop('runtimeClassName')
     result['template']['metadata']['labels'].pop(RESERVE.LABEL)
@@ -179,6 +184,7 @@ def private_sandbox_foundation(source):
         meta['name'] = PRIVATE_ADMISSION
         item['spec']['matchConstraints']['namespaceSelector']['matchLabels'] = {
             'runner-reserve.github.io/admission': 'private-worker'}
+        item['spec']['validations'] = private_scratch_validations(item['spec']['validations'])
     elif item['kind'] == 'ValidatingAdmissionPolicyBinding':
         meta['name'] = PRIVATE_ADMISSION
         item['spec']['policyName'] = PRIVATE_ADMISSION
@@ -191,6 +197,27 @@ def private_sandbox_foundation(source):
         if item['kind'] == 'ResourceQuota':
             item['spec']['hard'] = sandbox_quota(meta['namespace'].removeprefix('arc-private-'))
     return item
+
+
+def private_scratch_validations(validations):
+    """Permit only one disposable disk mount, preserving the public no-volume rule."""
+    for rule in validations:
+        if rule['message'] == 'Host, persistent and credential volumes are forbidden':
+            rule['expression'] = (
+                "has(object.spec.volumes) && size(object.spec.volumes) == 1 && "
+                "object.spec.volumes.all(v, v.name == 'docker-data' && has(v.emptyDir) && "
+                "(!has(v.emptyDir.medium) || v.emptyDir.medium == '') && "
+                "has(v.emptyDir.sizeLimit) && v.emptyDir.sizeLimit == '16Gi')")
+            rule['message'] = 'Only the bounded private Docker emptyDir is allowed'
+    validations.extend([
+        {'expression': "object.spec.containers.all(c, has(c.volumeMounts) && size(c.volumeMounts) == 1 && c.volumeMounts.all(m, m.name == 'docker-data' && m.mountPath == '/var/lib/docker' && !has(m.subPath) && !has(m.subPathExpr) && !has(m.mountPropagation) && (!has(m.readOnly) || !m.readOnly)))",
+         'message': 'Docker scratch cannot be redirected, shared or mounted elsewhere'},
+        {'expression': "object.spec.containers.all(c, has(c.env) && size(c.env.filter(e, e.name == 'RUNNER_DOCKER_STORAGE_DRIVER')) == 1 && c.env.exists(e, e.name == 'RUNNER_DOCKER_STORAGE_DRIVER' && has(e.value) && e.value == 'overlay2' && !has(e.valueFrom)))",
+         'message': 'Private workers require the qualified overlay driver'},
+        {'expression': "!has(object.metadata.annotations) || object.metadata.annotations.all(k, !k.startsWith('dev.gvisor.'))",
+         'message': 'Worker annotations cannot override sandbox filesystem policy'},
+    ])
+    return validations
 
 
 def native_foundations(profile, network_policy):
