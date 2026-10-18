@@ -37,6 +37,9 @@ if [ -n "${DOCKER_HOST:-}" ]; then
     sleep 1
   done
 fi
+# Jobs need normal checkout modes so Docker COPY works for non-root image users.
+# The pod filesystem is disposable and never shared with another job.
+umask 022
 exec ./run.sh
 '''
 
