@@ -215,17 +215,39 @@ def process(
     finally:
         # An exited but unreaped leader still reserves its PID while descendants
         # retain streams. After wait() reaps it, never signal a potentially reused
-        # process-group ID. Do not poll() here: that would also reap the leader.
-        if p.returncode is None:
-            try:
-                os.killpg(p.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-            p.wait()
-        sel.close()
-        for stream in (p.stdin, p.stdout, p.stderr):
-            if not stream.closed:
-                stream.close()
+        # process-group ID. Do not poll() before the group signal: that would also
+        # reap the leader.
+        try:
+            if p.returncode is None:
+                cleanup_failed = False
+                try:
+                    os.killpg(p.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                except PermissionError:
+                    # macOS can deny signalling a group whose leader already
+                    # exited. Popen.kill safely handles that race and also stops
+                    # a live direct child. Never signal the group again after it
+                    # may have reaped the leader.
+                    try:
+                        p.kill()
+                    except OSError:
+                        cleanup_failed = True
+                except OSError:
+                    cleanup_failed = True
+                try:
+                    p.wait(timeout=5)
+                except (subprocess.TimeoutExpired, OSError):
+                    cleanup_failed = True
+                require(
+                    not cleanup_failed,
+                    "external tool cleanup failed; output withheld",
+                )
+        finally:
+            sel.close()
+            for stream in (p.stdin, p.stdout, p.stderr):
+                if not stream.closed:
+                    stream.close()
 
 
 def decrypt(path, identity, age):
