@@ -162,7 +162,6 @@ def values(row, profile, sandbox_image, native_image, node_ip, arm_node='h7', li
         spec['runtimeClassName'] = sandbox_runtime
         spec['volumes'] = [{'name': 'docker-data', 'emptyDir': {'sizeLimit': DOCKER_SCRATCH_SIZE}}]
         spec['containers'][0]['volumeMounts'] = [{'name': 'docker-data', 'mountPath': DOCKER_DATA}]
-        spec['containers'][0]['env'].append({'name': 'RUNNER_DOCKER_STORAGE_DRIVER', 'value': 'overlay2'})
         mode = None
         runner = spec['containers'][0]
         if profile == 'ci' and storage == 'tmpfs-2gi':
@@ -174,6 +173,8 @@ def values(row, profile, sandbox_image, native_image, node_ip, arm_node='h7', li
             mode = 'automation-tmpfs-3gi'
             runner['resources']['requests']['memory'] = '5Gi'
             runner['resources']['limits']['memory'] = '6Gi'
+        runner['env'].append({'name': 'RUNNER_DOCKER_STORAGE_DRIVER',
+                              'value': 'overlayfs' if mode else 'overlay2'})
         if mode:
             runner['env'] += [
                 {'name': 'RUNNER_PRIVATE_DOCKER_STORAGE', 'value': mode},
@@ -312,10 +313,12 @@ def private_tmpfs_validation():
 
     def context(mode, profile):
         return (f"e.value == '{mode}' && object.metadata.namespace == 'arc-private-{profile}' && "
-                f"object.metadata.labels['private-runners.github.io/profile'] == '{profile}'")
+                f"object.metadata.labels['private-runners.github.io/profile'] == '{profile}' && "
+                "c.env.exists(b, b.name == 'RUNNER_DOCKER_STORAGE_DRIVER' && has(b.value) && "
+                "!has(b.valueFrom) && b.value == 'overlayfs')")
 
     cases = [
-        context('ci-tmpfs-2gi', 'ci') + ' && ' + memory('3Gi', '6Gi'),
+        context('ci-tmpfs-2gi', 'ci') + ' && ' + memory('3Gi', '6Gi') + ' && ' + cpu('900m', '4'),
         context('ci-heavy-tmpfs-6gi', 'ci') + ' && ' + memory('13Gi', '16Gi')
         + ' && ' + cpu('1500m', '3'),
         context('automation-tmpfs-3gi', 'automation') + ' && ' + memory('5Gi', '6Gi')
@@ -353,8 +356,8 @@ def private_scratch_validations(validations):
          'message': 'The tmpfs candidate requires its exact private profile and resource tuple'},
         {'expression': "object.spec.containers.all(c, has(c.volumeMounts) && size(c.volumeMounts) == 1 && c.volumeMounts.all(m, m.name == 'docker-data' && m.mountPath == '/var/lib/docker' && !has(m.subPath) && !has(m.subPathExpr) && !has(m.mountPropagation) && (!has(m.readOnly) || !m.readOnly)))",
          'message': 'Docker scratch cannot be redirected, shared or mounted elsewhere'},
-        {'expression': "object.spec.containers.all(c, has(c.env) && size(c.env.filter(e, e.name == 'RUNNER_DOCKER_STORAGE_DRIVER')) == 1 && c.env.exists(e, e.name == 'RUNNER_DOCKER_STORAGE_DRIVER' && has(e.value) && e.value == 'overlay2' && !has(e.valueFrom)))",
-         'message': 'Private workers require the qualified overlay driver'},
+        {'expression': "object.spec.containers.all(c, has(c.env) && size(c.env.filter(e, e.name == 'RUNNER_DOCKER_STORAGE_DRIVER')) == 1 && c.env.exists(e, e.name == 'RUNNER_DOCKER_STORAGE_DRIVER' && has(e.value) && e.value == (c.env.exists(m, m.name == 'RUNNER_PRIVATE_DOCKER_STORAGE') ? 'overlayfs' : 'overlay2') && !has(e.valueFrom)))",
+         'message': 'Private storage modes require their exact Docker backend'},
         {'expression': "!has(object.metadata.annotations) || object.metadata.annotations.all(k, !k.startsWith('dev.gvisor.'))",
          'message': 'Worker annotations cannot override sandbox filesystem policy'},
     ])

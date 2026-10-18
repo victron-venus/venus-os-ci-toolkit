@@ -22,7 +22,7 @@ private_tmpfs_storage() {
       ;;
     *) printf 'Unsupported private tmpfs mode\n' >&2; return 1 ;;
   esac
-  [[ "${RUNNER_DOCKER_STORAGE_DRIVER:-}" == overlay2 &&
+  [[ "${RUNNER_DOCKER_STORAGE_DRIVER:-}" == overlayfs &&
      "$(id -u)" == 0 && "$(uname -r)" == *-gvisor &&
      "${RUNNER_PRIVATE_NAMESPACE:-}" == "$namespace" &&
      "${RUNNER_PRIVATE_PROFILE:-}" == "$profile" &&
@@ -69,7 +69,7 @@ private_tmpfs_storage() {
   }
   printf 'PRIVATE_DOCKER_TMPFS_READY filesystem=tmpfs bytes=%s inodes=%s memory_request=%s memory_limit=%s\n' \
     "$capacity" "$inode_cap" "$RUNNER_PRIVATE_MEMORY_REQUEST" "$RUNNER_PRIVATE_MEMORY_LIMIT" >&2
-  printf '%s' overlay2
+  printf '%s' overlayfs
 }
 
 private_start_docker() {
@@ -81,6 +81,35 @@ private_start_docker() {
       # shellcheck source-path=SCRIPTDIR
       # shellcheck source=../runner-reserve/sandbox-docker.sh
       source /opt/victron-ci-reserve/sandbox-docker-base.sh
+      # Experimental: use the containerd image store only in these explicit private tmpfs modes.
+      local dockerd_binary
+      dockerd_binary=$(type -P dockerd) || return 1
+      [[ "$dockerd_binary" == /* && -x "$dockerd_binary" ]] || return 1
+      dockerd() {
+        local -a adapted=("$@")
+        local i changed=0 drivers=0
+        for ((i=0; i<${#adapted[@]}; i++)); do
+          case "${adapted[i]}" in
+            --feature)
+              if [[ "${adapted[i+1]:-}" == containerd-snapshotter=* ]]; then
+                [[ "${adapted[i+1]}" == containerd-snapshotter=false && "$changed" == 0 ]] || return 1
+                adapted[i+1]=containerd-snapshotter=true
+                changed=1
+              fi
+              ;;
+            --feature=containerd-snapshotter=*|--storage-driver)
+              printf 'Experimental image-store argument form rejected\n' >&2; return 1 ;;
+            --storage-driver=*)
+              [[ "${adapted[i]}" == --storage-driver=overlayfs ]] || return 1
+              drivers=$((drivers + 1))
+              ;;
+          esac
+        done
+        [[ "$changed" == 1 && "$drivers" == 1 ]] || {
+          printf 'Experimental image-store daemon contract rejected\n' >&2; return 1;
+        }
+        exec "$dockerd_binary" "${adapted[@]}"
+      }
       docker_storage_driver() { private_tmpfs_storage /var/lib/docker; }
       start_sandbox_docker "$@"
       ;;

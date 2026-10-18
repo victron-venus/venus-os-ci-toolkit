@@ -13,6 +13,38 @@ mounts tmpfs before starting Docker. Here the private image retains the shared
 daemon implementation and adds a storage gate; the public image and bootstrap
 are unchanged. Classic disk storage remains the default.
 
+## Proposed containerd image-store backend
+
+This draft changes only the three explicit private tmpfs modes below. It has not
+been selected for deployment or proven by a runtime A/B. Source-level inspection
+shows that containerd pulls avoid Moby's classic tar-split pipe and chroot
+unpacking path; this is a testable performance hypothesis, not a speed guarantee.
+The [pinned gVisor Docker guide](https://github.com/google/gvisor/blob/release-20260928.0/g3doc/user_guide/tutorials/docker-in-gvisor.md)
+supports the image store when `/var/lib/docker` is backed by guest tmpfs.
+
+The wrapper resolves the external daemon before shadowing its launch function.
+It rewrites exactly one `--feature containerd-snapshotter=false` pair to `true`,
+requires exactly one `--storage-driver=overlayfs`, and rejects missing,
+duplicated or alternate forms of these target arguments. Other launch arguments
+are preserved; `exec` retains daemon PID and cleanup semantics. The public helper,
+its standalone containerd configuration, CRI-disabled setting and local sockets
+remain unchanged. No GOMAXPROCS or host runtime setting changes.
+
+The renderer pairs each named mode with `RUNNER_DOCKER_STORAGE_DRIVER=overlayfs`;
+admission requires its exact namespace/profile, memory and CPU tuple, one literal
+backend selector, and one valid mode selector. An absent mode retains `overlay2`.
+The canonical qualifier stays byte-identical: its backend assertion follows the
+selected driver, and BusyBox build/whiteout/run and PostgreSQL network/SQL checks
+remain mandatory. A candidate also needs independent `DriverStatus` evidence
+showing `driver-type=io.containerd.snapshotter.v1`.
+
+Containerd retains compressed content as well as unpacked snapshots, both under
+`/var/lib/docker/containerd/daemon` in this configuration. Existing static image
+sizes or classic-driver peak measurements do not qualify the new backend's
+capacity. Measure real occupancy and cgroup peak memory separately for the
+2 GiB, 6 GiB and 3 GiB modes before enabling their pools. The numerical caps and
+quotas below are unchanged; none is a claim that the workload fits.
+
 ## Select one standard CI candidate
 
 In the protected operator inventory, explicitly set `ci_storage` for the
@@ -41,7 +73,8 @@ Only this repository's standard `ci` profile changes:
   and its mount restrictions remain intact.
 - Memory: 3 GiB request, 6 GiB limit. CPU remains 900m request / 4 CPU limit.
   RuntimeClass overhead adds 128 MiB and 100m for scheduling and quota.
-- Docker remains classic `overlay2` with the containerd snapshotter disabled.
+- Explicit private tmpfs modes select `overlayfs` with the containerd image store.
+  Disk/default modes retain classic `overlay2` with the snapshotter disabled.
   Network fencing, daemon readiness/cleanup and the nonroot job are unchanged.
 
 The renderer rejects unknown storage modes, a missing matching profile, heavy

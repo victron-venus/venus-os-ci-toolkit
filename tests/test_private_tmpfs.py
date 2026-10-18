@@ -1,5 +1,10 @@
 """Exercise the private storage gate without mounting or starting a daemon."""
 import importlib.util
+import json
+import os
+import shlex
+import sys
+import time
 from pathlib import Path
 import subprocess
 import tempfile
@@ -13,6 +18,8 @@ SPEC = importlib.util.spec_from_file_location('private_tmpfs_arc', ROOT / 'deplo
 arc = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(arc)
 IMAGE = 'localhost/private@sha256:' + 'a' * 64
+CANDIDATE = HELPER.read_text()
+ARGV = ['--containerd=/var/run/docker/containerd/containerd.sock', '--iptables=false', '--ip6tables=false', '--feature', 'embedded-containerd=false', '--feature', 'containerd-snapshotter=false', '--storage-driver=overlayfs', '--mtu=1400', '--group=runner', '--log-driver', 'argument with spaces']
 ROW = {'name': 'owner/private', 'visibility': 'private', 'profiles': ['ci', 'automation', 'release']}
 
 
@@ -26,7 +33,7 @@ source "$1"
 data=$2
 state=$3
 RUNNER_PRIVATE_DOCKER_STORAGE=ci-tmpfs-2gi
-RUNNER_DOCKER_STORAGE_DRIVER=overlay2
+RUNNER_DOCKER_STORAGE_DRIVER=overlayfs
 RUNNER_PRIVATE_NAMESPACE=arc-private-ci
 RUNNER_PRIVATE_PROFILE=ci
 RUNNER_PRIVATE_MEMORY_LIMIT=6442450944
@@ -45,7 +52,7 @@ stat() { printf 'tmpfs 4096 524288 262144'; }
 
     def test_exact_bounded_guest_mount_is_accepted(self):
         result, mounted = self.gate()
-        self.assertEqual((result.returncode, result.stdout), (0, 'overlay2'), result.stderr)
+        self.assertEqual((result.returncode, result.stdout), (0, 'overlayfs'), result.stderr)
         self.assertTrue(mounted.startswith('-t tmpfs -o size=2147483648,nr_inodes=262144,mode=0710 tmpfs '))
         self.assertIn('PRIVATE_DOCKER_TMPFS_READY filesystem=tmpfs bytes=2147483648 inodes=262144', result.stderr)
 
@@ -53,12 +60,13 @@ stat() { printf 'tmpfs 4096 524288 262144'; }
         result, mounted = self.gate('''
 findmnt() { if [[ -e "$state" ]]; then printf '9p\\ntmpfs'; else printf 9p; fi; }
 ''')
-        self.assertEqual((result.returncode, result.stdout), (0, 'overlay2'), result.stderr)
+        self.assertEqual((result.returncode, result.stdout), (0, 'overlayfs'), result.stderr)
         self.assertIsNotNone(mounted)
 
     def test_profile_resources_and_unknown_modes_fail_before_mount(self):
         for setup in [
                 'RUNNER_PRIVATE_DOCKER_STORAGE=tmpfs', 'RUNNER_DOCKER_STORAGE_DRIVER=vfs',
+                'RUNNER_DOCKER_STORAGE_DRIVER=overlay2',
                 'RUNNER_PRIVATE_NAMESPACE=runner-reserve-ci', 'RUNNER_PRIVATE_PROFILE=automation',
                 'RUNNER_PRIVATE_PROFILE=release', 'RUNNER_PRIVATE_MEMORY_LIMIT=17179869184',
                 'RUNNER_PRIVATE_MEMORY_LIMIT=2147483648', 'RUNNER_PRIVATE_MEMORY_REQUEST=1073741824',
@@ -151,6 +159,7 @@ findmnt() { if [[ -e "$state" ]]; then printf '9p\\ntmpfs'; else printf 9p; fi; 
             self.assertEqual(runner['resources']['requests']['cpu'], '900m')
             env = {e['name']: e for e in runner['env']}
             self.assertEqual(env['RUNNER_PRIVATE_DOCKER_STORAGE']['value'], 'ci-tmpfs-2gi')
+            self.assertEqual(env['RUNNER_DOCKER_STORAGE_DRIVER']['value'], 'overlayfs')
             self.assertEqual(env['RUNNER_PRIVATE_MEMORY_REQUEST']['valueFrom']['resourceFieldRef'],
                              {'containerName': 'runner', 'resource': 'requests.memory', 'divisor': '1'})
             self.assertEqual(pod['volumes'], old['template']['spec']['volumes'])
@@ -215,7 +224,7 @@ stat() { printf 'tmpfs 4096 786432 262144'; }
                                       ('automation-tmpfs-3gi', 3221225472, 262144)]:
             with self.subTest(mode=mode):
                 result, mounted = self.gate(self.new_mode_setup(mode))
-                self.assertEqual((result.returncode, result.stdout), (0, 'overlay2'), result.stderr)
+                self.assertEqual((result.returncode, result.stdout), (0, 'overlayfs'), result.stderr)
                 self.assertIn(f'size={capacity},nr_inodes={inodes},mode=0710', mounted)
                 self.assertIn(f'bytes={capacity} inodes={inodes}', result.stderr)
 
@@ -228,7 +237,7 @@ stat() { printf 'tmpfs 4096 786432 262144'; }
                              'RUNNER_PRIVATE_MEMORY_REQUEST=17179869184',
                              'RUNNER_PRIVATE_MEMORY_REQUEST=05368709120',
                              'RUNNER_PRIVATE_MEMORY_LIMIT=2147483648',
-                             'RUNNER_DOCKER_STORAGE_DRIVER=vfs',
+                             'RUNNER_DOCKER_STORAGE_DRIVER=vfs', 'RUNNER_DOCKER_STORAGE_DRIVER=overlay2',
                              'uname() { printf 6.12; }', 'id() { printf 1001; }']:
                 with self.subTest(mode=mode, mutation=mutation):
                     result, mounted = self.gate(self.new_mode_setup(mode) + mutation)
@@ -285,6 +294,7 @@ stat() { printf 'tmpfs 4096 786432 262144'; }
                 self.assertEqual((runner['resources']['requests']['cpu'],
                                   runner['resources']['limits']['cpu']), cpu)
                 self.assertIn({'name': 'RUNNER_PRIVATE_DOCKER_STORAGE', 'value': expected[2]}, runner['env'])
+                self.assertIn({'name': 'RUNNER_DOCKER_STORAGE_DRIVER', 'value': 'overlayfs'}, runner['env'])
                 self.assertEqual(new['template']['spec']['volumes'], old['template']['spec']['volumes'])
 
     def test_automation_quota_is_opt_in_and_excludes_heavy_plus_standard(self):
@@ -318,6 +328,7 @@ stat() { printf 'tmpfs 4096 786432 262144'; }
     def test_admission_contains_only_named_exact_new_tuples(self):
         expression = arc.private_tmpfs_validation()
         for mode, profile, request, limit, cpu_request, cpu_limit in [
+                ('ci-tmpfs-2gi', 'ci', '3Gi', '6Gi', '900m', '4'),
                 ('ci-heavy-tmpfs-6gi', 'ci', '13Gi', '16Gi', '1500m', '3'),
                 ('automation-tmpfs-3gi', 'automation', '5Gi', '6Gi', '50m', '1')]:
             branch = next(part for part in expression.split(' || ') if f"e.value == '{mode}'" in part)
@@ -326,7 +337,8 @@ stat() { printf 'tmpfs 4096 786432 262144'; }
                           f"dyn(c.resources).requests['memory'] == '{request}'",
                           f"dyn(c.resources).limits['memory'] == '{limit}'",
                           f"dyn(c.resources).requests['cpu'] == '{cpu_request}'",
-                          f"dyn(c.resources).limits['cpu'] == '{cpu_limit}'"]:
+                          f"dyn(c.resources).limits['cpu'] == '{cpu_limit}'",
+                          "b.name == 'RUNNER_DOCKER_STORAGE_DRIVER'", "b.value == 'overlayfs'"]:
                 self.assertIn(value, branch)
         self.assertIn("size(c.env.filter(e, e.name == 'RUNNER_PRIVATE_DOCKER_STORAGE')) <= 1", expression)
         self.assertIn("object.spec.runtimeClassName == 'victron-reserve'", expression)
@@ -351,6 +363,87 @@ exec() { printf '%s' "$*"; }
                                  'test', str(HELPER)], text=True, capture_output=True, check=False, timeout=10)
         self.assertNotEqual(result.returncode, 0)
 
+
+    def harness(self, argv=ARGV, *, ignore_term=False, expect_ok=True, missing=False, relative=False, mode='ci-tmpfs-2gi'):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp); binaries = root/'bin'; binaries.mkdir()
+            fake = binaries/'dockerd'
+            fake.write_text(f'#!{sys.executable}\n' + '''import json, os, signal, sys, time
+from pathlib import Path
+signal.signal(signal.SIGTERM, signal.SIG_IGN if os.environ.get('IGNORE_TERM') == '1' else lambda *_: sys.exit(0))
+Path(os.environ['RECORD']).write_text(json.dumps({'pid':os.getpid(), 'gomaxprocs':os.environ.get('GOMAXPROCS'), 'argv':sys.argv[1:]}))
+while True: time.sleep(1)
+'''); fake.chmod(0o755)
+            public = (ROOT/'deploy/runner-reserve/sandbox-docker.sh').read_text()
+            cleanup = 'cleanup_startup() {' + public.split('cleanup_startup() {', 1)[1].split('\ndocker_api_ready()', 1)[0]
+            helper = root/'helper.sh'
+            helper.write_text(cleanup + '''
+start_sandbox_docker() {
+  trap cleanup_startup EXIT
+  RECORD="$OUT/containerd.json" "$FAKE_DAEMON" --containerd &
+  sandbox_containerd_pid=$!
+  RECORD="$OUT/dockerd.json" dockerd ''' + shlex.join(argv) + ''' &
+  sandbox_docker_pid=$!
+  for attempt in {1..200}; do
+    [[ -s "$OUT/dockerd.json" && -s "$OUT/containerd.json" ]] && break
+    kill -0 "$sandbox_docker_pid" 2>/dev/null || return 1
+    sleep 0.01
+  done
+  [[ -s "$OUT/dockerd.json" && -s "$OUT/containerd.json" ]] || return 1
+  printf '%s %s %s\\n' "$sandbox_docker_pid" "$sandbox_containerd_pid" "${GOMAXPROCS-unset}"
+  cleanup_startup
+  trap - EXIT
+  ! kill -0 "$sandbox_docker_pid" 2>/dev/null
+  ! kill -0 "$sandbox_containerd_pid" 2>/dev/null
+}
+''')
+            script = root/'candidate.sh'; script.write_text(CANDIDATE.replace('/opt/victron-ci-reserve/sandbox-docker-base.sh', str(helper)))
+            env = dict(os.environ, OUT=str(root), RECORD=str(root/'unexpected.json'), FAKE_DAEMON=str(fake), RUNNER_PRIVATE_DOCKER_STORAGE=mode, GOMAXPROCS='7', IGNORE_TERM='1' if ignore_term else '0')
+            env['PATH'] = '' if missing else ('bin' if relative else str(binaries)) + os.pathsep + os.defpath
+            started = time.monotonic()
+            r = subprocess.run(['/bin/bash', str(script), '1400'], env=env, cwd=root, capture_output=True, text=True, timeout=9)
+            if not expect_ok:
+                self.assertNotEqual(r.returncode, 0)
+                self.assertFalse((root/'dockerd.json').exists())
+                if missing or relative: self.assertFalse((root/'containerd.json').exists())
+                return
+            self.assertEqual(r.returncode, 0, r.stderr)
+            docker_pid, containerd_pid, parent_value = r.stdout.strip().split()
+            d=json.loads((root/'dockerd.json').read_text()); c=json.loads((root/'containerd.json').read_text())
+            self.assertEqual((d['pid'],c['pid']), (int(docker_pid),int(containerd_pid)))
+            self.assertEqual((d['gomaxprocs'],c['gomaxprocs'],parent_value), ('7','7','7'))
+            expected = list(argv); expected[expected.index('containerd-snapshotter=false')] = 'containerd-snapshotter=true'
+            self.assertEqual(d['argv'], expected)
+            self.assertLess(time.monotonic()-started, 8)
+
+    def test_argv_pid_and_original_cleanup(self):
+        for mode in ['ci-tmpfs-2gi', 'ci-heavy-tmpfs-6gi', 'automation-tmpfs-3gi']:
+            with self.subTest(mode=mode): self.harness(mode=mode)
+
+    def test_term_ignoring_daemon_escalates_and_reaps(self):
+        self.harness(ignore_term=True)
+
+    def test_invalid_feature_and_driver_arguments_rejected(self):
+        bad = [ARGV + ['--feature','containerd-snapshotter=false'], [v for v in ARGV if v != 'containerd-snapshotter=false'], [v.replace('containerd-snapshotter=false','containerd-snapshotter=true') for v in ARGV], ARGV + ['--feature=containerd-snapshotter=false'], [v.replace('--storage-driver=overlayfs','--storage-driver=overlay2') for v in ARGV], ARGV + ['--storage-driver=overlayfs']]
+        for argv in bad:
+            with self.subTest(argv=argv): self.harness(argv, expect_ok=False)
+
+    def test_no_absolute_daemon_fails_before_any_launch(self):
+        self.harness(missing=True, expect_ok=False)
+        self.harness(relative=True, expect_ok=False)
+
+    def test_backend_admission_keeps_disk_on_classic_driver(self):
+        policy=next(item for item in arc.foundations([ROW], IMAGE, '192.0.2.1')['items']
+                    if item['kind']=='ValidatingAdmissionPolicy')
+        expr=next(rule['expression'] for rule in policy['spec']['validations']
+                  if rule['message']=='Private storage modes require their exact Docker backend')
+        self.assertIn("size(c.env.filter(e, e.name == 'RUNNER_DOCKER_STORAGE_DRIVER')) == 1",expr)
+        self.assertIn("c.env.exists(m, m.name == 'RUNNER_PRIVATE_DOCKER_STORAGE') ? 'overlayfs' : 'overlay2'",expr)
+        self.assertIn('!has(e.valueFrom)',expr)
+        for profile in ROW['profiles']:
+            env=arc.values(ROW, profile, IMAGE, IMAGE, '192.0.2.1')['template']['spec']['containers'][0]['env']
+            self.assertIn({'name':'RUNNER_DOCKER_STORAGE_DRIVER','value':'overlay2'},env)
+            self.assertFalse(any(e['name']=='RUNNER_PRIVATE_DOCKER_STORAGE' for e in env))
 
 if __name__ == '__main__':
     unittest.main()
