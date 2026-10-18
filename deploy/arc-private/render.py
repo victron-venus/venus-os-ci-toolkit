@@ -492,12 +492,28 @@ def nuc_kvm_foundations(document, config, value):
     guard['metadata']['name'] = NUC_RUNTIME + '-workers'
     guard['spec']['matchConstraints'].pop('namespaceSelector')
     runtime_match = "has(object.spec.runtimeClassName) && object.spec.runtimeClassName == " + json.dumps(NUC_RUNTIME)
-    guard['spec']['matchConditions'] = [{'name': 'nuc-runtime', 'expression': runtime_match}]
+    old_runtime_match = ("oldObject != null && has(oldObject.spec.runtimeClassName) && "
+                         "oldObject.spec.runtimeClassName == " + json.dumps(NUC_RUNTIME))
+    runtime_in_request = '(' + runtime_match + ') || (' + old_runtime_match + ')'
+    selected_scope = json.dumps(name(config.scope, 'scope'))
+    scope_matches = []
+    for obj in ('object', 'oldObject'):
+        scope_matches.append(
+            f'({obj} != null && has({obj}.metadata.labels) && '
+            f'{json.dumps(SCOPE_LABEL)} in {obj}.metadata.labels && '
+            f'{obj}.metadata.labels[{json.dumps(SCOPE_LABEL)}] == {selected_scope})')
+    selected_in_request = "request.namespace == 'arc-private-ci' && (" + ' || '.join(scope_matches) + ')'
+    guard['spec']['matchConditions'] = [{
+        'name': 'nuc-runtime-or-selected-scope',
+        'expression': '(' + runtime_in_request + ') || (' + selected_in_request + ')'}]
+    # PodStatusStrategy resets spec/ownerReferences, but leaves labels mutable.
+    # Run the complete contract on status writes, not only ordinary Pod updates.
+    guard['spec']['matchConstraints']['resourceRules'].append({
+        'apiGroups': [''], 'apiVersions': ['v1'], 'operations': ['UPDATE'], 'resources': ['pods/status']})
     # Existing mp workers retain every original rule. The new global guard also
     # protects namespaces that do not carry the private admission label.
     private['spec']['matchConditions'] = [{'name': 'not-nuc-runtime',
-                                          'expression': '!(' + runtime_match + ')'}]
-    selected_scope = json.dumps(name(config.scope, 'scope'))
+                                          'expression': '!(' + runtime_in_request + ')'}]
     private['spec']['validations'].append({
         'expression': "!has(object.metadata.labels) || !('" + SCOPE_LABEL
                       + "' in object.metadata.labels) || object.metadata.labels['" + SCOPE_LABEL
@@ -518,6 +534,16 @@ def nuc_kvm_foundations(document, config, value):
                                   + " && dyn(c.resources).limits == " + json.dumps(runner['resources']['limits']) + ")")
             rule['message'] = 'NUC workers require the exact bounded CI resource tuple'
     guard['spec']['validations'].extend([
+        {'expression': "request.operation != 'UPDATE' || (oldObject != null && "
+                       "has(oldObject.metadata.labels) && has(object.metadata.labels) && "
+                       + ' && '.join(
+                           f'{json.dumps(key)} in oldObject.metadata.labels && '
+                           f'{json.dumps(key)} in object.metadata.labels && '
+                           f'object.metadata.labels[{json.dumps(key)}] == oldObject.metadata.labels[{json.dumps(key)}]'
+                           for key in (SCOPE_LABEL, PROFILE_LABEL, 'runner-reserve.github.io/role'))
+                       + " && (!has(oldObject.spec.nodeName) || oldObject.spec.nodeName == '' || "
+                       "(has(object.spec.nodeName) && object.spec.nodeName == oldObject.spec.nodeName)))",
+         'message': 'NUC updates preserve scope, profile, worker identity and the bound node'},
         {'expression': "request.namespace == 'arc-private-ci' && object.metadata.namespace == 'arc-private-ci' && "
                        "has(object.metadata.labels) && object.metadata.labels['" + SCOPE_LABEL + "'] == "
                        + selected_scope + " && object.metadata.labels['" + PROFILE_LABEL + "'] == 'ci'",

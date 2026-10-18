@@ -99,7 +99,9 @@ shortcut. Keep snapshots and an exact rollback for each staged change.
 
 Install and observe the two global Fail/Deny guards before exposing the new
 RuntimeClass/handler. The worker guard covers CREATE and UPDATE, including
-`pods/ephemeralcontainers`, across all namespaces. It requires the selected
+`pods/ephemeralcontainers` and UPDATE on `pods/status`, across all namespaces.
+It matches either old or new NUC runtime, and either old or new selected scope
+in the CI namespace, so a label change cannot evade the guard. It requires the selected
 private CI scope, exact image/node/resource/storage/guard inputs and inherited
 no-host/no-credentials constraints. The class guard rejects another class name
 using this handler and changes to its node/overhead. Review pre-existing class
@@ -110,6 +112,15 @@ global guard and refuses an mp fallback for the selected CI scope. Other private
 and all public workers retain their original contracts. ARC's same-name JIT
 Secret reference remains the only permitted environment Secret; this structural
 check is not a Secret-ownership lookup or a replacement for controller RBAC.
+
+Updates preserve the scope, profile and `runner-reserve.github.io/role` labels
+and an already bound node. Normal kubelet status changes and unrelated ARC label
+additions remain allowed. This also protects NetworkPolicy selection and the
+host guard's worker discovery: Kubernetes 1.31.4's
+[PodStatusStrategy](https://github.com/kubernetes/kubernetes/blob/v1.31.4/pkg/registry/core/pod/strategy.go#L203-L227)
+restores the old spec and owner references on status writes, but does not restore
+labels. The full inherited contract, including the prohibition on `dev.gvisor.*`
+annotations, applies to those writes too.
 
 Before a real worker, obtain actual Kubernetes-version CEL type-check results
 and server dry-run positive/negative results. A rejection for an unknown

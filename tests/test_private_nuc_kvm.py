@@ -1,9 +1,11 @@
 """Offline NUC opt-in contracts; actual Kubernetes CEL/runtime proof stays separate."""
+import ast
 import copy
 import hashlib
 import importlib.util
 import json
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tempfile
@@ -25,6 +27,54 @@ CONFIG = arc.NucKvmConfig(ROW['name'], NUC, '192.0.2.2')
 def render(rows=None, config=CONFIG):
     return arc.render({'repositories': rows or [copy.deepcopy(ROW)]}, MP, NATIVE, '192.0.2.1',
                       listener_node='nuc', nuc_kvm=config)
+
+
+def identity_expression(expression, context):
+    """Exercise the emitted boolean/map identity subset; not a CEL typechecker."""
+    source = expression.replace('&&', ' and ').replace('||', ' or ')
+    source = re.sub(r'!(?!=)', ' not ', source)
+    source = re.sub(r'\bnull\b', 'None', source)
+
+    def visit(node, values):
+        if isinstance(node, ast.Constant):
+            return node.value
+        if isinstance(node, ast.Name):
+            return values[node.id]
+        if isinstance(node, ast.Attribute):
+            return visit(node.value, values)[node.attr]
+        if isinstance(node, ast.Subscript):
+            return visit(node.value, values)[visit(node.slice, values)]
+        if isinstance(node, ast.Dict):
+            return {visit(k, values): visit(v, values) for k, v in zip(node.keys, node.values)}
+        if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
+            return not visit(node.operand, values)
+        if isinstance(node, ast.BoolOp):
+            results = (bool(visit(child, values)) for child in node.values)
+            return all(results) if isinstance(node.op, ast.And) else any(results)
+        if isinstance(node, ast.Compare) and len(node.ops) == 1:
+            left, right = visit(node.left, values), visit(node.comparators[0], values)
+            if isinstance(node.ops[0], ast.Eq):
+                return left == right
+            if isinstance(node.ops[0], ast.NotEq):
+                return left != right
+            if isinstance(node.ops[0], ast.In):
+                return left in right
+        if isinstance(node, ast.Call):
+            if isinstance(node.func, ast.Name) and node.func.id == 'has' and len(node.args) == 1:
+                try:
+                    visit(node.args[0], values)
+                except (KeyError, TypeError):
+                    return False
+                return True
+            if isinstance(node.func, ast.Attribute):
+                receiver = visit(node.func.value, values)
+                if node.func.attr == 'all' and isinstance(node.args[0], ast.Name):
+                    return all(visit(node.args[1], {**values, node.args[0].id: item}) for item in receiver)
+                if node.func.attr == 'startsWith':
+                    return receiver.startswith(visit(node.args[0], values))
+        raise AssertionError('Unsupported identity expression syntax: ' + ast.dump(node))
+
+    return bool(visit(ast.parse(source.strip(), mode='eval').body, context))
 
 
 class NucKvmTests(unittest.TestCase):
@@ -125,8 +175,10 @@ class NucKvmTests(unittest.TestCase):
         self.assertIn("request.namespace != 'arc-private-ci'", shared['spec']['validations'][-1]['expression'])
         self.assertNotIn('namespaceSelector', guard['spec']['matchConstraints'])
         self.assertEqual(guard['spec']['failurePolicy'], 'Fail')
-        self.assertEqual(guard['spec']['matchConstraints']['resourceRules'],
+        self.assertEqual(guard['spec']['matchConstraints']['resourceRules'][:-1],
                          old['spec']['matchConstraints']['resourceRules'])
+        self.assertEqual(guard['spec']['matchConstraints']['resourceRules'][-1], {
+            'apiGroups': [''], 'apiVersions': ['v1'], 'operations': ['UPDATE'], 'resources': ['pods/status']})
         rules = {v['message']: v['expression'] for v in guard['spec']['validations']}
         changed = {'gVisor is mandatory', 'Only the reviewed pinned worker image is allowed',
                    'The tmpfs candidate requires its exact private profile and resource tuple'}
@@ -165,6 +217,91 @@ class NucKvmTests(unittest.TestCase):
         self.assertIn("dyn(e.valueFrom.resourceFieldRef).divisor == '1'", expression)
         for forbidden in ['LD_PRELOAD', 'HTTPS_PROXY', 'RUNNER_RESERVE_QUALIFICATION']:
             self.assertNotIn(forbidden, names)
+
+    def identity_policy(self):
+        documents = render()
+        pod = copy.deepcopy(documents[arc.name(ROW['name'], 'ci') + '.json']['template'])
+        pod['metadata']['namespace'] = 'arc-private-ci'
+        pod['spec']['nodeName'] = 'nuc'
+        guard = next(x for x in documents['foundations.json']['items']
+                     if x['kind'] == 'ValidatingAdmissionPolicy'
+                     and x['metadata']['name'] == arc.NUC_RUNTIME + '-workers')
+        rules = {v['message']: v['expression'] for v in guard['spec']['validations']}
+        return pod, guard['spec']['matchConditions'][0]['expression'], rules
+
+    def test_status_update_preserves_identity_but_allows_status_and_arc_metadata(self):
+        old, match, rules = self.identity_policy()
+        new = copy.deepcopy(old)
+        new['status'] = {'phase': 'Running', 'conditions': [{'type': 'Ready', 'status': 'True'}]}
+        new['metadata']['labels']['actions.github.com/job-result'] = 'running'
+        context = {'object': new, 'oldObject': old,
+                   'request': {'operation': 'UPDATE', 'namespace': 'arc-private-ci'}}
+        self.assertTrue(identity_expression(match, context))
+        for message in ['NUC updates preserve scope, profile, worker identity and the bound node',
+                        'NUC KVM is restricted to the one selected private CI scope',
+                        'NUC KVM cannot select another node or scheduler', 'gVisor is mandatory',
+                        'Worker network identity is mandatory',
+                        'Worker annotations cannot override sandbox filesystem policy']:
+            self.assertTrue(identity_expression(rules[message], context), message)
+        # CREATE has no oldObject; a newly scheduled node does not require an old binding.
+        self.assertTrue(identity_expression(rules['NUC updates preserve scope, profile, worker identity and the bound node'],
+                                            {**context, 'oldObject': None, 'request': {'operation': 'CREATE'}}))
+
+    def test_status_and_regular_updates_cannot_drop_or_replace_network_labels(self):
+        old, match, rules = self.identity_policy()
+        immutable = rules['NUC updates preserve scope, profile, worker identity and the bound node']
+        for subresource in ['', 'status', 'ephemeralcontainers']:
+            for key in [arc.SCOPE_LABEL, arc.PROFILE_LABEL, 'runner-reserve.github.io/role']:
+                for replacement in [None, 'other']:
+                    with self.subTest(subresource=subresource, label=key, replacement=replacement):
+                        new = copy.deepcopy(old)
+                        if replacement is None:
+                            del new['metadata']['labels'][key]
+                        else:
+                            new['metadata']['labels'][key] = replacement
+                        context = {'object': new, 'oldObject': old, 'request': {
+                            'operation': 'UPDATE', 'namespace': 'arc-private-ci', 'subResource': subresource}}
+                        self.assertTrue(identity_expression(match, context))
+                        self.assertFalse(identity_expression(immutable, context))
+        for replacement in [None, 'mp']:
+            new = copy.deepcopy(old)
+            if replacement is None:
+                del new['spec']['nodeName']
+            else:
+                new['spec']['nodeName'] = replacement
+            self.assertFalse(identity_expression(immutable, {'object': new, 'oldObject': old,
+                                                            'request': {'operation': 'UPDATE'}}))
+        new = copy.deepcopy(old)
+        new['metadata']['annotations'] = {'dev.gvisor.flag.file-access-mounts': 'exclusive'}
+        self.assertFalse(identity_expression(rules['Worker annotations cannot override sandbox filesystem policy'],
+                                             {'object': new}))
+
+    def test_match_cannot_escape_through_runtime_or_selected_scope_transitions(self):
+        old, match, rules = self.identity_policy()
+        for runtime in [None, arc.SHARED_RUNTIME]:
+            new = copy.deepcopy(old)
+            new['metadata']['labels'] = {}
+            if runtime is None:
+                del new['spec']['runtimeClassName']
+            else:
+                new['spec']['runtimeClassName'] = runtime
+            context = {'object': new, 'oldObject': old,
+                       'request': {'operation': 'UPDATE', 'namespace': 'arc-private-ci'}}
+            self.assertTrue(identity_expression(match, context))
+            self.assertFalse(identity_expression(rules['gVisor is mandatory'], context))
+        # A non-NUC Pod must not acquire (or shed) the selected NP label via status.
+        foreign = copy.deepcopy(old)
+        foreign['spec']['runtimeClassName'] = arc.SHARED_RUNTIME
+        foreign['metadata']['labels'][arc.SCOPE_LABEL] = 'another-scope'
+        selected = copy.deepcopy(foreign)
+        selected['metadata']['labels'][arc.SCOPE_LABEL] = arc.name(ROW['name'], 'scope')
+        for before, after in [(foreign, selected), (selected, foreign)]:
+            context = {'object': after, 'oldObject': before,
+                       'request': {'operation': 'UPDATE', 'namespace': 'arc-private-ci'}}
+            self.assertTrue(identity_expression(match, context))
+            self.assertFalse(identity_expression(rules['gVisor is mandatory'], context))
+        self.assertFalse(identity_expression(match, {'object': foreign, 'oldObject': foreign,
+                                                     'request': {'namespace': 'arc-private-ci'}}))
 
     def test_network_policies_cannot_add_old_guard_access_to_nuc_scope(self):
         items = render()['foundations.json']['items']
