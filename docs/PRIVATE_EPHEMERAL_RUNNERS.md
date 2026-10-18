@@ -173,7 +173,7 @@ image in an unconditional self-healing image-prune task.
 
 The sandbox starts its own containerd before Docker, with the same private data
 directories and disabled CRI plugins as Docker's managed daemon. Each startup
-stage waits up to 180 seconds for a successful RPC, with a six-second cap per
+stage uses a 180-second readiness budget, with a six-second cap per
 attempt; an exited daemon fails immediately and startup failure stops both
 children. This accommodates cold startup on a busy node without changing worker
 isolation. Docker's built-in supervisor otherwise has a fixed 15-second startup
