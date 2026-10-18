@@ -1,5 +1,15 @@
 # Private ephemeral runners
 
+The private image installs official GitHub CLI 2.102.0 at `/usr/local/bin/gh`,
+using the archive and executable hashes in `.github/gh/release.json` and the
+existing `scripts/install_release_gh.py` offline archive mode. Its build checks
+`gh api --paginate --slurp` without an API call: the inherited Ubuntu CLI 2.45
+lacks this option, which the approval, merge and CodeRabbit metadata workflows
+require. The public base image is unchanged. A CLI-only overlay on an existing
+private image must record its exact parent digest and verified CLI payload;
+that derived image is not a rebuild of all current source and needs its own
+image identity and actual automation validation before promotion.
+
 Private repositories select their execution environment explicitly. There is no
 billing probe, automatic paid fallback or hosted bootstrap job. The default fleet
 setting is `CI_RUNNER_MODE=self-hosted`; set it to `github` to use GitHub-hosted

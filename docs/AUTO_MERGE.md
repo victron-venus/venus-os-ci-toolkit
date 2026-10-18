@@ -177,6 +177,12 @@ trusted-author, default-base, open/non-draft and independent-reviewer checks and
 also requires a same-repository head on both metadata reads. A different or
 changed head is never approved. This interface adds approval only, not merge.
 
+Manual dispatch has no PR author in its event payload. Recovery first reads the
+PR metadata, then uses `GITHUB_TOKEN` for Dependabot or the configured independent
+PAT for other trusted authors. A missing installation token never falls back to
+a PAT for a Dependabot review. The final metadata read also verifies the author
+has not changed before submitting the exact-head approval.
+
 Use a reviewed dispatchable caller with the exact pinned toolkit revision and a
 trusted runner; never execute PR source in the metadata job. A recovery caller
 should validate its dispatched commit through its ordinary CI gate before the

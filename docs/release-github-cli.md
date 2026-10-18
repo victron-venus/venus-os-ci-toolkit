@@ -18,6 +18,13 @@ version, and atomically replaces the selected output only after validation.
 `--check` needs no Go compiler: the exact binary hash identifies the inspected
 Go build and requires the same FIPS runtime setting. Unsupported platforms fail.
 
+`--archive FILE --output PATH` installs an already downloaded archive without
+network access or a Go compiler. The same size, archive hash, native executable
+hash, FIPS runtime setting, version and atomic replacement checks still apply;
+an invalid archive never falls back to downloading. Private runner image builds
+use this mode after a bounded, unauthenticated HTTPS download. This does not
+change the online installer's Go-based FIPS transport profile.
+
 For local release helper use, select Go 1.27.2 on PATH, then:
 
 ```sh

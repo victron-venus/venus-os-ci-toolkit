@@ -2,6 +2,7 @@
 
 import base64
 import copy
+from contextlib import ExitStack
 import hashlib
 import io
 import json
@@ -9,6 +10,7 @@ import os
 from pathlib import Path
 import stat
 import signal
+import subprocess
 import sys
 import tempfile
 import time
@@ -238,6 +240,114 @@ class PrivateIOTests(unittest.TestCase):
         self.assertNotIn("synthetic-sensitive", str(ctx.exception))
         with self.assertRaises(catalog.ControlError):
             private_io.process([sys.executable, "-c", 'print("x"*10000)'], limit=100)
+
+    def _capture_cleanup_resources(self, stack, configure=None):
+        captured = NS()
+        popen = private_io.subprocess.Popen
+        selector = private_io.selectors.DefaultSelector
+
+        def start(*args, **kwargs):
+            child = popen(*args, **kwargs)
+            captured.child = child
+            captured.real_kill, captured.real_wait = child.kill, child.wait
+            captured.kill = stack.enter_context(patch.object(child, "kill", wraps=child.kill))
+            captured.wait = stack.enter_context(patch.object(child, "wait", wraps=child.wait))
+            if configure is not None:
+                configure(captured)
+            return child
+
+        def select():
+            captured.selector = selector()
+            return captured.selector
+
+        stack.enter_context(patch.object(private_io.subprocess, "Popen", side_effect=start))
+        stack.enter_context(patch.object(private_io.selectors, "DefaultSelector", side_effect=select))
+        return captured
+
+    def _assert_cleanup_resources_closed(self, captured):
+        self.assertIsNone(captured.selector.get_map())
+        for stream in (captured.child.stdin, captured.child.stdout, captured.child.stderr):
+            self.assertTrue(stream.closed)
+
+    @unittest.skipUnless(sys.platform == "darwin" and hasattr(os, "waitid"), "macOS waitid required")
+    def test_output_limit_cleans_exited_unreaped_process_group(self):
+        real_killpg = os.killpg
+        with ExitStack() as stack:
+            captured = self._capture_cleanup_resources(stack)
+
+            def kill_exited_group(pid, sig):
+                # Observe exit without reaping: this deterministically exposes
+                # Darwin's EPERM path instead of depending on scheduler timing.
+                deadline = time.monotonic() + 5
+                while time.monotonic() < deadline:
+                    state = os.waitid(os.P_PID, pid, os.WEXITED | os.WNOWAIT | os.WNOHANG)
+                    if state is not None:
+                        break
+                    time.sleep(0.005)
+                else:
+                    self.fail("synthetic child did not exit")
+                self.assertEqual(state.si_pid, pid)
+                self.assertIsNone(captured.child.returncode)
+                return real_killpg(pid, sig)
+
+            stack.enter_context(patch.object(private_io.os, "killpg", side_effect=kill_exited_group))
+            try:
+                with self.assertRaisesRegex(catalog.ControlError, "output limit"):
+                    private_io.process([sys.executable, "-c", 'print("x"*10000)'], limit=100)
+                self.assertEqual(captured.child.returncode, 0)
+                self._assert_cleanup_resources_closed(captured)
+            finally:
+                captured.real_kill()
+                captured.real_wait(timeout=5)
+
+    def test_denied_group_kills_and_reaps_live_child(self):
+        with ExitStack() as stack:
+            captured = self._capture_cleanup_resources(stack)
+            denied = stack.enter_context(
+                patch.object(private_io.os, "killpg", side_effect=PermissionError("synthetic-sensitive"))
+            )
+            try:
+                with self.assertRaisesRegex(catalog.ControlError, "output limit") as error:
+                    private_io.process(
+                        [sys.executable, "-c", 'import time; print("x"*10000, flush=True); time.sleep(30)'],
+                        limit=100,
+                    )
+                self.assertNotIn("synthetic-sensitive", str(error.exception))
+                denied.assert_called_once_with(captured.child.pid, signal.SIGKILL)
+                captured.kill.assert_called_once_with()
+                captured.wait.assert_called_once_with(timeout=5)
+                self.assertEqual(captured.child.returncode, -signal.SIGKILL)
+                self._assert_cleanup_resources_closed(captured)
+            finally:
+                captured.real_kill()
+                captured.real_wait(timeout=5)
+
+    def test_cleanup_failure_is_bounded_redacted_and_closes_resources(self):
+        for wait_error in (
+            subprocess.TimeoutExpired("synthetic-sensitive", 5),
+            OSError("synthetic-sensitive"),
+        ):
+            with self.subTest(error=type(wait_error).__name__), ExitStack() as stack:
+                def fail_cleanup(captured):
+                    captured.kill.side_effect = PermissionError("synthetic-sensitive")
+                    captured.wait.side_effect = wait_error
+
+                captured = self._capture_cleanup_resources(stack, fail_cleanup)
+                stack.enter_context(
+                    patch.object(private_io.os, "killpg", side_effect=PermissionError("synthetic-sensitive"))
+                )
+                try:
+                    with self.assertRaises(catalog.ControlError) as error:
+                        private_io.process(
+                            [sys.executable, "-c", 'import time; print("x"*10000, flush=True); time.sleep(30)'],
+                            limit=100,
+                        )
+                    self.assertNotIn("synthetic-sensitive", str(error.exception))
+                    captured.wait.assert_called_once_with(timeout=5)
+                    self._assert_cleanup_resources_closed(captured)
+                finally:
+                    captured.real_kill()
+                    captured.real_wait(timeout=5)
 
     def test_process_rejects_unconsumed_input(self):
         with self.assertRaises(catalog.ControlError):

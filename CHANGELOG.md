@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.1.5] - 2026-10-18
+
+### Changed
+
+- Route Dependabot approval metadata through the trusted default branch, including manual recovery. Select the official `GITHUB_TOKEN` for Dependabot and retain the existing bot credential for maintainer-authored changes.
+- Add opt-in disposable worker profiles with bounded CPU and scratch storage, including disk, tmpfs and exclusive bind configurations. Preserve local runner images while pools are idle and wait for sandbox containerd before starting Docker.
+- Include an optional, single-repository NUC KVM CI profile with fixed resource limits and admission guards. It remains unqualified until the intended host, image, network and unchanged application jobs pass their separate checks; source publication does not activate it.
+- Validate resource maps and scratch limits against the Kubernetes CEL schema, and verify the visible filesystem before admitting tmpfs work.
+- Enable guest `sudo` for installers inside the dedicated gVisor runtime, preserving the host capability, filesystem and network boundaries.
+- Document Terraform-owned routing, staged qualification, quota waits and return to standard runner capacity.
+- Update the pinned Renovate runtime to 44.166.0 and align the internal setup and fuzz workflow references.
+
+### Fixed
+
+- Handle macOS process-group signal denial when a secret-control tool exits during an output-limit check. Preserve the redacted failure, bound process cleanup, and always close its pipes and selector, including when termination fails.
+- Install the pinned GitHub CLI in private runner images so metadata workflows can use `gh api --paginate --slurp`. Support bounded offline archive installation with the same artifact, executable and runtime checks; deployment still requires separate image qualification.
+
+### Upgrade
+
+The source package version is independent of consumer workflow pins. Adopt a reviewed immutable commit explicitly, keep the previous pin for rollback, and validate each selected worker profile before activation. Publishing this source release does not switch existing runner routing or qualify a cluster deployment.
+
+### Security
+
+Approval recovery reads trusted PR metadata without executing pull-request code and preserves the distinction between the Dependabot token and the existing review bot. Worker profiles remain opt-in; repository CI and source-package acceptance do not replace isolation, storage, concurrency or workload acceptance on the intended host. No credentials or installation-specific configuration are included in the source archive.
+
 ## [0.1.4] - 2026-10-17
 
 - Add explicit private runner selection and repository-scoped, disposable ARC
