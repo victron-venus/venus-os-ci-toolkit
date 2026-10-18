@@ -22,7 +22,8 @@ class ScopeRoutingTests(unittest.TestCase):
         runner = workflow["on"]["workflow_call"]["inputs"]["runner"]
         self.assertEqual(runner["type"], "string")
         self.assertEqual(runner["default"], "ubuntu-latest")
-        self.assertEqual(workflow["jobs"]["scope"]["runs-on"], renderer.runner_labels(explicit_input="runner", scalar=True))
+        self.assertEqual(workflow["jobs"]["scope"]["runs-on"],
+                         renderer.runner_labels(explicit_input="runner", scalar=True, hosted_budget=True))
         self.assertEqual(list(workflow["jobs"]), ["scope"])
 
     def test_checked_in_workflow_matches_generator(self):
