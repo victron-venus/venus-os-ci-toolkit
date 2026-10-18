@@ -29,6 +29,21 @@ wait_for_service "$pid" 5 "$log" ready
 ''')
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_overlay_requires_exact_disk_mount_and_explicit_driver(self):
+        default = self.run_shell('unset RUNNER_DOCKER_STORAGE_DRIVER; docker_storage_driver')
+        self.assertEqual((default.returncode, default.stdout), (0, 'vfs'))
+        for filesystem, status, expected in [('9p', 0, 0), ('overlay', 0, 1),
+                                              ('tmpfs', 0, 1), ('9p', 1, 1)]:
+            with self.subTest(filesystem=filesystem, status=status):
+                result = self.run_shell('''
+RUNNER_DOCKER_STORAGE_DRIVER=overlay2
+findmnt() { [[ "$*" == '--noheadings --output FSTYPE --mountpoint /var/lib/docker' ]] || return 2; printf '%s' "''' + filesystem + '''"; return ''' + str(status) + '''; }
+docker_storage_driver
+''')
+                self.assertEqual(result.returncode, expected, result.stderr)
+        unknown = self.run_shell('RUNNER_DOCKER_STORAGE_DRIVER=unknown; docker_storage_driver')
+        self.assertNotEqual(unknown.returncode, 0)
+
     def test_exited_daemon_fails_without_accepting_stale_socket(self):
         result = self.run_shell('''
 true & pid=$!

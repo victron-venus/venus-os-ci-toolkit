@@ -50,9 +50,28 @@ docker_api_ready() {
   [[ "$response" == OK ]]
 }
 
+docker_storage_driver() {
+  local driver=${RUNNER_DOCKER_STORAGE_DRIVER:-vfs} filesystem
+  case "$driver" in
+    vfs) ;;
+    overlay2)
+      # Only the admitted per-pod disk mount can back nested overlay. The
+      # sandbox root is itself overlay and is not a supported upper filesystem.
+      filesystem=$(findmnt --noheadings --output FSTYPE --mountpoint /var/lib/docker) || return 1
+      [[ "$filesystem" == 9p ]] || {
+        printf 'Nested overlay requires the private Docker data mount\n' >&2
+        return 1
+      }
+      ;;
+    *) printf 'Unsupported Docker storage driver\n' >&2; return 1 ;;
+  esac
+  printf '%s' "$driver"
+}
+
 start_sandbox_docker() {
-  local mtu=$1
+  local mtu=$1 storage_driver
   [[ "$mtu" =~ ^[0-9]+$ ]]
+  storage_driver=$(docker_storage_driver)
   local runtime=/var/run/docker/containerd
   local socket="$runtime/containerd.sock"
   mkdir -p "$runtime"
@@ -78,7 +97,7 @@ TOML
   wait_for_service "$sandbox_containerd_pid" 180 /tmp/containerd.log \
     timeout --signal=KILL 6s ctr --address "$socket" --connect-timeout 5s --timeout 5s version
   dockerd --containerd="$socket" --iptables=false --ip6tables=false \
-    --feature embedded-containerd=false --feature containerd-snapshotter=false --storage-driver=vfs \
+    --feature embedded-containerd=false --feature containerd-snapshotter=false --storage-driver="$storage_driver" \
     --mtu="$mtu" --group=runner > /tmp/dockerd.log 2>&1 &
   sandbox_docker_pid=$!
   # The CLI's info command probes client plugins, which can exceed readiness

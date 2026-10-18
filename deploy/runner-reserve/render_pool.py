@@ -94,6 +94,17 @@ def foundations(profiles, image, node_ip):
                       'ports': [{'port': 19999, 'protocol': 'TCP'}]},
                      {'to': [{'ipBlock': {'cidr': '0.0.0.0/0', 'except': DENIED}}],
                       'ports': [{'port': 80, 'protocol': 'TCP'}, {'port': 443, 'protocol': 'TCP'}]}]}}]
+    # ARC 0.15 injects one job-scoped JIT Secret named after its runner Pod.
+    # CEL validates the structural reference, not existence/ownership of the
+    # referenced Secret. Controller RBAC remains the authority for creating it.
+    jit_reference = (
+        "e.name == 'ACTIONS_RUNNER_INPUT_JITCONFIG' && "
+        "e.valueFrom.secretKeyRef.name == object.metadata.name && "
+        "e.valueFrom.secretKeyRef.key == 'jitToken' && "
+        "(!has(e.valueFrom.secretKeyRef.optional) || !e.valueFrom.secretKeyRef.optional) && "
+        "has(object.metadata.ownerReferences) && object.metadata.ownerReferences.exists(o, "
+        "o.apiVersion == 'actions.github.com/v1alpha1' && o.kind == 'EphemeralRunner' && "
+        "o.name == object.metadata.name && size(o.uid) > 0 && has(o.controller) && o.controller)")
     validations = [
         ("has(object.spec.runtimeClassName) && object.spec.runtimeClassName == 'victron-reserve'", 'gVisor is mandatory'),
         ("has(object.metadata.labels) && object.metadata.labels['runner-reserve.github.io/role'] == 'worker'", 'Worker network identity is mandatory'),
@@ -103,6 +114,7 @@ def foundations(profiles, image, node_ip):
         ("(!has(object.spec.initContainers) || size(object.spec.initContainers) == 0) && (!has(object.spec.ephemeralContainers) || size(object.spec.ephemeralContainers) == 0)", 'Only the admitted worker may execute'),
         ("size(object.spec.containers) == 1 && object.spec.containers[0].name == 'runner' && object.spec.containers[0].image == " + json.dumps(image), 'Only the reviewed pinned worker image is allowed'),
         ("object.spec.containers.all(c, has(c.command) && c.command == ['/opt/victron-ci-reserve/start-runner.sh'] && (!has(c.args) || size(c.args) == 0) && (!has(c.envFrom) || size(c.envFrom) == 0) && (!has(c.lifecycle)) && has(c.securityContext) && (!has(c.securityContext.privileged) || !c.securityContext.privileged))", 'Bootstrap cannot be replaced or made host-privileged'),
+        ("object.spec.containers.all(c, !has(c.env) || (size(c.env.filter(e, e.name == 'ACTIONS_RUNNER_INPUT_JITCONFIG')) <= 1 && c.env.all(e, !has(e.valueFrom) || (!has(e.valueFrom.configMapKeyRef) && (!has(e.valueFrom.secretKeyRef) || (" + jit_reference + "))))))", 'Only the structurally matched ARC job JIT Secret may be referenced by environment'),
         ("object.spec.containers.all(c, !has(c.ports) || c.ports.all(p, !has(p.hostPort) || p.hostPort == 0))", 'Host ports are forbidden'),
     ]
     resources += [

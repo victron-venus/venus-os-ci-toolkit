@@ -58,7 +58,25 @@ class PrivatePoolTests(unittest.TestCase):
             self.assertEqual(pod['runtimeClassName'], 'victron-reserve')
             self.assertEqual(pod['containers'][0]['command'], ['/opt/victron-ci-reserve/start-runner.sh'])
             self.assertEqual(pod['containers'][0]['imagePullPolicy'], 'Never')
-            self.assertEqual(pod.get('volumes', []), [])
+            self.assertEqual(pod['volumes'], [{'name': 'docker-data', 'emptyDir': {'sizeLimit': '16Gi'}}])
+            self.assertEqual(pod['containers'][0]['volumeMounts'],
+                             [{'name': 'docker-data', 'mountPath': '/var/lib/docker'}])
+            self.assertIn({'name': 'RUNNER_DOCKER_STORAGE_DRIVER', 'value': 'overlay2'},
+                          pod['containers'][0]['env'])
+
+    def test_private_scratch_policy_does_not_change_public_mount_policy(self):
+        private = arc.foundations([ROW], SANDBOX, '10.66.10.2')['items']
+        public = arc.RESERVE.foundations(['ci'], SANDBOX, '10.66.10.2')['items']
+        def policy(items):
+            return next(x for x in items if x['kind'] == 'ValidatingAdmissionPolicy')['spec']['validations']
+        self.assertIn('Host, persistent and credential volumes are forbidden',
+                      [x['message'] for x in policy(public)])
+        expressions = '\n'.join(x['expression'] for x in policy(private))
+        for condition in ["size(object.spec.volumes) == 1", "v.emptyDir.sizeLimit == '16Gi'",
+                          "v.emptyDir.medium == ''", "m.mountPath == '/var/lib/docker'",
+                          '!has(m.subPath)', '!has(m.subPathExpr)', '!has(m.mountPropagation)',
+                          "!k.startsWith('dev.gvisor.')"]:
+            self.assertIn(condition, expressions)
 
     def test_listener_placement_does_not_move_workers(self):
         row = {**ROW, 'profiles': ['ci', 'automation', 'lan', 'arm64']}
