@@ -46,6 +46,8 @@ def identity_expression(expression, context):
             return visit(node.value, values)[visit(node.slice, values)]
         if isinstance(node, ast.Dict):
             return {visit(k, values): visit(v, values) for k, v in zip(node.keys, node.values)}
+        if isinstance(node, ast.List):
+            return [visit(item, values) for item in node.elts]
         if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
             return not visit(node.operand, values)
         if isinstance(node, ast.BoolOp):
@@ -59,9 +61,13 @@ def identity_expression(expression, context):
                 return left != right
             if isinstance(node.ops[0], ast.In):
                 return left in right
+            if isinstance(node.ops[0], ast.LtE):
+                return left <= right
         if isinstance(node, ast.Call):
             if isinstance(node.func, ast.Name) and node.func.id == 'dyn' and len(node.args) == 1:
                 return visit(node.args[0], values)
+            if isinstance(node.func, ast.Name) and node.func.id == 'size' and len(node.args) == 1:
+                return len(visit(node.args[0], values))
             if isinstance(node.func, ast.Name) and node.func.id == 'has' and len(node.args) == 1:
                 try:
                     visit(node.args[0], values)
@@ -72,6 +78,9 @@ def identity_expression(expression, context):
                 receiver = visit(node.func.value, values)
                 if node.func.attr == 'all' and isinstance(node.args[0], ast.Name):
                     return all(visit(node.args[1], {**values, node.args[0].id: item}) for item in receiver)
+                if node.func.attr == 'filter' and isinstance(node.args[0], ast.Name):
+                    return [item for item in receiver
+                            if visit(node.args[1], {**values, node.args[0].id: item})]
                 if node.func.attr == 'startsWith':
                     return receiver.startswith(visit(node.args[0], values))
         raise AssertionError('Unsupported identity expression syntax: ' + ast.dump(node))
@@ -207,7 +216,9 @@ class NucKvmTests(unittest.TestCase):
         documents = render()
         expected = documents[arc.name(ROW['name'], 'ci') + '.json']['template']['spec']['containers'][0]['env']
         expression = arc.nuc_environment_validation(expected)
-        names = [e['name'] for e in expected] + ['ACTIONS_RUNNER_INPUT_JITCONFIG']
+        names = [e['name'] for e in expected] + [
+            'ACTIONS_RUNNER_INPUT_JITCONFIG', 'GITHUB_ACTIONS_RUNNER_EXTRA_USER_AGENT',
+            'ACTIONS_RUNNER_RETURN_VERSION_DEPRECATED_EXIT_CODE']
         self.assertIn('c.env.all(e, e.name in ' + json.dumps(names) + ')', expression)
         for env in expected:
             self.assertIn('size(c.env.filter(e, e.name == ' + json.dumps(env['name']) + ')) == 1', expression)
@@ -219,6 +230,46 @@ class NucKvmTests(unittest.TestCase):
         self.assertIn("dyn(e.valueFrom.resourceFieldRef).divisor == '1'", expression)
         for forbidden in ['LD_PRELOAD', 'HTTPS_PROXY', 'RUNNER_RESERVE_QUALIFICATION']:
             self.assertNotIn(forbidden, names)
+
+    def test_arc_generated_environment_preserves_exact_bootstrap_and_metadata(self):
+        documents = render()
+        authored = documents[arc.name(ROW['name'], 'ci') + '.json']['template']['spec']['containers'][0]['env']
+        expression = arc.nuc_environment_validation(authored)
+
+        def allowed(env):
+            return identity_expression(expression, {'object': {'spec': {'containers': [{'env': env}]}}})
+
+        # Pinned ARC 0.15.0 resourcebuilder appends these three fields; its only
+        # optional caller inputs are proxy envs, absent in this candidate.
+        metadata = [
+            {'name': 'GITHUB_ACTIONS_RUNNER_EXTRA_USER_AGENT', 'value': 'actions-runner-controller/0.15.0'},
+            {'name': 'ACTIONS_RUNNER_RETURN_VERSION_DEPRECATED_EXIT_CODE', 'value': '1'},
+        ]
+        jit = {'name': 'ACTIONS_RUNNER_INPUT_JITCONFIG', 'valueFrom': {
+            'secretKeyRef': {'name': 'fixture-runner', 'key': 'jitToken'}}}
+        generated = copy.deepcopy(authored) + [jit] + metadata
+        for env in generated:
+            if 'fieldRef' in env.get('valueFrom', {}):
+                env['valueFrom']['fieldRef']['apiVersion'] = 'v1'
+        self.assertTrue(allowed(authored))
+        self.assertTrue(allowed(generated))
+        for item in metadata:
+            for replacement in [dict(item, value='unexpected'),
+                                {'name': item['name'], 'valueFrom': {'fieldRef': {'fieldPath': 'metadata.name'}}},
+                                dict(item, valueFrom={'fieldRef': {'fieldPath': 'metadata.name'}})]:
+                with self.subTest(name=item['name'], replacement=replacement):
+                    self.assertFalse(allowed([replacement if e['name'] == item['name'] else e
+                                              for e in generated]))
+            self.assertFalse(allowed(generated + [dict(item)]))
+        for name in ['http_proxy', 'https_proxy', 'no_proxy', 'HTTPS_PROXY', 'LD_PRELOAD',
+                     'RUNNER_RESERVE_QUALIFICATION']:
+            self.assertFalse(allowed(generated + [{'name': name, 'value': 'unexpected'}]))
+        for item in authored:
+            with self.subTest(required=item['name']):
+                self.assertFalse(allowed([e for e in generated if e['name'] != item['name']]))
+                self.assertFalse(allowed(generated + [copy.deepcopy(item)]))
+                replacement = {'name': item['name'], 'value': 'unexpected'}
+                self.assertFalse(allowed([replacement if e['name'] == item['name'] else e for e in generated]))
 
     def identity_policy(self):
         documents = render()
