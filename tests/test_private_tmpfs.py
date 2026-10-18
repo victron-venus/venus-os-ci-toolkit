@@ -125,6 +125,14 @@ start_sandbox_docker 1500
             self.assertNotIn('UNEXPECTED_', result.stderr)
             self.assertNotIn('PRIVATE_DOCKER_TMPFS_READY', result.stderr)
 
+    def test_failed_statfs_diagnostics_are_limited_and_shell_quoted(self):
+        result, _ = self.gate('stat() { printf "v9fs;bad 4096 524288 262144 ignored-extra"; }')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(r'filesystem=v9fs\;bad block_size=4096 blocks=524288 inodes=262144', result.stderr)
+        self.assertNotIn('ignored-extra', result.stderr)
+        self.assertNotIn('memory_request', result.stderr)
+        self.assertEqual(result.stdout, '')
+
     def test_opt_in_reserves_ci_memory_but_preserves_other_profiles(self):
         row = {**ROW, 'ci_storage': 'tmpfs-2gi'}
         for profile in ROW['profiles']:

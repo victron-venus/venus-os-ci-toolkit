@@ -3,7 +3,7 @@
 set -euo pipefail
 
 private_tmpfs_storage() {
-  local data=$1 filesystem entries stats block_size blocks inodes extra
+  local data=$1 filesystem entries stats block_size blocks inodes extra diagnostic
   # Return explicitly: the shared daemon launcher invokes this gate inside
   # command substitution, where Bash may disable errexit.
   [[ "${RUNNER_PRIVATE_DOCKER_STORAGE:-}" == ci-tmpfs-2gi &&
@@ -35,13 +35,17 @@ private_tmpfs_storage() {
   stats=$(stat --file-system --format='%T %S %b %c' "$data") || return 1
   [[ "$stats" != *$'\n'* ]] || return 1
   read -r filesystem block_size blocks inodes extra <<< "$stats"
+  printf -v diagnostic 'filesystem=%q block_size=%q blocks=%q inodes=%q' \
+    "$filesystem" "$block_size" "$blocks" "$inodes"
   [[ "$filesystem" == tmpfs ]] || {
-    printf 'Private tmpfs mount type verification failed\n' >&2; return 1;
+    printf 'Private tmpfs mount type verification failed: %s\n' "$diagnostic" >&2; return 1;
   }
   [[ "$block_size" =~ ^[1-9][0-9]{0,9}$ && "$blocks" =~ ^[1-9][0-9]{0,9}$ &&
-     "$inodes" == 262144 && -z "$extra" ]] || return 1
+     "$inodes" == 262144 && -z "$extra" ]] || {
+    printf 'Private tmpfs statfs bounds rejected: %s\n' "$diagnostic" >&2; return 1;
+  }
   ((block_size <= 2147483648 && blocks <= 2147483648 && block_size * blocks == 2147483648)) || {
-    printf 'Private tmpfs capacity verification failed\n' >&2; return 1;
+    printf 'Private tmpfs capacity verification failed: %s\n' "$diagnostic" >&2; return 1;
   }
   printf 'PRIVATE_DOCKER_TMPFS_READY filesystem=tmpfs bytes=2147483648 inodes=262144 memory_request=%s memory_limit=%s\n' \
     "$RUNNER_PRIVATE_MEMORY_REQUEST" "$RUNNER_PRIVATE_MEMORY_LIMIT" >&2
