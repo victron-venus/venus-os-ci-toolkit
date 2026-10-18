@@ -1,0 +1,8 @@
+# Append only to a reviewed complete K3s/containerd 1.7 config-v2 template.
+# This is not a replacement config and does not register a handler by itself.
+[plugins."io.containerd.grpc.v1.cri".containerd.runtimes.victron-private-nuc-kvm]
+  runtime_type = "io.containerd.runsc.v1"
+  runtime_path = "/opt/victron-ci-reserve/gvisor-20261012/containerd-shim-runsc-v1"
+  [plugins."io.containerd.grpc.v1.cri".containerd.runtimes.victron-private-nuc-kvm.options]
+    TypeUrl = "io.containerd.runsc.v1.options"
+    ConfigPath = "/etc/victron-ci-reserve/runsc-nuc-kvm.toml"

@@ -6,6 +6,7 @@
 
 - Route Dependabot approval metadata through the trusted default branch, including manual recovery. Select the official `GITHUB_TOKEN` for Dependabot and retain the existing bot credential for maintainer-authored changes.
 - Add opt-in disposable worker profiles with bounded CPU and scratch storage, including disk, tmpfs and exclusive bind configurations. Preserve local runner images while pools are idle and wait for sandbox containerd before starting Docker.
+- Include an optional, single-repository NUC KVM CI profile with fixed resource limits and admission guards. It remains unqualified until the intended host, image, network and unchanged application jobs pass their separate checks; source publication does not activate it.
 - Validate resource maps and scratch limits against the Kubernetes CEL schema, and verify the visible filesystem before admitting tmpfs work.
 - Enable guest `sudo` for installers inside the dedicated gVisor runtime, preserving the host capability, filesystem and network boundaries.
 - Document Terraform-owned routing, staged qualification, quota waits and return to standard runner capacity.
