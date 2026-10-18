@@ -109,7 +109,7 @@ def values(row, profile, sandbox_image, native_image, node_ip, arm_node='h7', li
     spec['restartPolicy'] = 'Never'
     spec['serviceAccountName'] = 'reserve-worker' if profile in ('ci', 'automation', 'release') else 'private-worker'
     spec['containers'][0]['resources'] = {
-        'requests': {'cpu': '250m' if profile == 'ci' else '50m',
+        'requests': {'cpu': '900m' if profile == 'ci' else '50m',
                      'memory': '1Gi' if profile in ('ci', 'automation') else '512Mi', 'ephemeral-storage': '1Gi'},
         'limits': {'cpu': '4' if profile == 'ci' else '1',
                    'memory': {'ci': '6Gi', 'automation': '4Gi'}.get(profile, '2Gi'),

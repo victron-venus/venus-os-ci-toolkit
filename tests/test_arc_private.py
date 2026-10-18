@@ -1,8 +1,11 @@
 """Private ARC rendering keeps scope, lifecycle and network boundaries explicit."""
 import importlib.util
 import json
+from decimal import Decimal
 from pathlib import Path
 import unittest
+
+import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 SPEC = importlib.util.spec_from_file_location('arc_private', ROOT / 'deploy/arc-private/render.py')
@@ -141,6 +144,54 @@ class PrivatePoolTests(unittest.TestCase):
         self.assertEqual(resources['limits']['memory'], '6Gi')
         heavy['template']['spec']['containers'][0].pop('resources')
         self.assertEqual(standard, heavy)
+
+    def test_ci_capacity_accounts_for_runtime_overhead(self):
+        overhead = yaml.safe_load((ROOT / 'deploy/runner-reserve/runtime-class.yaml').read_text())['overhead']['podFixed']
+        quota = arc.sandbox_quota('ci')
+        pods = {kind: arc.values({**ROW, 'ci_resource_class': kind}, 'ci',
+                                SANDBOX, NATIVE, '10.66.10.2')['template']['spec']
+                for kind in ('standard', 'heavy')}
+
+        def quantity(value):
+            for unit, scale in [('Gi', 1024 ** 3), ('Mi', 1024 ** 2), ('m', Decimal('0.001'))]:
+                if value.endswith(unit):
+                    return Decimal(value[:-len(unit)]) * scale
+            return Decimal(value)
+
+        for kinds, expected_cpu, fits in [
+                (['standard'], '1', True),
+                (['standard', 'standard'], '2', True),
+                (['standard'] * 3, '3', False),
+                (['heavy'], '1.6', True),
+                (['heavy', 'standard'], '2.6', False),
+                (['heavy', 'heavy'], '3.2', False)]:
+            with self.subTest(kinds=kinds):
+                usage = {'pods': Decimal(len(kinds))}
+                for kind in kinds:
+                    self.assertNotIn('initContainers', pods[kind])
+                    for category in ('requests', 'limits'):
+                        for container in pods[kind]['containers']:
+                            for resource, value in container['resources'][category].items():
+                                key = category + '.' + resource
+                                usage[key] = usage.get(key, Decimal(0)) + quantity(value)
+                        for resource, value in overhead.items():
+                            key = category + '.' + resource
+                            usage[key] += quantity(value)
+                self.assertEqual(usage['requests.cpu'], Decimal(expected_cpu))
+                self.assertEqual(all(usage[key] <= quantity(value) for key, value in quota.items()), fits)
+                if kinds == ['standard', 'standard']:
+                    self.assertEqual(usage['limits.cpu'], quantity(quota['limits.cpu']))
+
+    def test_non_ci_profiles_keep_their_cpu_budgets(self):
+        for profile in ('automation', 'release', 'lan', 'arm64'):
+            with self.subTest(profile=profile):
+                pod = arc.values(ROW, profile, SANDBOX, NATIVE, '10.66.10.2')['template']['spec']
+                resources = pod['containers'][0]['resources']
+                self.assertEqual(resources['requests']['cpu'], '50m')
+                self.assertEqual(resources['limits']['cpu'], '1' if profile in ('automation', 'release') else '2')
+                if profile == 'arm64':
+                    self.assertEqual(pod['initContainers'][0]['resources']['requests']['cpu'], '50m')
+                    self.assertEqual(pod['initContainers'][0]['resources']['limits']['cpu'], '1')
 
     def test_routing_uses_concrete_unique_labels_and_explicit_mode(self):
         row = {**ROW, 'profiles': ['ci', 'automation', 'lan', 'arm64']}
