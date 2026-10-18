@@ -147,6 +147,12 @@ def name(scope, profile):
     return 'private-' + hashlib.sha256(scope.encode()).hexdigest()[:12] + '-' + profile
 
 
+def validate_listener_node(value):
+    if not isinstance(value, str) or not re.fullmatch(r'[a-z0-9](?:[-a-z0-9.]{0,61}[a-z0-9])?', value):
+        raise ValueError('Listener node must be a valid hostname label')
+    return value
+
+
 def validate_profiles(row):
     if row.get('ci_resource_class', 'standard') not in ('standard', 'heavy'):
         raise ValueError('Unknown CI resource class')
@@ -206,6 +212,8 @@ def validate_inventory(inventory):
         seen.add(scope)
         validate_profiles(row)
         validate_lan(row)
+        if 'listener_node' in row:
+            validate_listener_node(row['listener_node'])
     return rows
 
 
@@ -230,7 +238,8 @@ def values(row, profile, sandbox_image, native_image, node_ip, arm_node='h7', li
     listener = result['listenerTemplate']['spec']['containers'][0]
     result['listenerTemplate']['spec']['securityContext'] = {
         'seccompProfile': {'type': 'RuntimeDefault'}}
-    result['listenerTemplate']['spec']['nodeSelector'] = {HOSTNAME_LABEL: listener_node}
+    result['listenerTemplate']['spec']['nodeSelector'] = {
+        HOSTNAME_LABEL: validate_listener_node(row.get('listener_node', listener_node))}
     listener['resources'] = {'requests': {'cpu': '5m', 'memory': '32Mi'},
                              'limits': {'cpu': '100m', 'memory': '192Mi'}}
     spec = result['template']['spec']
@@ -781,8 +790,7 @@ def render(inventory, sandbox_image, native_image, node_ip, listener_node='mp',
            sandbox_runtime=SHARED_RUNTIME, nuc_kvm: NucKvmConfig | NucKvmPlan | None = None):
     rows = validate_inventory(inventory)
     ipaddress.IPv4Address(node_ip)
-    if not isinstance(listener_node, str) or not re.fullmatch(r'[a-z0-9](?:[-a-z0-9.]{0,61}[a-z0-9])?', listener_node):
-        raise ValueError('Listener node must be a valid hostname label')
+    validate_listener_node(listener_node)
     plan = validate_nuc_kvm(rows, nuc_kvm, sandbox_runtime, node_ip)
     output = {'foundations.json': foundations(rows, sandbox_image, node_ip, sandbox_runtime)}
     index, routing = [], {}

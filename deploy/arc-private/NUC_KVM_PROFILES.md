@@ -59,6 +59,17 @@ retain their existing configuration. LAN and ARM profiles cannot be selected
 through this interface. A release target must already be declared separately in
 the private inventory; selecting CI or automation never selects release.
 
+The global `--listener-node` remains the default listener placement. An optional
+`listener_node` hostname in a repository's inventory row overrides that default
+for every profile of that repository, including release and native profiles.
+For example, a row with `"listener_node": "nuc"` keeps its listeners there when
+the global default is `h7`. An omitted field inherits the default; an empty,
+null or invalid hostname is rejected. This changes only the listener's node
+selector, not worker placement, resources, image, runtime or admission rules.
+Review listener architecture support, Pod slots, CPU and memory on each chosen
+node before deployment. Rendering a placement does not establish capacity or
+authorize moving an existing listener.
+
 ## Fixed resource contracts
 
 Resources follow the selected profile and its existing inventory storage mode;

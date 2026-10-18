@@ -135,6 +135,40 @@ def selected_scopes(selector):
 
 
 class NucProfileOutputTests(unittest.TestCase):
+    def test_repository_listener_override_only_changes_its_listener_placement(self):
+        rows = copy.deepcopy(ROWS)
+        rows[0]['listener_node'] = 'nuc'
+        rows[2]['listener_node'] = 'h7'
+        original = render(plan())
+        candidate = render(plan(), rows)
+        for row in rows:
+            expected = row.get('listener_node', 'control-node')
+            for profile in row['profiles']:
+                value = worker(candidate, (row['name'], profile))
+                selector = value['listenerTemplate']['spec']['nodeSelector']
+                self.assertEqual(selector, {arc.HOSTNAME_LABEL: expected})
+                # Includes release, ARM and LAN: only the listener moves.
+                selector[arc.HOSTNAME_LABEL] = 'control-node'
+        self.assertEqual(candidate, original)
+
+    def test_explicit_listener_default_equals_omitted_override(self):
+        rows = copy.deepcopy(ROWS)
+        for row in rows:
+            row['listener_node'] = 'control-node'
+        self.assertEqual(render(plan(), rows), render(plan()))
+
+    def test_invalid_listener_override_never_falls_back_to_global_node(self):
+        for value in (None, '', 123, True, [], {}, '-nuc', 'nuc-', 'NUC',
+                      'nuc/worker', 'nuc worker', 'a' * 64):
+            with self.subTest(value=value):
+                rows = copy.deepcopy(ROWS)
+                rows[0]['listener_node'] = value
+                with self.assertRaisesRegex(ValueError, 'Listener node'):
+                    render(plan(), rows)
+                with self.assertRaisesRegex(ValueError, 'Listener node'):
+                    arc.values(rows[0], 'ci', MP_IMAGE, NATIVE_IMAGE, MP_IP,
+                               listener_node='control-node')
+
     def test_fleet_size_compacts_only_identical_contracts_and_preserves_outputs(self):
         rows = [dict(name=f'example/project-{i}', visibility='private',
                      profiles=['ci', 'automation'], automation_storage='tmpfs-3gi',
