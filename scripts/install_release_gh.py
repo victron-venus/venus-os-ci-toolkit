@@ -89,9 +89,16 @@ def verify(path: Path, artifact: dict, version: str) -> None:
         raise ValueError("Release CLI version does not match the reviewed version")
 
 
-def install(output: Path, manifest: dict, artifact: dict) -> None:
-    url = f'https://github.com/cli/cli/releases/download/v{manifest["version"]}/{artifact["asset"]}'
-    binary = binary_from_archive(download(url), artifact)
+def install(output: Path, manifest: dict, artifact: dict, archive: Path | None = None) -> None:
+    if archive is None:
+        url = f'https://github.com/cli/cli/releases/download/v{manifest["version"]}/{artifact["asset"]}'
+        data = download(url)
+    else:
+        with archive.open("rb") as source:
+            data = source.read(MAX_ARCHIVE + 1)
+        if len(data) > MAX_ARCHIVE:
+            raise ValueError("Release CLI archive exceeded its size limit")
+    binary = binary_from_archive(data, artifact)
     output.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile(dir=output.parent, prefix=".gh-", delete=False) as temporary:
         temporary.write(binary)
@@ -109,12 +116,16 @@ def main() -> None:
     choice = parser.add_mutually_exclusive_group(required=True)
     choice.add_argument("--output", type=Path)
     choice.add_argument("--check", type=Path)
+    parser.add_argument("--archive", type=Path,
+                        help="Install a previously downloaded archive without network access; requires --output")
     args = parser.parse_args()
+    if args.archive and not args.output:
+        parser.error("--archive requires --output")
     manifest = json.loads(MANIFEST.read_text())
     target = native_target()
     artifact = manifest["artifacts"][target]
     if args.output:
-        install(args.output, manifest, artifact)
+        install(args.output, manifest, artifact, args.archive)
     else:
         verify(args.check, artifact, manifest["version"])
     print(f'Qualified gh {manifest["version"]}, {manifest["go_version"]}, {target}, FIPS TLS enabled')

@@ -15,6 +15,7 @@
 ### Fixed
 
 - Handle macOS process-group signal denial when a secret-control tool exits during an output-limit check. Preserve the redacted failure, bound process cleanup, and always close its pipes and selector, including when termination fails.
+- Install the pinned GitHub CLI in private runner images so metadata workflows can use `gh api --paginate --slurp`. Support bounded offline archive installation with the same artifact, executable and runtime checks; deployment still requires separate image qualification.
 
 ### Upgrade
 
