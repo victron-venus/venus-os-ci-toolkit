@@ -558,7 +558,7 @@ def nuc_kvm_foundations(document, config, value):
                        "has(object.spec.terminationGracePeriodSeconds) && object.spec.terminationGracePeriodSeconds == 30 && "
                        "has(object.spec.enableServiceLinks) && !object.spec.enableServiceLinks",
          'message': 'NUC workers keep the bounded single-job lifecycle'},
-        {'expression': "has(object.spec.overhead) && dyn(object.spec.overhead) == {'cpu': '100m', 'memory': '128Mi'}",
+        {'expression': "has(dyn(object.spec).overhead) && dyn(object.spec).overhead == {'cpu': '100m', 'memory': '128Mi'}",
          'message': 'NUC worker overhead must match its RuntimeClass'},
         {'expression': "object.spec.containers.all(c, c.imagePullPolicy == 'Never' && "
                        "has(c.securityContext.runAsUser) && c.securityContext.runAsUser == 0 && "
@@ -584,7 +584,7 @@ def nuc_kvm_foundations(document, config, value):
             'matchConditions': [{'name': 'nuc-class-or-handler',
                                  'expression': f'object.metadata.name == {json.dumps(NUC_RUNTIME)} || object.handler == {json.dumps(NUC_RUNTIME)}'}],
             'validations': [{'expression': f'object.metadata.name == {json.dumps(NUC_RUNTIME)} && object.handler == {json.dumps(NUC_RUNTIME)} && '
-                             'has(object.overhead) && dyn(object.overhead.podFixed) == '
+                             'has(object.overhead) && has(dyn(object.overhead).podFixed) && dyn(object.overhead).podFixed == '
                              + json.dumps(runtime['overhead']['podFixed']) + ' && has(object.scheduling) && '
                              'object.scheduling.nodeSelector == ' + json.dumps(runtime['scheduling']['nodeSelector'])
                              + ' && (!has(object.scheduling.tolerations) || size(object.scheduling.tolerations) == 0)',

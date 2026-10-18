@@ -60,6 +60,8 @@ def identity_expression(expression, context):
             if isinstance(node.ops[0], ast.In):
                 return left in right
         if isinstance(node, ast.Call):
+            if isinstance(node.func, ast.Name) and node.func.id == 'dyn' and len(node.args) == 1:
+                return visit(node.args[0], values)
             if isinstance(node.func, ast.Name) and node.func.id == 'has' and len(node.args) == 1:
                 try:
                     visit(node.args[0], values)
@@ -321,6 +323,24 @@ class NucKvmTests(unittest.TestCase):
         self.assertEqual(new['spec']['egress'], old_egress)
         self.assertEqual(new['spec']['ingress'], [])
 
+    def test_pod_overhead_uses_dynamic_parent_and_exact_runtime_bounds(self):
+        _, _, rules = self.identity_policy()
+        expression = rules['NUC worker overhead must match its RuntimeClass']
+        # Kubernetes 1.31's Pod schema omits overhead: cast before field access,
+        # including has(), rather than casting an already statically read field.
+        self.assertIn('has(dyn(object.spec).overhead)', expression)
+        self.assertNotIn('object.spec.overhead', expression)
+        self.assertTrue(identity_expression(expression, {
+            'object': {'spec': {'overhead': {'cpu': '100m', 'memory': '128Mi'}}}}))
+        for spec in [{}, {'overhead': None}, {'overhead': {}},
+                     {'overhead': {'cpu': '100m', 'memory': '256Mi'}},
+                     {'overhead': {'cpu': '200m', 'memory': '128Mi'}},
+                     {'overhead': {'cpu': '100m', 'memory': '128Mi', 'pods': '1'}},
+                     {'overhead': {'cpu': 100, 'memory': '128Mi'}},
+                     {'overhead': '100m/128Mi'}]:
+            with self.subTest(spec=spec):
+                self.assertFalse(identity_expression(expression, {'object': {'spec': spec}}))
+
     def test_runtime_alias_guard_and_fixed_capacity(self):
         items = render()['foundations.json']['items']
         runtime = next(x for x in items if x['kind'] == 'RuntimeClass')
@@ -338,6 +358,27 @@ class NucKvmTests(unittest.TestCase):
         self.assertEqual(quota['requests.cpu'], '2000m')
         self.assertLessEqual(1250 + 100, 2000)
         self.assertGreater(2 * (1250 + 100), 2000)
+
+    def test_class_overhead_uses_dynamic_parent_and_rejects_missing_or_wrong_bounds(self):
+        items = render()['foundations.json']['items']
+        runtime = next(x for x in items if x['kind'] == 'RuntimeClass')
+        guard = next(x for x in items if x['kind'] == 'ValidatingAdmissionPolicy'
+                     and x['metadata']['name'] == arc.NUC_RUNTIME + '-class')
+        expression = guard['spec']['validations'][0]['expression']
+        self.assertIn('has(dyn(object.overhead).podFixed)', expression)
+        self.assertNotIn('object.overhead.podFixed', expression)
+        self.assertTrue(identity_expression(expression, {'object': runtime}))
+        for overhead in [None, {}, {'podFixed': None}, {'podFixed': {}},
+                         {'podFixed': {'cpu': '200m', 'memory': '128Mi'}},
+                         {'podFixed': {'cpu': '100m', 'memory': '256Mi'}},
+                         {'podFixed': {'cpu': '100m', 'memory': '128Mi', 'pods': '1'}}]:
+            with self.subTest(overhead=overhead):
+                bad = copy.deepcopy(runtime)
+                if overhead is None:
+                    del bad['overhead']
+                else:
+                    bad['overhead'] = overhead
+                self.assertFalse(identity_expression(expression, {'object': bad}))
 
     def test_host_assets_select_complete_versioned_bundle_and_reuse_guard(self):
         directory = ROOT / 'deploy/arc-private'
