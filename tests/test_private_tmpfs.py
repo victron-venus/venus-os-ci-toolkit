@@ -35,7 +35,7 @@ id() { printf 0; }
 uname() { printf 6.12-gvisor; }
 findmnt() { if [[ -e "$state" ]]; then printf tmpfs; else printf 9p; fi; }
 mount() { printf '%s\\n' "$*" > "$state"; }
-stat() { printf '4096 524288 262144'; }
+stat() { printf 'tmpfs 4096 524288 262144'; }
 ''' + setup + '\n' + invoke,
                 'test', str(HELPER), str(data), str(Path(directory) / 'mounted'),
                 str(ROOT / 'deploy/runner-reserve/sandbox-docker.sh')],
@@ -48,6 +48,13 @@ stat() { printf '4096 524288 262144'; }
         self.assertEqual((result.returncode, result.stdout), (0, 'overlay2'), result.stderr)
         self.assertTrue(mounted.startswith('-t tmpfs -o size=2147483648,nr_inodes=262144,mode=0710 tmpfs '))
         self.assertIn('PRIVATE_DOCKER_TMPFS_READY filesystem=tmpfs bytes=2147483648 inodes=262144', result.stderr)
+
+    def test_covered_mount_table_entry_does_not_hide_visible_tmpfs(self):
+        result, mounted = self.gate('''
+findmnt() { if [[ -e "$state" ]]; then printf '9p\\ntmpfs'; else printf 9p; fi; }
+''')
+        self.assertEqual((result.returncode, result.stdout), (0, 'overlay2'), result.stderr)
+        self.assertIsNotNone(mounted)
 
     def test_profile_resources_and_unknown_modes_fail_before_mount(self):
         for setup in [
@@ -83,10 +90,12 @@ stat() { printf '4096 524288 262144'; }
 
     def test_mount_readback_and_capacity_must_match(self):
         for setup in [
-                'findmnt() { printf 9p; }',
-                'stat() { return 1; }', 'stat() { printf "4096 1048576 262144"; }',
-                'stat() { printf "4096 524288 999999"; }', 'stat() { printf "bad output"; }',
-                'stat() { printf "4096 524288 262144 extra"; }']:
+                'stat() { printf "v9fs 4096 524288 262144"; }',
+                'stat() { printf "overlayfs 4096 524288 262144"; }',
+                'stat() { return 1; }', 'stat() { printf "tmpfs 4096 1048576 262144"; }',
+                'stat() { printf "tmpfs 4096 524288 999999"; }', 'stat() { printf "bad output"; }',
+                'stat() { printf "tmpfs 4096 524288 262144 extra"; }',
+                'stat() { printf "tmpfs 4096 524288 262144\\nv9fs 4096 524288 262144"; }']:
             with self.subTest(setup=setup):
                 result, mounted = self.gate(setup)
                 self.assertNotEqual(result.returncode, 0)
@@ -94,7 +103,9 @@ stat() { printf '4096 524288 262144'; }
                 self.assertIsNotNone(mounted)
 
     def test_failed_storage_gate_stops_shared_launcher_before_any_daemon(self):
-        for failure in ['mount() { return 1; }', 'stat() { printf "4096 1 1"; }']:
+        for failure in ['mount() { return 1; }',
+                        'stat() { printf "v9fs 4096 524288 262144"; }',
+                        'stat() { printf "tmpfs 4096 1 1"; }']:
             result, _ = self.gate('''
 base=$4
 source() {
@@ -113,6 +124,14 @@ start_sandbox_docker 1500
             self.assertNotEqual(result.returncode, 0)
             self.assertNotIn('UNEXPECTED_', result.stderr)
             self.assertNotIn('PRIVATE_DOCKER_TMPFS_READY', result.stderr)
+
+    def test_failed_statfs_diagnostics_are_limited_and_shell_quoted(self):
+        result, _ = self.gate('stat() { printf "v9fs;bad 4096 524288 262144 ignored-extra"; }')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(r'filesystem=v9fs\;bad block_size=4096 blocks=524288 inodes=262144', result.stderr)
+        self.assertNotIn('ignored-extra', result.stderr)
+        self.assertNotIn('memory_request', result.stderr)
+        self.assertEqual(result.stdout, '')
 
     def test_opt_in_reserves_ci_memory_but_preserves_other_profiles(self):
         row = {**ROW, 'ci_storage': 'tmpfs-2gi'}
