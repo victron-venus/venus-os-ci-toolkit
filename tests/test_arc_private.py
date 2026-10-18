@@ -159,11 +159,11 @@ class PrivatePoolTests(unittest.TestCase):
             return Decimal(value)
 
         for kinds, expected_cpu, fits in [
-                (['standard'], '1', True),
-                (['standard', 'standard'], '2', True),
-                (['standard'] * 3, '3', False),
+                (['standard'], '2', True),
+                (['standard', 'standard'], '4', False),
+                (['standard'] * 3, '6', False),
                 (['heavy'], '1.6', True),
-                (['heavy', 'standard'], '2.6', False),
+                (['heavy', 'standard'], '3.6', False),
                 (['heavy', 'heavy'], '3.2', False)]:
             with self.subTest(kinds=kinds):
                 usage = {'pods': Decimal(len(kinds))}

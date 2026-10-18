@@ -157,7 +157,7 @@ findmnt() { if [[ -e "$state" ]]; then printf '9p\\ntmpfs'; else printf 9p; fi; 
             runner = pod['containers'][0]
             self.assertEqual(runner['resources']['requests']['memory'], '3Gi')
             self.assertEqual(runner['resources']['limits']['memory'], '6Gi')
-            self.assertEqual(runner['resources']['requests']['cpu'], '900m')
+            self.assertEqual(runner['resources']['requests']['cpu'], '1900m')
             env = {e['name']: e for e in runner['env']}
             self.assertEqual(env['RUNNER_PRIVATE_DOCKER_STORAGE']['value'], 'ci-tmpfs-2gi')
             self.assertEqual(env['RUNNER_DOCKER_STORAGE_DRIVER']['value'], 'overlayfs')
@@ -175,7 +175,7 @@ findmnt() { if [[ -e "$state" ]]; then printf '9p\\ntmpfs'; else printf 9p; fi; 
             arc.values({**ROW, 'ci_storage': 'tmpfs-2gi'}, 'ci', IMAGE, IMAGE, '192.0.2.1',
                        sandbox_runtime=arc.EXCLUSIVE_RUNTIME)
 
-    def test_two_candidates_fit_existing_quota_with_overhead(self):
+    def test_two_candidates_fit_memory_but_cpu_quota_admits_only_one(self):
         def mib(value):
             return int(value[:-2]) * (1024 if value.endswith('Gi') else 1)
         pod = arc.values({**ROW, 'ci_storage': 'tmpfs-2gi'}, 'ci', IMAGE, IMAGE, '192.0.2.1')['template']['spec']
@@ -184,6 +184,10 @@ findmnt() { if [[ -e "$state" ]]; then printf '9p\\ntmpfs'; else printf 9p; fi; 
         for kind in ('requests', 'limits'):
             amount = mib(pod['containers'][0]['resources'][kind]['memory']) + mib(overhead['memory'])
             self.assertLessEqual(2 * amount, mib(quota[kind + '.memory']))
+        cpu = (int(pod['containers'][0]['resources']['requests']['cpu'][:-1])
+               + int(overhead['cpu'][:-1]))
+        self.assertEqual(cpu, int(quota['requests.cpu'][:-1]))
+        self.assertGreater(2 * cpu, int(quota['requests.cpu'][:-1]))
 
     def test_private_admission_bounds_selector_count_and_actual_resources(self):
         items = arc.foundations([ROW], IMAGE, '192.0.2.1')['items']
@@ -329,7 +333,7 @@ stat() { printf 'tmpfs 4096 786432 262144'; }
     def test_admission_contains_only_named_exact_new_tuples(self):
         expression = arc.private_tmpfs_validation()
         for mode, profile, request, limit, cpu_request, cpu_limit in [
-                ('ci-tmpfs-2gi', 'ci', '3Gi', '6Gi', '900m', '4'),
+                ('ci-tmpfs-2gi', 'ci', '3Gi', '6Gi', '1900m', '4'),
                 ('ci-heavy-tmpfs-6gi', 'ci', '13Gi', '16Gi', '1500m', '3'),
                 ('automation-tmpfs-3gi', 'automation', '5Gi', '6Gi', '50m', '1')]:
             branch = next(part for part in expression.split(' || ') if f"e.value == '{mode}'" in part)
@@ -344,6 +348,7 @@ stat() { printf 'tmpfs 4096 786432 262144'; }
         self.assertIn("size(c.env.filter(e, e.name == 'RUNNER_PRIVATE_DOCKER_STORAGE')) <= 1", expression)
         self.assertIn("object.spec.runtimeClassName == 'victron-reserve'", expression)
         self.assertIn('!has(e.valueFrom)', expression)
+        self.assertNotIn("dyn(c.resources).requests['cpu'] == '900m'", expression)
 
 
     def test_only_private_image_installs_wrapper_and_default_remains_disk(self):

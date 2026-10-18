@@ -227,9 +227,9 @@ not apply the whole foundations list without reviewing every object.
    This draft's Python tests are structural tests, not live CEL acceptance.
 8. Restore scheduling only if the node was schedulable before maintenance and
    health checks pass; keep the ARC worker-creation hold. Run one explicitly
-   approved isolated qualification at a time using the same image, 900m standard
-   request, 100m RuntimeClass overhead, limits, emptyDir and network fence. Use
-   the fixed bootstrap's existing qualification mode. Do not relax admission to
+   approved isolated qualification at a time using the same image, candidate
+   1900m standard request, 100m RuntimeClass overhead, limits, emptyDir and network
+   fence. Use the fixed bootstrap's existing qualification mode. Do not relax admission to
    inject a different command, init container, helper mount or extra secret.
    The canonical Docker/PostgreSQL qualification keeps the same **1800-second
    (30-minute)** overall deadline as V7; do not change the comparison contract.

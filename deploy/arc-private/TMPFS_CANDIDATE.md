@@ -6,6 +6,11 @@ restarting the node. The standard CI candidate and the new heavy CI/automation c
 separate runtime and application CI qualification; no new mode is qualified by
 this source change. Do not enable a fleet from a successful render or unit test.
 
+The proposed standard CI CPU request is 1900m rather than 900m. This is an
+unqualified scheduling candidate, not a change to image contents or the CPU
+quota. With runtime overhead it permits one standard CI worker at a time;
+heavy CI, automation, release and native resource budgets are unchanged.
+
 The pinned [gVisor Docker guide](https://github.com/google/gvisor/blob/release-20260928.0/g3doc/user_guide/tutorials/docker-in-gvisor.md#docker-storage-backend)
 recommends tmpfs for Docker storage. Its
 [reference bootstrap](https://github.com/google/gvisor/blob/release-20260928.0/images/basic/docker/start-dockerd.sh#L34-L45)
@@ -85,7 +90,7 @@ Only this repository's standard `ci` profile changes:
 - Docker data: 2 GiB tmpfs, at most 262,144 inodes, mounted inside the sandbox
   over the existing fresh 16 GiB disk emptyDir. The disk volume declaration
   and its mount restrictions remain intact.
-- Memory: 3 GiB request, 6 GiB limit. CPU remains 900m request / 4 CPU limit.
+- Memory: 3 GiB request, 6 GiB limit. Candidate CPU: 1900m request / 4 CPU limit.
   RuntimeClass overhead adds 128 MiB and 100m for scheduling and quota.
 - Explicit private tmpfs modes select `overlayfs` with the containerd image store.
   Disk/default modes retain classic `overlay2` with the snapshotter disabled.
@@ -216,9 +221,11 @@ limit for other data, daemon/job processes and filesystem metadata. The
 filesystem size is not a reservation, and guest root can change guest mount
 options; the outer cgroup limit remains the containment boundary.
 
-Two standard candidates request 6.25 GiB including RuntimeClass overhead,
-within the CI namespace's existing 14 GiB request quota. Its quotas and limits are
-unchanged; only explicit automation selection changes the quota described above. The scheduler still needs available node capacity; inspect current
+Two standard candidates would request 6.25 GiB including RuntimeClass overhead,
+within the CI namespace's existing 14 GiB memory request quota. Their combined
+4-CPU request exceeds its unchanged 2-CPU request quota, so only one can run
+at a time. Only explicit automation selection changes the quota described
+above. The scheduler still needs available node capacity; inspect current
 memory and workloads before qualification. Image downloads, unpacked layers,
 build cache and database volumes all compete for this tmpfs. Fixture size
 alone does not establish that a full application's CI fits.
