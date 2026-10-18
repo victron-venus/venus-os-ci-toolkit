@@ -42,6 +42,15 @@ class PrivatePoolTests(unittest.TestCase):
                     self.assertNotIn(forbidden, serialized)
                 self.assertNotEqual(value['runnerScaleSetName'], arc.name('other/private', profile))
 
+    def test_listeners_satisfy_restricted_namespace_security(self):
+        for profile in ROW['profiles']:
+            pod = arc.values(ROW, profile, SANDBOX, NATIVE, '10.66.10.2')['listenerTemplate']['spec']
+            self.assertEqual(pod['securityContext']['seccompProfile']['type'], 'RuntimeDefault')
+            security = pod['containers'][0]['securityContext']
+            self.assertTrue(security['runAsNonRoot'])
+            self.assertFalse(security['allowPrivilegeEscalation'])
+            self.assertEqual(security['capabilities']['drop'], ['ALL'])
+
     def test_sandbox_profiles_preserve_network_guard_and_runtime(self):
         for profile in ('ci', 'automation', 'release'):
             value = arc.values(ROW, profile, SANDBOX, NATIVE, '10.66.10.2')

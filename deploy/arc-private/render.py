@@ -93,6 +93,8 @@ def values(row, profile, sandbox_image, native_image, node_ip, arm_node='h7'):
                    'scaleSetLabels': [name(scope, profile)],
                    'githubConfigSecret': 'private-runner-app-' + scope.split('/')[0].lower()})
     listener = result['listenerTemplate']['spec']['containers'][0]
+    result['listenerTemplate']['spec']['securityContext'] = {
+        'seccompProfile': {'type': 'RuntimeDefault'}}
     listener['resources'] = {'requests': {'cpu': '5m', 'memory': '32Mi'},
                              'limits': {'cpu': '100m', 'memory': '192Mi'}}
     spec = result['template']['spec']
