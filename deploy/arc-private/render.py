@@ -50,6 +50,8 @@ def validate_inventory(inventory):
         if not SCOPE.fullmatch(scope) or scope in seen or row.get('visibility') != 'private':
             raise ValueError('Inventory requires unique explicitly private owner/repository scopes')
         seen.add(scope)
+        if row.get('ci_resource_class', 'standard') not in ('standard', 'heavy'):
+            raise ValueError('Unknown CI resource class')
         profiles = row['profiles']
         if not isinstance(profiles, list) or not profiles or any(p not in PROFILES for p in profiles):
             raise ValueError('Unsupported or empty worker profile')
@@ -93,6 +95,13 @@ def values(row, profile, sandbox_image, native_image, node_ip, arm_node='h7'):
         'limits': {'cpu': '4' if profile == 'ci' else '1',
                    'memory': '6Gi' if profile == 'ci' else ('4Gi' if profile == 'automation' else '2Gi'),
                    'ephemeral-storage': '20Gi'}}
+    if profile == 'ci' and row.get('ci_resource_class') == 'heavy':
+        # Covers native build/test suites formerly split between a large runner
+        # and Docker sidecar. Namespace limits admit only one heavy worker and
+        # reject a concurrent standard worker while it is present.
+        spec['containers'][0]['resources'] = {
+            'requests': {'cpu': '1500m', 'memory': '13Gi', 'ephemeral-storage': '2Gi'},
+            'limits': {'cpu': '3', 'memory': '16Gi', 'ephemeral-storage': '30Gi'}}
     if profile in ('ci', 'automation', 'release'):
         return result
     spec.pop('runtimeClassName')
@@ -165,10 +174,11 @@ def foundations(rows, sandbox_image, node_ip):
             # ARC puts listeners in the controller namespace. Bound workers in
             # aggregate here, even when all repositories queue at the same time.
             profile = meta['namespace'].removeprefix('arc-private-')
-            budget = {'ci': ('8200m', '13Gi'), 'automation': ('2200m', '9Gi'), 'release': ('2200m', '5Gi')}[profile]
-            item['spec']['hard'] = {'pods': '2', 'requests.cpu': '1000m', 'requests.memory': '3Gi',
+            budget = {'ci': ('8200m', '17Gi'), 'automation': ('2200m', '9Gi'), 'release': ('2200m', '5Gi')}[profile]
+            item['spec']['hard'] = {'pods': '2', 'requests.cpu': '2000m' if profile == 'ci' else '1000m',
+                                    'requests.memory': '14Gi' if profile == 'ci' else '3Gi',
                                     'limits.cpu': budget[0], 'limits.memory': budget[1],
-                                    'requests.ephemeral-storage': '2Gi', 'limits.ephemeral-storage': '40Gi'}
+                                    'requests.ephemeral-storage': '3Gi', 'limits.ephemeral-storage': '40Gi'}
         resources.append(item)
     for profile in ('lan', 'arm64'):
         if not any(profile in r['profiles'] for r in rows):

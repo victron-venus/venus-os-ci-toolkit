@@ -72,6 +72,13 @@ through explicit artifacts or caches, not a shared workspace/PVC. Each pool has
 queue when node capacity is exhausted. A four-hour pod deadline bounds stranded
 workers; workflows should also set suitable job timeouts.
 
+Large build suites can declare `ci_resource_class: "heavy"` in the private
+inventory. This reserves 13 GiB and limits the worker to 16 GiB, covering a former
+large runner plus Docker sidecar in one sandbox. The shared CI namespace permits
+one heavy worker or two standard workers, never a mixture while the heavy worker
+is present. Node scheduling must still have the requested memory and CPU free;
+the class does not guarantee performance or bypass capacity checks.
+
 ## Provisioning
 
 Keep the real private inventory and generated values outside Git. The example

@@ -80,6 +80,18 @@ class PrivatePoolTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 arc.values(ROW, 'ci', first, second, '10.66.10.2')
 
+    def test_heavy_ci_reserves_capacity_without_admitting_mixed_workers(self):
+        row = {**ROW, 'ci_resource_class': 'heavy'}
+        pod = arc.values(row, 'ci', SANDBOX, NATIVE, '10.66.10.2')['template']['spec']
+        self.assertEqual(pod['containers'][0]['resources']['requests']['memory'], '13Gi')
+        self.assertEqual(pod['containers'][0]['resources']['limits']['memory'], '16Gi')
+        quotas = [x for x in arc.foundations([row], SANDBOX, '10.66.10.2')['items']
+                  if x['kind'] == 'ResourceQuota' and x['metadata']['namespace'] == 'arc-private-ci']
+        # 16 GiB + runtime overhead fits, another 6 GiB standard worker does not.
+        self.assertEqual(quotas[0]['spec']['hard']['limits.memory'], '17Gi')
+        with self.assertRaises(ValueError):
+            arc.validate_inventory({'repositories': [{**ROW, 'ci_resource_class': 'unbounded'}]})
+
     def test_routing_uses_concrete_unique_labels_and_explicit_mode(self):
         row = {**ROW, 'profiles': ['ci', 'automation', 'lan', 'arm64']}
         rendered = arc.render({'repositories': [row]}, SANDBOX, NATIVE, '10.66.10.2')
