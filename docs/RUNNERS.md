@@ -1,5 +1,10 @@
 # Optional self-hosted routing
 
+For private consumers spanning multiple owners, use the
+[caller-local workflow distribution](WORKFLOW_DISTRIBUTION.md). It preserves
+immutable shared sources and the explicit `github` / `self-hosted` switch while
+keeping every reusable job definition inside the caller repository.
+
 GitHub-hosted `ubuntu-latest` remains the default. No new runner, bootstrap job,
 secret or Actions variable is created by the toolkit. The existing reusable
 workflows evaluate routing directly when GitHub dispatches each job, including
@@ -161,8 +166,13 @@ The node runtime uses the pinned gVisor release with `systrap`, which works in a
 nested VM without KVM. `containerd-config.toml.tmpl` extends K3s's base template;
 never replace an existing custom template without integrating its settings.
 `runsc.toml`, the shim and `RuntimeClass` must agree on their installed paths and
-handler. Runtime configuration needs an approved node restart; it must not be
-applied blindly to a control-plane server. Private runners retain their runtime.
+handler. Changing containerd's handler configuration needs an approved node
+restart; it must not be applied blindly to a control-plane server. The existing
+shim reads `runsc.toml` for newly created sandboxes without a containerd restart.
+This dedicated runtime enables guest `allow-suid` for package installers run by
+the non-root user. Public reserve and private sandbox pods both use this setting;
+guest root remains inside gVisor and the host/network admission boundaries stay
+in force. Native private LAN/ARM profiles retain their separate runtime policy.
 
 `node_guard.py` is a node service, not code supplied to a job. Install the pinned
 CRI client at `/opt/victron-ci-reserve/crictl`; `versions.json` records its checksum.

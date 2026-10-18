@@ -1,0 +1,15 @@
+{
+  "repositories": [
+    {
+      "name": "example-owner/private-application",
+      "visibility": "private",
+      "profiles": ["ci", "automation", "arm64"]
+    },
+    {
+      "name": "example-owner/private-infrastructure",
+      "visibility": "private",
+      "profiles": ["ci", "automation", "lan"],
+      "lan_egress": [{"cidr": "192.0.2.10/32", "port": 9443}]
+    }
+  ]
+}

@@ -1,0 +1,7 @@
+# Append only to the reviewed, existing K3s containerd 1.7 template.
+# This is not a replacement config.toml.tmpl and contains no base template call.
+[plugins."io.containerd.grpc.v1.cri".containerd.runtimes.victron-private-exclusive]
+  runtime_type = "io.containerd.runsc.v1"
+[plugins."io.containerd.grpc.v1.cri".containerd.runtimes.victron-private-exclusive.options]
+  TypeUrl = "io.containerd.runsc.v1.options"
+  ConfigPath = "/etc/victron-ci-private-exclusive/runsc.toml"
