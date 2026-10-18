@@ -220,23 +220,33 @@ the exact body `OK`, bypassing HTTP proxies. It avoids the CLI plugin discovery
 performed by `docker info`; the separate qualification still builds and runs a
 container and tests a PostgreSQL published port.
 
-Private sandbox profiles select Docker `overlay2` on one fresh disk-backed
-`docker-data` emptyDir mounted only at `/var/lib/docker`. The mount is limited to
+The default private sandbox `disk` mode selects Docker `overlay2` on one fresh
+disk-backed `docker-data` emptyDir mounted only at `/var/lib/docker`. The mount is limited to
 16Gi within the existing per-pod ephemeral-storage limits (20Gi standard,
 30Gi heavy CI); these are kubelet
 accounting and eviction limits, not synchronous filesystem quotas or guaranteed
 ENOSPC boundaries. No data is reused between jobs. Public reserve templates keep
-their volume-free VFS configuration. CPU and memory budgets are unchanged.
+their volume-free VFS configuration.
+
+The explicit private tmpfs modes instead mount bounded guest tmpfs over that
+same emptyDir and select the containerd image store with the `overlayfs`
+snapshotter. Their exact storage, inode, CPU and memory tuples and qualification
+limits are defined in [Private tmpfs candidates](../deploy/arc-private/TMPFS_CANDIDATE.md).
+These opt-in modes do not change public reserve or native profiles, and source
+support does not establish runtime or application acceptance.
 
 This follows the pinned gVisor release's support for a
 [9p or tmpfs overlay upper filesystem](https://github.com/google/gvisor/blob/release-20260928.0/pkg/sentry/fsimpl/overlay/overlay.go#L239-L256).
 The default `root:self` configuration leaves ordinary bind submounts as 9p;
 private admission rejects `dev.gvisor.*` annotations that could change that
-behavior. Bootstrap checks that the exact Docker mount reports 9p before
-starting the selected driver. VFS copies each parent layer, which can make cold
-multilayer images much slower. Overlay must still pass a fresh bounded runtime
-qualification, including deletion/opaque-directory layers and PostgreSQL, before
-activating a new image; source support alone does not establish compatibility.
+behavior. Bootstrap checks that the underlying Docker mount reports 9p. A tmpfs
+mode then mounts guest tmpfs and verifies the visible filesystem type, byte
+capacity and inode limit before starting either daemon. VFS copies each parent
+layer, which can make cold multilayer images much slower. Full runtime qualification
+includes deletion/opaque-directory layers and PostgreSQL; source support alone
+does not establish compatibility. A separately recorded workload-scoped pilot
+may evaluate unchanged application jobs, but must preserve any failed canonical
+capability result and must not qualify untested profiles or capabilities.
 Admission allows only this single emptyDir and mount. It rejects credential
 volumes and ConfigMap environment references. The sole Secret environment
 exception matches ARC 0.15's job-scoped `ACTIONS_RUNNER_INPUT_JITCONFIG`, key
