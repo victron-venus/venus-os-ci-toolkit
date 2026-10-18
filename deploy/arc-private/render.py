@@ -18,6 +18,9 @@ SPEC.loader.exec_module(RESERVE)
 PROFILES = ('ci', 'automation', 'release', 'lan', 'arm64')
 PINNED = re.compile(r'^[a-z0-9./:_-]+@sha256:[0-9a-f]{64}$')
 SCOPE = re.compile(r'^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$')
+RUNNER_HOME = '/home/runner'
+TOOL_CACHE = '/opt/hostedtoolcache'
+PRIVATE_ADMISSION = 'private-ephemeral-workers'
 # Embed the checked startup code; native workers have no ConfigMap dependency.
 NATIVE_DOCKER_BOOT = (ROOT / 'native-docker.sh').read_text()
 NATIVE_BOOT = '''set -euo pipefail
@@ -42,6 +45,29 @@ def name(scope, profile):
     return 'private-' + hashlib.sha256(scope.encode()).hexdigest()[:12] + '-' + profile
 
 
+def validate_profiles(row):
+    if row.get('ci_resource_class', 'standard') not in ('standard', 'heavy'):
+        raise ValueError('Unknown CI resource class')
+    profiles = row['profiles']
+    if not isinstance(profiles, list) or not profiles or any(p not in PROFILES for p in profiles):
+        raise ValueError('Unsupported or empty worker profile')
+    if len(set(profiles)) != len(profiles):
+        raise ValueError('Duplicate worker profile')
+    if {'lan', 'release'} <= set(profiles):
+        raise ValueError('Choose one release route: sandbox release or LAN')
+
+
+def validate_lan(row):
+    for destination in row.get('lan_egress', []):
+        network = ipaddress.ip_network(destination['cidr'])
+        if network.version != 4 or network.prefixlen != 32:
+            raise ValueError('LAN destinations must be exact IPv4 /32 hosts')
+        if type(destination['port']) is not int or not 1 <= destination['port'] <= 65535:
+            raise ValueError('Invalid LAN TCP port')
+    if 'lan' in row['profiles'] and not row.get('lan_egress'):
+        raise ValueError('LAN profile requires explicit destinations')
+
+
 def validate_inventory(inventory):
     rows = inventory['repositories']
     seen = set()
@@ -50,23 +76,8 @@ def validate_inventory(inventory):
         if not SCOPE.fullmatch(scope) or scope in seen or row.get('visibility') != 'private':
             raise ValueError('Inventory requires unique explicitly private owner/repository scopes')
         seen.add(scope)
-        if row.get('ci_resource_class', 'standard') not in ('standard', 'heavy'):
-            raise ValueError('Unknown CI resource class')
-        profiles = row['profiles']
-        if not isinstance(profiles, list) or not profiles or any(p not in PROFILES for p in profiles):
-            raise ValueError('Unsupported or empty worker profile')
-        if len(set(profiles)) != len(profiles):
-            raise ValueError('Duplicate worker profile')
-        if {'lan', 'release'} <= set(profiles):
-            raise ValueError('Choose one release route: sandbox release or LAN')
-        for destination in row.get('lan_egress', []):
-            network = ipaddress.ip_network(destination['cidr'])
-            if network.version != 4 or network.prefixlen != 32:
-                raise ValueError('LAN destinations must be exact IPv4 /32 hosts')
-            if type(destination['port']) is not int or not 1 <= destination['port'] <= 65535:
-                raise ValueError('Invalid LAN TCP port')
-        if 'lan' in row['profiles'] and not row.get('lan_egress'):
-            raise ValueError('LAN profile requires explicit destinations')
+        validate_profiles(row)
+        validate_lan(row)
     return rows
 
 
@@ -93,7 +104,7 @@ def values(row, profile, sandbox_image, native_image, node_ip, arm_node='h7'):
         'requests': {'cpu': '250m' if profile == 'ci' else '50m',
                      'memory': '1Gi' if profile in ('ci', 'automation') else '512Mi', 'ephemeral-storage': '1Gi'},
         'limits': {'cpu': '4' if profile == 'ci' else '1',
-                   'memory': '6Gi' if profile == 'ci' else ('4Gi' if profile == 'automation' else '2Gi'),
+                   'memory': {'ci': '6Gi', 'automation': '4Gi'}.get(profile, '2Gi'),
                    'ephemeral-storage': '20Gi'}}
     if profile == 'ci' and row.get('ci_resource_class') == 'heavy':
         # Covers native build/test suites formerly split between a large runner
@@ -113,12 +124,12 @@ def values(row, profile, sandbox_image, native_image, node_ip, arm_node='h7'):
     security = {'runAsNonRoot': True, 'allowPrivilegeEscalation': False,
                 'readOnlyRootFilesystem': True, 'capabilities': {'drop': ['ALL']}}
     # A fresh per-pod emptyDir mount, not a host temporary file.
-    mounts = {'home': '/home/runner', 'tools': '/opt/hostedtoolcache', 'tmp': '/tmp'}  # nosec B108
+    mounts = {'home': RUNNER_HOME, 'tools': TOOL_CACHE, 'tmp': '/tmp'}  # nosec B108
     runner = {'name': 'runner', 'image': native_image, 'imagePullPolicy': 'IfNotPresent',
               'command': ['/bin/bash', '-c'], 'args': [NATIVE_BOOT], 'securityContext': security,
-              'env': [{'name': 'HOME', 'value': '/home/runner'},
-                      {'name': 'RUNNER_TOOL_CACHE', 'value': '/opt/hostedtoolcache'},
-                      {'name': 'AGENT_TOOLSDIRECTORY', 'value': '/opt/hostedtoolcache'},
+              'env': [{'name': 'HOME', 'value': RUNNER_HOME},
+                      {'name': 'RUNNER_TOOL_CACHE', 'value': TOOL_CACHE},
+                      {'name': 'AGENT_TOOLSDIRECTORY', 'value': TOOL_CACHE},
                       {'name': 'ImageOS', 'value': 'ubuntu24'}],
               'resources': {'requests': {'cpu': '50m', 'memory': '256Mi', 'ephemeral-storage': '512Mi'},
                             'limits': {'cpu': '2', 'memory': '3Gi', 'ephemeral-storage': '12Gi'}},
@@ -139,73 +150,80 @@ def values(row, profile, sandbox_image, native_image, node_ip, arm_node='h7'):
                           'limits': {'cpu': '1', 'memory': '2Gi', 'ephemeral-storage': '16Gi'}},
             'volumeMounts': [{'name': 'docker-socket', 'mountPath': '/docker-socket'},
                              {'name': 'docker-data', 'mountPath': '/docker-data'},
-                             {'name': 'home', 'mountPath': '/home/runner'}]}]
+                             {'name': 'home', 'mountPath': RUNNER_HOME}]}]
         spec['volumes'] += [{'name': 'docker-socket', 'emptyDir': {'sizeLimit': '64Mi'}},
                             {'name': 'docker-data', 'emptyDir': {'sizeLimit': '16Gi'}}]
     return result
 
 
-def foundations(rows, sandbox_image, node_ip):
-    # Copy the reviewed admission contract into a distinct private policy so
-    # updating private job dependencies cannot change the public image boundary.
-    rendered = RESERVE.foundations(['ci', 'automation', 'release'], sandbox_image, node_ip)
-    resources = []
-    for item in rendered['items']:
-        item = copy.deepcopy(item)
-        meta = item['metadata']
-        if item['kind'] == 'ValidatingAdmissionPolicy':
-            meta['name'] = 'private-ephemeral-workers'
-            item['spec']['matchConstraints']['namespaceSelector']['matchLabels'] = {
-                'runner-reserve.github.io/admission': 'private-worker'}
-            resources.append(item)
-            continue
-        if item['kind'] == 'ValidatingAdmissionPolicyBinding':
-            meta['name'] = 'private-ephemeral-workers'
-            item['spec']['policyName'] = 'private-ephemeral-workers'
-            resources.append(item)
-            continue
-        if item['kind'] == 'Namespace':
-            meta['name'] = meta['name'].replace('runner-reserve-', 'arc-private-')
-            meta['labels']['app.kubernetes.io/part-of'] = 'private-ephemeral-runners'
-            meta['labels']['runner-reserve.github.io/admission'] = 'private-worker'
-        else:
-            meta['namespace'] = meta['namespace'].replace('runner-reserve-', 'arc-private-')
+def sandbox_quota(profile):
+    # ARC keeps listeners in its controller namespace. This bounds aggregate
+    # worker demand, including RuntimeClass overhead, across all repositories.
+    budget = {'ci': ('8200m', '17Gi'), 'automation': ('2200m', '9Gi'), 'release': ('2200m', '5Gi')}[profile]
+    return {'pods': '2', 'requests.cpu': '2000m' if profile == 'ci' else '1000m',
+            'requests.memory': '14Gi' if profile == 'ci' else '3Gi',
+            'limits.cpu': budget[0], 'limits.memory': budget[1],
+            'requests.ephemeral-storage': '3Gi', 'limits.ephemeral-storage': '40Gi'}
+
+
+def private_sandbox_foundation(source):
+    item = copy.deepcopy(source)
+    meta = item['metadata']
+    if item['kind'] == 'ValidatingAdmissionPolicy':
+        meta['name'] = PRIVATE_ADMISSION
+        item['spec']['matchConstraints']['namespaceSelector']['matchLabels'] = {
+            'runner-reserve.github.io/admission': 'private-worker'}
+    elif item['kind'] == 'ValidatingAdmissionPolicyBinding':
+        meta['name'] = PRIVATE_ADMISSION
+        item['spec']['policyName'] = PRIVATE_ADMISSION
+    elif item['kind'] == 'Namespace':
+        meta['name'] = meta['name'].replace('runner-reserve-', 'arc-private-')
+        meta['labels']['app.kubernetes.io/part-of'] = 'private-ephemeral-runners'
+        meta['labels']['runner-reserve.github.io/admission'] = 'private-worker'
+    else:
+        meta['namespace'] = meta['namespace'].replace('runner-reserve-', 'arc-private-')
         if item['kind'] == 'ResourceQuota':
-            # ARC puts listeners in the controller namespace. Bound workers in
-            # aggregate here, even when all repositories queue at the same time.
-            profile = meta['namespace'].removeprefix('arc-private-')
-            budget = {'ci': ('8200m', '17Gi'), 'automation': ('2200m', '9Gi'), 'release': ('2200m', '5Gi')}[profile]
-            item['spec']['hard'] = {'pods': '2', 'requests.cpu': '2000m' if profile == 'ci' else '1000m',
-                                    'requests.memory': '14Gi' if profile == 'ci' else '3Gi',
-                                    'limits.cpu': budget[0], 'limits.memory': budget[1],
-                                    'requests.ephemeral-storage': '3Gi', 'limits.ephemeral-storage': '40Gi'}
-        resources.append(item)
+            item['spec']['hard'] = sandbox_quota(meta['namespace'].removeprefix('arc-private-'))
+    return item
+
+
+def native_foundations(profile, network_policy):
+    ns = 'arc-private-' + profile
+    resources = [
+        {'apiVersion': 'v1', 'kind': 'Namespace', 'metadata': {'name': ns, 'labels': {
+            'app.kubernetes.io/part-of': 'private-ephemeral-runners',
+            'pod-security.kubernetes.io/enforce': 'privileged' if profile == 'arm64' else 'baseline'}}},
+        {'apiVersion': 'v1', 'kind': 'ServiceAccount', 'metadata': {'name': 'private-worker', 'namespace': ns},
+         'automountServiceAccountToken': False},
+        {'apiVersion': 'v1', 'kind': 'ResourceQuota', 'metadata': {'name': 'private-budget', 'namespace': ns},
+         'spec': {'hard': {'pods': '8', 'requests.cpu': '500m', 'requests.memory': '4Gi',
+                           'limits.cpu': '12', 'limits.memory': '20Gi',
+                           'requests.ephemeral-storage': '4Gi', 'limits.ephemeral-storage': '80Gi'}}}]
+    base = copy.deepcopy(network_policy)
+    base['metadata'] = {'name': 'private-worker-isolation', 'namespace': ns}
+    base['spec']['egress'] = [r for r in base['spec']['egress'] if r['ports'][0]['port'] != 19999]
+    resources.append(base)
+    return resources
+
+
+def lan_policy(row):
+    return {'apiVersion': 'networking.k8s.io/v1', 'kind': 'NetworkPolicy',
+            'metadata': {'name': name(row['name'], 'lan'), 'namespace': 'arc-private-lan'},
+            'spec': {'podSelector': {'matchLabels': {'private-runners.github.io/scope': name(row['name'], 'scope')}},
+                     'policyTypes': ['Egress'], 'egress': [
+                         {'to': [{'ipBlock': {'cidr': d['cidr']}}],
+                          'ports': [{'port': d['port'], 'protocol': 'TCP'}]} for d in row['lan_egress']]}}
+
+
+def foundations(rows, sandbox_image, node_ip):
+    # Separate policy/image identity preserves the public reserve boundary.
+    rendered = RESERVE.foundations(['ci', 'automation', 'release'], sandbox_image, node_ip)
+    resources = [private_sandbox_foundation(item) for item in rendered['items']]
+    network = next(r for r in resources if r['kind'] == 'NetworkPolicy')
     for profile in ('lan', 'arm64'):
-        if not any(profile in r['profiles'] for r in rows):
-            continue
-        ns = 'arc-private-' + profile
-        resources += [
-            {'apiVersion': 'v1', 'kind': 'Namespace', 'metadata': {'name': ns, 'labels': {
-                'app.kubernetes.io/part-of': 'private-ephemeral-runners',
-                'pod-security.kubernetes.io/enforce': 'privileged' if profile == 'arm64' else 'baseline'}}},
-            {'apiVersion': 'v1', 'kind': 'ServiceAccount', 'metadata': {'name': 'private-worker', 'namespace': ns},
-             'automountServiceAccountToken': False},
-            {'apiVersion': 'v1', 'kind': 'ResourceQuota', 'metadata': {'name': 'private-budget', 'namespace': ns},
-             'spec': {'hard': {'pods': '8', 'requests.cpu': '500m', 'requests.memory': '4Gi',
-                               'limits.cpu': '12', 'limits.memory': '20Gi',
-                               'requests.ephemeral-storage': '4Gi', 'limits.ephemeral-storage': '80Gi'}}}]
-        base = next(copy.deepcopy(r) for r in resources if r['kind'] == 'NetworkPolicy')
-        base['metadata'] = {'name': 'private-worker-isolation', 'namespace': ns}
-        base['spec']['egress'] = [r for r in base['spec']['egress'] if r['ports'][0]['port'] != 19999]
-        resources.append(base)
-    for row in rows:
-        if 'lan' in row['profiles']:
-            resources.append({'apiVersion': 'networking.k8s.io/v1', 'kind': 'NetworkPolicy',
-                'metadata': {'name': name(row['name'], 'lan'), 'namespace': 'arc-private-lan'},
-                'spec': {'podSelector': {'matchLabels': {'private-runners.github.io/scope': name(row['name'], 'scope')}},
-                         'policyTypes': ['Egress'], 'egress': [
-                             {'to': [{'ipBlock': {'cidr': d['cidr']}}],
-                              'ports': [{'port': d['port'], 'protocol': 'TCP'}]} for d in row['lan_egress']]}})
+        if any(profile in r['profiles'] for r in rows):
+            resources.extend(native_foundations(profile, network))
+    resources.extend(lan_policy(row) for row in rows if 'lan' in row['profiles'])
     return {'apiVersion': 'v1', 'kind': 'List', 'items': resources}
 
 
