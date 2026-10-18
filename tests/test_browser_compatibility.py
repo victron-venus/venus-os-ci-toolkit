@@ -40,6 +40,7 @@ class BrowserCompatibilityTests(unittest.TestCase):
             **os.environ, "GITHUB_OUTPUT": str(self.root / "output"),
             "GITHUB_ENV": str(self.root / "env"), "RUNNER_TEMP": str(self.root),
             "BROWSER_MATRIX_FILE": "", "BROWSER_EXTENDED": "false",
+            "BROWSER_PLATFORM_SCOPE": "all",
             "BROWSER_RELEASE_CHANNEL": "",
             "BROWSER_EVIDENCE_PREFIX": "browser-compatibility",
             "BROWSER_COMMAND": "node scripts/application-acceptance.cjs",
@@ -107,6 +108,67 @@ class BrowserCompatibilityTests(unittest.TestCase):
         duplicate_identity[-1] = duplicate_identity[-2] | {"id": rows[-1]["id"]}
         self.assertNotEqual(self.plan(duplicate_identity, BROWSER_RELEASE_CHANNEL="rc",
                                      BROWSER_EXTENDED="true").returncode, 0)
+
+    def test_linux_scope_preserves_every_selected_linux_target(self):
+        rows = self.release_targets()
+        for extended in (False, True):
+            for scope in ("all", "linux"):
+                with self.subTest(scope=scope, extended=extended):
+                    (self.root / "output").unlink(missing_ok=True)
+                    result = self.plan(rows, BROWSER_PLATFORM_SCOPE=scope,
+                                       BROWSER_EXTENDED=str(extended).lower())
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    selected = json.loads((self.root / "output").read_text().split("=", 1)[1])["include"]
+                    expected = [row | {"channel": row.get("channel", "")} for row in rows
+                                if (extended or row["tier"] == "required")
+                                and (scope == "all" or row["os"] == "ubuntu-latest")]
+                    self.assertEqual(selected, expected)
+                    self.assertEqual(len(selected), (35 if extended else 5) if scope == "all"
+                                     else (13 if extended else 3))
+                    self.assertEqual(json.loads(result.stdout), {
+                        "platformScope": scope, "selectedTargetIds": [row["id"] for row in expected],
+                    })
+
+    def test_linux_scope_requires_required_linux_and_validates_excluded_targets(self):
+        windows = TARGET | {"id": "windows", "os": "windows-2022"}
+        for rows, scope in (
+            ([TARGET], ""), ([TARGET], "windows"), ([TARGET], "ALL"),
+            ([windows], "linux"),
+            ([windows, TARGET | {"tier": "extended"}], "linux"),
+            ([TARGET, windows | {"playwright": "latest"}], "linux"),
+        ):
+            with self.subTest(rows=rows, scope=scope):
+                self.assertNotEqual(self.plan(rows, BROWSER_PLATFORM_SCOPE=scope,
+                                             BROWSER_EXTENDED="true").returncode, 0)
+                self.assertFalse((self.root / "output").exists())
+
+    def test_linux_scope_cannot_claim_any_release_qualification(self):
+        for channel in ("nightly", "beta", "rc", "stable"):
+            with self.subTest(channel=channel):
+                result = self.plan(self.release_targets(), BROWSER_PLATFORM_SCOPE="linux",
+                                   BROWSER_RELEASE_CHANNEL=channel,
+                                   BROWSER_EXTENDED=str(channel in ("rc", "stable")).lower())
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("Release qualification requires all platforms", result.stderr)
+                self.assertFalse((self.root / "output").exists())
+
+    def test_linux_scope_excludes_fixed_hosted_ubuntu_without_relabelling(self):
+        fixed = [TARGET | {"id": os_name.replace(".", "-"), "os": os_name}
+                 for os_name in ("ubuntu-24.04", "ubuntu-26.04")]
+        for extended in ("false", "true"):
+            for scope in ("all", "linux"):
+                with self.subTest(scope=scope, extended=extended):
+                    (self.root / "output").unlink(missing_ok=True)
+                    result = self.plan([TARGET, *fixed], BROWSER_PLATFORM_SCOPE=scope,
+                                       BROWSER_EXTENDED=extended)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    selected = json.loads((self.root / "output").read_text().split("=", 1)[1])["include"]
+                    expected = [TARGET, *fixed] if scope == "all" else [TARGET]
+                    self.assertEqual(selected, [row | {"channel": ""} for row in expected])
+        (self.root / "output").unlink(missing_ok=True)
+        self.assertNotEqual(self.plan(fixed, BROWSER_PLATFORM_SCOPE="linux",
+                                     BROWSER_EXTENDED="true").returncode, 0)
+        self.assertFalse((self.root / "output").exists())
 
     def release_evidence(self, channel="rc", rows=None):
         rows = self.release_targets() if rows is None else rows

@@ -96,6 +96,26 @@ with:
   browser-extended: ${{ github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
 ```
 
+For ordinary application CI, a caller may explicitly set
+`browser-platform-scope: linux` to select only `ubuntu-latest` rows compatible
+with the Linux reserve. Fixed Ubuntu, Windows and macOS rows are excluded, not
+relabelled. The default is `all`; the full inventory is validated in either mode.
+The selected scope must contain a required target, and `browser-extended` still
+selects the extended rows within that scope. The planner logs the scope and exact
+selected target IDs. This accepts only the selected Linux subset; it does not
+establish fixed Ubuntu, Windows or macOS coverage.
+Any nonempty `browser-release-channel` requires `all` and rejects `linux`.
+
+A private consumer that runs Linux on self-hosted workers can select `linux`
+using the same trusted-event and runner-mode condition as its runner routing,
+and select `all` when using GitHub-hosted runners. Keep all selected browser jobs
+required by the existing CI gate; do not accept a skipped or failed browser call.
+Fixed Ubuntu, Windows and macOS remain distinct matrix jobs in `all` mode and
+retain their documented hosted runners. `linux` excludes fixed Ubuntu rows even
+when `browser-extended` is true, so they cannot introduce hosted jobs into the
+selected reserve subset. `ubuntu-latest` uses the existing runner routing. Preserve
+the original application commands, browser pins and job timeouts.
+
 When a consumer already has its ordinary Node checks in another required job,
 set `run-node-ci: false` for this browser-only call to avoid a redundant install
 and lint/build/test job. The default is `true`, preserving existing callers.
