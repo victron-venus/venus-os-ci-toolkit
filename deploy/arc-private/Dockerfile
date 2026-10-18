@@ -16,6 +16,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Reuse the reviewed release CLI pins and installer without adding a Go compiler.
 COPY .github/gh/release.json /tmp/private-gh/.github/gh/release.json
 COPY scripts/install_release_gh.py /tmp/private-gh/scripts/install_release_gh.py
+# Older bases stored a pristine runner under /opt and copied it during startup.
+# Populate the image layer once so every ephemeral worker starts without that I/O.
 RUN arch="$(dpkg --print-architecture)" \
     && case "$arch" in amd64|arm64) ;; *) exit 1 ;; esac \
     && curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
@@ -27,10 +29,8 @@ RUN arch="$(dpkg --print-architecture)" \
     && test "$(command -v gh)" = /usr/local/bin/gh \
     && gh api --paginate --slurp --help >/dev/null \
     && gh api --help | grep -F -- '--slurp' >/dev/null \
-    && rm -rf /tmp/private-gh
-# Older bases stored a pristine runner under /opt and copied it during startup.
-# Populate the image layer once so every ephemeral worker starts without that I/O.
-RUN if [ -d /opt/actions-runner ]; then \
+    && rm -rf /tmp/private-gh \
+    && if [ -d /opt/actions-runner ]; then \
       cp -a /opt/actions-runner/. /home/runner/; \
     fi \
     && test -x /home/runner/bin/Runner.Listener \
