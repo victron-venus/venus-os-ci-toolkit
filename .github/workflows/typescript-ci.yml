@@ -75,6 +75,10 @@ on:
         description: 'Include extended targets for scheduled, manual and RC qualification'
         type: boolean
         default: false
+      browser-platform-scope:
+        description: 'Ordinary browser CI scope: all or linux (ubuntu-latest reserve targets only); release qualification requires all'
+        type: string
+        default: 'all'
       browser-release-channel:
         description: 'Optional release qualification: nightly/beta require 5 targets, rc/stable require all 35'
         type: string
@@ -174,6 +178,7 @@ jobs:
           BROWSER_MATRIX: ${{ inputs.browser-matrix }}
           BROWSER_MATRIX_FILE: ${{ inputs.browser-matrix-file }}
           BROWSER_EXTENDED: ${{ inputs.browser-extended }}
+          BROWSER_PLATFORM_SCOPE: ${{ inputs.browser-platform-scope }}
           BROWSER_RELEASE_CHANNEL: ${{ inputs.browser-release-channel }}
           BROWSER_COMMAND: ${{ inputs.browser-test-command }}
           BROWSER_ARTIFACT_ID: ${{ inputs.browser-artifact-id }}
@@ -216,10 +221,13 @@ jobs:
             if (!['', 'chrome', 'chrome-beta', 'msedge', 'msedge-beta'].includes(row.channel) || (row.channel && row.engine !== 'chromium')) fail('Invalid branded browser channel');
             if (row.channel ? row.browser_version !== 'installed' : typeof row.browser_version !== 'string' || !/^\d+(?:\.\d+){1,3}$/.test(row.browser_version)) fail('Pin the bundled browser version, or record the installed branded channel');
           }
-          const selected = rows.filter(row => row.tier === 'required' || process.env.BROWSER_EXTENDED === 'true');
-          if (!selected.length || !rows.some(row => row.tier === 'required')) fail('At least one required target is mandatory');
+          const platformScope = process.env.BROWSER_PLATFORM_SCOPE ?? 'all';
+          if (!['all', 'linux'].includes(platformScope)) fail('Browser platform scope must be all or linux');
+          const selected = rows.filter(row => (platformScope === 'all' || row.os === 'ubuntu-latest') && (row.tier === 'required' || process.env.BROWSER_EXTENDED === 'true'));
+          if (!selected.some(row => row.tier === 'required')) fail('At least one required target in the selected platform scope is mandatory');
           const releaseChannel = process.env.BROWSER_RELEASE_CHANNEL || '';
           if (!['', 'nightly', 'beta', 'rc', 'stable'].includes(releaseChannel)) fail('Unknown browser release channel');
+          if (releaseChannel && platformScope !== 'all') fail('Release qualification requires all platforms');
           if (releaseChannel) {
             const full = ['rc', 'stable'].includes(releaseChannel);
             if (rows.length !== 35 || rows.filter(row => row.tier === 'required').length !== 5) fail('Release qualification requires the reviewed 35-target inventory with 5 required targets');
@@ -251,6 +259,7 @@ jobs:
               if (generations.some(pins => pins.size !== 1) || new Set(generations.map(pins => [...pins][0])).size !== 3) fail('Each engine needs three distinct browser generations with consistent pins across OS targets');
             }
           }
+          console.log(JSON.stringify({platformScope, selectedTargetIds: selected.map(row => row.id)}));
           fs.appendFileSync(process.env.GITHUB_OUTPUT, `matrix=${JSON.stringify({include: selected})}\n`);
           NODE
   browser:
