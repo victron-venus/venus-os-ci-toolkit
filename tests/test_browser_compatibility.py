@@ -40,7 +40,7 @@ class BrowserCompatibilityTests(unittest.TestCase):
             **os.environ, "GITHUB_OUTPUT": str(self.root / "output"),
             "GITHUB_ENV": str(self.root / "env"), "RUNNER_TEMP": str(self.root),
             "BROWSER_MATRIX_FILE": "", "BROWSER_EXTENDED": "false",
-            "BROWSER_PLATFORM_SCOPE": "all",
+            "BROWSER_PLATFORM_SCOPE": "all", "CI_HOSTED_RUNNERS_ENABLED": "",
             "BROWSER_RELEASE_CHANNEL": "",
             "BROWSER_EVIDENCE_PREFIX": "browser-compatibility",
             "BROWSER_COMMAND": "node scripts/application-acceptance.cjs",
@@ -51,6 +51,9 @@ class BrowserCompatibilityTests(unittest.TestCase):
             ["node", "-e", script(job, name)], cwd=self.root,
             env=self.env | env, capture_output=True, text=True, check=False,
         )
+
+    def output(self, name="matrix"):
+        return json.loads(dict(line.split("=", 1) for line in (self.root / "output").read_text().splitlines())[name])
 
     def plan(self, targets, **env):
         return self.execute(
@@ -63,13 +66,65 @@ class BrowserCompatibilityTests(unittest.TestCase):
                         "playwright": "1.63.0", "tier": "extended"}
         result = self.plan([TARGET, old])
         self.assertEqual(result.returncode, 0, result.stderr)
-        data = json.loads((self.root / "output").read_text().split("=", 1)[1])
+        data = self.output()
         self.assertEqual([row["id"] for row in data["include"]], [TARGET["id"]])
         (self.root / "output").unlink()
         result = self.plan([TARGET, old], BROWSER_EXTENDED="true")
         self.assertEqual(result.returncode, 0, result.stderr)
-        data = json.loads((self.root / "output").read_text().split("=", 1)[1])
+        data = self.output()
         self.assertEqual(len(data["include"]), 2)
+
+    def reserve_env(self):
+        return {"CI_HOSTED_RUNNERS_ENABLED": "false", "CI_RUNNER_MODE": "self-hosted",
+                "CI_RUNNER_LABELS": '["reviewed-ci"]', "RUNNER_ENVIRONMENT": "self-hosted"}
+
+    def test_disabled_hosted_selects_real_linux_and_reports_omitted_targets(self):
+        rows = self.release_targets()
+        for extended, count, omitted in ((False, 3, 2), (True, 13, 22)):
+            (self.root / "output").unlink(missing_ok=True)
+            result = self.plan(rows, BROWSER_EXTENDED=str(extended).lower(), **self.reserve_env())
+            self.assertEqual(result.returncode, 0, result.stderr)
+            selected, coverage = self.output()["include"], self.output("coverage")
+            self.assertEqual(len(selected), count)
+            self.assertTrue(all(row["os"] == "ubuntu-latest" for row in selected))
+            self.assertEqual(len(coverage["skippedTargets"]), omitted)
+            self.assertTrue(all(row["reason"] == "hosted-runners-disabled" for row in coverage["skippedTargets"]))
+            self.assertEqual(coverage["selectedTargetIds"], [row["id"] for row in selected])
+            self.assertFalse(coverage["hostedRunnersEnabled"])
+
+    def test_disabled_hosted_requires_configured_real_reserve(self):
+        for override in ({"CI_RUNNER_MODE": "github"}, {"CI_RUNNER_LABELS": "[]"},
+                         {"CI_RUNNER_LABELS": "invalid"}, {"CI_RUNNER_LABELS": '[""]'},
+                         {"RUNNER_ENVIRONMENT": "github-hosted"}, {"CI_HOSTED_RUNNERS_ENABLED": "False"}):
+            with self.subTest(override=override):
+                result = self.plan([TARGET], **(self.reserve_env() | override))
+                self.assertNotEqual(result.returncode, 0)
+                self.assertFalse((self.root / "output").exists())
+
+    def test_disabled_hosted_release_tests_preserve_inventory_but_report_reduced_scope(self):
+        for channel in ("nightly", "beta", "rc", "stable"):
+            (self.root / "output").unlink(missing_ok=True)
+            result = self.plan(self.release_targets(), BROWSER_RELEASE_CHANNEL=channel,
+                               BROWSER_EXTENDED=str(channel in ("rc", "stable")).lower(),
+                               **self.reserve_env())
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(self.output("coverage")["releaseChannel"], channel)
+
+    def test_selected_scope_gate_rejects_failed_skipped_and_missing_results(self):
+        result = self.plan([TARGET], **self.reserve_env())
+        self.assertEqual(result.returncode, 0, result.stderr)
+        coverage = self.output("coverage")
+        env = self.reserve_env() | {"CHANGE_RESULT": "success", "CHANGE_RUN": "true",
+            "CHANGE_REASON": "forced", "PLAN_RESULT": "success", "BROWSER_RESULT": "success",
+            "BROWSER_COVERAGE": json.dumps(coverage), "GITHUB_STEP_SUMMARY": str(self.root / "summary")}
+        for state in ("failure", "skipped", "cancelled", ""):
+            for name in ("CHANGE_RESULT", "PLAN_RESULT", "BROWSER_RESULT"):
+                with self.subTest(name=name, state=state):
+                    result = self.execute("browser-gate", "Require selected browser checks and report omitted platforms", **(env | {name: state}))
+                    self.assertNotEqual(result.returncode, 0)
+        result = self.execute("browser-gate", "Require selected browser checks and report omitted platforms", **env)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.output("coverage")["status"], "selected-targets-passed")
 
     def test_malformed_targets_fail_before_any_runner_is_selected(self):
         for changed in (
@@ -118,7 +173,7 @@ class BrowserCompatibilityTests(unittest.TestCase):
                     result = self.plan(rows, BROWSER_PLATFORM_SCOPE=scope,
                                        BROWSER_EXTENDED=str(extended).lower())
                     self.assertEqual(result.returncode, 0, result.stderr)
-                    selected = json.loads((self.root / "output").read_text().split("=", 1)[1])["include"]
+                    selected = self.output()["include"]
                     expected = [row | {"channel": row.get("channel", "")} for row in rows
                                 if (extended or row["tier"] == "required")
                                 and (scope == "all" or row["os"] == "ubuntu-latest")]
@@ -149,7 +204,7 @@ class BrowserCompatibilityTests(unittest.TestCase):
                                    BROWSER_RELEASE_CHANNEL=channel,
                                    BROWSER_EXTENDED=str(channel in ("rc", "stable")).lower())
                 self.assertNotEqual(result.returncode, 0)
-                self.assertIn("Release qualification requires all platforms", result.stderr)
+                self.assertIn("Release inventory selection requires all platforms", result.stderr)
                 self.assertFalse((self.root / "output").exists())
 
     def test_linux_scope_excludes_fixed_hosted_ubuntu_without_relabelling(self):
@@ -162,7 +217,7 @@ class BrowserCompatibilityTests(unittest.TestCase):
                     result = self.plan([TARGET, *fixed], BROWSER_PLATFORM_SCOPE=scope,
                                        BROWSER_EXTENDED=extended)
                     self.assertEqual(result.returncode, 0, result.stderr)
-                    selected = json.loads((self.root / "output").read_text().split("=", 1)[1])["include"]
+                    selected = self.output()["include"]
                     expected = [TARGET, *fixed] if scope == "all" else [TARGET]
                     self.assertEqual(selected, [row | {"channel": ""} for row in expected])
         (self.root / "output").unlink(missing_ok=True)
@@ -238,7 +293,7 @@ class BrowserCompatibilityTests(unittest.TestCase):
                     result = self.plan(rows, BROWSER_RELEASE_CHANNEL=channel,
                                        BROWSER_EXTENDED=str(full).lower())
                     self.assertEqual(result.returncode, 0, result.stderr)
-                    selected = json.loads(output.read_text().split("=", 1)[1])["include"]
+                    selected = self.output()["include"]
                     expected = [row | {"channel": row.get("channel", "")}
                                 for row in rows if full or row["tier"] == "required"]
                     self.assertEqual(selected, expected)
@@ -289,7 +344,7 @@ class BrowserCompatibilityTests(unittest.TestCase):
                 result = self.plan(rows, BROWSER_RELEASE_CHANNEL=channel,
                                    BROWSER_EXTENDED=str(full).lower())
                 self.assertEqual(result.returncode, 0, result.stderr)
-                selected = json.loads((self.root / "output").read_text().split("=", 1)[1])["include"]
+                selected = self.output()["include"]
                 self.assertEqual(selected, [row | {"channel": row.get("channel", "")}
                                             for row in rows if full or row["tier"] == "required"])
                 self.assertEqual(len(selected), 35 if full else 5)
@@ -355,6 +410,24 @@ class BrowserCompatibilityTests(unittest.TestCase):
         self.assertNotEqual(self.verdict(rows, directory, channel="rc").returncode, 0)
         rows[0]["tier"] = "extended"
         self.assertNotEqual(self.verdict(rows, directory, channel="beta").returncode, 0)
+
+    def test_reduced_release_verdict_is_explicit_and_still_requires_every_selected_result(self):
+        result = self.plan(self.release_targets(), BROWSER_RELEASE_CHANNEL="rc",
+                           BROWSER_EXTENDED="true", **self.reserve_env())
+        self.assertEqual(result.returncode, 0, result.stderr)
+        coverage = self.output("coverage")
+        rows, directory = self.release_evidence(rows=self.output()["include"])
+        env = {"CI_HOSTED_RUNNERS_ENABLED": "false", "BROWSER_COVERAGE": json.dumps(coverage)}
+        result = self.verdict(rows, directory, **env)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        receipt = json.loads((self.root / "verdict.json").read_text())
+        self.assertFalse(receipt["fullPlatformQualified"])
+        self.assertEqual(receipt["platformCoverage"], "reduced-linux")
+        self.assertEqual(len(receipt["targets"]), 13)
+        self.assertEqual(len(receipt["skippedTargets"]), 22)
+        self.assertNotEqual(self.verdict(rows, directory).returncode, 0)
+        self.assertNotEqual(self.verdict(rows[:-1], directory, **env).returncode, 0)
+        self.assertNotEqual(self.verdict(rows, directory, **(env | {"BROWSER_COVERAGE": "{}"})).returncode, 0)
 
     def test_release_verdict_rejects_missing_or_unexpected_artifacts(self):
         rows, directory = self.release_evidence("beta")

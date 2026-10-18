@@ -100,7 +100,7 @@ def render(source: str) -> str:
     harden = next(pin for pin in pins if pin["packageName"] == "step-security/harden-runner")
     harden_reference = f"step-security/harden-runner@{harden['digest']} # {harden['version']}"
     return (
-        TEMPLATE.replace("@RUNNER@", runner_labels(explicit_input="runner", scalar=True))
+        TEMPLATE.replace("@RUNNER@", runner_labels(explicit_input="runner", scalar=True, hosted_budget=True))
         .replace("@CHECKOUT@", reference)
         .replace("@HARDEN_RUNNER@", harden_reference)
         .replace("@DIGEST@", hashlib.sha256(source.encode()).hexdigest())

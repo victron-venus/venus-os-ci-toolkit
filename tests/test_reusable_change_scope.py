@@ -87,6 +87,22 @@ class ReusableScopeContracts(unittest.TestCase):
                 for key, job in data["jobs"].items():
                     if key == "change-scope":
                         continue
+                    if name == "typescript-ci.yml" and key == "browser-gate":
+                        # The final gate must report an explicit docs-only scope
+                        # instead of being skipped with the browser jobs.
+                        self.assertEqual(job["needs"], ["change-scope", "browser-plan", "browser"])
+                        self.assertEqual(job["if"], "${{ !cancelled() && (inputs.browser-matrix != '[]' || inputs.browser-matrix-file != '') }}")
+                        admission = next(step for step in job["steps"] if step.get("id") == "verify")
+                        for field, output in (("CHANGE_RESULT", "needs.change-scope.result"),
+                                              ("CHANGE_RUN", "needs.change-scope.outputs.run"),
+                                              ("CHANGE_REASON", "needs.change-scope.outputs.reason"),
+                                              ("PLAN_RESULT", "needs.browser-plan.result"),
+                                              ("BROWSER_RESULT", "needs.browser.result")):
+                            self.assertEqual(admission["env"][field], "${{ " + output + " }}")
+                        self.assertIn("process.env.CHANGE_RESULT !== 'success'", admission["run"])
+                        self.assertIn("process.env.CHANGE_RUN === 'false' && process.env.CHANGE_REASON === 'documentation-only'", admission["run"])
+                        self.assertIn("process.env.PLAN_RESULT !== 'success' || process.env.BROWSER_RESULT !== 'success'", admission["run"])
+                        continue
                     if name == "typescript-ci.yml" and key == "browser-verdict":
                         # Release evidence must fail when planning/targets were
                         # skipped, including an accidental docs-only release.

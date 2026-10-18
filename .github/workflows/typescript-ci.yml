@@ -103,6 +103,10 @@ on:
         description: 'Application acceptance command using CI_PLAYWRIGHT_MODULE and writing CI_BROWSER_EVIDENCE'
         type: string
         default: ''
+    outputs:
+      browser-coverage:
+        description: 'Verified selected scope and explicitly skipped browser targets; never certifies omitted platforms'
+        value: ${{ jobs.browser-gate.outputs.coverage }}
 
 permissions:
   contents: read
@@ -118,7 +122,7 @@ jobs:
     needs: change-scope
     if: ${{ inputs.run-node-ci && (needs.change-scope.outputs.run != 'false' || needs.change-scope.outputs.reason != 'documentation-only') }}
     name: CI
-    runs-on: ${{ fromJSON((vars.CI_RUNNER_MODE == 'self-hosted' || vars.CI_RUNNER_MODE == 'k3s') && ((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) || (contains(fromJSON('["push","schedule","workflow_dispatch"]'), github.event_name) && github.ref == format('refs/heads/{0}', github.event.repository.default_branch))) && (vars.CI_RUNNER_LABELS || '[]') || '["ubuntu-latest"]') }}
+    runs-on: ${{ fromJSON((vars.CI_RUNNER_MODE == 'self-hosted' || vars.CI_RUNNER_MODE == 'k3s') && (((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) || (contains(fromJSON('["push","schedule","workflow_dispatch"]'), github.event_name) && github.ref == format('refs/heads/{0}', github.event.repository.default_branch))) || (vars.CI_HOSTED_RUNNERS_ENABLED == 'false' && github.event.repository.private == true && github.event_name == 'workflow_dispatch')) && (vars.CI_RUNNER_LABELS || '[]') || (vars.CI_HOSTED_RUNNERS_ENABLED == 'false' && '[]' || '["ubuntu-latest"]')) }}
     defaults:
       run:
         working-directory: ${{ inputs.working-directory }}
@@ -161,10 +165,11 @@ jobs:
     needs: change-scope
     if: ${{ (inputs.browser-matrix != '[]' || inputs.browser-matrix-file != '') && (needs.change-scope.outputs.run != 'false' || needs.change-scope.outputs.reason != 'documentation-only') }}
     name: Validate browser compatibility targets
-    runs-on: ${{ fromJSON((vars.CI_RUNNER_MODE == 'self-hosted' || vars.CI_RUNNER_MODE == 'k3s') && ((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) || (contains(fromJSON('["push","schedule","workflow_dispatch"]'), github.event_name) && github.ref == format('refs/heads/{0}', github.event.repository.default_branch))) && (vars.CI_RUNNER_LABELS || '[]') || '["ubuntu-latest"]') }}
+    runs-on: ${{ fromJSON((vars.CI_RUNNER_MODE == 'self-hosted' || vars.CI_RUNNER_MODE == 'k3s') && (((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) || (contains(fromJSON('["push","schedule","workflow_dispatch"]'), github.event_name) && github.ref == format('refs/heads/{0}', github.event.repository.default_branch))) || (vars.CI_HOSTED_RUNNERS_ENABLED == 'false' && github.event.repository.private == true && github.event_name == 'workflow_dispatch')) && (vars.CI_RUNNER_LABELS || '[]') || (vars.CI_HOSTED_RUNNERS_ENABLED == 'false' && '[]' || '["ubuntu-latest"]')) }}
     timeout-minutes: 15
     outputs:
       matrix: ${{ steps.plan.outputs.matrix }}
+      coverage: ${{ steps.plan.outputs.coverage }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -179,6 +184,10 @@ jobs:
           BROWSER_MATRIX_FILE: ${{ inputs.browser-matrix-file }}
           BROWSER_EXTENDED: ${{ inputs.browser-extended }}
           BROWSER_PLATFORM_SCOPE: ${{ inputs.browser-platform-scope }}
+          CI_HOSTED_RUNNERS_ENABLED: ${{ vars.CI_HOSTED_RUNNERS_ENABLED }}
+          CI_RUNNER_MODE: ${{ vars.CI_RUNNER_MODE }}
+          CI_RUNNER_LABELS: ${{ vars.CI_RUNNER_LABELS }}
+          RUNNER_ENVIRONMENT: ${{ runner.environment }}
           BROWSER_RELEASE_CHANNEL: ${{ inputs.browser-release-channel }}
           BROWSER_COMMAND: ${{ inputs.browser-test-command }}
           BROWSER_ARTIFACT_ID: ${{ inputs.browser-artifact-id }}
@@ -221,17 +230,27 @@ jobs:
             if (!['', 'chrome', 'chrome-beta', 'msedge', 'msedge-beta'].includes(row.channel) || (row.channel && row.engine !== 'chromium')) fail('Invalid branded browser channel');
             if (row.channel ? row.browser_version !== 'installed' : typeof row.browser_version !== 'string' || !/^\d+(?:\.\d+){1,3}$/.test(row.browser_version)) fail('Pin the bundled browser version, or record the installed branded channel');
           }
-          const platformScope = process.env.BROWSER_PLATFORM_SCOPE ?? 'all';
-          if (!['all', 'linux'].includes(platformScope)) fail('Browser platform scope must be all or linux');
-          const selected = rows.filter(row => (platformScope === 'all' || row.os === 'ubuntu-latest') && (row.tier === 'required' || process.env.BROWSER_EXTENDED === 'true'));
+          const requestedScope = process.env.BROWSER_PLATFORM_SCOPE ?? 'all';
+          if (!['all', 'linux'].includes(requestedScope)) fail('Browser platform scope must be all or linux');
+          const hostedSetting = process.env.CI_HOSTED_RUNNERS_ENABLED || 'true';
+          if (!['true', 'false'].includes(hostedSetting)) fail('CI_HOSTED_RUNNERS_ENABLED must be true or false');
+          const hostedEnabled = hostedSetting === 'true';
+          if (!hostedEnabled) {
+            let labels;
+            try { labels = JSON.parse(process.env.CI_RUNNER_LABELS || '[]'); } catch { fail('Invalid CI_RUNNER_LABELS'); }
+            if (!['self-hosted', 'k3s'].includes(process.env.CI_RUNNER_MODE) || !Array.isArray(labels) || !labels.length || labels.some(label => typeof label !== 'string' || !label.trim()) || process.env.RUNNER_ENVIRONMENT !== 'self-hosted') fail('Disabled hosted runners require a configured self-hosted CI runner');
+          }
+          const platformScope = hostedEnabled ? requestedScope : 'linux';
+          const requested = rows.filter(row => row.tier === 'required' || process.env.BROWSER_EXTENDED === 'true');
+          const selected = requested.filter(row => platformScope === 'all' || row.os === 'ubuntu-latest');
           if (!selected.some(row => row.tier === 'required')) fail('At least one required target in the selected platform scope is mandatory');
           const releaseChannel = process.env.BROWSER_RELEASE_CHANNEL || '';
           if (!['', 'nightly', 'beta', 'rc', 'stable'].includes(releaseChannel)) fail('Unknown browser release channel');
-          if (releaseChannel && platformScope !== 'all') fail('Release qualification requires all platforms');
+          if (releaseChannel && requestedScope !== 'all') fail('Release inventory selection requires all platforms; use the explicit hosted budget policy for unavailable runners');
           if (releaseChannel) {
             const full = ['rc', 'stable'].includes(releaseChannel);
             if (rows.length !== 35 || rows.filter(row => row.tier === 'required').length !== 5) fail('Release qualification requires the reviewed 35-target inventory with 5 required targets');
-            if ((process.env.BROWSER_EXTENDED === 'true') !== full || selected.length !== (full ? 35 : 5)) fail('Release channel does not match the required qualification breadth');
+            if ((process.env.BROWSER_EXTENDED === 'true') !== full || requested.length !== (full ? 35 : 5)) fail('Release channel does not match the required qualification breadth');
             const platformIdentity = os => os === 'macos-15-intel' ? 'macos-15' : os === 'ubuntu-26.04' ? 'ubuntu-latest' : os;
             const identity = row => JSON.stringify([platformIdentity(row.os), row.engine, row.playwright, row.channel]);
             const identities = new Set(rows.map(identity));
@@ -260,7 +279,11 @@ jobs:
             }
           }
           console.log(JSON.stringify({platformScope, selectedTargetIds: selected.map(row => row.id)}));
+          const selectedIds = new Set(selected.map(row => row.id));
+          const coverage = {schema: 1, hostedRunnersEnabled: hostedEnabled, platformScope, requestedScope, releaseChannel,
+            selectedTargetIds: [...selectedIds], skippedTargets: requested.filter(row => !selectedIds.has(row.id)).map(row => ({id: row.id, os: row.os, reason: hostedEnabled ? 'platform-scope' : 'hosted-runners-disabled'}))};
           fs.appendFileSync(process.env.GITHUB_OUTPUT, `matrix=${JSON.stringify({include: selected})}\n`);
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `coverage=${JSON.stringify(coverage)}\n`);
           NODE
   browser:
     name: Browser (${{ matrix.id }})
@@ -272,7 +295,7 @@ jobs:
       matrix: ${{ fromJSON(needs.browser-plan.outputs.matrix) }}
     # Only the default Linux target may use the already-qualified Linux reserve.
     # Native OS targets must not silently collapse onto that pool.
-    runs-on: ${{ fromJSON(matrix.os == 'ubuntu-latest' && (vars.CI_RUNNER_MODE == 'self-hosted' || vars.CI_RUNNER_MODE == 'k3s') && ((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) || (contains(fromJSON('["push","schedule","workflow_dispatch"]'), github.event_name) && github.ref == format('refs/heads/{0}', github.event.repository.default_branch))) && (vars.CI_RUNNER_LABELS || '[]') || format('["{0}"]', matrix.os)) }}
+    runs-on: ${{ fromJSON(matrix.os == 'ubuntu-latest' && (vars.CI_RUNNER_MODE == 'self-hosted' || vars.CI_RUNNER_MODE == 'k3s') && (((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) || (contains(fromJSON('["push","schedule","workflow_dispatch"]'), github.event_name) && github.ref == format('refs/heads/{0}', github.event.repository.default_branch))) || (vars.CI_HOSTED_RUNNERS_ENABLED == 'false' && github.event.repository.private == true && github.event_name == 'workflow_dispatch')) && (vars.CI_RUNNER_LABELS || '[]') || (vars.CI_HOSTED_RUNNERS_ENABLED == 'false' && '[]' || format('["{0}"]', matrix.os))) }}
     timeout-minutes: 35
     defaults:
       run:
@@ -435,11 +458,54 @@ jobs:
           include-hidden-files: true
           if-no-files-found: error
           retention-days: 14
+  browser-gate:
+    name: Verify selected browser scope
+    needs: [change-scope, browser-plan, browser]
+    if: ${{ !cancelled() && (inputs.browser-matrix != '[]' || inputs.browser-matrix-file != '') }}
+    runs-on: ${{ fromJSON((vars.CI_RUNNER_MODE == 'self-hosted' || vars.CI_RUNNER_MODE == 'k3s') && (((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) || (contains(fromJSON('["push","schedule","workflow_dispatch"]'), github.event_name) && github.ref == format('refs/heads/{0}', github.event.repository.default_branch))) || (vars.CI_HOSTED_RUNNERS_ENABLED == 'false' && github.event.repository.private == true && github.event_name == 'workflow_dispatch')) && (vars.CI_RUNNER_LABELS || '[]') || (vars.CI_HOSTED_RUNNERS_ENABLED == 'false' && '[]' || '["ubuntu-latest"]')) }}
+    timeout-minutes: 5
+    outputs:
+      coverage: ${{ steps.verify.outputs.coverage }}
+    steps:
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+      - name: Require selected browser checks and report omitted platforms
+        id: verify
+        env:
+          PLAN_RESULT: ${{ needs.browser-plan.result }}
+          BROWSER_RESULT: ${{ needs.browser.result }}
+          CHANGE_RESULT: ${{ needs.change-scope.result }}
+          CHANGE_RUN: ${{ needs.change-scope.outputs.run }}
+          CHANGE_REASON: ${{ needs.change-scope.outputs.reason }}
+          BROWSER_COVERAGE: ${{ needs.browser-plan.outputs.coverage }}
+          CI_HOSTED_RUNNERS_ENABLED: ${{ vars.CI_HOSTED_RUNNERS_ENABLED }}
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const fail = message => { throw new Error(message); };
+          if (process.env.CHANGE_RESULT !== 'success') fail('Change-scope check did not succeed');
+          let coverage;
+          if (process.env.CHANGE_RUN === 'false' && process.env.CHANGE_REASON === 'documentation-only') {
+            coverage = {schema: 1, status: 'documentation-only', selectedTargetIds: [], skippedTargets: []};
+          } else {
+            if (process.env.PLAN_RESULT !== 'success' || process.env.BROWSER_RESULT !== 'success') fail('Every selected browser check must succeed');
+            coverage = JSON.parse(process.env.BROWSER_COVERAGE);
+            if (coverage.schema !== 1 || !Array.isArray(coverage.selectedTargetIds) || !coverage.selectedTargetIds.length || !Array.isArray(coverage.skippedTargets)) fail('Missing selected browser scope');
+            if (coverage.hostedRunnersEnabled !== (process.env.CI_HOSTED_RUNNERS_ENABLED !== 'false')) fail('Browser runner policy changed');
+            coverage.status = 'selected-targets-passed';
+          }
+          const omitted = coverage.skippedTargets.map(row => `${row.id} (${row.os}: ${row.reason})`);
+          const summary = `### Browser coverage\n\nStatus: ${coverage.status}. Selected checks: ${coverage.selectedTargetIds.length}.\n\n` +
+            (omitted.length ? `Skipped without a platform result:\n\n${omitted.map(row => `- ${row}`).join('\n')}\n` : 'No targets omitted from the requested scope.\n');
+          if (process.env.GITHUB_STEP_SUMMARY) fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, summary);
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `coverage=${JSON.stringify(coverage)}\n`);
+          NODE
   browser-verdict:
     name: Verify release browser qualification
     needs: [browser-plan, browser]
     if: ${{ !cancelled() && inputs.browser-release-channel != '' }}
-    runs-on: ${{ fromJSON((vars.CI_RUNNER_MODE == 'self-hosted' || vars.CI_RUNNER_MODE == 'k3s') && ((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) || (contains(fromJSON('["push","schedule","workflow_dispatch"]'), github.event_name) && github.ref == format('refs/heads/{0}', github.event.repository.default_branch))) && (vars.CI_RUNNER_LABELS || '[]') || '["ubuntu-latest"]') }}
+    runs-on: ${{ fromJSON((vars.CI_RUNNER_MODE == 'self-hosted' || vars.CI_RUNNER_MODE == 'k3s') && (((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) || (contains(fromJSON('["push","schedule","workflow_dispatch"]'), github.event_name) && github.ref == format('refs/heads/{0}', github.event.repository.default_branch))) || (vars.CI_HOSTED_RUNNERS_ENABLED == 'false' && github.event.repository.private == true && github.event_name == 'workflow_dispatch')) && (vars.CI_RUNNER_LABELS || '[]') || (vars.CI_HOSTED_RUNNERS_ENABLED == 'false' && '[]' || '["ubuntu-latest"]')) }}
     timeout-minutes: 5
     steps:
       - name: Harden the runner (Audit all outbound calls)
@@ -463,6 +529,8 @@ jobs:
       - name: Verify the exact release target set and evidence identity
         env:
           BROWSER_MATRIX: ${{ needs.browser-plan.outputs.matrix }}
+          BROWSER_COVERAGE: ${{ needs.browser-plan.outputs.coverage }}
+          CI_HOSTED_RUNNERS_ENABLED: ${{ vars.CI_HOSTED_RUNNERS_ENABLED }}
           BROWSER_RELEASE_CHANNEL: ${{ inputs.browser-release-channel }}
           BROWSER_ARTIFACT_ID: ${{ inputs.browser-artifact-id }}
           BROWSER_EVIDENCE_PREFIX: ${{ inputs.browser-evidence-prefix }}
@@ -478,8 +546,11 @@ jobs:
           if (!['nightly', 'beta', 'rc', 'stable'].includes(releaseChannel)) fail('Unknown release channel');
           const rows = JSON.parse(process.env.BROWSER_MATRIX).include;
           const full = ['rc', 'stable'].includes(releaseChannel);
-          if (!Array.isArray(rows) || rows.length !== (full ? 35 : 5) || new Set(rows.map(row => row.id)).size !== rows.length) fail('Incorrect or duplicate release target set');
-          if (rows.filter(row => row.tier === 'required').length !== 5 || (!full && rows.some(row => row.tier !== 'required'))) fail('Incorrect required release targets');
+          const reduced = process.env.CI_HOSTED_RUNNERS_ENABLED === 'false';
+          const coverage = JSON.parse(process.env.BROWSER_COVERAGE || 'null');
+          if (!Array.isArray(rows) || rows.length !== (reduced ? (full ? 13 : 3) : (full ? 35 : 5)) || new Set(rows.map(row => row.id)).size !== rows.length) fail('Incorrect or duplicate release target set');
+          if (rows.filter(row => row.tier === 'required').length !== (reduced ? 3 : 5) || (!full && rows.some(row => row.tier !== 'required'))) fail('Incorrect required release targets');
+          if (reduced && (rows.some(row => row.os !== 'ubuntu-latest') || coverage?.hostedRunnersEnabled !== false || coverage.platformScope !== 'linux' || coverage.releaseChannel !== releaseChannel || JSON.stringify(coverage.selectedTargetIds) !== JSON.stringify(rows.map(row => row.id)) || coverage.skippedTargets?.length !== (full ? 22 : 2))) fail('Missing explicit reduced-platform evidence');
           const binding = {schema: 1, sourceSha: process.env.GITHUB_SHA, runId: process.env.GITHUB_RUN_ID, runAttempt: process.env.GITHUB_RUN_ATTEMPT, releaseChannel, candidateArtifactId: process.env.BROWSER_ARTIFACT_ID || ''};
           const directory = process.env.BROWSER_EVIDENCE_DIRECTORY;
           const artifactName = row => `${process.env.BROWSER_EVIDENCE_PREFIX}-${row.id}-${binding.runAttempt}`;
@@ -510,7 +581,7 @@ jobs:
             if (!Number.isSafeInteger(result.testsPassed) || result.testsPassed < 1 || result.testsFailed !== 0 || !Array.isArray(result.scenarios) || result.scenarios.length !== result.testsPassed || new Set(result.scenarios).size !== result.scenarios.length || result.scenarios.some(name => typeof name !== 'string' || !name.trim())) fail('Missing or failed application scenarios');
             return {id: row.id, os: row.os, engine: row.engine, channel: row.channel, playwrightVersion: runtime.playwrightVersion, browserVersion: runtime.browserVersion, testsPassed: result.testsPassed, scenarios: result.scenarios, evidenceSha256: digest};
           });
-          fs.writeFileSync(process.env.BROWSER_VERDICT_FILE, JSON.stringify({...binding, targets}, null, 2) + '\n');
+          fs.writeFileSync(process.env.BROWSER_VERDICT_FILE, JSON.stringify({...binding, targets, platformCoverage: reduced ? 'reduced-linux' : 'all-requested', fullPlatformQualified: !reduced, skippedTargets: coverage?.skippedTargets || []}, null, 2) + '\n');
           NODE
       - name: Preserve verified release qualification
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

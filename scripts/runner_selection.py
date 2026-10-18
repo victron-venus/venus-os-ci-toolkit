@@ -43,20 +43,37 @@ ACTIVE_WORKFLOWS = {
 }
 
 
-def runner_labels(profile="ci", *, explicit_input=None, scalar=False, browser_matrix=False):
+def runner_labels(profile="ci", *, explicit_input=None, scalar=False, browser_matrix=False,
+                  hosted_budget=False):
     """Keep hosted defaults and legacy explicit inputs, with no implicit pool reuse."""
     variable = PROFILES[profile]
     trusted = {"ci": TRUSTED_EVENT, "automation": METADATA_EVENT, "release": DEFAULT_BRANCH_EVENT}[profile]
+    fallback = "'[\"ubuntu-latest\"]'"
+    if hosted_budget:
+        if profile != "ci":
+            raise ValueError("Hosted budget selection supports the CI profile only")
+        # A private repository writer may dispatch its own branch. Public branch
+        # and fork jobs must never gain reserve access from a budget setting.
+        trusted = (
+            f"({trusted} || (vars.CI_HOSTED_RUNNERS_ENABLED == 'false' && "
+            "github.event.repository.private == true && github.event_name == 'workflow_dispatch'))"
+        )
+        # An empty runner selection is a configuration error before allocation,
+        # not a successful skip or an implicit fallback to paid hosted compute.
+        fallback = "(vars.CI_HOSTED_RUNNERS_ENABLED == 'false' && '[]' || '[\"ubuntu-latest\"]')"
     managed = (
         "(vars.CI_RUNNER_MODE == 'self-hosted' || vars.CI_RUNNER_MODE == 'k3s') && "
-        f"{trusted} && (vars.{variable} || '[]') || '[\"ubuntu-latest\"]'"
+        f"{trusted} && (vars.{variable} || '[]') || {fallback}"
     )
     if browser_matrix:
         if profile != "ci" or explicit_input is not None:
             raise ValueError("Browser matrices support only the CI profile")
+        matrix_fallback = "format('[\"{0}\"]', matrix.os)"
+        if hosted_budget:
+            matrix_fallback = "(vars.CI_HOSTED_RUNNERS_ENABLED == 'false' && '[]' || " + matrix_fallback + ")"
         managed = "matrix.os == 'ubuntu-latest' && " + managed.removesuffix(
-            " || '[\"ubuntu-latest\"]'"
-        ) + " || format('[\"{0}\"]', matrix.os)"
+            " || " + fallback
+        ) + " || " + matrix_fallback
     if explicit_input is not None:
         if explicit_input not in {"runner", "runner-labels"}:
             raise ValueError("Unsupported explicit runner input")
@@ -64,8 +81,9 @@ def runner_labels(profile="ci", *, explicit_input=None, scalar=False, browser_ma
         value = f"toJSON(inputs.{explicit_input})" if scalar else f"inputs.{explicit_input}"
         # Existing private callers retain their reviewed explicit pool selection.
         # Public callers cannot use an input to bypass the fork/event boundary.
+        explicit_allowed = "vars.CI_HOSTED_RUNNERS_ENABLED != 'false' && " if hosted_budget else ""
         managed = (
-            f"(github.event.repository.private || {trusted}) && "
+            f"{explicit_allowed}(github.event.repository.private || {trusted}) && "
             f"inputs.{explicit_input} != '{default}' && {value} || ({managed})"
         )
     return "${{ fromJSON(" + managed + ") }}"
@@ -169,9 +187,10 @@ def render_shared_workflow(filename, profile):
     workflow = editor.load(source)
     changed = False
     explicit = "runner-labels" if filename in {"auto-merge.yml", "auto-approve-reusable.yml"} else None
-    selected = runner_labels(profile, explicit_input=explicit)
+    budget = filename == "typescript-ci.yml"
+    selected = runner_labels(profile, explicit_input=explicit, hosted_budget=budget)
     for name, job in workflow["jobs"].items():
-        expected = runner_labels(browser_matrix=True) if filename == "typescript-ci.yml" and name == "browser" else selected
+        expected = runner_labels(browser_matrix=True, hosted_budget=True) if filename == "typescript-ci.yml" and name == "browser" else selected
         if "runs-on" in job and job["runs-on"] != expected:
             job["runs-on"] = expected
             changed = True
