@@ -108,12 +108,21 @@ class CandidateValidationTests(unittest.TestCase):
         path = self.path / "test.xml"
         path.write_text('<testsuite tests="2" failures="0" errors="0"/>')
         self.assertEqual(candidate.validate_test_xml(path), 2)
-        for xml in ('<testsuite tests="0"/>', '<testsuite tests="2" skipped="1"/>',
+        for xml in ('<testsuites></testsuites>', '<testsuite tests="0"/>', '<testsuite tests="2" skipped="1"/>',
                     '<testsuite tests="2"><testcase><failure/></testcase></testsuite>',
                     '<testsuite tests="2"><testcase><skipped/></testcase></testsuite>'):
             path.write_text(xml)
             with self.assertRaises(candidate.BuildError):
                 candidate.validate_test_xml(path)
+
+    def test_rules_go_named_passing_cases_are_accepted(self):
+        path = self.path / "test.xml"
+        path.write_text('<testsuites><testsuite name="vfs.TestMount" tests="2" '
+                        'failures="0" errors="0" skipped="0">'
+                        '<testcase name="TestMount"/>'
+                        '<testcase name="TestMount/lookup"/>'
+                        '</testsuite></testsuites>')
+        self.assertEqual(candidate.validate_test_xml(path), 2)
 
     def event(self):
         env = {"GITHUB_ACTIONS": "true", "RUNNER_ENVIRONMENT": "github-hosted",
@@ -168,15 +177,15 @@ class CandidateValidationTests(unittest.TestCase):
         shutil.copyfile(public / "patches/gvisor/LICENSE", source / "LICENSE")
         paths = {"/workspace": source, "/build": build,
                  "/control/vfs-final-symlink.patch": public / "patches/gvisor/vfs-final-symlink.patch"}
-        answers = iter(["f" * 40, candidate.VERSION, "bazel 8.8.1"])
+        answers = iter(["f" * 40, candidate.VERSION, "bazel 8.8.1", None])
         seen = []
 
         def command(argv, **_kwargs):
             self.assertTrue((build / "tmp").is_dir())
             self.assertEqual((build / "tmp").stat().st_mode & 0o777, 0o700)
             seen.append(argv)
-            if len(seen) == 4:
-                raise candidate.BuildError("stop before mocked build")
+            if len(seen) == 5:
+                raise candidate.BuildError("stop before mocked tests")
             return next(answers)
 
         supervisor = mock.Mock()
@@ -191,16 +200,22 @@ class CandidateValidationTests(unittest.TestCase):
             mock.patch.object(candidate.subprocess, "run") as run,
             mock.patch.object(candidate.subprocess, "Popen") as popen,
         ):
-            with self.assertRaisesRegex(candidate.BuildError, "stop before mocked build"):
+            with self.assertRaisesRegex(candidate.BuildError, "stop before mocked tests"):
                 candidate.inside()
         env = factory.call_args.args[0]
         self.assertEqual(env["TMPDIR"], str(build / "tmp"))
         self.assertEqual(env["GOMAXPROCS"], "2")
         self.assertNotIn("GOTMPDIR", env)
         self.assertNotIn("GITHUB_TOKEN", env)
-        self.assertEqual(seen[-1], candidate.bazel("build", *candidate.build_flags(), *candidate.BUILD_TARGETS))
-        self.assertIn("--repo_env=TMPDIR=/build/tmp", seen[-1])
-        self.assertFalse(any(arg.startswith(("--action_env=", "--test_env=")) for arg in seen[-1]))
+        self.assertEqual(seen[-2], candidate.bazel("build", *candidate.build_flags(), *candidate.BUILD_TARGETS))
+        self.assertIn("--repo_env=TMPDIR=/build/tmp", seen[-2])
+        self.assertFalse(any(arg.startswith(("--action_env=", "--test_env=")) for arg in seen[-2]))
+        self.assertEqual(seen[-1], candidate.bazel(
+            "test", *candidate.build_flags(), "--nocache_test_results", "--test_output=errors",
+            "--test_env=GO_TEST_WRAP_TESTV=1", "--local_test_jobs=1", "--test_timeout=300",
+            *candidate.TEST_TARGETS))
+        self.assertEqual([arg for arg in seen[-1] if arg.startswith("--test_env=")],
+                         ["--test_env=GO_TEST_WRAP_TESTV=1"])
         run.assert_not_called()
         popen.assert_not_called()
 

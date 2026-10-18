@@ -43,6 +43,17 @@ tests. It does not execute `open_test`, `runsc`, Sentry, sidecars, syscall wrapp
 the root filesystem exposed and seccomp disabled, so it is deliberately outside
 this stage. Do not expand the target list to a wildcard.
 
+The unit-test invocation explicitly sets `GO_TEST_WRAP_TESTV=1` through
+`--test_env`. The pinned [rules_go wrapper](https://github.com/bazel-contrib/rules_go/blob/v0.63.0/go/tools/bzltestutil/wrap.go)
+uses this switch to add the named passing-test events required by its XML
+reporter. Without it, a successful test process can produce an empty report.
+XML validation still requires a positive test count and rejects failures,
+errors, skipped tests and missing suites; the Bazel success summary is not a
+substitute for those checks. This setting is not passed to the build invocation.
+The missing-suite diagnosis is based on the pinned wrapper source and the
+post-test validation failure: the original XML was not retained. A new build
+must still pass XML validation before its artifacts are accepted.
+
 Successful status is **artifact and allowed unit tests passed, not runtime
 qualified**. Startup with ordinary and symlink `/tmp`, syscall regressions,
 unchanged consumer tests, and platform/lifecycle acceptance remain separate gates.
@@ -94,8 +105,9 @@ Gazelle 0.51.3 preserves `TMPDIR` when it clears its subprocess environment;
 setting only `GOTMPDIR` would not reach its repository helper. Bazel 8.8.1's
 `processwrapper-sandbox` rewrites action `TMPDIR` from that same client value,
 including nested build and test spawns. No extra `--action_env` or `--test_env`
-override is needed for this fixed strategy. This keeps executable tool temporaries
-on the already owned build mount; the `/tmp` tmpfs options and container privileges
+override is needed for temporary-directory placement with this fixed strategy.
+This keeps executable tool temporaries on the already owned build mount; the
+`/tmp` tmpfs options and container privileges
 are unchanged. The directory is covered by the existing disk monitor and hosted
 VM disposal policy. A pre-existing directory or symlink is rejected before any
 build command, rather than reused.
