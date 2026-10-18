@@ -181,6 +181,10 @@ deadline in [the installed 29.8.2 source](https://github.com/moby/moby/blob/8af9
 The bootstrap uses Docker's documented [standalone containerd socket](https://docs.docker.com/reference/cli/dockerd/#run-containerd-standalone);
 it never connects to a host Docker or containerd service. Diagnose failed startup
 with the pod's `/tmp/containerd.log` and `/tmp/dockerd.log`.
+Docker readiness requires a successful local Unix-socket `/_ping` response with
+the exact body `OK`, bypassing HTTP proxies. It avoids the CLI plugin discovery
+performed by `docker info`; the separate qualification still builds and runs a
+container and tests a PostgreSQL published port.
 
 ```sh
 python3 deploy/arc-private/render.py \

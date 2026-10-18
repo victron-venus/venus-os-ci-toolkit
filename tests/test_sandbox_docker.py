@@ -72,6 +72,18 @@ cleanup_startup
 ''')
         self.assertEqual(result.returncode, 0, result.stderr)
 
+    def test_ping_requires_both_success_and_exact_ready_body(self):
+        for body, status, expected in [('OK', 0, 0), ('starting', 0, 1),
+                                       ('', 0, 1), ('OK', 22, 1)]:
+            with self.subTest(body=body, status=status):
+                # Isolate response validation from the real network and clock.
+                result = self.run_shell('''
+timeout() { shift 2; "$@"; }
+curl() { printf '%s' "''' + body + '''"; return ''' + str(status) + '''; }
+docker_api_ready
+''')
+                self.assertEqual(result.returncode, expected, result.stderr)
+
 
 if __name__ == '__main__':
     unittest.main()

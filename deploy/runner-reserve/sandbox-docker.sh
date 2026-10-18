@@ -42,6 +42,14 @@ cleanup_startup() {
   done
 }
 
+docker_api_ready() {
+  local response
+  response=$(timeout --signal=KILL 6s curl --unix-socket /var/run/docker.sock \
+    --noproxy '*' --fail --silent --show-error --connect-timeout 2 --max-time 5 \
+    http://localhost/_ping) || return 1
+  [[ "$response" == OK ]]
+}
+
 start_sandbox_docker() {
   local mtu=$1
   [[ "$mtu" =~ ^[0-9]+$ ]]
@@ -73,7 +81,9 @@ TOML
     --feature embedded-containerd=false --feature containerd-snapshotter=false --storage-driver=vfs \
     --mtu="$mtu" --group=runner > /tmp/dockerd.log 2>&1 &
   sandbox_docker_pid=$!
-  wait_for_service "$sandbox_docker_pid" 180 /tmp/dockerd.log timeout --signal=KILL 6s docker info
+  # The CLI's info command probes client plugins, which can exceed readiness
+  # deadlines on a busy node even after the daemon has finished initialization.
+  wait_for_service "$sandbox_docker_pid" 180 /tmp/dockerd.log docker_api_ready
   # The pod owns both healthy children from here; pod deletion reaps them.
   trap - EXIT INT TERM
 }
