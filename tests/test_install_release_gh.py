@@ -1,7 +1,9 @@
 """The release client installer accepts only the reviewed native artifact."""
 import io
+import json
 import os
 from pathlib import Path
+import re
 import sys
 import tarfile
 import tempfile
@@ -12,6 +14,8 @@ import zipfile
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 import install_release_gh as installer
 import release_gh_workflow
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def fixture(kind="tar", *, duplicate=False, symlink=False):
@@ -62,6 +66,97 @@ class InstallReleaseGhTests(unittest.TestCase):
             with patch.object(installer, "download", return_value=raw + b"tamper"), self.assertRaises(ValueError):
                 installer.install(output, {"version": "test"}, artifact)
             self.assertEqual(output.read_bytes(), b"old")
+
+    def test_offline_archive_installs_atomically_without_downloader(self):
+        raw, artifact, binary = fixture()
+        with tempfile.TemporaryDirectory() as directory:
+            archive = Path(directory) / "download.tar.gz"
+            archive.write_bytes(raw)
+            output = Path(directory) / "gh"
+            output.write_bytes(b"old")
+
+            def verify(candidate, actual_artifact, version):
+                self.assertEqual(output.read_bytes(), b"old")
+                self.assertEqual(candidate.read_bytes(), binary)
+                self.assertEqual(candidate.stat().st_mode & 0o777, 0o755)
+                self.assertEqual(actual_artifact, artifact)
+                self.assertEqual(version, "test")
+
+            with patch.object(installer, "download") as download, \
+                    patch.object(installer, "verify", side_effect=verify):
+                installer.install(output, {"version": "test"}, artifact, archive)
+                download.assert_not_called()
+            self.assertEqual(output.read_bytes(), binary)
+            self.assertEqual(list(Path(directory).glob(".gh-*")), [])
+
+    def test_offline_corrupt_wrong_arch_and_oversize_never_fall_back(self):
+        raw, artifact, _ = fixture()
+        wrong_arch = dict(artifact, archive_sha256="0" * 64)
+        with tempfile.TemporaryDirectory() as directory:
+            archive = Path(directory) / "download.tar.gz"
+            output = Path(directory) / "gh"
+            output.write_bytes(b"old")
+            cases = [(raw + b"corrupt", artifact, installer.MAX_ARCHIVE),
+                     (raw, wrong_arch, installer.MAX_ARCHIVE), (raw, artifact, len(raw) - 1)]
+            for data, selected_artifact, limit in cases:
+                archive.write_bytes(data)
+                with self.subTest(limit=limit, artifact=selected_artifact), \
+                        patch.object(installer, "MAX_ARCHIVE", limit), \
+                        patch.object(installer, "download") as download, \
+                        patch.object(installer, "verify") as verify, self.assertRaises(ValueError):
+                    installer.install(output, {"version": "test"}, selected_artifact, archive)
+                download.assert_not_called()
+                verify.assert_not_called()
+                self.assertEqual(output.read_bytes(), b"old")
+
+    def test_offline_runtime_verification_failure_preserves_old_output(self):
+        raw, artifact, _ = fixture()
+        with tempfile.TemporaryDirectory() as directory:
+            archive = Path(directory) / "download.tar.gz"
+            archive.write_bytes(raw)
+            output = Path(directory) / "gh"
+            output.write_bytes(b"old")
+            with patch.object(installer, "verify", side_effect=ValueError("version mismatch")), \
+                    self.assertRaisesRegex(ValueError, "version mismatch"):
+                installer.install(output, {"version": "test"}, artifact, archive)
+            self.assertEqual(output.read_bytes(), b"old")
+            self.assertEqual(list(Path(directory).glob(".gh-*")), [])
+
+    def test_offline_archive_never_extracts_other_member_paths(self):
+        _, artifact, binary = fixture()
+        stream = io.BytesIO()
+        with tarfile.open(fileobj=stream, mode="w:gz") as tar:
+            for name, data in [("../outside", b"bad"), ("/absolute", b"bad"),
+                               (artifact["member"], binary)]:
+                member = tarfile.TarInfo(name)
+                member.size = len(data)
+                tar.addfile(member, io.BytesIO(data))
+        raw = stream.getvalue()
+        artifact["archive_sha256"] = installer.digest(raw)
+        with tempfile.TemporaryDirectory() as directory:
+            archive = Path(directory) / "download.tar.gz"
+            archive.write_bytes(raw)
+            output = Path(directory) / "gh"
+            with patch.object(installer, "verify"):
+                installer.install(output, {"version": "test"}, artifact, archive)
+            self.assertEqual(output.read_bytes(), binary)
+            self.assertEqual(sorted(p.name for p in Path(directory).iterdir()), ["download.tar.gz", "gh"])
+
+    def test_archive_option_cannot_be_used_with_check(self):
+        with patch.object(sys, "argv", ["install_release_gh.py", "--check", "/unused", "--archive", "/unused"]), \
+                patch("sys.stderr", new_callable=io.StringIO), self.assertRaises(SystemExit) as error:
+            installer.main()
+        self.assertEqual(error.exception.code, 2)
+
+    def test_private_image_archive_url_matches_reviewed_manifest(self):
+        dockerfile = (ROOT / "deploy/arc-private/Dockerfile").read_text()
+        manifest = json.loads((ROOT / ".github/gh/release.json").read_text())
+        urls = re.findall(r'https://github.com/cli/cli/releases/download/[^"\s]+', dockerfile)
+        self.assertEqual(len(urls), 1)
+        for arch in ("amd64", "arm64"):
+            asset = manifest["artifacts"][f"linux_{arch}"]["asset"]
+            expected = f"https://github.com/cli/cli/releases/download/v{manifest['version']}/{asset}"
+            self.assertEqual(urls[0].replace("${arch}", arch), expected)
 
     def test_runtime_policy_and_binary_are_checked_before_execution(self):
         raw, artifact, binary = fixture()
