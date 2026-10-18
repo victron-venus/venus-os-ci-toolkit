@@ -366,14 +366,17 @@ exec() { printf '%s' "$*"; }
 
     def harness(self, argv=ARGV, *, ignore_term=False, expect_ok=True, missing=False, relative=False, mode='ci-tmpfs-2gi'):
         with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp); binaries = root/'bin'; binaries.mkdir()
+            root = Path(tmp)
+            binaries = root/'bin'
+            binaries.mkdir()
             fake = binaries/'dockerd'
             fake.write_text(f'#!{sys.executable}\n' + '''import json, os, signal, sys, time
 from pathlib import Path
 signal.signal(signal.SIGTERM, signal.SIG_IGN if os.environ.get('IGNORE_TERM') == '1' else lambda *_: sys.exit(0))
 Path(os.environ['RECORD']).write_text(json.dumps({'pid':os.getpid(), 'gomaxprocs':os.environ.get('GOMAXPROCS'), 'argv':sys.argv[1:]}))
 while True: time.sleep(1)
-'''); fake.chmod(0o755)
+''')
+            fake.chmod(0o755)
             public = (ROOT/'deploy/runner-reserve/sandbox-docker.sh').read_text()
             cleanup = 'cleanup_startup() {' + public.split('cleanup_startup() {', 1)[1].split('\ndocker_api_ready()', 1)[0]
             helper = root/'helper.sh'
@@ -397,7 +400,8 @@ start_sandbox_docker() {
   ! kill -0 "$sandbox_containerd_pid" 2>/dev/null
 }
 ''')
-            script = root/'candidate.sh'; script.write_text(CANDIDATE.replace('/opt/victron-ci-reserve/sandbox-docker-base.sh', str(helper)))
+            script = root/'candidate.sh'
+            script.write_text(CANDIDATE.replace('/opt/victron-ci-reserve/sandbox-docker-base.sh', str(helper)))
             env = dict(os.environ, OUT=str(root), RECORD=str(root/'unexpected.json'), FAKE_DAEMON=str(fake), RUNNER_PRIVATE_DOCKER_STORAGE=mode, GOMAXPROCS='7', IGNORE_TERM='1' if ignore_term else '0')
             env['PATH'] = '' if missing else ('bin' if relative else str(binaries)) + os.pathsep + os.defpath
             started = time.monotonic()
@@ -405,20 +409,24 @@ start_sandbox_docker() {
             if not expect_ok:
                 self.assertNotEqual(r.returncode, 0)
                 self.assertFalse((root/'dockerd.json').exists())
-                if missing or relative: self.assertFalse((root/'containerd.json').exists())
+                if missing or relative:
+                    self.assertFalse((root/'containerd.json').exists())
                 return
             self.assertEqual(r.returncode, 0, r.stderr)
             docker_pid, containerd_pid, parent_value = r.stdout.strip().split()
-            d=json.loads((root/'dockerd.json').read_text()); c=json.loads((root/'containerd.json').read_text())
+            d=json.loads((root/'dockerd.json').read_text())
+            c=json.loads((root/'containerd.json').read_text())
             self.assertEqual((d['pid'],c['pid']), (int(docker_pid),int(containerd_pid)))
             self.assertEqual((d['gomaxprocs'],c['gomaxprocs'],parent_value), ('7','7','7'))
-            expected = list(argv); expected[expected.index('containerd-snapshotter=false')] = 'containerd-snapshotter=true'
+            expected = list(argv)
+            expected[expected.index('containerd-snapshotter=false')] = 'containerd-snapshotter=true'
             self.assertEqual(d['argv'], expected)
             self.assertLess(time.monotonic()-started, 8)
 
     def test_argv_pid_and_original_cleanup(self):
         for mode in ['ci-tmpfs-2gi', 'ci-heavy-tmpfs-6gi', 'automation-tmpfs-3gi']:
-            with self.subTest(mode=mode): self.harness(mode=mode)
+            with self.subTest(mode=mode):
+                self.harness(mode=mode)
 
     def test_term_ignoring_daemon_escalates_and_reaps(self):
         self.harness(ignore_term=True)
@@ -426,7 +434,8 @@ start_sandbox_docker() {
     def test_invalid_feature_and_driver_arguments_rejected(self):
         bad = [ARGV + ['--feature','containerd-snapshotter=false'], [v for v in ARGV if v != 'containerd-snapshotter=false'], [v.replace('containerd-snapshotter=false','containerd-snapshotter=true') for v in ARGV], ARGV + ['--feature=containerd-snapshotter=false'], [v.replace('--storage-driver=overlayfs','--storage-driver=overlay2') for v in ARGV], ARGV + ['--storage-driver=overlayfs']]
         for argv in bad:
-            with self.subTest(argv=argv): self.harness(argv, expect_ok=False)
+            with self.subTest(argv=argv):
+                self.harness(argv, expect_ok=False)
 
     def test_no_absolute_daemon_fails_before_any_launch(self):
         self.harness(missing=True, expect_ok=False)
