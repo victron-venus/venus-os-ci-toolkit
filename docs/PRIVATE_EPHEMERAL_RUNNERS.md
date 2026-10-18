@@ -33,20 +33,34 @@ between owners. Reusable workflow definitions are generated into each private
 consumer repository to avoid cross-owner self-hosted runner resolution limits;
 the toolkit remains the single maintained source.
 
-Switch to GitHub-hosted without changing labels:
+Before switching, identify whether Terraform manages the repository's Actions
+variables. For a managed repository, change `CI_RUNNER_MODE` in its Terraform
+source to `github` or `self-hosted`, review the plan and apply it through the
+workspace that owns those variables. Keep the profile labels unchanged when
+switching modes. Verify the resulting value in GitHub before starting a new run.
+Changing only the live GitHub variable creates drift: a later Terraform apply
+can restore the mode declared in source.
+
+For a repository whose variables are not managed by Terraform, switch to
+GitHub-hosted directly:
 
 ```sh
 gh variable set CI_RUNNER_MODE --repo OWNER/PRIVATE_REPOSITORY --body github
 ```
 
-Switch back to the installed, qualified ephemeral pool:
+Switch an unmanaged repository back to its installed, qualified ephemeral pool:
 
 ```sh
 gh variable set CI_RUNNER_MODE --repo OWNER/PRIVATE_REPOSITORY --body self-hosted
 ```
 
+An emergency direct change to a managed variable must be reconciled with its
+Terraform source and workspace, or explicitly restored to the declared value.
+Do not leave that override as the documented permanent configuration.
+
 This changes subsequent job evaluation; it does not migrate an already-running
-job. Cancel/re-run explicitly when necessary. A deployment that requires a
+job. Inspect queued and running jobs before cancelling or starting replacements;
+do not blindly rerun deployment jobs. A deployment that requires a
 private LAN endpoint cannot run on GitHub-hosted without separate secure network
 access. Do not silently map ARM, Windows, macOS, KVM or LAN work to generic x64 CI.
 
