@@ -85,6 +85,22 @@ Keep the real private inventory and generated values outside Git. The example
 `deploy/arc-private/inventory.example.json` contains fictitious names only. The
 renderer requires explicit private visibility and digest-pinned worker images:
 
+Build the private sandbox image from the repository root. The derivative keeps
+the installed guard CA and toolchains, adds the document/test utilities, and
+bakes the current checked-in bootstrap. Older bases that copied the runner at
+startup are normalized at build time. A historical image tag is not evidence
+that its baked bootstrap matches the current source.
+
+```sh
+docker build --file deploy/arc-private/Dockerfile \
+  --build-arg BASE_IMAGE=REGISTRY/BASE@sha256:DIGEST \
+  --tag REGISTRY/PRIVATE_SANDBOX:VERSION .
+```
+
+Preload the resulting digest on every eligible sandbox node, then run the
+sandbox qualification probe before installing pools; sandbox workers use
+`imagePullPolicy: Never`.
+
 ```sh
 python3 deploy/arc-private/render.py \
   --inventory /private/operator/inventory.json \
