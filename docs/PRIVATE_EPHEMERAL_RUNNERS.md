@@ -115,6 +115,61 @@ Preload the resulting digest on every eligible sandbox node, then run the
 sandbox qualification probe before installing pools; sandbox workers use
 `imagePullPolicy: Never`.
 
+### Local image retention and recovery
+
+Zero idle workers also means that the sandbox image can be unused between jobs.
+Keep its tag and digest reference pinned in the node's CRI image metadata so
+kubelet image garbage collection does not remove the only local copy. A digest
+in the pod specification guarantees image identity; it does not itself prevent
+garbage collection. This applies to the sandbox image using `Never`; native
+profiles use their separate digest-pinned registry image with `IfNotPresent`.
+
+After importing a verified OCI archive, or exporting a build directly into the
+node's `k8s.io` containerd namespace, create and label both references:
+
+```sh
+# Obtain this digest from the verified image manifest/build metadata,
+# not from the checksum of the archive file.
+SANDBOX_TAG=localhost/private-sandbox:VERSION
+SANDBOX_REF=localhost/private-sandbox@sha256:DIGEST
+
+# Archive recovery only; skip when the build is already in this content store.
+(cd /private/operator && sha256sum --check sandbox.oci.tar.sha256)
+sudo k3s ctr -n k8s.io images import /private/operator/sandbox.oci.tar
+sudo k3s ctr -n k8s.io images tag "$SANDBOX_TAG" "$SANDBOX_REF"
+for SANDBOX_IMAGE in "$SANDBOX_TAG" "$SANDBOX_REF"; do
+  sudo k3s ctr -n k8s.io images label "$SANDBOX_IMAGE" \
+    io.cri-containerd.image=managed io.cri-containerd.pinned=pinned
+done
+
+sudo k3s crictl inspecti "$SANDBOX_REF" | \
+  jq -e '.status.pinned == true and (.status.id | length > 0)'
+```
+
+Check the manifest digest, both image references and `pinned: true` through CRI
+before enabling a pool. Save this evidence with the private operator inventory.
+Labels live in containerd metadata and do not depend on a running worker or a
+registry connection. Confirm they remain present after the next normally
+scheduled node/runtime restart; do not restart a shared runtime just to test
+retention. Pinning protects kubelet garbage collection, not explicit operator
+deletion, `ctr` pruning or loss of the node's data disk; see the
+[containerd maintainer's explanation](https://github.com/containerd/containerd/discussions/12156).
+
+Keep a protected OCI archive, its archive checksum and its manifest digest
+outside Git, on storage that survives replacement of the runner node. These
+permit restoration of the exact image without a registry connection. Retain
+the reviewed build inputs as well, but do not assume a rebuild has identical
+bytes: unpinned package versions can produce a new digest. A rebuilt image needs
+review, runtime qualification and an explicit inventory image-pin update before
+jobs use it. On a rebuilt node, restore
+the current node-guard configuration and CA, import the image, reapply the
+labels, verify CRI visibility and run the sandbox qualification probe before
+resuming jobs. `Never` intentionally fails if the exact local image is missing;
+neither ARC nor a pod restart downloads or reconstructs it. Do not include this
+image in an unconditional self-healing image-prune task.
+
+### Rendering pools
+
 ```sh
 python3 deploy/arc-private/render.py \
   --inventory /private/operator/inventory.json \
