@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -134,6 +135,66 @@ def selected_scopes(selector):
 
 
 class NucProfileOutputTests(unittest.TestCase):
+    def test_fleet_size_compacts_only_identical_contracts_and_preserves_outputs(self):
+        rows = [dict(name=f'example/project-{i}', visibility='private',
+                     profiles=['ci', 'automation'], automation_storage='tmpfs-3gi',
+                     ci_storage='tmpfs-6gi-heavy' if i < 3 else 'tmpfs-2gi',
+                     ci_resource_class='heavy' if i < 3 else 'standard') for i in range(20)]
+        rows[0]['profiles'].append('release')
+        rows[1]['profiles'].append('arm64')
+        rows[2]['profiles'].append('lan')
+        rows[2]['lan_egress'] = [{'cidr': '192.0.2.20/32', 'port': 9443}]
+        targets = tuple((row['name'], profile) for row in rows for profile in ('ci', 'automation'))
+        candidate = render(plan(targets), rows)
+
+        def expanded(values):
+            return ' || '.join('(' + arc.nuc_target_validation(target, values[target]) + ')'
+                               for target in sorted(values))
+
+        with mock.patch.object(arc, 'nuc_targets_validation', expanded):
+            previous = render(plan(targets), rows)
+        self.assertEqual(len(candidate['index.json']), 43)
+        old_guard = policy(previous, '-workers')
+        new_guard = policy(candidate, '-workers')
+        changed = [(old, new) for old, new in zip(old_guard['spec']['validations'],
+                                                new_guard['spec']['validations']) if old != new]
+        self.assertEqual(len(changed), 1)
+        old, new = changed[0]
+        self.assertGreater(len(old['expression']), 100_000)
+        self.assertLess(len(new['expression']), 20_000)
+        branches = split_top_level(new['expression'], '||')
+        self.assertEqual(len(branches), 3)
+        for scope, profile in targets:
+            matching = [branch for branch in branches
+                        if json.dumps(arc.name(scope, 'scope')) in branch
+                        and 'request.namespace == ' + json.dumps('arc-private-' + profile) in branch]
+            self.assertEqual(len(matching), 1, (scope, profile))
+        # Normalizing only the changed rule restores the entire prior render:
+        # pools, security rules, network selection and unselected native routes.
+        new['expression'] = old['expression']
+        self.assertEqual(candidate, previous)
+
+    def test_grouping_separates_resource_and_environment_differences(self):
+        documents = render(plan())
+        first = arc.NucKvmTarget(*TARGETS[0])
+        second = arc.NucKvmTarget('example/other', first.profile)
+        value = worker(documents, first)
+        cases = (('requests', 'cpu'), ('limits', 'memory'), ('env', 'value'))
+        for section, field in cases:
+            changed = copy.deepcopy(value)
+            runner = changed['template']['spec']['containers'][0]
+            if section == 'env':
+                runner['env'][0]['value'] = 'different-bootstrap-value'
+            else:
+                runner['resources'][section][field] = 'different-resource'
+            with self.subTest(section=section):
+                expression = arc.nuc_targets_validation({first: value, second: changed})
+                self.assertEqual(len(split_top_level(expression, '||')), 2)
+        identical = {first: value, second: copy.deepcopy(value)}
+        expression = arc.nuc_targets_validation(identical)
+        self.assertEqual(len(split_top_level(expression, '||')), 1)
+        self.assertEqual(expression, arc.nuc_targets_validation(dict(reversed(list(identical.items())))))
+
     def test_selected_profiles_fit_quota_only_after_the_reviewed_automation_delta(self):
         documents = render(plan())
         for target in TARGETS:
@@ -515,6 +576,126 @@ class NucProfileDecisionTests(unittest.TestCase):
                     self.assertTrue(identity_expression(condition, context))
                     self.assertEqual(identity_expression(expression, context), actor == 'system:kube-scheduler')
         self.assertFalse(identity_expression(condition, {'request': {'namespace': 'arc-private-release'}}))
+
+
+class NucReleaseTests(unittest.TestCase):
+    """An explicitly selected release keeps its own disk and credential boundary."""
+
+    target = ('example/standard', 'release')
+
+    def setUp(self):
+        self.original = render(plan())
+        self.documents = render(plan((*TARGETS, self.target)))
+        self.guard = policy(self.documents, '-workers')['spec']
+        self.rules = {rule['message']: rule['expression'] for rule in self.guard['validations']}
+
+    def context(self):
+        pod = copy.deepcopy(worker(self.documents, self.target)['template'])
+        pod['metadata']['namespace'] = 'arc-private-release'
+        return {'object': pod, 'oldObject': None,
+                'request': {'operation': 'CREATE', 'namespace': 'arc-private-release'}}
+
+    def test_release_is_opt_in_and_existing_workers_are_unchanged(self):
+        changed = {key for key in self.documents if self.documents[key] != self.original[key]}
+        self.assertEqual(changed, {'foundations.json', arc.name(*self.target) + '.json'})
+        before, after = worker(self.original, self.target), worker(self.documents, self.target)
+        for key in ('githubConfigUrl', 'githubConfigSecret', 'runnerScaleSetName',
+                    'listenerTemplate', 'minRunners', 'maxRunners'):
+            self.assertEqual(before[key], after[key])
+        self.assertEqual(after['runnerScaleSetName'], arc.name(*self.target))
+        self.assertEqual(self.documents['repository-variables.json'], self.original['repository-variables.json'])
+
+    def test_release_keeps_disk_resources_bootstrap_and_no_cluster_credentials(self):
+        before = worker(self.original, self.target)['template']['spec']
+        after = worker(self.documents, self.target)['template']['spec']
+        self.assertEqual(after['runtimeClassName'], arc.NUC_RUNTIME)
+        self.assertEqual(after['affinity'], AFFINITY)
+        self.assertFalse(after['automountServiceAccountToken'])
+        runner = after['containers'][0]
+        self.assertEqual(runner['resources'], {
+            'requests': {'cpu': '50m', 'memory': '512Mi', 'ephemeral-storage': '1Gi'},
+            'limits': {'cpu': '1', 'memory': '2Gi', 'ephemeral-storage': '20Gi'}})
+        expected = copy.deepcopy(before)
+        expected['runtimeClassName'] = arc.NUC_RUNTIME
+        expected['nodeSelector'] = {'kubernetes.io/hostname': 'nuc', 'kubernetes.io/arch': 'amd64'}
+        expected['schedulerName'] = 'default-scheduler'
+        expected['affinity'] = AFFINITY
+        expected['containers'][0]['image'] = NUC_IMAGE
+        for env in expected['containers'][0]['env']:
+            if env['name'] == 'RUNNER_RESERVE_NODE_IP':
+                env['value'] = NUC_IP
+        self.assertEqual(after, expected)
+        env = {item['name']: item for item in runner['env']}
+        self.assertEqual(env['RUNNER_DOCKER_STORAGE_DRIVER']['value'], 'overlay2')
+        self.assertNotIn('RUNNER_PRIVATE_DOCKER_STORAGE', env)
+        budget = namespace_budget(self.documents, 'release')
+        self.assertEqual(budget, namespace_budget(self.original, 'release'))
+        for resource, amount in quota_charge(self.documents, self.target).items():
+            self.assertLessEqual(amount, quantity(budget[resource]))
+
+    def test_release_tuple_rejects_borrowed_profile_or_bootstrap_overrides(self):
+        expression = self.rules['NUC workers require one exact scope, namespace, profile, resource and environment tuple']
+        self.assertTrue(identity_expression(expression, self.context()))
+        for mutation in ('resources', 'profile', 'scope', 'namespace', 'tmpfs', 'driver', 'proxy'):
+            context = self.context()
+            runner = context['object']['spec']['containers'][0]
+            labels = context['object']['metadata']['labels']
+            if mutation == 'resources':
+                runner['resources'] = RESOURCE_TUPLES[TARGETS[0]]
+            elif mutation == 'profile':
+                labels[arc.PROFILE_LABEL] = 'ci'
+            elif mutation == 'scope':
+                labels[arc.SCOPE_LABEL] = arc.name('example/heavy', 'scope')
+            elif mutation == 'namespace':
+                context['request']['namespace'] = context['object']['metadata']['namespace'] = 'arc-private-ci'
+            elif mutation == 'driver':
+                next(item for item in runner['env'] if item['name'] == 'RUNNER_DOCKER_STORAGE_DRIVER')['value'] = 'overlayfs'
+            else:
+                name, value = ('RUNNER_PRIVATE_DOCKER_STORAGE', 'ci-tmpfs-2gi') if mutation == 'tmpfs' else ('HTTPS_PROXY', 'http://redirect')
+                runner['env'].append({'name': name, 'value': value})
+            with self.subTest(mutation=mutation):
+                self.assertFalse(identity_expression(expression, context))
+
+    def test_release_status_keeps_identity_and_scheduler_binding_boundary(self):
+        context = self.context()
+        context['request']['operation'] = 'UPDATE'
+        context['object']['spec']['nodeName'] = 'nuc'
+        context['oldObject'] = copy.deepcopy(context['object'])
+        context['object']['status'] = {'phase': 'Succeeded'}
+        immutable = self.rules['NUC updates preserve scope, profile, worker identity and the bound node']
+        self.assertTrue(identity_expression(immutable, context))
+        for label in (arc.SCOPE_LABEL, arc.PROFILE_LABEL, 'runner-reserve.github.io/role', SERIAL_LABEL):
+            altered = copy.deepcopy(context)
+            del altered['object']['metadata']['labels'][label]
+            self.assertFalse(identity_expression(immutable, altered), label)
+        binding = policy(self.documents, '-binding')['spec']
+        request = {'request': {'namespace': 'arc-private-release', 'userInfo': {'username': 'system:kube-scheduler'}}}
+        self.assertTrue(identity_expression(binding['matchConditions'][0]['expression'], request))
+        self.assertTrue(identity_expression(binding['validations'][0]['expression'], request))
+        request['request']['userInfo']['username'] = 'release-job'
+        self.assertFalse(identity_expression(binding['validations'][0]['expression'], request))
+
+    def test_release_network_does_not_gain_lan_or_keep_the_old_guard(self):
+        items = self.documents['foundations.json']['items']
+        old = next(item for item in self.original['foundations.json']['items']
+                   if item['kind'] == 'NetworkPolicy' and item['metadata']['namespace'] == 'arc-private-release')
+        new = next(item for item in items if item['kind'] == 'NetworkPolicy'
+                   and item['metadata']['namespace'] == 'arc-private-release'
+                   and item['metadata']['name'] == arc.NUC_RUNTIME + '-isolation')
+        self.assertEqual(selected_scopes(new['spec']['podSelector']), {arc.name(self.target[0], 'scope')})
+        expected = copy.deepcopy(old['spec']['egress'])
+        for rule in expected:
+            if any(port['port'] == 19999 for port in rule.get('ports', [])):
+                rule['to'] = [{'ipBlock': {'cidr': NUC_IP + '/32'}}]
+        self.assertEqual(new['spec']['egress'], expected)
+        self.assertEqual(new['spec']['ingress'], [])
+
+    def test_release_still_requires_private_declared_profile(self):
+        for changes in ({'visibility': 'public'}, {'profiles': ['ci', 'automation']}):
+            rows = copy.deepcopy(ROWS)
+            rows[0].update(changes)
+            with self.subTest(changes=changes), self.assertRaises(ValueError):
+                render(plan((self.target,)), rows)
 
 
 class NucProfileInputTests(unittest.TestCase):

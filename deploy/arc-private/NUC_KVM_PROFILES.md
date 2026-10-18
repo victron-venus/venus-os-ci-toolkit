@@ -1,7 +1,7 @@
 # Multiple private profiles on one NUC
 
 This is a **render-only, unqualified candidate**. It extends the single-repository
-[NUC KVM candidate](NUC_KVM_CANDIDATE.md) to an explicit set of CI and automation
+[NUC KVM candidate](NUC_KVM_CANDIDATE.md) to an explicit set of CI, automation and release
 profiles. Rendering does not install a runtime, transfer an image, start a
 runner, or establish that an application works on this machine.
 
@@ -55,8 +55,9 @@ last invocation would replace the previous shared allowlist.
 The original `--nuc-kvm-scope`, `--nuc-kvm-image` and `--nuc-kvm-node-ip` interface
 remains available for one standard CI profile. Do not combine it with a plan.
 Unselected profiles, repository URLs, GitHub App references and routing labels
-retain their existing configuration. Release, LAN and ARM profiles cannot be
-selected through this interface.
+retain their existing configuration. LAN and ARM profiles cannot be selected
+through this interface. A release target must already be declared separately in
+the private inventory; selecting CI or automation never selects release.
 
 ## Fixed resource contracts
 
@@ -71,6 +72,23 @@ the plan does not accept arbitrary CPU, memory or security settings.
 - Automation requires `automation_storage: tmpfs-3gi`. It requests 50m CPU and
   5 GiB memory, with limits of 1 CPU and 6 GiB memory. Its Docker guest tmpfs
   remains 3 GiB.
+- Release retains its existing 50m CPU and 512 MiB memory requests, with limits
+  of 1 CPU and 2 GiB memory. It uses the existing disposable disk/`overlay2`
+  bootstrap, not a private tmpfs mode. Selecting the NUC changes its node,
+  runtime, image and guard endpoint and adds the same cross-namespace serial
+  contract; it does not change its repository, GitHub App, routing label or
+  namespace. Its disk backend and application deadlines still need their own
+  actual evidence; CI tmpfs success does not qualify this contract.
+
+Release support is inert until explicitly selected and installed. Keep a new
+release scale set at `minRunners: 0`, `maxRunners: 0` while reviewing current
+queues and the exact authored workflow. A workflow's existing `contents: write`
+permission remains a GitHub job permission, not a host or Kubernetes privilege.
+Do not dispatch a real release merely to test a route. For example, an authored
+manual draft-release job may verify an existing tag, build packages and upload
+draft assets; running it still creates external state and needs the intended
+release authorization. Preserve its tag/source checks and timeouts. A manual
+smoke can test routing without proving those publishing operations.
 
 The RuntimeClass adds 100m CPU and 128 MiB memory per worker. Account for
 listeners, the guard, and other workloads separately. A CPU request that fits the
@@ -123,6 +141,13 @@ assigns a new execution node or a broader runner label.
 The global NUC admission policy binds each allowed repository, namespace,
 profile, resource tuple and bootstrap environment together. A heavy worker
 cannot borrow an automation identity or another repository's resource tuple.
+The renderer shares an admission branch only across scopes whose profile,
+complete resource maps and bootstrap environment are identical. Each such
+branch retains an explicit list of selected scopes. This avoids repeating the
+environment contract once per repository: [Kubernetes 1.31.4 pins CEL-Go 0.20.1](https://github.com/kubernetes/kubernetes/blob/v1.31.4/go.mod),
+whose [default parser limit is 100,000 code points per expression](https://github.com/google/cel-go/blob/v0.20.1/parser/parser.go).
+Sharing a branch does not admit unlisted scopes or combine different resource
+contracts.
 The original sandbox policy denies selected scope/namespace pairs from falling
 back to the original node, even with a substituted profile label. Separate
 network policies preserve denied networks and permit only the selected node's

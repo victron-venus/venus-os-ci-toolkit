@@ -115,9 +115,9 @@ def validate_nuc_kvm(rows, config, sandbox_runtime, node_ip):
     if (not isinstance(plan.targets, tuple) or not plan.targets
             or any(not isinstance(target, NucKvmTarget)
                    or not isinstance(target.scope, str) or not SCOPE.fullmatch(target.scope)
-                   or not isinstance(target.profile, str) or target.profile not in ('ci', 'automation')
+                   or not isinstance(target.profile, str) or target.profile not in ('ci', 'automation', 'release')
                    for target in plan.targets)):
-        raise ValueError('NUC KVM requires explicit typed CI or automation targets')
+        raise ValueError('NUC KVM requires explicit typed CI, automation or release targets')
     if len(set(plan.targets)) != len(plan.targets):
         raise ValueError('Duplicate NUC KVM target')
     address = ipaddress.IPv4Address(plan.node_ip)
@@ -138,7 +138,7 @@ def validate_nuc_kvm(rows, config, sandbox_runtime, node_ip):
                 raise ValueError('Legacy NUC KVM supports only explicit standard CI tmpfs-2gi')
             if mode not in (('standard', 'tmpfs-2gi'), ('heavy', 'tmpfs-6gi-heavy')):
                 raise ValueError('NUC KVM CI requires standard tmpfs-2gi or heavy tmpfs-6gi-heavy')
-        elif validate_automation_storage(row) != 'tmpfs-3gi':
+        elif target.profile == 'automation' and validate_automation_storage(row) != 'tmpfs-3gi':
             raise ValueError('NUC KVM automation requires explicit tmpfs-3gi')
     return NucKvmPlan(tuple(sorted(plan.targets)), plan.image, plan.node_ip)
 
@@ -593,17 +593,18 @@ def nuc_environment_validation(expected):
             + json.dumps(names) + ') && ' + ' && '.join('(' + x + ')' for x in clauses) + ')')
 
 
-def nuc_target_validation(target, value):
+def nuc_target_validation(target, value, scopes=None):
     """Keep identity, resources and bootstrap environment in one allowed branch."""
     runner = value['template']['spec']['containers'][0]
     namespace = json.dumps('arc-private-' + target.profile)
+    scope_check = (' == ' + json.dumps(name(target.scope, 'scope')) if scopes is None
+                   else ' in ' + json.dumps([name(scope, 'scope') for scope in scopes]))
     return (
         'request.namespace == ' + namespace + ' && object.metadata.namespace == ' + namespace + ' && '
         'has(object.metadata.labels) && '
         + json.dumps(SCOPE_LABEL) + ' in object.metadata.labels && '
         + json.dumps(PROFILE_LABEL) + ' in object.metadata.labels && '
-        'object.metadata.labels[' + json.dumps(SCOPE_LABEL) + '] == '
-        + json.dumps(name(target.scope, 'scope')) + ' && '
+        'object.metadata.labels[' + json.dumps(SCOPE_LABEL) + ']' + scope_check + ' && '
         'object.metadata.labels[' + json.dumps(PROFILE_LABEL) + '] == '
         + json.dumps(target.profile) + ' && '
         'object.spec.containers.all(c, has(c.resources) && '
@@ -611,6 +612,22 @@ def nuc_target_validation(target, value):
         'dyn(c.resources).requests == ' + json.dumps(runner['resources']['requests']) + ' && '
         'dyn(c.resources).limits == ' + json.dumps(runner['resources']['limits']) + ') && '
         + nuc_environment_validation(runner['env']))
+
+
+def nuc_targets_validation(values_by_target):
+    """Share a branch only when every non-scope contract field is identical."""
+    groups = {}
+    for target in sorted(values_by_target):
+        value = values_by_target[target]
+        runner = value['template']['spec']['containers'][0]
+        key = json.dumps([target.profile, runner['resources'], runner['env']], sort_keys=True)
+        groups.setdefault(key, []).append(target)
+    branches = []
+    for targets in groups.values():
+        first = targets[0]
+        scopes = [target.scope for target in targets] if len(targets) > 1 else None
+        branches.append('(' + nuc_target_validation(first, values_by_target[first], scopes) + ')')
+    return ' || '.join(branches)
 
 
 def nuc_kvm_foundations(document, config, values_by_target):
@@ -664,9 +681,7 @@ def nuc_kvm_foundations(document, config, values_by_target):
                                   "object.spec.containers[0].image == " + json.dumps(config.image))
         elif rule['message'] == 'The tmpfs candidate requires its exact private profile and resource tuple':
             # Dynamic Quantity maps retain the Kubernetes 1.31 advisory workaround.
-            rule['expression'] = ' || '.join(
-                '(' + nuc_target_validation(target, values_by_target[target]) + ')'
-                for target in config.targets)
+            rule['expression'] = nuc_targets_validation(values_by_target)
             rule['message'] = 'NUC workers require one exact scope, namespace, profile, resource and environment tuple'
     guard['spec']['validations'].extend([
         {'expression': "request.operation != 'UPDATE' || (oldObject != null && "
