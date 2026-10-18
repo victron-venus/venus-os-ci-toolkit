@@ -82,9 +82,17 @@ private_start_docker() {
       # shellcheck source=../runner-reserve/sandbox-docker.sh
       source /opt/victron-ci-reserve/sandbox-docker-base.sh
       # Experimental: use the containerd image store only in these explicit private tmpfs modes.
-      local dockerd_binary
+      local containerd_binary dockerd_binary
+      containerd_binary=$(type -P containerd) || return 1
       dockerd_binary=$(type -P dockerd) || return 1
+      [[ "$containerd_binary" == /* && -x "$containerd_binary" ]] || return 1
       [[ "$dockerd_binary" == /* && -x "$dockerd_binary" ]] || return 1
+      # The shared launcher backgrounds both functions. Change only the child
+      # masks: bootstrap files remain private, but new snapshot roots need 0755.
+      containerd() {
+        umask 022
+        exec "$containerd_binary" "$@"
+      }
       dockerd() {
         local -a adapted=("$@")
         local i changed=0 drivers=0
@@ -108,6 +116,7 @@ private_start_docker() {
         [[ "$changed" == 1 && "$drivers" == 1 ]] || {
           printf 'Experimental image-store daemon contract rejected\n' >&2; return 1;
         }
+        umask 022
         exec "$dockerd_binary" "${adapted[@]}"
       }
       docker_storage_driver() { private_tmpfs_storage /var/lib/docker; }

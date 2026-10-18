@@ -22,13 +22,27 @@ unpacking path; this is a testable performance hypothesis, not a speed guarantee
 The [pinned gVisor Docker guide](https://github.com/google/gvisor/blob/release-20260928.0/g3doc/user_guide/tutorials/docker-in-gvisor.md)
 supports the image store when `/var/lib/docker` is backed by guest tmpfs.
 
-The wrapper resolves the external daemon before shadowing its launch function.
+The wrapper resolves both external daemon executables to absolute paths before
+shadowing their launch functions or starting either process.
 It rewrites exactly one `--feature containerd-snapshotter=false` pair to `true`,
 requires exactly one `--storage-driver=overlayfs`, and rejects missing,
 duplicated or alternate forms of these target arguments. Other launch arguments
 are preserved; `exec` retains daemon PID and cleanup semantics. The public helper,
 its standalone containerd configuration, CRI-disabled setting and local sockets
 remain unchanged. No GOMAXPROCS or host runtime setting changes.
+
+Both background launch functions set a child-only `umask 022` before `exec`.
+The calling bootstrap retains `077` for its private files. This matters for the
+standalone containerd process: its
+[overlay snapshotter creates new filesystem roots with mode 0755](https://github.com/containerd/containerd/blob/v2.3.6/plugins/snapshots/overlay/overlay.go),
+which an inherited `077` mask reduces to `0700`, blocking nonroot image users
+from traversing `/`. The fix sets creation semantics before any snapshots exist;
+it does not chmod existing images or change their declared file modes. Docker
+29.8.2 [resets its own mask to zero during initialization](https://github.com/moby/moby/blob/8af9fe3a36bab3e039862a2ab1cef1880c9b4d03/daemon/command/daemon_unix.go#L47-L57),
+so the wrapper's `022` is a launch contract, not a claim about Docker's eventual
+runtime mask. Containerd's deliberately private state directories remain private.
+Tests verify child masks, ordinary creation modes, argument preservation and PID
+cleanup; the candidate still requires the unchanged nonroot PostgreSQL check.
 
 The renderer pairs each named mode with `RUNNER_DOCKER_STORAGE_DRIVER=overlayfs`;
 admission requires its exact namespace/profile, memory and CPU tuple, one literal

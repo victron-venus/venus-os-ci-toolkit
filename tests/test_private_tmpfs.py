@@ -3,6 +3,7 @@ import importlib.util
 import json
 import os
 import shlex
+import shutil
 import sys
 import time
 from pathlib import Path
@@ -364,26 +365,41 @@ exec() { printf '%s' "$*"; }
         self.assertNotEqual(result.returncode, 0)
 
 
-    def harness(self, argv=ARGV, *, ignore_term=False, expect_ok=True, missing=False, relative=False, mode='ci-tmpfs-2gi'):
+    def harness(self, argv=ARGV, *, ignore_term=False, expect_ok=True, missing=None, relative=None, mode='ci-tmpfs-2gi'):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             binaries = root/'bin'
             binaries.mkdir()
-            fake = binaries/'dockerd'
-            fake.write_text(f'#!{sys.executable}\n' + '''import json, os, signal, sys, time
+            sleep_binary = shutil.which('sleep')
+            self.assertIsNotNone(sleep_binary)
+            (binaries/'sleep').symlink_to(Path(sleep_binary).resolve())
+            fake_source = f'#!{sys.executable}\n' + '''import json, os, signal, sys, time
 from pathlib import Path
 signal.signal(signal.SIGTERM, signal.SIG_IGN if os.environ.get('IGNORE_TERM') == '1' else lambda *_: sys.exit(0))
-Path(os.environ['RECORD']).write_text(json.dumps({'pid':os.getpid(), 'gomaxprocs':os.environ.get('GOMAXPROCS'), 'argv':sys.argv[1:]}))
+record = Path(os.environ['RECORD'])
+mask = os.umask(0)
+os.umask(mask)
+directory = record.with_suffix('.directory')
+os.mkdir(directory, 0o755)
+file = directory / 'file'
+file.write_text('ordinary daemon file')
+record.write_text(json.dumps({'pid':os.getpid(), 'gomaxprocs':os.environ.get('GOMAXPROCS'),
+    'argv':sys.argv[1:], 'umask':mask, 'directory_mode':directory.stat().st_mode & 0o777,
+    'file_mode':file.stat().st_mode & 0o777}))
 while True: time.sleep(1)
-''')
-            fake.chmod(0o755)
+'''
+            for name in ('containerd', 'dockerd'):
+                if name != missing:
+                    target = (root if name == relative else binaries) / name
+                    target.write_text(fake_source)
+                    target.chmod(0o755)
             public = (ROOT/'deploy/runner-reserve/sandbox-docker.sh').read_text()
             cleanup = 'cleanup_startup() {' + public.split('cleanup_startup() {', 1)[1].split('\ndocker_api_ready()', 1)[0]
             helper = root/'helper.sh'
             helper.write_text(cleanup + '''
 start_sandbox_docker() {
   trap cleanup_startup EXIT
-  RECORD="$OUT/containerd.json" "$FAKE_DAEMON" --containerd &
+  RECORD="$OUT/containerd.json" containerd --config 'path with spaces' &
   sandbox_containerd_pid=$!
   RECORD="$OUT/dockerd.json" dockerd ''' + shlex.join(argv) + ''' &
   sandbox_docker_pid=$!
@@ -402,10 +418,18 @@ start_sandbox_docker() {
 ''')
             script = root/'candidate.sh'
             script.write_text(CANDIDATE.replace('/opt/victron-ci-reserve/sandbox-docker-base.sh', str(helper)))
-            env = dict(os.environ, OUT=str(root), RECORD=str(root/'unexpected.json'), FAKE_DAEMON=str(fake), RUNNER_PRIVATE_DOCKER_STORAGE=mode, GOMAXPROCS='7', IGNORE_TERM='1' if ignore_term else '0')
-            env['PATH'] = '' if missing else ('bin' if relative else str(binaries)) + os.pathsep + os.defpath
+            env = dict(os.environ, OUT=str(root), RECORD=str(root/'unexpected.json'), RUNNER_PRIVATE_DOCKER_STORAGE=mode, GOMAXPROCS='7', IGNORE_TERM='1' if ignore_term else '0')
+            # A missing fixture must never fall through to a real host daemon.
+            env['PATH'] = ('.' + os.pathsep if relative else '') + str(binaries)
             started = time.monotonic()
-            r = subprocess.run(['/bin/bash', str(script), '1400'], env=env, cwd=root, capture_output=True, text=True, timeout=9)
+            # Both actual adapters execute through the real background/PID cleanup path.
+            # Only external daemon executables are replaced with harmless child processes.
+            r = subprocess.run(['/bin/bash', '-c', '''
+umask 077
+source "$1"
+private_start_docker 1400
+umask > "$OUT/caller-mask"
+''', 'test', str(script)], env=env, cwd=root, capture_output=True, text=True, timeout=9)
             if not expect_ok:
                 self.assertNotEqual(r.returncode, 0)
                 self.assertFalse((root/'dockerd.json').exists())
@@ -418,6 +442,11 @@ start_sandbox_docker() {
             c=json.loads((root/'containerd.json').read_text())
             self.assertEqual((d['pid'],c['pid']), (int(docker_pid),int(containerd_pid)))
             self.assertEqual((d['gomaxprocs'],c['gomaxprocs'],parent_value), ('7','7','7'))
+            self.assertEqual(int((root/'caller-mask').read_text().strip(), 8), 0o077)
+            for record in (d, c):
+                self.assertEqual((record['umask'], record['directory_mode'], record['file_mode']),
+                                 (0o022, 0o755, 0o644))
+            self.assertEqual(c['argv'], ['--config', 'path with spaces'])
             expected = list(argv)
             expected[expected.index('containerd-snapshotter=false')] = 'containerd-snapshotter=true'
             self.assertEqual(d['argv'], expected)
@@ -438,8 +467,11 @@ start_sandbox_docker() {
                 self.harness(argv, expect_ok=False)
 
     def test_no_absolute_daemon_fails_before_any_launch(self):
-        self.harness(missing=True, expect_ok=False)
-        self.harness(relative=True, expect_ok=False)
+        for name in ('containerd', 'dockerd'):
+            with self.subTest(missing=name):
+                self.harness(missing=name, expect_ok=False)
+            with self.subTest(relative=name):
+                self.harness(relative=name, expect_ok=False)
 
     def test_backend_admission_keeps_disk_on_classic_driver(self):
         policy=next(item for item in arc.foundations([ROW], IMAGE, '192.0.2.1')['items']
