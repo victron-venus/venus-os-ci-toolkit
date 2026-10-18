@@ -30,13 +30,7 @@ printf 1 > /proc/sys/net/ipv4/ip_forward
 for protocol in tcp udp; do
   iptables-legacy -t nat -A POSTROUTING -o "$interface" -p "$protocol" -j SNAT --to-source "$address"
 done
-dockerd --iptables=false --ip6tables=false --feature containerd-snapshotter=false \
-  --storage-driver=vfs --mtu="$mtu" --group=runner > /tmp/dockerd.log 2>&1 &
-for attempt in {1..60}; do
-  docker info >/dev/null 2>&1 && break
-  [[ "$attempt" != 60 ]] || { tail -30 /tmp/dockerd.log; exit 1; }
-  sleep 1
-done
+/opt/victron-ci-reserve/sandbox-docker.sh "$mtu"
 # Checkout/build files must remain readable by non-root users in built images.
 # Bootstrap setup stayed private; each job has its own disposable filesystem.
 umask 022

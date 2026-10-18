@@ -171,6 +171,21 @@ image in an unconditional self-healing image-prune task.
 
 ### Rendering pools
 
+The sandbox starts its own containerd before Docker, with the same private data
+directories and disabled CRI plugins as Docker's managed daemon. Each startup
+stage uses a 180-second readiness budget, with a six-second cap per
+attempt; an exited daemon fails immediately and startup failure stops both
+children. This accommodates cold startup on a busy node without changing worker
+isolation. Docker's built-in supervisor otherwise has a fixed 15-second startup
+deadline in [the installed 29.8.2 source](https://github.com/moby/moby/blob/8af9fe3a36bab3e039862a2ab1cef1880c9b4d03/daemon/internal/containerd/server/supervisor/remote_daemon.go#L26-L32).
+The bootstrap uses Docker's documented [standalone containerd socket](https://docs.docker.com/reference/cli/dockerd/#run-containerd-standalone);
+it never connects to a host Docker or containerd service. Diagnose failed startup
+with the pod's `/tmp/containerd.log` and `/tmp/dockerd.log`.
+Docker readiness requires a successful local Unix-socket `/_ping` response with
+the exact body `OK`, bypassing HTTP proxies. It avoids the CLI plugin discovery
+performed by `docker info`; the separate qualification still builds and runs a
+container and tests a PostgreSQL published port.
+
 ```sh
 python3 deploy/arc-private/render.py \
   --inventory /private/operator/inventory.json \
