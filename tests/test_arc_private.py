@@ -72,7 +72,8 @@ class PrivatePoolTests(unittest.TestCase):
         self.assertIn('Host, persistent and credential volumes are forbidden',
                       [x['message'] for x in policy(public)])
         expressions = '\n'.join(x['expression'] for x in policy(private))
-        for condition in ["size(object.spec.volumes) == 1", "v.emptyDir.sizeLimit == '16Gi'",
+        for condition in ["size(object.spec.volumes) == 1", "has(dyn(v.emptyDir).sizeLimit)",
+                          "type(dyn(v.emptyDir).sizeLimit) == string", "dyn(v.emptyDir).sizeLimit == '16Gi'",
                           "v.emptyDir.medium == ''", "m.mountPath == '/var/lib/docker'",
                           '!has(m.subPath)', '!has(m.subPathExpr)', '!has(m.mountPropagation)',
                           "!k.startsWith('dev.gvisor.')"]:
