@@ -79,6 +79,15 @@ actions and genrules: it supplies declared-input isolation, while the outer
 container/VM supplies the security boundary. It is not equivalent to per-action
 Linux namespace isolation.
 
+The source marks `GoStandardLibraryAnalysis` and `GoStaticAnalysis` actions
+`no-sandbox` to avoid historical FUSE overhead; its comment explicitly says
+sandboxing is correct. One anchored `--modify_execution_info` expression removes
+only that metadata key for those two exact mnemonics. Both continue to run with
+`processwrapper-sandbox`; no local/standalone fallback is enabled. The unchanged
+analyzer performs standard-library/package analysis and fact-based source
+rendering. This does not disable analysis or add the separate `*_nogo` test suite.
+Other action mnemonics and execution requirements are unaffected.
+
 Build tools use a fresh private `/build/tmp` directory (mode 0700). `TMPDIR` is
 set in the sanitized Bazel client environment and explicitly in `--repo_env`.
 Gazelle 0.51.3 preserves `TMPDIR` when it clears its subprocess environment;
