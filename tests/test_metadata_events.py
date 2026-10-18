@@ -86,10 +86,12 @@ def context(action="opened", changes=None, run="10", event="pull_request_target"
             "run_id": run,
             "event_name": event,
             "event": {
+                "repository": {"default_branch": "main"},
                 "action": action,
                 "changes": changes or {},
                 "pull_request": {
                     "number": 42,
+                    "base": {"ref": "main"},
                     "user": {"login": "4alvit"},
                     "draft": False,
                     "head": {"repo": {"full_name": "contributor/fork"}},
@@ -170,14 +172,32 @@ class MetadataEventsTests(unittest.TestCase):
             ("stranger", False, "pull_request_target", False),
             ("4alvit", True, "pull_request_target", False),
             ("4alvit", False, "pull_request_target", True),
-            ("dependabot[bot]", False, "pull_request", True),
-            ("dependabot[bot]", False, "pull_request_target", False),
+            ("dependabot[bot]", False, "pull_request", False),
+            ("dependabot[bot]", False, "pull_request_target", True),
         ):
             data = context(event=event)
             data["github"]["event"]["pull_request"]["user"]["login"] = author
             data["github"]["event"]["pull_request"]["draft"] = draft
             with self.subTest(author=author, draft=draft, event=event):
                 self.assertEqual(bool(evaluate(condition, data)), expected)
+
+    def test_dependabot_uses_the_default_branch_metadata_context(self):
+        for name in (CALLERS[2], CALLERS[3]):
+            condition = next(iter(definition(name)["jobs"].values()))["if"]
+            for author in ("4alvit", "californiantiramisu", "dependabot[bot]", "renovate[bot]"):
+                for same_repository in (True, False):
+                    for event in ("pull_request", "pull_request_target"):
+                        data = context(event=event)
+                        pr = data["github"]["event"]["pull_request"]
+                        pr["user"]["login"] = author
+                        pr["head"]["repo"]["full_name"] = "example/repo" if same_repository else "contributor/fork"
+                        target = author == "dependabot[bot]" or not same_repository
+                        expected = target if event == "pull_request_target" else not target
+                        with self.subTest(workflow=name, author=author, same=same_repository, event=event):
+                            self.assertEqual(bool(evaluate(condition, data)), expected)
+                            if event == "pull_request_target":
+                                pr["base"]["ref"] = "untrusted-topic"
+                                self.assertFalse(evaluate(condition, data))
 
     def test_pin_only_consumers_keep_the_replacement_job_after_metadata_edits(self):
         """An older caller can cancel the first run; its replacement must still run."""
