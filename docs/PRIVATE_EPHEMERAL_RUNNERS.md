@@ -307,6 +307,17 @@ and the exact repository variable values. Rendering performs no deployment.
 `--listener-node` places lightweight listeners independently from workers and
 defaults to `mp` for compatibility. Select a healthy node with GitHub and cluster
 API access; moving listeners does not change worker architecture or placement.
+
+The shared controller has its own placement in
+[`controller-values.yaml`](../deploy/runner-reserve/controller-values.yaml):
+it runs on the `amd64` node `h5`, independently of listeners and worker pools.
+Keep this node schedulable and monitor memory pressure. A controller pinned to
+an unavailable node cannot reconcile ephemeral runners or clean up completed
+pods. When moving it, check destination capacity and existing workloads, apply
+the same placement to the Helm release, and verify controller availability and
+runner cleanup. A direct Deployment patch alone does not persist the Helm
+configuration; do not change pool limits or worker placement as part of this move.
+
 Install foundations first, then Helm `gha-runner-scale-set` 0.15.0 with the existing
 `runner-reserve-system/victron-reserve-controller` service account. Install the
 updated node guard before creating private gVisor jobs: it explicitly recognizes
