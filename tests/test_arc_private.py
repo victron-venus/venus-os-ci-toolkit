@@ -57,6 +57,9 @@ class PrivatePoolTests(unittest.TestCase):
         self.assertEqual(len(pod['containers']), 1)
         self.assertEqual(pod['initContainers'][0]['restartPolicy'], 'Always')
         self.assertNotIn('runtimeClassName', pod)
+        boot = pod['initContainers'][0]['args'][0]
+        self.assertEqual(boot, (ROOT / 'deploy/arc-private/native-docker.sh').read_text())
+        self.assertIn('--exec-opt=native.cgroupdriver=cgroupfs --cgroup-parent="$parent"', boot)
         self.assertFalse(pod['containers'][0]['securityContext']['allowPrivilegeEscalation'])
         # Docker bind mounts resolve in the daemon container, so both processes
         # must see the same fresh workspace path and volume.

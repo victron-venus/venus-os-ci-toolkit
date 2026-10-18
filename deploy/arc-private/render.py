@@ -18,6 +18,8 @@ SPEC.loader.exec_module(RESERVE)
 PROFILES = ('ci', 'automation', 'release', 'lan', 'arm64')
 PINNED = re.compile(r'^[a-z0-9./:_-]+@sha256:[0-9a-f]{64}$')
 SCOPE = re.compile(r'^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$')
+# Embed the checked startup code; native workers have no ConfigMap dependency.
+NATIVE_DOCKER_BOOT = (ROOT / 'native-docker.sh').read_text()
 NATIVE_BOOT = '''set -euo pipefail
 umask 077
 test -n "${ACTIONS_RUNNER_INPUT_JITCONFIG:-}"
@@ -121,7 +123,7 @@ def values(row, profile, sandbox_image, native_image, node_ip, arm_node='h7'):
         spec['initContainers'] = [{
             'name': 'docker', 'restartPolicy': 'Always', 'image': native_image,
             'command': ['/bin/bash', '-c'],
-            'args': ['exec dockerd --host=unix:///docker-socket/docker.sock --group=121 --data-root=/docker-data --storage-driver=vfs'],
+            'args': [NATIVE_DOCKER_BOOT],
             'securityContext': {'privileged': True, 'runAsUser': 0, 'runAsGroup': 0},
             'resources': {'requests': {'cpu': '50m', 'memory': '512Mi', 'ephemeral-storage': '512Mi'},
                           'limits': {'cpu': '1', 'memory': '2Gi', 'ephemeral-storage': '16Gi'}},
