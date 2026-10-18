@@ -82,8 +82,21 @@ burst can otherwise create many waiting registrations, and quota protection
 does not guarantee a particular queue order or waiting time. Include a real
 quota-wait-and-recovery check when changing capacity policy.
 
+A standard CI worker requests 900m CPU and has a 4-CPU limit. The RuntimeClass
+adds 100m CPU per pod, so two standard workers account for exactly the namespace's
+2-CPU request budget and 8.2-CPU limit budget. The higher request gives CI a larger
+relative CPU share when the node is busy; the limit alone does not reserve CPU.
+This accounting leaves the existing two-worker capacity intact, but does not
+guarantee execution speed or that the node has enough unallocated capacity.
+Automation, release and native profiles keep their separate resource budgets.
+After changing requests, qualify one cold worker before expanding the rollout
+and repeat the quota-wait-and-recovery check. See Kubernetes documentation on
+[requests and limits](https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/)
+and [pod overhead](https://kubernetes.io/docs/concepts/scheduling-eviction/pod-overhead/).
+
 Large build suites can declare `ci_resource_class: "heavy"` in the private
-inventory. This reserves 13 GiB and limits the worker to 16 GiB, covering a former
+inventory. This requests 1500m CPU (1600m including runtime overhead), reserves
+13 GiB and limits the worker to 16 GiB, covering a former
 large runner plus Docker sidecar in one sandbox. The shared CI namespace permits
 one heavy worker or two standard workers, never a mixture while the heavy worker
 is present. Node scheduling must still have the requested memory and CPU free;
