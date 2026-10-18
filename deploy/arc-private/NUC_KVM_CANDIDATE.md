@@ -169,10 +169,15 @@ The common worker bootstrap makes at most 60 admission requests, retaining its
 two-second connect deadline, three-second request deadline and two-second pause
 between failed attempts. Only a successful verified-TLS response containing the
 literal JSON boolean `"admitted": true` permits startup. Transport failures skip
-JSON parsing; invalid responses and denials remain failures. Diagnostics report
-only a bounded attempt count and sanitized failure category. A bootstrap source
-fix takes effect only after rebuilding, qualifying and pinning its worker image;
-merging this source does not update already installed images.
+JSON parsing; invalid responses and denials remain failures. The response is
+limited to 64 KiB by curl and independently by the parser's bounded read. The
+worker image must retain curl 8.4 or newer so the download limit also applies
+when the server omits the response length; see the
+[curl size-limit contract](https://curl.se/docs/manpage.html#--max-filesize).
+Diagnostics report only a bounded attempt count, sanitized failure category and
+numeric curl exit status. A bootstrap source fix takes effect only after
+rebuilding, qualifying and pinning its worker image; merging this source does
+not update already installed images.
 
 ## Admission, review and rollout boundary
 

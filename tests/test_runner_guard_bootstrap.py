@@ -77,6 +77,7 @@ sys.exit(outcome['code'])
                 self.assertNotIn("-k", args)
                 self.assertEqual(args[args.index("--connect-timeout") + 1], "2")
                 self.assertEqual(args[args.index("--max-time") + 1], "3")
+                self.assertEqual(args[args.index("--max-filesize") + 1], "65536")
                 self.assertEqual(args[args.index("--cacert") + 1], "/opt/victron-ci-reserve/guard-ca.crt")
                 self.assertEqual(args[-1], "https://192.0.2.10:19999/ready/synthetic-private-pod-uid")
             self.assertEqual(result.stdout, "")
@@ -85,7 +86,7 @@ sys.exit(outcome['code'])
             return result, len(requests), len(parses), sleeps, started
 
     def test_transport_http_and_tls_failures_never_parse_or_start(self):
-        for code in (7, 22, 60):
+        for code in (7, 22, 60, 63):
             with self.subTest(curl_exit=code):
                 result, requests, parses, sleeps, started = self.run_admission(
                     [(code, b'{"admitted":true,"secret":"private-body-marker"}')])
@@ -93,7 +94,7 @@ sys.exit(outcome['code'])
                 self.assertEqual((requests, parses, started), (60, 0, False))
                 self.assertEqual(sleeps, ["2"] * 59)
                 self.assertEqual(len(result.stderr.splitlines()), 7)
-                self.assertIn("after 60 attempts (request-failed)", result.stderr)
+                self.assertIn(f"after 60 attempts (request-failed-curl-{code})", result.stderr)
 
     def test_only_literal_true_admits_and_invalid_payloads_can_recover(self):
         rejected = [b"", b"private-body-marker", b"\xff", b"[]", b"null", b"true",
@@ -111,6 +112,24 @@ sys.exit(outcome['code'])
         result, requests, parses, sleeps, started = self.run_admission([(0, b'{"admitted":true}')])
         self.assertEqual(result.returncode, 0)
         self.assertEqual((requests, parses, sleeps, started), (1, 1, [], True))
+
+    def test_response_size_boundary_and_independent_parser_limit(self):
+        accepted = b'{"admitted":true}'.ljust(65536)
+        result, requests, parses, sleeps, started = self.run_admission([(0, accepted)])
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual((requests, parses, sleeps, started), (1, 1, [], True))
+        # The stub deliberately ignores curl's size limit. The parser must reject
+        # oversized but otherwise valid JSON and still remove its response file.
+        result, requests, parses, sleeps, started = self.run_admission([(0, accepted + b" ")])
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual((requests, parses, started), (60, 60, False))
+        self.assertEqual(sleeps, ["2"] * 59)
+        self.assertEqual(len(result.stderr.splitlines()), 7)
+        self.assertIn("after 60 attempts (invalid-response)", result.stderr)
+        result, requests, parses, sleeps, started = self.run_admission(
+            [(0, accepted + b" "), (0, b'{"admitted":true}')])
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual((requests, parses, sleeps, started), (2, 2, ["2"], True))
 
     def test_denial_exhausts_budget_without_startup(self):
         result, requests, parses, sleeps, started = self.run_admission([(0, b'{"admitted":false}')])

@@ -14,14 +14,16 @@ wait_for_guard() (
   trap 'rm -f -- "$response"' EXIT
   printf '%s\n' 'Waiting for node guard admission (up to 60 attempts).' >&2
   for attempt in {1..60}; do
-    status=request-failed
-    if curl --fail --silent --connect-timeout 2 --max-time 3 \
+    if curl --fail --silent --connect-timeout 2 --max-time 3 --max-filesize 65536 \
         --cacert /opt/victron-ci-reserve/guard-ca.crt --output "$response" \
         "https://${RUNNER_RESERVE_NODE_IP}:19999/ready/${RUNNER_RESERVE_POD_UID}"; then
       if python3 -I -c '
 import json, sys
 try:
-    response = json.load(sys.stdin)
+    raw = sys.stdin.buffer.read(65537)
+    if len(raw) > 65536:
+        sys.exit(2)
+    response = json.loads(raw)
 except (ValueError, UnicodeError, RecursionError, OSError):
     sys.exit(2)
 if not isinstance(response, dict):
@@ -37,6 +39,8 @@ sys.exit(0 if response.get("admitted") is True else 1)
           *) status=parser-failed ;;
         esac
       fi
+    else
+      status="request-failed-curl-$?"
     fi
     if [[ "$attempt" == 60 ]]; then
       printf 'Node guard admission failed after 60 attempts (%s).\n' "$status" >&2
