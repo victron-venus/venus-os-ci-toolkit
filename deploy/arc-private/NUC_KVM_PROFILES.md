@@ -78,14 +78,47 @@ scheduler does not prove sufficient throughput; application deadlines remain
 unchanged. Namespace quotas and `maxRunners: 1` alone do not serialize workers
 across namespaces.
 
+Before qualification, read all ResourceQuota and LimitRange objects in each
+affected namespace, including quota `spec.hard`, `status.hard`, `status.used`,
+and any scopes. The admission evaluator uses `status.hard`; wait for it to
+converge to the reviewed `spec.hard` before computing admission headroom,
+especially after a quota update.
+Overlapping quotas all apply; adding another quota does not lift a smaller
+existing budget. The rendered sandbox quota is named
+`reserve-budget`; verify the actual target name from a fresh live snapshot.
+Account for existing requests and limits usage, RuntimeClass overhead, and all
+other quota dimensions before assuming that a worker can be admitted. A
+`Pending` Pod already consumes quota.
+
+The observed automation `requests.memory` quota of 3 GiB cannot admit a worker
+requesting 5 GiB plus 128 MiB overhead (5248 MiB). Its memory limit also consumes
+6 GiB plus 128 MiB (6272 MiB) of the namespace limit budget. The renderer emits a
+6 GiB automation request quota only when the inventory selects
+`automation_storage: tmpfs-3gi`; rendering does not update the live quota.
+
+Treat the necessary quota change as a separate reviewed JSON Patch. From the
+fresh snapshot, include `test` operations for `/metadata/uid`,
+`/metadata/resourceVersion`, and the complete old `/spec/hard` object, followed
+by a single `replace` of `/spec/hard/requests.memory` from `3Gi` to `6Gi`.
+Preserve every other budget. If any precondition fails, take a new snapshot and
+review it again; do not discard the tests. Never apply all of `foundations.json`
+to make this one-field change. Admission still requires sufficient unused
+requests and limits capacity after the change.
+
 ## Scheduling and isolation
 
 Selected workers share `private-runners.github.io/serial-domain: nuc-kvm` and a
 required Pod anti-affinity rule. The rule uses an empty `namespaceSelector` to
 cover all namespaces and the `kubernetes.io/hostname` topology key. The admission
-contract requires this exact rule, its label, and the default scheduler. A
-second worker stays Pending until the first leaves the node; it is not assigned
-a new execution node or a broader runner label.
+contract requires this exact rule, its label, and the default scheduler.
+
+Quota admission happens before scheduling. With the 2 CPU request quota in the
+CI namespace, two CI workers would request `2 * (1250m + 100m) = 2700m`. A
+second same-namespace CI worker therefore receives an API quota rejection and
+must wait for a later creation retry; there is no second Pod to remain Pending.
+An admitted second worker in another selected namespace remains Pending under
+the required anti-affinity until the first leaves the node. Neither path
+assigns a new execution node or a broader runner label.
 
 The global NUC admission policy binds each allowed repository, namespace,
 profile, resource tuple and bootstrap environment together. A heavy worker
@@ -117,20 +150,32 @@ slot; establish that its runtime and temporary storage are gone first.
 1. Review the complete desired state, immutable source/image pins, available
    capacity, guard TLS identity, existing RuntimeClass aliases and namespace
    permissions. Drain old NUC workers that lack the new serialization rule.
-2. Test generated admission rules on the actual Kubernetes version. Positive
+2. Complete the quota preflight above for every selected namespace, using fresh
+   `spec.hard`, `status.hard` and `status.used` values. If the automation quota still allows
+   only 3 GiB of memory requests, stop before creating its worker. Review the
+   guarded one-field quota patch separately, preserving other budgets; after
+   an authorized update, wait for `status.hard` to match the reviewed `spec.hard`,
+   read current usage again, and recompute remaining capacity.
+   Do not apply the complete foundations bundle to resolve a quota mismatch.
+3. Test generated admission rules on the actual Kubernetes version. Positive
    tests must include legitimate pending and bound Pod status updates and
    scheduler bindings. Negative tests must include cross-profile resource
    substitution, label edits through `/status`, preassigned nodes, alternate
    schedulers, both direct-binding endpoints, and weakened anti-affinity.
    Rejection for a missing RuntimeClass is not proof of the intended rule.
-3. Prove the node guard, network isolation, nested Docker, and actual application
+4. Prove the node guard, network isolation, nested Docker, and actual application
    workload under each selected resource contract. Include cold downloads and
    image extraction, not just an already warm BusyBox test. A standard CI result
    does not qualify heavy CI or automation.
-4. With controlled synthetic workers, verify both scheduling orders across
-   profile namespaces: the second remains Pending, then starts after the first
-   is fully removed. Record actual Pod identity, node, image and runtime.
-5. Activate only the reviewed scale sets. Existing queued jobs can claim a new
+5. With controlled synthetic workers, verify both scheduling orders across
+   profile namespaces, after checking quota headroom for each: the admitted
+   second Pod remains Pending because of anti-affinity, then starts after the
+   first runtime and Pod are fully removed. Separately verify that a second
+   same-namespace CI creation is quota-rejected while the first exists, then
+   succeeds on retry after quota is released. Distinguish API creation errors
+   from scheduler Pending events. Record actual Pod identity, node, image and
+   runtime for each admitted worker.
+6. Activate only the reviewed scale sets. Existing queued jobs can claim a new
    worker immediately; dispatching a smoke first does not reserve capacity.
    Record run/attempt/head, runner and Pod UID, complete unchanged application
    checks, and verify Pod, registration, JIT Secret, sandbox and scratch cleanup.

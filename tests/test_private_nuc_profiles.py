@@ -1,5 +1,6 @@
 """Offline multi-profile output contracts, not a Kubernetes CEL evaluator."""
 import copy
+from decimal import Decimal
 import importlib.util
 import json
 from pathlib import Path
@@ -67,6 +68,30 @@ def policy(documents, suffix):
                 and item['metadata']['name'] == arc.NUC_RUNTIME + suffix)
 
 
+def quantity(value):
+    """Convert the renderer's fixed units for quota arithmetic, not arbitrary K8s input."""
+    for unit, scale in (('Gi', 1024 ** 3), ('Mi', 1024 ** 2), ('m', Decimal('0.001'))):
+        if value.endswith(unit):
+            return Decimal(value[:-len(unit)]) * scale
+    return Decimal(value)
+
+
+def quota_charge(documents, target):
+    resources = worker(documents, target)['template']['spec']['containers'][0]['resources']
+    runtime = next(item for item in documents['foundations.json']['items']
+                   if item['kind'] == 'RuntimeClass' and item['metadata']['name'] == arc.NUC_RUNTIME)
+    overhead = runtime['overhead']['podFixed']
+    return {'pods': Decimal(1), **{
+        category + '.' + resource: quantity(amount) + quantity(overhead.get(resource, '0'))
+        for category, values in resources.items() for resource, amount in values.items()}}
+
+
+def namespace_budget(documents, profile):
+    return next(item['spec']['hard'] for item in documents['foundations.json']['items']
+                if item['kind'] == 'ResourceQuota'
+                and item['metadata']['namespace'] == 'arc-private-' + profile)
+
+
 def split_top_level(expression, operator):
     """Inspect emitted grouping only; do not claim to execute CEL semantics."""
     brackets, quote, escaped, start, parts = [], None, False, 0, []
@@ -109,6 +134,39 @@ def selected_scopes(selector):
 
 
 class NucProfileOutputTests(unittest.TestCase):
+    def test_selected_profiles_fit_quota_only_after_the_reviewed_automation_delta(self):
+        documents = render(plan())
+        for target in TARGETS:
+            with self.subTest(target=target):
+                budget = namespace_budget(documents, target[1])
+                for resource, charge in quota_charge(documents, target).items():
+                    self.assertLessEqual(charge, quantity(budget[resource]), resource)
+        previous_rows = copy.deepcopy(ROWS)
+        previous_rows[1].pop('automation_storage')
+        previous = namespace_budget(render(None, previous_rows), 'automation')
+        proposed = namespace_budget(documents, 'automation')
+        self.assertEqual(previous['requests.memory'], '3Gi')
+        self.assertEqual(proposed['requests.memory'], '6Gi')
+        self.assertEqual({key for key in previous if previous[key] != proposed[key]}, {'requests.memory'})
+        charge = quota_charge(documents, TARGETS[2])
+        self.assertEqual(charge['requests.memory'], quantity('5248Mi'))
+        self.assertEqual(charge['limits.memory'], quantity('6272Mi'))
+        self.assertGreater(charge['requests.memory'], quantity(previous['requests.memory']))
+
+    def test_same_namespace_quota_denial_is_distinct_from_cross_namespace_scheduling(self):
+        documents = render(plan())
+        standard, heavy, automation = [quota_charge(documents, target) for target in TARGETS]
+        ci = namespace_budget(documents, 'ci')
+        auto = namespace_budget(documents, 'automation')
+        self.assertEqual(standard['requests.cpu'] + heavy['requests.cpu'], Decimal('2.7'))
+        self.assertGreater(2 * standard['requests.cpu'], quantity(ci['requests.cpu']))
+        self.assertGreater(2 * automation['requests.memory'], quantity(auto['requests.memory']))
+        # Cross-namespace quota is independent: admission can pass for both.
+        # Their actual Pending reason still requires live scheduler evidence.
+        for charge, budget in ((standard, ci), (automation, auto)):
+            for resource, amount in charge.items():
+                self.assertLessEqual(amount, quantity(budget[resource]))
+
     def test_complete_plan_changes_only_three_workers_and_foundations(self):
         original, candidate = render(None), render(plan())
         self.assertEqual(set(original), set(candidate))
