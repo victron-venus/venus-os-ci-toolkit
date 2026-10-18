@@ -297,6 +297,7 @@ def build_flags():
     return ["--config=x86_64", "-c", "opt", "--jobs=2", "--local_resources=cpu=3",
             "--local_resources=memory=8000", "--spawn_strategy=processwrapper-sandbox",
             "--strategy=Genrule=processwrapper-sandbox", "--repository_cache=/build/repository-cache",
+            "--repo_env=TMPDIR=/build/tmp",
             "--symlink_prefix=/build/links/", "--lockfile_mode=update", "--color=no", "--curses=no"]
 
 
@@ -307,8 +308,12 @@ def inside():
     for name in ("home", "links", "output"):
         (build / name).mkdir(exist_ok=True)
     output = build / "output"
+    temporary = build / "tmp"
+    temporary.mkdir(mode=0o700)  # Fresh owned directory; reject existing paths/symlinks.
     env = clean_env(build / "home")
     env["GOMAXPROCS"] = "2"
+    # Gazelle preserves TMPDIR; Bazel also uses the client value for local actions.
+    env["TMPDIR"] = str(temporary)
     sup = Supervisor(env, [source, build])
     before = sup.run(["git", "rev-parse", "HEAD^{tree}"], cwd=source, capture=True)
     require(sup.run(["git", "describe", "--exact-match", "--tags", "HEAD"],
