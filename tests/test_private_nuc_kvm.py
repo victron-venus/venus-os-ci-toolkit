@@ -61,6 +61,8 @@ def identity_expression(expression, context):
                 return left != right
             if isinstance(node.ops[0], ast.In):
                 return left in right
+            if isinstance(node.ops[0], ast.LtE):
+                return left <= right
         if isinstance(node, ast.Call):
             if isinstance(node.func, ast.Name) and len(node.args) == 1:
                 if node.func.id == 'size':
@@ -78,7 +80,8 @@ def identity_expression(expression, context):
                 if node.func.attr == 'all' and isinstance(node.args[0], ast.Name):
                     return all(visit(node.args[1], {**values, node.args[0].id: item}) for item in receiver)
                 if node.func.attr == 'filter' and isinstance(node.args[0], ast.Name):
-                    return [item for item in receiver if visit(node.args[1], {**values, node.args[0].id: item})]
+                    return [item for item in receiver
+                            if visit(node.args[1], {**values, node.args[0].id: item})]
                 if node.func.attr == 'startsWith':
                     return receiver.startswith(visit(node.args[0], values))
         raise AssertionError('Unsupported identity expression syntax: ' + ast.dump(node))
@@ -221,7 +224,9 @@ class NucKvmTests(unittest.TestCase):
         documents = render()
         expected = documents[arc.name(ROW['name'], 'ci') + '.json']['template']['spec']['containers'][0]['env']
         expression = arc.nuc_environment_validation(expected)
-        names = [e['name'] for e in expected] + ['ACTIONS_RUNNER_INPUT_JITCONFIG']
+        names = [e['name'] for e in expected] + [
+            'ACTIONS_RUNNER_INPUT_JITCONFIG', 'GITHUB_ACTIONS_RUNNER_EXTRA_USER_AGENT',
+            'ACTIONS_RUNNER_RETURN_VERSION_DEPRECATED_EXIT_CODE']
         self.assertIn('c.env.all(e, e.name in ' + json.dumps(names) + ')', expression)
         for env in expected:
             self.assertIn('size(c.env.filter(e, e.name == ' + json.dumps(env['name']) + ')) == 1', expression)
@@ -233,6 +238,46 @@ class NucKvmTests(unittest.TestCase):
         self.assertIn("dyn(e.valueFrom.resourceFieldRef).divisor == '1'", expression)
         for forbidden in ['LD_PRELOAD', 'HTTPS_PROXY', 'RUNNER_RESERVE_QUALIFICATION']:
             self.assertNotIn(forbidden, names)
+
+    def test_arc_generated_environment_preserves_exact_bootstrap_and_metadata(self):
+        documents = render()
+        authored = documents[arc.name(ROW['name'], 'ci') + '.json']['template']['spec']['containers'][0]['env']
+        expression = arc.nuc_environment_validation(authored)
+
+        def allowed(env):
+            return identity_expression(expression, {'object': {'spec': {'containers': [{'env': env}]}}})
+
+        # Pinned ARC 0.15.0 resourcebuilder appends these three fields; its only
+        # optional caller inputs are proxy envs, absent in this candidate.
+        metadata = [
+            {'name': 'GITHUB_ACTIONS_RUNNER_EXTRA_USER_AGENT', 'value': 'actions-runner-controller/0.15.0'},
+            {'name': 'ACTIONS_RUNNER_RETURN_VERSION_DEPRECATED_EXIT_CODE', 'value': '1'},
+        ]
+        jit = {'name': 'ACTIONS_RUNNER_INPUT_JITCONFIG', 'valueFrom': {
+            'secretKeyRef': {'name': 'fixture-runner', 'key': 'jitToken'}}}
+        generated = copy.deepcopy(authored) + [jit] + metadata
+        for env in generated:
+            if 'fieldRef' in env.get('valueFrom', {}):
+                env['valueFrom']['fieldRef']['apiVersion'] = 'v1'
+        self.assertTrue(allowed(authored))
+        self.assertTrue(allowed(generated))
+        for item in metadata:
+            for replacement in [dict(item, value='unexpected'),
+                                {'name': item['name'], 'valueFrom': {'fieldRef': {'fieldPath': 'metadata.name'}}},
+                                dict(item, valueFrom={'fieldRef': {'fieldPath': 'metadata.name'}})]:
+                with self.subTest(name=item['name'], replacement=replacement):
+                    self.assertFalse(allowed([replacement if e['name'] == item['name'] else e
+                                              for e in generated]))
+            self.assertFalse(allowed(generated + [dict(item)]))
+        for name in ['http_proxy', 'https_proxy', 'no_proxy', 'HTTPS_PROXY', 'LD_PRELOAD',
+                     'RUNNER_RESERVE_QUALIFICATION']:
+            self.assertFalse(allowed(generated + [{'name': name, 'value': 'unexpected'}]))
+        for item in authored:
+            with self.subTest(required=item['name']):
+                self.assertFalse(allowed([e for e in generated if e['name'] != item['name']]))
+                self.assertFalse(allowed(generated + [copy.deepcopy(item)]))
+                replacement = {'name': item['name'], 'value': 'unexpected'}
+                self.assertFalse(allowed([replacement if e['name'] == item['name'] else e for e in generated]))
 
     def identity_policy(self):
         documents = render()
@@ -339,6 +384,24 @@ class NucKvmTests(unittest.TestCase):
         self.assertEqual(new['spec']['egress'], old_egress)
         self.assertEqual(new['spec']['ingress'], [])
 
+    def test_pod_overhead_uses_dynamic_parent_and_exact_runtime_bounds(self):
+        _, _, rules = self.identity_policy()
+        expression = rules['NUC worker overhead must match its RuntimeClass']
+        # Kubernetes 1.31's Pod schema omits overhead: cast before field access,
+        # including has(), rather than casting an already statically read field.
+        self.assertIn('has(dyn(object.spec).overhead)', expression)
+        self.assertNotIn('object.spec.overhead', expression)
+        self.assertTrue(identity_expression(expression, {
+            'object': {'spec': {'overhead': {'cpu': '100m', 'memory': '128Mi'}}}}))
+        for spec in [{}, {'overhead': None}, {'overhead': {}},
+                     {'overhead': {'cpu': '100m', 'memory': '256Mi'}},
+                     {'overhead': {'cpu': '200m', 'memory': '128Mi'}},
+                     {'overhead': {'cpu': '100m', 'memory': '128Mi', 'pods': '1'}},
+                     {'overhead': {'cpu': 100, 'memory': '128Mi'}},
+                     {'overhead': '100m/128Mi'}]:
+            with self.subTest(spec=spec):
+                self.assertFalse(identity_expression(expression, {'object': {'spec': spec}}))
+
     def test_runtime_alias_guard_and_fixed_capacity(self):
         items = render()['foundations.json']['items']
         runtime = next(x for x in items if x['kind'] == 'RuntimeClass')
@@ -356,6 +419,27 @@ class NucKvmTests(unittest.TestCase):
         self.assertEqual(quota['requests.cpu'], '2000m')
         self.assertLessEqual(1250 + 100, 2000)
         self.assertGreater(2 * (1250 + 100), 2000)
+
+    def test_class_overhead_uses_dynamic_parent_and_rejects_missing_or_wrong_bounds(self):
+        items = render()['foundations.json']['items']
+        runtime = next(x for x in items if x['kind'] == 'RuntimeClass')
+        guard = next(x for x in items if x['kind'] == 'ValidatingAdmissionPolicy'
+                     and x['metadata']['name'] == arc.NUC_RUNTIME + '-class')
+        expression = guard['spec']['validations'][0]['expression']
+        self.assertIn('has(dyn(object.overhead).podFixed)', expression)
+        self.assertNotIn('object.overhead.podFixed', expression)
+        self.assertTrue(identity_expression(expression, {'object': runtime}))
+        for overhead in [None, {}, {'podFixed': None}, {'podFixed': {}},
+                         {'podFixed': {'cpu': '200m', 'memory': '128Mi'}},
+                         {'podFixed': {'cpu': '100m', 'memory': '256Mi'}},
+                         {'podFixed': {'cpu': '100m', 'memory': '128Mi', 'pods': '1'}}]:
+            with self.subTest(overhead=overhead):
+                bad = copy.deepcopy(runtime)
+                if overhead is None:
+                    del bad['overhead']
+                else:
+                    bad['overhead'] = overhead
+                self.assertFalse(identity_expression(expression, {'object': bad}))
 
     def test_host_assets_select_complete_versioned_bundle_and_reuse_guard(self):
         directory = ROOT / 'deploy/arc-private'
