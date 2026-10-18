@@ -128,14 +128,15 @@ After importing a verified OCI archive, or exporting a build directly into the
 node's `k8s.io` containerd namespace, create and label both references:
 
 ```sh
+set -eu
 # Obtain this digest from the verified image manifest/build metadata,
 # not from the checksum of the archive file.
 SANDBOX_TAG=localhost/private-sandbox:VERSION
 SANDBOX_REF=localhost/private-sandbox@sha256:DIGEST
 
 # Archive recovery only; skip when the build is already in this content store.
-(cd /private/operator && sha256sum --check sandbox.oci.tar.sha256)
-sudo k3s ctr -n k8s.io images import /private/operator/sandbox.oci.tar
+(cd /private/operator && sha256sum --check sandbox.oci.tar.sha256) &&
+  sudo k3s ctr -n k8s.io images import /private/operator/sandbox.oci.tar
 sudo k3s ctr -n k8s.io images tag "$SANDBOX_TAG" "$SANDBOX_REF"
 for SANDBOX_IMAGE in "$SANDBOX_TAG" "$SANDBOX_REF"; do
   sudo k3s ctr -n k8s.io images label "$SANDBOX_IMAGE" \
