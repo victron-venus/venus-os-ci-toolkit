@@ -72,6 +72,16 @@ through explicit artifacts or caches, not a shared workspace/PVC. Each pool has
 queue when node capacity is exhausted. A four-hour pod deadline bounds stranded
 workers; workflows should also set suitable job timeouts.
 
+ARC 0.15 handles an API `exceeded quota:` response by retrying pod creation
+after 30 seconds, without counting it as a failed worker. After ten minutes it
+recreates the waiting ephemeral registration before its JIT configuration
+expires. This is separate from its retry limit for workers that actually crash.
+See the [versioned controller implementation](https://github.com/actions/actions-runner-controller/blob/gha-runner-scale-set-0.15.0/controllers/actions.github.com/ephemeralrunner_controller.go).
+Install and qualify one pool first, then expand in bounded batches: a fleet-wide
+burst can otherwise create many waiting registrations, and quota protection
+does not guarantee a particular queue order or waiting time. Include a real
+quota-wait-and-recovery check when changing capacity policy.
+
 Large build suites can declare `ci_resource_class: "heavy"` in the private
 inventory. This reserves 13 GiB and limits the worker to 16 GiB, covering a former
 large runner plus Docker sidecar in one sandbox. The shared CI namespace permits
