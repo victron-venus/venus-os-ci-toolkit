@@ -19,6 +19,47 @@ from runner_selection import ACTIVE_WORKFLOWS, render_consumer, render_workflows
 
 
 class RunnerSelectionTests(unittest.TestCase):
+    def test_budget_expression_does_not_allocate_hosted_or_untrusted_reserve(self):
+        # Execute the generated expression: these fixed boolean/string fixtures
+        # use the same &&, ||, == and JSON semantics in Actions and JavaScript.
+        expression = runner_labels(hosted_budget=True).removeprefix("${{ ").removesuffix(" }}")
+        javascript = """
+const p = JSON.parse(process.argv[1]);
+const evaluate = new Function('github', 'vars', 'fromJSON', 'toJSON', 'contains', 'format', 'inputs', 'return ' + p.expression);
+console.log(JSON.stringify(evaluate(p.github, p.vars, JSON.parse, JSON.stringify,
+  (values, value) => values.includes(value), (s, value) => s.replace('{0}', value), p.inputs)));
+"""
+        variables = {"CI_HOSTED_RUNNERS_ENABLED": "false", "CI_RUNNER_MODE": "self-hosted",
+                     "CI_RUNNER_LABELS": '["reviewed-ci"]'}
+        github = {"event_name": "workflow_dispatch", "ref": "refs/heads/reviewed-branch",
+                  "repository": "owner/project", "event": {"repository": {"private": True, "default_branch": "main"},
+                  "pull_request": {"head": {"repo": {"full_name": "owner/project"}}}}}
+
+        def selected(event, values, runner=None):
+            evaluated = expression if runner is None else runner_labels(
+                explicit_input="runner", scalar=True, hosted_budget=True).removeprefix("${{ ").removesuffix(" }}")
+            result = subprocess.run(["node", "-e", javascript, json.dumps({
+                "expression": evaluated, "github": event, "vars": values, "inputs": {"runner": runner}})],
+                capture_output=True, text=True, check=True)
+            return json.loads(result.stdout)
+
+        self.assertEqual(selected(github, variables), ["reviewed-ci"])
+        for changed in ({"CI_RUNNER_LABELS": ""}, {"CI_RUNNER_MODE": "github"}):
+            self.assertEqual(selected(github, variables | changed), [])
+        public = github | {"event": github["event"] | {"repository": {"private": False, "default_branch": "main"}}}
+        self.assertEqual(selected(public, variables), [])
+        self.assertEqual(selected(public | {"ref": "refs/heads/main"}, variables), ["reviewed-ci"])
+        fork = github | {"event_name": "pull_request", "event": github["event"] | {
+            "pull_request": {"head": {"repo": {"full_name": "other/fork"}}}}}
+        self.assertEqual(selected(fork, variables), [])
+        self.assertEqual(selected(github | {"event_name": "pull_request_target"}, variables), [])
+        for runner in ("windows-2022", "macos-15", "ubuntu-24.04", "reviewed-ci"):
+            self.assertEqual(selected(github, variables, runner), ["reviewed-ci"])
+            self.assertEqual(selected(fork, variables, runner), [])
+            self.assertEqual(selected(github, variables | {"CI_RUNNER_LABELS": ""}, runner), [])
+        for enabled in ("", "true"):
+            self.assertEqual(selected(github, variables | {"CI_HOSTED_RUNNERS_ENABLED": enabled}), ["ubuntu-latest"])
+
     def test_shared_workflows_and_nested_classifier_use_canonical_routing(self):
         for path, expected in render_workflows().items():
             self.assertEqual(path.read_text(), expected, path.name)
@@ -29,7 +70,7 @@ class RunnerSelectionTests(unittest.TestCase):
                 elif job.get("uses") == "./.github/workflows/change-scope.yml":
                     self.assertNotIn("runner", job.get("with", {}))
         classifier = yaml.load((ROOT / ".github/workflows/change-scope.yml").read_text(), Loader=yaml.BaseLoader)
-        self.assertEqual(classifier["jobs"]["scope"]["runs-on"], runner_labels(explicit_input="runner", scalar=True))
+        self.assertEqual(classifier["jobs"]["scope"]["runs-on"], runner_labels(explicit_input="runner", scalar=True, hosted_budget=True))
         self.assertNotIn("deploy", ACTIVE_WORKFLOWS)
 
     def test_no_checkout_in_metadata_jobs(self):

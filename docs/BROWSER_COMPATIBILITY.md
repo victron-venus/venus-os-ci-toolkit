@@ -106,6 +106,40 @@ selected target IDs. This accepts only the selected Linux subset; it does not
 establish fixed Ubuntu, Windows or macOS coverage.
 Any nonempty `browser-release-channel` requires `all` and rejects `linux`.
 
+### When hosted runner minutes are unavailable
+
+Set the repository or organization Actions variable
+`CI_HOSTED_RUNNERS_ENABLED=false` alongside the existing
+`CI_RUNNER_MODE=self-hosted` (or `k3s`) and nonempty JSON `CI_RUNNER_LABELS`.
+This is an explicit compute-budget policy, not an automatic reaction to a failed
+test. Leave the variable unset or set it to `true` to retain the normal matrix.
+
+The shared TypeScript workflow and nested change-scope planner select the existing
+reserve before scheduling jobs. The browser planner selects only compatible
+`ubuntu-latest` inventory rows; fixed Ubuntu, Windows and macOS targets are listed
+as skipped without creating hosted jobs. No target is renamed to another OS.
+A trusted private repository's manual branch dispatch may use its configured
+reserve in this mode. Public non-default branches, forks and PR-target events do
+not gain reserve access. Missing or ineligible reserve configuration produces an
+empty runner selection and fails workflow configuration before allocation; it
+never falls back to hosted compute or produces a successful all-skipped run.
+
+The reusable `browser-coverage` output and **Verify selected browser scope** job
+record selected target IDs, omitted targets and reasons. The gate requires every
+selected browser job to succeed. Callers should retain that output in their
+aggregate summary rather than describing the reduced run as full platform coverage.
+Ordinary release testing can use the same policy: the complete release inventory
+is still validated, while only supported Linux tests run. The resulting release
+test receipt says `platformCoverage: reduced-linux` and
+`fullPlatformQualified: false`. This does not create missing Windows/macOS build
+artifacts or satisfy a separate contract that requires those artifacts.
+
+Existing consumers pinned to older SHAs need one reviewed pin update. Consumers
+using generated caller-local workflows must regenerate them with
+`scripts/vendor_workflows.py`; subsequent budget changes need only the variable.
+This policy covers this reusable workflow and its planner, not unrelated local
+jobs or independent release workflows.
+
 A private consumer that runs Linux on self-hosted workers can select `linux`
 using the same trusted-event and runner-mode condition as its runner routing,
 and select `all` when using GitHub-hosted runners. Keep all selected browser jobs
