@@ -347,6 +347,7 @@
   "tests/test_renovate_signing.py",
   "tests/test_reserve_adoption.py",
   "tests/test_reusable_change_scope.py",
+  "tests/test_runner_guard_bootstrap.py",
   "tests/test_runner_mode.py",
   "tests/test_runner_preflight.py",
   "tests/test_runner_selection.py",

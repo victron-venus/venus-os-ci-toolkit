@@ -202,7 +202,14 @@ slot; establish that its runtime and temporary storage are gone first.
 4. Prove the node guard, network isolation, nested Docker, and actual application
    workload under each selected resource contract. Include cold downloads and
    image extraction, not just an already warm BusyBox test. A standard CI result
-   does not qualify heavy CI or automation.
+   does not qualify heavy CI or automation. Follow the
+   [guard lifecycle review](NUC_KVM_CANDIDATE.md#guard-lifecycle-qualification-and-persistent-standby):
+   inert installation remains disabled; accepted persistent standby requires an
+   explicit owner decision and enablement of the unchanged active unit, without
+   `--now` or a restart. Verify its boot link and unchanged process identity.
+   A negative TLS readiness probe alone does not establish fresh reconciliation
+   or firewall ownership, and a source-only bootstrap fix does not replace an
+   already installed worker image.
 5. With controlled synthetic workers, verify both scheduling orders across
    profile namespaces, after checking quota headroom for each: the admitted
    second Pod remains Pending because of anti-affinity, then starts after the

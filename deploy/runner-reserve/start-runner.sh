@@ -8,16 +8,51 @@ umask 077
 [[ -n "${ACTIONS_RUNNER_INPUT_JITCONFIG:-}" || "${RUNNER_RESERVE_QUALIFICATION:-}" == 1 ]]
 [[ ! -e /home/runner/.runner ]]
 # The node must acknowledge this exact pod after committing its network fence.
-for attempt in {1..60}; do
-  if curl --fail --silent --connect-timeout 2 --max-time 3 \
-      --cacert /opt/victron-ci-reserve/guard-ca.crt \
-      "https://${RUNNER_RESERVE_NODE_IP}:19999/ready/${RUNNER_RESERVE_POD_UID}" |
-      python3 -c 'import json,sys; assert json.load(sys.stdin)["admitted"] is True'; then
-    break
-  fi
-  [[ "$attempt" != 60 ]] || exit 1
-  sleep 2
-done
+wait_for_guard() (
+  # Preserve response bytes (including invalid NULs) without exposing them in logs.
+  response=$(mktemp 2>/dev/null) || { printf '%s\n' 'Node guard response storage unavailable.' >&2; exit 1; }
+  trap 'rm -f -- "$response"' EXIT
+  printf '%s\n' 'Waiting for node guard admission (up to 60 attempts).' >&2
+  for attempt in {1..60}; do
+    if curl --fail --silent --connect-timeout 2 --max-time 3 --max-filesize 65536 \
+        --cacert /opt/victron-ci-reserve/guard-ca.crt --output "$response" \
+        "https://${RUNNER_RESERVE_NODE_IP}:19999/ready/${RUNNER_RESERVE_POD_UID}"; then
+      if python3 -I -c '
+import json, sys
+try:
+    raw = sys.stdin.buffer.read(65537)
+    if len(raw) > 65536:
+        sys.exit(2)
+    response = json.loads(raw)
+except (ValueError, UnicodeError, RecursionError, OSError):
+    sys.exit(2)
+if not isinstance(response, dict):
+    sys.exit(2)
+sys.exit(0 if response.get("admitted") is True else 1)
+' < "$response" 2>/dev/null; then
+        printf 'Node guard admitted worker on attempt %s.\n' "$attempt" >&2
+        exit 0
+      else
+        case "$?" in
+          1) status=not-admitted ;;
+          2) status=invalid-response ;;
+          *) status=parser-failed ;;
+        esac
+      fi
+    else
+      status="request-failed-curl-$?"
+    fi
+    if [[ "$attempt" == 60 ]]; then
+      printf 'Node guard admission failed after 60 attempts (%s).\n' "$status" >&2
+      exit 1
+    fi
+    if (( attempt % 10 == 0 )); then
+      printf 'Still waiting for node guard admission: %s/60 (%s).\n' "$attempt" "$status" >&2
+    fi
+    sleep 2
+  done
+)
+wait_for_guard
 mkdir -p /home/runner/_work "$RUNNER_TOOL_CACHE"
 chown runner:runner /home/runner/_work "$RUNNER_TOOL_CACHE"
 # Required by upstream gVisor's Docker-in-sandbox reference configuration.
