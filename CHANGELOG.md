@@ -11,6 +11,10 @@
 - Document Terraform-owned routing, staged qualification, quota waits and return to standard runner capacity.
 - Update the pinned Renovate runtime to 44.166.0 and align the internal setup and fuzz workflow references.
 
+### Fixed
+
+- Handle macOS process-group signal denial when a secret-control tool exits during an output-limit check. Preserve the redacted failure, bound process cleanup, and always close its pipes and selector, including when termination fails.
+
 ### Upgrade
 
 The source package version is independent of consumer workflow pins. Adopt a reviewed immutable commit explicitly, keep the previous pin for rollback, and validate each selected worker profile before activation. Publishing this source release does not switch existing runner routing or qualify a cluster deployment.
