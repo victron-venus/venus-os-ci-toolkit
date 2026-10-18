@@ -100,6 +100,80 @@ shortcut. Keep snapshots and an exact rollback for each staged change.
   and its dedicated policy admits only DNS, public HTTP(S) with the existing
   denied networks, and NUC `/32`:19999. It does not add access to the mp guard.
 
+## Guard lifecycle: qualification and persistent standby
+
+Inert installation and durable standby are separate, reviewed states. The inert
+installer leaves the guard disabled and does not start services. Qualification
+may explicitly start that installed unit once; a successful one-shot start does
+not make it start on a future boot. Keep that behavior in the installer and
+renderer. Do not add automatic enablement, another watchdog, or a restart timer.
+
+After the exact source, configuration, TLS identity, reconciliation, network
+fence and worker profile have passed acceptance, the owner may designate that
+unchanged guard as **persistent standby**. Record this decision and confirm that
+no maintenance or rollback hold is active. Check the approved file hashes,
+ownership, modes and absence of unexpected symlink changes; the loaded unit's
+`FragmentPath` and `DropInPaths` must match that record. Inspect its current state:
+
+```sh
+unit=victron-private-nuc-guard.service
+systemctl show "$unit" -p FragmentPath -p DropInPaths -p UnitFileState \
+  -p ActiveState -p SubState -p MainPID -p Result -p NRestarts -p ExecMainStatus
+```
+
+For an already active, unchanged, accepted guard, this explicit transition only
+enables its existing boot dependency. Run it as one checked sequence after the
+review above; an inactive, failed, masked or changed unit requires separate
+diagnosis and is not an invitation to start or repair it automatically.
+
+```sh
+set -eu
+unit=victron-private-nuc-guard.service
+systemctl is-active --quiet "$unit"
+before_pid=$(systemctl show "$unit" -p MainPID --value)
+before_fragment=$(systemctl show "$unit" -p FragmentPath --value)
+test "$before_pid" -gt 0
+sudo systemctl enable "$unit"
+test "$(systemctl is-enabled "$unit")" = enabled
+test "$(readlink -f "/etc/systemd/system/multi-user.target.wants/$unit")" = "$before_fragment"
+systemctl is-active --quiet "$unit"
+test "$(systemctl show "$unit" -p MainPID --value)" = "$before_pid"
+```
+
+Do not add `--now` or restart the healthy guard. As documented by
+[systemctl](https://www.freedesktop.org/software/systemd/man/latest/systemctl.html#enable%20UNIT%E2%80%A6),
+enablement creates the unit's boot links; it does not start it. The existing
+[`Restart=always`](https://www.freedesktop.org/software/systemd/man/latest/systemd.service.html#Restart=)
+handles ordinary process exits subject to rate limits, but does not undo a
+deliberate stop. Do not add stop propagation from the runtime service: the guard
+already revokes admission when runtime discovery fails. Test boot and deliberate
+stop semantics in a disposable systemd fixture; confirm a real boot only during
+a separately approved maintenance window, never by rebooting an active host for
+this check.
+
+An enabled/active unit and a verified-TLS denial for a bogus Pod UID establish
+listener identity and a negative authorization result. They do **not** prove a
+fresh CRI reconciliation, current firewall ownership, or successful worker
+admission. Verify those separately with the accepted source/configuration and
+owned fence, then retain the exact worker identity and application evidence.
+Keep bounded journal diagnostics private; do not publish addresses, Pod UIDs,
+credentials or raw response bodies.
+
+If readiness fails, hold new assignments and investigate. Do not automatically
+reset failures, unmask a unit, clear a fence, change routes, or restart a healthy
+guard. Existing workers do not continuously poll the startup endpoint. Preserve
+their evidence and drain them under the reviewed rollback plan before changing
+host state.
+
+The common worker bootstrap makes at most 60 admission requests, retaining its
+two-second connect deadline, three-second request deadline and two-second pause
+between failed attempts. Only a successful verified-TLS response containing the
+literal JSON boolean `"admitted": true` permits startup. Transport failures skip
+JSON parsing; invalid responses and denials remain failures. Diagnostics report
+only a bounded attempt count and sanitized failure category. A bootstrap source
+fix takes effect only after rebuilding, qualifying and pinning its worker image;
+merging this source does not update already installed images.
+
 ## Admission, review and rollout boundary
 
 Install and observe the two global Fail/Deny guards before exposing the new
