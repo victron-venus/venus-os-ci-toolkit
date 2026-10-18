@@ -207,7 +207,8 @@ def private_scratch_validations(validations):
                 "has(object.spec.volumes) && size(object.spec.volumes) == 1 && "
                 "object.spec.volumes.all(v, v.name == 'docker-data' && has(v.emptyDir) && "
                 "(!has(v.emptyDir.medium) || v.emptyDir.medium == '') && "
-                "has(v.emptyDir.sizeLimit) && v.emptyDir.sizeLimit == '16Gi')")
+                "has(dyn(v.emptyDir).sizeLimit) && type(dyn(v.emptyDir).sizeLimit) == string && "
+                "dyn(v.emptyDir).sizeLimit == '16Gi')")
             rule['message'] = 'Only the bounded private Docker emptyDir is allowed'
     validations.extend([
         {'expression': "object.spec.containers.all(c, has(c.volumeMounts) && size(c.volumeMounts) == 1 && c.volumeMounts.all(m, m.name == 'docker-data' && m.mountPath == '/var/lib/docker' && !has(m.subPath) && !has(m.subPathExpr) && !has(m.mountPropagation) && (!has(m.readOnly) || !m.readOnly)))",

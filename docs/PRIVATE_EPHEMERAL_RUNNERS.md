@@ -211,6 +211,14 @@ controller owner reference. This is a structural check; CEL cannot verify the
 referenced Secret's actual owner. Controller RBAC governs its creation. GitHub
 App credential Secrets never match this exception.
 
+Kubernetes 1.31's [advisory CEL type checker](https://github.com/kubernetes/apiserver/blob/v0.31.4/pkg/cel/common/schemas.go#L113-L123)
+omits `resource.Quantity` properties whose OpenAPI schema has no single type.
+The scratch rule uses `dyn` only at
+that `emptyDir.sizeLimit` boundary, then requires presence, string type and the
+exact value `16Gi`. [Runtime admission](https://github.com/kubernetes/apiserver/blob/v0.31.4/pkg/admission/plugin/cel/filter.go#L107-L127)
+still checks the actual unstructured Pod value. Qualification must confirm both a warning-free policy and real
+server dry-run acceptance/rejection, including missing and oversized limits.
+
 The dedicated `victron-reserve` runtime enables `allow-suid` so the non-root
 runner can use guest `sudo`, including Playwright's Linux dependency installer.
 The pinned [gVisor release defaults this flag to false](https://github.com/google/gvisor/blob/release-20260928.0/runsc/config/flags.go#L126),
