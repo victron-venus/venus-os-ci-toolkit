@@ -126,6 +126,59 @@ jobs:
         with self.assertRaisesRegex(ValueError, 'automation steps'):
             render(self.root, 'b' * 40)
 
+    def vendor_consumer(self):
+        workflow = {'on': {'push': {}}, 'permissions': {'contents': 'read'}, 'jobs': {
+            'deliver': {'uses': 'victron-venus/venus-os-ci-toolkit/.github/workflows/vendor-update.yml@' + 'a' * 40,
+                        'if': "${{ github.ref == 'refs/heads/main' }}", 'needs': ['build'],
+                        'with': {'toolkit-revision': 'a' * 40, 'artifact-id': '${{ needs.build.outputs.id }}'},
+                        'secrets': {'DELIVERY_TOKEN': '${{ secrets.DELIVERY_TOKEN }}'}}}}
+        path = self.workflows / 'vendor.yml'
+        path.write_text(json.dumps(workflow))
+        return path, workflow
+
+    def test_vendor_workflow_and_runtime_upgrade_together(self):
+        path, workflow = self.vendor_consumer()
+        before = path.read_bytes()
+        files = render(self.root, 'b' * 40)
+        self.assertEqual(set(files), {'.github/workflows/vendor.yml'})
+        updated = yaml_editor().load(files['.github/workflows/vendor.yml'])
+        self.assertEqual(updated['jobs']['deliver']['with']['toolkit-revision'], 'b' * 40)
+        self.assertEqual(updated['jobs']['deliver']['uses'],
+                         workflow['jobs']['deliver']['uses'].replace('a' * 40, 'b' * 40))
+        restored = copy.deepcopy(updated)
+        restored['jobs']['deliver']['uses'] = workflow['jobs']['deliver']['uses']
+        restored['jobs']['deliver']['with']['toolkit-revision'] = 'a' * 40
+        self.assertEqual(restored, workflow)
+        self.assertEqual(path.read_bytes(), before)
+        path.write_text(files['.github/workflows/vendor.yml'])
+        self.assertEqual(render(self.root, 'b' * 40), {})
+
+    def test_inconsistent_vendor_pins_refuse_all_edits(self):
+        for mutation in ('missing-input', 'missing-with', 'invalid-with', 'different-input', 'mutable-ref', 'already-target'):
+            path, workflow = self.vendor_consumer()
+            job = workflow['jobs']['deliver']
+            if mutation == 'missing-input':
+                del job['with']['toolkit-revision']
+            elif mutation == 'missing-with':
+                del job['with']
+            elif mutation == 'invalid-with':
+                job['with'] = 'unexpected'
+            elif mutation == 'different-input':
+                job['with']['toolkit-revision'] = 'c' * 40
+            elif mutation == 'mutable-ref':
+                job['uses'] = job['uses'].replace('a' * 40, 'main')
+                job['with']['toolkit-revision'] = 'main'
+            else:
+                job['uses'] = job['uses'].replace('a' * 40, 'b' * 40)
+            path.write_text(json.dumps(workflow))
+            # A preceding valid workflow must not be written before this error.
+            earlier = self.workflows / 'ci.yml'
+            earlier.write_text('permissions: {contents: read}\njobs: {test: {runs-on: ubuntu-latest, steps: []}}')
+            before = {p: p.read_bytes() for p in (path, earlier)}
+            with self.subTest(mutation=mutation), self.assertRaisesRegex(ValueError, 'vendor-update'):
+                render(self.root, 'b' * 40)
+            self.assertEqual({p: p.read_bytes() for p in before}, before)
+
     def test_symlink_rejected(self):
         outside = self.root / 'external.yml'
         outside.write_text('jobs: {}')
