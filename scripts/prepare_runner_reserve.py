@@ -122,6 +122,18 @@ def update_fuzz_runtime(job, old_ref, fuzz_ref, toolkit_ref):
     return True
 
 
+def update_vendor_runtime(job, old_ref, toolkit_ref):
+    """Preserve the verified delivery workflow/helper revision binding."""
+    parameters = job.get("with")
+    if (not re.fullmatch(r"[0-9a-f]{40}", old_ref) or not isinstance(parameters, dict)
+            or parameters.get("toolkit-revision") != old_ref):
+        raise ValueError("Existing vendor-update workflow and runtime pins must match")
+    if old_ref == toolkit_ref:
+        return False
+    parameters["toolkit-revision"] = toolkit_ref
+    return True
+
+
 def update_pins(workflow, toolkit_ref, fuzz_ref):
     """Pin only reusable calls belonging to this toolkit."""
     changed = False
@@ -134,6 +146,8 @@ def update_pins(workflow, toolkit_ref, fuzz_ref):
             raise ValueError("Invalid reusable workflow reference")
         if name == "fuzz.yml":
             changed = update_fuzz_runtime(job, old_ref, fuzz_ref, toolkit_ref) or changed
+        if name == "vendor-update.yml":
+            changed = update_vendor_runtime(job, old_ref, toolkit_ref) or changed
         if old_ref != toolkit_ref:
             job["uses"] = TOOLKIT + name + "@" + toolkit_ref
             changed = True
@@ -183,6 +197,53 @@ def update_policy_pins(policy, toolkit_ref):
     return changed
 
 
+def unique_policy_members(pairs):
+    """Ambiguous duplicate keys cannot safely identify a policy edit location."""
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("Duplicate policy key: " + key)
+        result[key] = value
+    return result
+
+
+def policy_member_spans(source, start=0):
+    """Locate direct object values in already validated JSON without reprinting it."""
+    decoder = json.JSONDecoder()
+    position = start + 1
+    spans = {}
+    while True:
+        position = re.compile(r"\s*").match(source, position).end()
+        if source[position] == "}":
+            return spans
+        key, position = decoder.raw_decode(source, position)
+        position = re.compile(r"\s*:\s*").match(source, position).end()
+        value_start = position
+        _, position = decoder.raw_decode(source, position)
+        spans[key] = (value_start, position)
+        position = re.compile(r"\s*").match(source, position).end()
+        if source[position] == ",":
+            position += 1
+
+
+def render_policy_pins(source, policy):
+    """Replace only owned pin values, retaining consumer formatting byte for byte."""
+    original = json.loads(source, object_pairs_hook=unique_policy_members)
+    root = policy_member_spans(source, len(source) - len(source.lstrip()))
+    replacements = []
+    for section in ("coverage", "fuzzing"):
+        if not policy.get(section) or original[section]["toolkit_ref"] == policy[section]["toolkit_ref"]:
+            continue
+        section_start, _ = root[section]
+        start, end = policy_member_spans(source, section_start)["toolkit_ref"]
+        replacements.append((start, end, json.dumps(policy[section]["toolkit_ref"])))
+    for start, end, value in sorted(replacements, reverse=True):
+        source = source[:start] + value + source[end:]
+    if json.loads(source, object_pairs_hook=unique_policy_members) != policy:
+        raise ValueError("Policy pin edits changed unexpected values")
+    return source
+
+
 def render(directory, toolkit_ref, *, job_profiles=()):
     """Return a complete, validated edit set before writing any consumer files."""
     directory = Path(directory).resolve()
@@ -192,7 +253,8 @@ def render(directory, toolkit_ref, *, job_profiles=()):
     policy_path = directory / ".release-policy.json"
     if policy_path.is_symlink():
         raise ValueError("Refusing policy symlink")
-    policy = json.loads(policy_path.read_text()) if policy_path.exists() else {}
+    policy_source = policy_path.read_bytes().decode("utf-8") if policy_path.exists() else "{}"
+    policy = json.loads(policy_source, object_pairs_hook=unique_policy_members)
     fuzz_ref = existing_fuzz_reference(directory, policy)
     profiles = {}
     if policy.get("single_entry_ci"):
@@ -212,7 +274,7 @@ def render(directory, toolkit_ref, *, job_profiles=()):
     if set(overrides) - seen_workflows:
         raise ValueError("Job profile names an unknown workflow")
     if update_policy_pins(policy, toolkit_ref):
-        files[".release-policy.json"] = json.dumps(policy, indent=2) + "\n"
+        files[".release-policy.json"] = render_policy_pins(policy_source, policy)
     return files
 
 
@@ -229,7 +291,7 @@ def main():
         parser.exit(1, "Runner adoption drift: " + ", ".join(files) + "\n")
     if not args.check:
         for path, source in files.items():
-            (args.repository / path).write_text(source)
+            (args.repository / path).write_bytes(source.encode("utf-8"))
     print(f"Runner adoption: {len(files)} files; no Actions settings changed")
 
 

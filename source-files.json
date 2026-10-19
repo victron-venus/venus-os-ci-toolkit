@@ -279,6 +279,7 @@
   "tests/fixtures/python-type-error/example.py",
   "tests/fixtures/python_action_smoke/calculator.py",
   "tests/fixtures/python_action_smoke/test_calculator.py",
+  "tests/fixtures/scorecard-v5.6.0.json",
   "tests/fixtures/signing/README.md",
   "tests/fixtures/signing/ed448-synthetic.asc",
   "tests/fixtures/terraform-minimal/main.tf",
