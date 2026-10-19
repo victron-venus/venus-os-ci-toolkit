@@ -4,11 +4,12 @@ import copy
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'scripts'))
-from prepare_runner_reserve import render  # noqa: E402 - Import the source scripts after adding their directory.
+from prepare_runner_reserve import main, render, render_policy_pins  # noqa: E402 - Import after adding the source directory.
 from runner_selection import runner_labels, yaml_editor  # noqa: E402 - Import the source scripts after adding their directory.
 from workflow_contracts import validate_fuzz_pins  # noqa: E402 - Exercise the consumer's actual pin contract.
 
@@ -64,6 +65,71 @@ jobs:
         self.assertEqual(updated['versioning'], policy['versioning'])
         self.assertEqual(updated['coverage']['toolkit_ref'], 'b' * 40)
         self.assertEqual(updated['coverage']['reports'], policy['coverage']['reports'])
+
+    def test_policy_pin_edits_preserve_consumer_layout(self):
+        self.fuzz_consumer()
+        template = '''{
+  "versioning": {"toolkit_revision": "OLD"},
+  "coverage": {"toolkit_ref": "COVERAGE_PIN", "reports": ["one", "two"]},
+  "fuzzing": {"toolkit_ref": "FUZZ_PIN"},
+  "other": {"coverage": {"toolkit_ref": "OLD"}},
+  "text": "\\\"toolkit_ref\\\": \\\"OLD\\\" and caf\\u00e9",
+  "array": [{"fuzzing": {"toolkit_ref": "OLD"}}, true, null, 1e-3]
+}'''.replace('OLD', 'a' * 40)
+        path = self.root / '.release-policy.json'
+        for newline, indent, final in (('\n', '  ', '\n'), ('\r\n', '\t', ''), ('\n', '', '')):
+            formatted = template.replace('\n', newline).replace('  ', indent) + final
+            source = formatted.replace('COVERAGE_PIN', 'a' * 40).replace('FUZZ_PIN', 'a' * 40)
+            expected = formatted.replace('COVERAGE_PIN', 'b' * 40).replace('FUZZ_PIN', 'b' * 40)
+            path.write_bytes(source.encode())
+            with self.subTest(newline=newline, indent=indent, final=final):
+                files = render(self.root, 'b' * 40)
+                self.assertEqual(files['.release-policy.json'], expected)
+                self.assertEqual(path.read_bytes(), source.encode())
+                policy = json.loads(source)
+                policy['coverage']['toolkit_ref'] = 'b' * 40
+                policy['fuzzing']['toolkit_ref'] = 'b' * 40
+                self.assertEqual(json.loads(expected), policy)
+
+    def test_policy_pin_edits_support_escaped_keys_and_values(self):
+        source = '  {"cover\\u0061ge":{"toolkit_\\u0072ef":"' + '\\u0061' * 40 + '"}, "keep": []}  '
+        path = self.root / '.release-policy.json'
+        path.write_text(source)
+        expected = source.replace('\\u0061' * 40, 'b' * 40)
+        self.assertEqual(render(self.root, 'b' * 40)['.release-policy.json'], expected)
+        path.write_text(expected)
+        self.assertEqual(render(self.root, 'b' * 40), {})
+
+    def test_cli_writes_exact_rendered_bytes(self):
+        source = '{\r\n\t"coverage": {"toolkit_ref": "' + 'a' * 40 + '"}\r\n}'
+        path = self.root / '.release-policy.json'
+        path.write_bytes(source.encode())
+        with mock.patch.object(sys, 'argv', ['prepare_runner_reserve.py', str(self.root), '--toolkit-ref', 'b' * 40]):
+            main()
+        self.assertEqual(path.read_bytes(), source.replace('a' * 40, 'b' * 40).encode())
+
+    def test_duplicate_policy_members_refuse_all_edits(self):
+        valid = '{"coverage":{"toolkit_ref":"' + 'a' * 40 + '"}}'
+        cases = ('{"coverage":{},"coverage":{}}',
+                 '{"coverage":{"toolkit_ref":"a","toolkit_ref":"b"}}',
+                 valid[:-1] + ',"other":{"same":1,"same":2}}')
+        workflow = self.workflows / 'ci.yml'
+        workflow.write_text('permissions: {contents: read}\njobs: {ci: {runs-on: ubuntu-latest, steps: [{run: test}]}}')
+        path = self.root / '.release-policy.json'
+        for source in cases:
+            path.write_text(source)
+            before = {p: p.read_bytes() for p in (path, workflow)}
+            with self.subTest(source=source), self.assertRaisesRegex(ValueError, 'Duplicate policy key'):
+                render(self.root, 'b' * 40)
+            self.assertEqual({p: p.read_bytes() for p in before}, before)
+
+    def test_policy_preservation_checks_all_semantic_values(self):
+        source = '{"coverage":{"toolkit_ref":"' + 'a' * 40 + '"},"untouched":true}'
+        expected = json.loads(source)
+        expected['coverage']['toolkit_ref'] = 'b' * 40
+        expected['untouched'] = False
+        with self.assertRaisesRegex(ValueError, 'unexpected values'):
+            render_policy_pins(source, expected)
 
     def fuzz_consumer(self):
         policy = {'versioning': {'toolkit_revision': 'c' * 40}, 'fuzzing': {'toolkit_ref': 'a' * 40}}
