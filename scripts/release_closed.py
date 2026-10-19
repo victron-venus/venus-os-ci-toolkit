@@ -91,16 +91,22 @@ def request(policy: dict, event: dict, environ: dict) -> dict[str, str]:
         or (expected and expected != sha)
         or (operation == "release" and tag)
         or (not enabled and bool(identifier))
-        or (operation == "closed-rebuild" and (not enabled or not TAG.fullmatch(tag)))
-        or (operation == "closed-rebuild" and (inputs.get("version") or inputs.get("rc_tag")))
     ):
         raise ValueError("Invalid closed-build request")
+    if operation == "closed-rebuild":
+        validate_rebuild(enabled, tag, inputs)
     return {
         "operation": operation,
         "closed_required": str(enabled).lower(),
         "closed_request": identifier,
         "release_tag": tag,
     }
+
+
+def validate_rebuild(enabled: bool, tag: str, inputs: dict) -> None:
+    """An existing-release rebuild cannot allocate or promote a public version."""
+    if not enabled or not TAG.fullmatch(tag) or inputs.get("version") or inputs.get("rc_tag"):
+        raise ValueError("Invalid closed rebuild request")
 
 
 def resolve(gh: rc.GitHub, tag: str, output: Path, current_sha: str, current_run_id: int) -> dict:
