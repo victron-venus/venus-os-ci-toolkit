@@ -80,16 +80,8 @@ def record(gh: rc.GitHub, info: dict, run: dict, rc_tag: str, output: Path) -> d
     return result
 
 
-def verify(gh: rc.GitHub, info: dict, stable: tuple, manifest: dict, raw: bytes) -> dict:
-    """Require retained exact-attempt evidence and final promotion-run success."""
-    run_id = locator(stable[1], gh.repo)
-    run = gh.api(f"actions/runs/{run_id}")
-    rc.require(run.get("id") == run_id and run_id != manifest["run_id"], "Invalid promotion run")
-    attempt = rc.positive(run.get("run_attempt"), "promotion run attempt")
-    source = run.get("head_sha")
-    rc.require(isinstance(source, str) and rc.SHA_RE.fullmatch(source), "Invalid promotion source")
-    rc.validate_run(gh, run, info, source, attempt, True, gate=False)
-    rc.require(run.get("event") == "workflow_dispatch", "Promotion must be explicitly requested")
+def verify_jobs(gh: rc.GitHub, run_id: int, attempt: int, source: str) -> None:
+    """Check the source-controlled closed obligation and actual publisher job."""
     policy = rc.source_policy_snapshot(gh, source)["data"]
     rc.require_release_policy(policy, gh.repo, qualified=True)
     config = policy.get("closed_build")
@@ -103,6 +95,10 @@ def verify(gh: rc.GitHub, info: dict, stable: tuple, manifest: dict, raw: bytes)
         rc.require(len(matching) == 1 and matching[0].get("status") == "completed"
                    and matching[0].get("conclusion") == conclusion and matching[0].get("head_sha") == source,
                    "Promotion has no successful exact stable validation path")
+
+
+def read_receipt(gh: rc.GitHub, run_id: int, source: str) -> bytes:
+    """Read a bounded immutable artifact after authenticating its run metadata."""
     artifacts = gh.pages(f"actions/runs/{run_id}/artifacts", "artifacts")
     matching = [item for item in artifacts if item.get("name") == ARTIFACT and item.get("expired") is False]
     rc.require(len(matching) == 1, "Promotion requires one retained immutable receipt")
@@ -119,9 +115,23 @@ def verify(gh: rc.GitHub, info: dict, stable: tuple, manifest: dict, raw: bytes)
             entries = zipped.infolist()
             rc.require(len(entries) == 1 and entries[0].filename == FILE and entries[0].file_size <= MAX_BYTES,
                        "Promotion receipt archive has unexpected contents")
-            raw_receipt = zipped.read(entries[0])
+            return zipped.read(entries[0])
     except (zipfile.BadZipFile, RuntimeError) as error:
         raise rc.ReleaseError("Invalid promotion receipt archive") from error
+
+
+def verify(gh: rc.GitHub, info: dict, stable: tuple, manifest: dict, raw: bytes) -> dict:
+    """Require retained exact-attempt evidence and final promotion-run success."""
+    run_id = locator(stable[1], gh.repo)
+    run = gh.api(f"actions/runs/{run_id}")
+    rc.require(run.get("id") == run_id and run_id != manifest["run_id"], "Invalid promotion run")
+    attempt = rc.positive(run.get("run_attempt"), "promotion run attempt")
+    source = run.get("head_sha")
+    rc.require(isinstance(source, str) and rc.SHA_RE.fullmatch(source), "Invalid promotion source")
+    rc.validate_run(gh, run, info, source, attempt, True, gate=False)
+    rc.require(run.get("event") == "workflow_dispatch", "Promotion must be explicitly requested")
+    verify_jobs(gh, run_id, attempt, source)
+    raw_receipt = read_receipt(gh, run_id, source)
     result = receipt(stable[1], manifest, raw, run)
     rc.require(raw_receipt == rc.json_bytes(result), "Promotion receipt binding mismatch")
     # A rerun started during verification invalidates the earlier success too.

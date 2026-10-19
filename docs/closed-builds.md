@@ -70,6 +70,8 @@ validates literal queue values and rejects `max` with cancellation enabled. It
 blanks only validated queue entries in an in-memory lint copy, preserving source
 paths, positions, all other diagnostics and the original workflow bytes. The
 canonical CI and fleet validators use this wrapper; no linter warnings are ignored.
+CLI file selections are limited to regular YAML files in the current repository's
+`.github/workflows` directory; symlinks and files outside that directory are rejected.
 
 A stored closed candidate is not install approval. The deployment client must
 verify matching actual public publication and successful final run/attempt before
