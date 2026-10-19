@@ -110,6 +110,14 @@ def validate_rebuild(enabled: bool, tag: str, inputs: dict) -> None:
         raise ValueError("Invalid closed rebuild request")
 
 
+def promotion_context(gh: rc.GitHub, info: dict, published: tuple, manifest: dict, raw: bytes) -> dict | None:
+    """Promoted stable copies need qualification beyond the original RC run."""
+    plan = manifest["version_plan"]
+    if published[1]["tag_name"] == f"v{plan['base_version']}" and plan["channel"] == "rc":
+        return release_promotion.verify(gh, info, published, manifest, raw)
+    return None
+
+
 def resolve(gh: rc.GitHub, tag: str, output: Path, current_sha: str, current_run_id: int) -> dict:
     """Verify retained qualification and download exact public bytes atomically."""
     if not TAG.fullmatch(tag) or output.exists() or output.is_symlink():
@@ -140,8 +148,7 @@ def resolve(gh: rc.GitHub, tag: str, output: Path, current_sha: str, current_run
     rc.check_ancestry(gh, source, info["default_branch"])
     lifecycle.verify_scheduled_reuse(gh, info, snapshot, plan, run_id, tag)
     initial = lifecycle.published_plan_snapshot(gh, tag, source, tag != f"v{plan['base_version']}")
-    promoted = tag == f"v{plan['base_version']}" and plan["channel"] == "rc"
-    promotion = release_promotion.verify(gh, info, initial, manifest, raw) if promoted else None
+    promotion = promotion_context(gh, info, initial, manifest, raw)
     expected = {entry["name"]: entry for entry in manifest["assets"]}
     output.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="closed-public-", dir=output.parent) as temporary:
@@ -169,9 +176,8 @@ def resolve(gh: rc.GitHub, tag: str, output: Path, current_sha: str, current_run
         rc.require(rc.snapshot_identity(initial) == rc.snapshot_identity(
             lifecycle.published_plan_snapshot(gh, tag, source, tag != f"v{plan['base_version']}")),
             "Public release changed during transfer")
-        if promoted:
-            rc.require(release_promotion.verify(gh, info, initial, manifest, raw) == promotion,
-                       "Public promotion changed during transfer")
+        rc.require(promotion_context(gh, info, initial, manifest, raw) == promotion,
+                   "Public promotion changed during transfer")
         context = {
             "schema": 1, "repository": gh.repo, "workflow": rc.WORKFLOW,
             "run_id": str(run_id), "run_attempt": str(manifest["run_attempt"]),
@@ -186,6 +192,18 @@ def resolve(gh: rc.GitHub, tag: str, output: Path, current_sha: str, current_run
         (stage / "version-plan.json").write_bytes(rc.json_bytes(plan))
         stage.rename(output)
     return context
+
+
+def selected_tag(action: str, purpose: str | None, selected: dict, inputs: dict) -> str:
+    """Separate the exact RC promotion input from an existing-release request."""
+    if (purpose == "stable" or action == "record-promotion") and selected["operation"] == "release" and inputs.get("channel") == "stable":
+        tag = inputs.get("rc_tag", "")
+        if not re.fullmatch(r"v" + rc.VERSION_PATTERN + r"-rc\.[1-9]\d*", tag, re.ASCII):
+            raise ValueError("Stable resolution requires an exact RC")
+        return tag
+    if purpose == "rebuild" and selected["operation"] == "closed-rebuild":
+        return selected["release_tag"]
+    raise ValueError("Resolution purpose differs from dispatch")
 
 
 def main() -> int:
@@ -205,15 +223,7 @@ def main() -> int:
             return 0
         if (selected["closed_required"] != "true" and args.action != "record-promotion") or args.output is None:
             raise ValueError("Closed resolution requires an enabled policy")
-        inputs = event.get("inputs", {})
-        if (args.purpose == "stable" or args.action == "record-promotion") and selected["operation"] == "release" and inputs.get("channel") == "stable":
-            tag = inputs.get("rc_tag", "")
-            if not re.fullmatch(r"v" + rc.VERSION_PATTERN + r"-rc\.[1-9]\d*", tag, re.ASCII):
-                raise ValueError("Stable resolution requires an exact RC")
-        elif args.purpose == "rebuild" and selected["operation"] == "closed-rebuild":
-            tag = selected["release_tag"]
-        else:
-            raise ValueError("Resolution purpose differs from dispatch")
+        tag = selected_tag(args.action, args.purpose, selected, event.get("inputs", {}))
         gh = rc.GitHub(policy["repository"])
         info = rc.repository_info(gh)
         run_id = rc.positive(os.environ["GITHUB_RUN_ID"], "run ID")
