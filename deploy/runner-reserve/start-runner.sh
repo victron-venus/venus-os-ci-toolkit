@@ -70,6 +70,9 @@ done
 # Bootstrap setup stayed private; each job has its own disposable filesystem.
 umask 022
 if [[ "${RUNNER_RESERVE_QUALIFICATION:-}" == 1 ]]; then
-  exec setpriv --reuid=runner --regid=runner --init-groups /opt/victron-ci-reserve/qualify.sh
+  # Keep timeout outside setpriv so its root supervisor can signal the probe's
+  # process group after the UID drop. Do not use --foreground (it omits children).
+  exec timeout --signal=TERM --kill-after=15s 600s \
+    setpriv --reuid=runner --regid=runner --init-groups /opt/victron-ci-reserve/qualify.sh
 fi
 exec setpriv --reuid=runner --regid=runner --init-groups ./run.sh

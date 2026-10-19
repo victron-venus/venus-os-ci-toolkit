@@ -1,5 +1,7 @@
 # Optional self-hosted routing
 
+For reinstall, backup and another organization, use the [ARC recovery index](ARC_RECOVERY.md).
+
 For private consumers spanning multiple owners, use the
 [caller-local workflow distribution](WORKFLOW_DISTRIBUTION.md). It preserves
 immutable shared sources and the explicit `github` / `self-hosted` switch while
@@ -362,22 +364,91 @@ provides another boundary; it does not replace the node fence.
 Generate the node guard TLS key and certificate on the node, with the node IP in
 the certificate SAN. Keep the private key root-readable on that node; configure
 `tls_private_key` and `tls_certificate` in the node service configuration. Copy
-only the public certificate to the build context as `guard-ca.crt` (Git-ignored).
+only the public certificate to `deploy/runner-reserve/guard-ca.crt` (Git-ignored).
 Rebuild/requalify the worker image before certificate expiry or trust rotation.
 
-Build `Dockerfile` with BuildKit from this directory, preserving every base-image
-digest. Preload the resulting image into K3s containerd on the selected node and
+Build from the **repository root** with BuildKit, preserving every base-image
+digest. `deploy/runner-reserve/Dockerfile.dockerignore` limits this root context
+to the exact image sources, the public CA and the shared pinned GitHub CLI
+manifest/installer; it excludes Git history, keys and unrelated working files.
+Do not substitute a directory-wide allowlist. The image verifies the CLI archive,
+binary and version, then requires `gh api --paginate --slurp` support used by
+shared automation; distribution-provided `gh` is insufficient.
+
+```bash
+docker build --platform linux/amd64 --file deploy/runner-reserve/Dockerfile \
+  --tag localhost/victron-reserve-worker:qualification .
+```
+
+Building alone does not qualify an image. Preload the resulting image into K3s
+containerd on the selected node and
 use its immutable **manifest digest**, not the Docker configuration/image ID.
 Workers use `imagePullPolicy: Never` so a standby launch does not need a registry
 credential or a new image download during an outage. Keep a recoverable image
 archive and requalify after node replacement or cache eviction.
 
 ```bash
-python3 deploy/runner-reserve/render_pool.py \
+python3 deploy/runner-reserve/render_pool.py --held \
+  --node WORKER_NODE \
   --worker-image 'localhost/victron-reserve-worker@sha256:QUALIFIED_MANIFEST_DIGEST' \
   --node-ip NODE_ADDRESS_COVERED_BY_GUARD_CERTIFICATE \
   --output /path/to/new-reserve-plan
 ```
+
+Before deploying, verify that `--node` matches the installed `victron-reserve`
+RuntimeClass's `scheduling.nodeSelector` (the supplied `runtime-class.yaml` names
+`mp` and `amd64`). The renderer does not rewrite or inspect that RuntimeClass.
+Verify the final manifest is `linux/amd64`, matching that RuntimeClass; do not
+use the build host's native architecture implicitly. A different worker node
+requires separately reviewed runtime installation,
+matching RuntimeClass scheduling, guard certificate/address and preloaded image;
+a listener placement change does not move any of these worker prerequisites.
+Keep `--held` and `CI_RUNNER_MODE=github` while preparing and qualifying them.
+
+#### Distribute listeners separately from workers
+
+Each scale set needs a listener Pod in `runner-reserve-system`, even while its
+workers are held at zero. The 66-set inventory therefore needs 66 listener Pod
+slots, with aggregate requests of 660m CPU and 2640Mi memory. Worker namespace
+quotas do not include these listeners. Account for both populations and reserve
+headroom before selecting nodes; free memory alone does not imply free Pod slots.
+
+By default listeners use the worker's `--node`. To distribute them, provide
+`--listener-placement /path/to/listener-placement.json`. This changes only
+`listenerTemplate.spec.nodeSelector.kubernetes.io/hostname`. Worker placement,
+guard address, image, runtime, security settings and `--held` limits are preserved.
+No-map output remains unchanged.
+
+The JSON format is `{"schema": 1, "placements": {"SCOPE": {"PROFILE": "NODE"}}}`.
+It must include every current scope and all three profiles (`ci`, `automation`,
+`release`); there is no partial-map fallback. A scope is an organization name or
+the full name of a personal repository from `repositories.json`. Duplicate,
+unknown or missing entries and invalid node names fail before output is created.
+
+From the repository root, generate a complete starting map into a **new file**:
+
+```bash
+python3 - <<'PY'
+import json
+from pathlib import Path
+catalog = json.loads(Path('deploy/runner-reserve/repositories.json').read_text())
+scopes = [*catalog['organizations'], *[
+    repo['name'] for repo in catalog['repositories']
+    if repo['name'].split('/')[0] not in catalog['organizations']]]
+plan = {'schema': 1, 'placements': {
+    scope: {profile: 'choose-listener-node' for profile in catalog['profiles']}
+    for scope in scopes}}
+with open('listener-placement.json', 'x') as output:
+    output.write(json.dumps(plan, indent=2) + '\n')
+PY
+```
+
+Replace each placeholder with a reviewed node hostname, then pass the file to
+the existing render command along with `--held` during registration preparation.
+Inspect the resulting values and current node capacity before any installation.
+The renderer checks structure; it does not contact Kubernetes, verify that nodes
+exist, or certify their capacity or the worker image. A placement map alone does
+not make the reserve ready.
 
 The renderer validates the inventory and digest format, creates a new output
 directory, and never installs resources or changes Actions variables. Its
@@ -406,6 +477,13 @@ Keep `CI_RUNNER_MODE=github` throughout preparation and manual qualification.
 TLS admission and Docker bootstrap; it never registers a GitHub runner. It
 checks sandbox/toolchain prerequisites, public HTTPS, a nested BuildKit build
 and a published PostgreSQL service. Never set it in normal scale-set values.
+After bootstrap, only this probe has a 600-second deadline and a 15-second forced
+termination grace. The root timeout supervisor retains a process group across
+the probe's UID drop; ordinary JIT runner jobs do not get this probe deadline.
+A timeout or nonzero exit is a failed qualification, never a partial pass. This
+limit does not include the earlier admission/Docker startup budgets or replace
+operator cleanup: remove the owned test Pod and verify its containers, network
+fence entry and other owned resources are gone even after forced termination.
 
 A local Docker or networking probe is insufficient to certify a pool. Record a
 real GitHub JIT worker for each profile/owner, a cross-owner reusable call,

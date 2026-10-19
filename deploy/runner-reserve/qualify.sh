@@ -10,6 +10,8 @@ python3 --version
 java -version
 git --version
 gh --version
+gh api --paginate --slurp --help >/dev/null
+gh api --help | grep -F -- '--slurp' >/dev/null
 pkg-config --exists dbus-1 glib-2.0
 ./bin/Runner.Listener --version
 sudo -n true

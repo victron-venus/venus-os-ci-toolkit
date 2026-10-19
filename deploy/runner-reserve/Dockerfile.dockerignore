@@ -1,0 +1,11 @@
+# Root build context: transfer only these exact files, including the public CA.
+# Never allow entire directories or include the node's TLS private key.
+**
+!.github/gh/release.json
+!scripts/install_release_gh.py
+!deploy/runner-reserve/Dockerfile
+!deploy/runner-reserve/Dockerfile.dockerignore
+!deploy/runner-reserve/start-runner.sh
+!deploy/runner-reserve/sandbox-docker.sh
+!deploy/runner-reserve/qualify.sh
+!deploy/runner-reserve/guard-ca.crt

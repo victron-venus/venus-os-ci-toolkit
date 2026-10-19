@@ -1,0 +1,7 @@
+{
+  "schema": 1,
+  "placements": {
+    "example-org": {"ci": "listener-a", "automation": "listener-b", "release": "listener-b"},
+    "example-person/application": {"ci": "listener-a", "automation": "listener-b", "release": "listener-b"}
+  }
+}
