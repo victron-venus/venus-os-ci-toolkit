@@ -29,6 +29,7 @@ import release_validation  # pylint: disable=wrong-import-position
 import release_fuzz  # pylint: disable=wrong-import-position
 import release_signing_workflow  # pylint: disable=wrong-import-position
 import release_gh_workflow  # pylint: disable=wrong-import-position
+import release_closed_workflow  # pylint: disable=wrong-import-position
 from workflow_hardening import harden_jobs  # pylint: disable=wrong-import-position
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -1268,6 +1269,7 @@ def release(policy):
     jobs["final"] = final
     release_signing_workflow.apply(workflow, policy, ACTION_REFS)
     configure_fuzzing(workflow, policy)
+    release_closed_workflow.apply(workflow, policy, ACTION_REFS)
     release_gh_workflow.apply(workflow, ACTION_REFS)
     return workflow
 
@@ -1323,6 +1325,7 @@ def validate_policy(directory: Path, policy: dict) -> None:
     if release_fuzz.configuration(policy) is not None:
         release_fuzz.manifest(directory)
     release_signing_workflow.enabled(policy)
+    release_closed_workflow.validate_adapter(directory, policy)
     from release_provenance import policy_pairs  # pylint: disable=import-outside-toplevel
 
     policy_pairs(policy)
@@ -1538,6 +1541,15 @@ def release_files(directory: Path, policy: dict) -> dict[str, str]:
     for path in ("scripts/install_release_gh.py", "scripts/download_release_gh.go", ".github/gh/release.json", ".github/gh/LICENSE", "docs/release-github-cli.md"):
         files[path] = (ROOT / path).read_text()
     files["scripts/release_validation.py"] = (ROOT / "scripts/release_validation.py").read_text()
+    if policy.get("closed_build"):
+        files["scripts/release_closed.py"] = (ROOT / "scripts/release_closed.py").read_text()
+        files["scripts/release_promotion.py"] = (ROOT / "scripts/release_promotion.py").read_text()
+        files["docs/closed-builds.md"] = (ROOT / "docs/closed-builds.md").read_text()
+        files[".github/release-tests/test_release_closed.py"] = (
+            (ROOT / "tests/test_release_closed.py").read_text().replace(
+                "Path(__file__).resolve().parents[1]", "Path(__file__).resolve().parents[2]"
+            )
+        )
     if release_fuzz.configuration(policy) is not None:
         files[FUZZ_RUNNER_PATH] = (ROOT / FUZZ_RUNNER_PATH).read_text()
         files[FUZZ_PREFLIGHT_PATH] = (ROOT / FUZZ_PREFLIGHT_PATH).read_text()

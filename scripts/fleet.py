@@ -98,7 +98,7 @@ def check_repository(directory, item):
     )
     workflows = sorted(str(p) for p in (directory / ".github/workflows").glob("*.yml"))
     if workflows:
-        run(["actionlint", "-shellcheck=", "-pyflakes=", *workflows], directory)
+        run([sys.executable, str(ROOT / "scripts/actionlint_compat.py"), *workflows], directory)
 
 
 def submission_body(policy):
