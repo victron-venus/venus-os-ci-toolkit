@@ -43,6 +43,9 @@ updating a local fleet or private-runner operator installation. Public source
 contains public inventory and synthetic examples; reviewed operational metadata
 lives outside the checkout. Preparing that configuration does not switch runners.
 
+For runner recovery, start with the [ARC recovery and reuse index](docs/ARC_RECOVERY.md),
+including portable held examples, storage boundaries and acceptance criteria.
+
 ## Runtime scope
 
 The CI workflows run in GitHub Actions; they are not a service installed on Venus OS.

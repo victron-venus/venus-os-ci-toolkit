@@ -1,5 +1,7 @@
 # Optional self-hosted routing
 
+For reinstall, backup and another organization, use the [ARC recovery index](ARC_RECOVERY.md).
+
 For private consumers spanning multiple owners, use the
 [caller-local workflow distribution](WORKFLOW_DISTRIBUTION.md). It preserves
 immutable shared sources and the explicit `github` / `self-hosted` switch while

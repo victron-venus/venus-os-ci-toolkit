@@ -57,6 +57,83 @@ def unique_placement_keys(pairs):
     return result
 
 
+def read_operator_json(path):
+    """Read a bounded regular JSON input, rejecting final symlinks and duplicate keys."""
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    with os.fdopen(fd, 'rb') as stream:
+        if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+            raise ValueError('Operator input must be a regular file')
+        raw = stream.read(131073)
+    if len(raw) > 131072:
+        raise ValueError('Operator input exceeds 128 KiB')
+    return json.loads(raw, object_pairs_hook=unique_placement_keys)
+
+
+def validate_public_organizations(organizations):
+    pattern = r'[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?'
+    if (not isinstance(organizations, list)
+            or any(not isinstance(owner, str) or not re.fullmatch(pattern, owner)
+                   for owner in organizations)
+            or len({owner.lower() for owner in organizations}) != len(organizations)):
+        raise ValueError('Organizations must be unique GitHub owner names')
+
+
+def validate_public_profiles(profiles):
+    if (not isinstance(profiles, dict) or set(profiles) != {'ci', 'automation', 'release'}
+            or any(not isinstance(label, str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]{0,62}', label)
+                   for label in profiles.values())
+            or len({label.lower() for label in profiles.values()}) != 3):
+        raise ValueError('Three distinct CI, automation and release labels are required')
+
+
+def validate_public_repositories(repositories, organizations):
+    if not isinstance(repositories, list) or not repositories:
+        raise ValueError('Public inventory requires repositories')
+    seen = set()
+    personal_owners = set()
+    owner_pattern = r'[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?'
+    owners = {owner.lower(): owner for owner in organizations}
+    for entry in repositories:
+        if (not isinstance(entry, dict) or set(entry) != {'name', 'default_branch'}
+                or not isinstance(entry['name'], str)
+                or not re.fullmatch(owner_pattern + r'/[A-Za-z0-9_.-]{1,100}', entry['name'])
+                or entry['name'].split('/')[1] in {'.', '..'}
+                or entry['name'].lower() in seen
+                or not isinstance(entry['default_branch'], str) or not entry['default_branch']
+                or re.search(r'[\x00-\x20\x7f]', entry['default_branch'])):
+            raise ValueError('Repositories need unique owner/name and a default branch')
+        owner = entry['name'].split('/')[0]
+        if owner.lower() in owners and owner != owners[owner.lower()]:
+            raise ValueError('Organization spelling must match the repository owner')
+        if owner.lower() not in owners:
+            personal_owners.add(owner.lower())
+        if len(personal_owners) > 1:
+            raise ValueError('The personal installation Secret supports only one personal owner')
+        seen.add(entry['name'].lower())
+
+
+def load_public_inventory(path):
+    """Validate explicit public scope data without changing routing or permissions."""
+    data = read_operator_json(path)
+    required = {'schema', 'default_mode', 'organizations', 'profiles', 'repositories'}
+    if (not isinstance(data, dict) or not required <= set(data)
+            or set(data) - required - {'organization_secrets'}
+            or type(data['schema']) is not int or data['schema'] != 1
+            or data['default_mode'] != 'github'):
+        raise ValueError('Public inventory needs schema 1 and default_mode github')
+    validate_public_organizations(data['organizations'])
+    validate_public_profiles(data['profiles'])
+    validate_public_repositories(data['repositories'], data['organizations'])
+    for owner in data['organizations']:
+        installation_secret(owner, data)
+    installation_secret(data['repositories'][0]['name'], data)
+    personal = any(row['name'].split('/')[0] not in data['organizations']
+                   for row in data['repositories'])
+    if personal and 'reserve-personal-app' in (data.get('organization_secrets') or {}).values():
+        raise ValueError('Organization and personal installations need separate Secrets')
+    return data
+
+
 def load_listener_placement(path, scopes, profiles):
     """Require a complete placement plan before rendering any output."""
     fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
@@ -201,6 +278,8 @@ def foundations(profiles, image, node_ip):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--inventory', type=Path, default=ROOT / 'repositories.json',
+                        help='Explicit public inventory; defaults to the checked-in public catalog')
     parser.add_argument('--worker-image', required=True, help='Preloaded, qualified image reference with sha256 digest')
     parser.add_argument('--node', default='mp')
     parser.add_argument('--node-ip', required=True, help='Address covered by the guard certificate')
@@ -210,10 +289,10 @@ def main():
     parser.add_argument('--listener-placement', type=Path,
                         help='Complete scope/profile listener node map; workers retain --node')
     args = parser.parse_args()
-    inventory = json.loads((ROOT / 'repositories.json').read_text())
-    scopes = [*inventory['organizations'], *[r['name'] for r in inventory['repositories']
-              if r['name'].split('/')[0] not in inventory['organizations']]]
     try:
+        inventory = load_public_inventory(args.inventory)
+        scopes = [*inventory['organizations'], *[r['name'] for r in inventory['repositories']
+                  if r['name'].split('/')[0] not in inventory['organizations']]]
         placement = (load_listener_placement(args.listener_placement, scopes, inventory['profiles'])
                      if args.listener_placement is not None else {})
     except (OSError, ValueError) as error:

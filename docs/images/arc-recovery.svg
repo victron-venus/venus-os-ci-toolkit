@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="650" viewBox="0 0 1200 650" role="img" aria-labelledby="title desc">
+<title id="title">ARC recovery uses three independently preserved inputs</title>
+<desc id="desc">Public source, protected site configuration and encrypted secrets converge on a reviewed held plan. Isolated qualification and real GitHub job evidence precede deliberate activation. Unknown or failed acceptance returns to a held state.</desc>
+<defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10z" fill="#475569"/></marker></defs>
+<style>text{font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;fill:#15263c}.title{font-size:30px;font-weight:750}.sub{font-size:17px;fill:#475569}.head{font-size:21px;font-weight:700}.body{font-size:17px}.small{font-size:15px;fill:#475569}.edge{fill:none;stroke:#475569;stroke-width:2.5;marker-end:url(#arrow)}</style>
+<rect width="1200" height="650" rx="24" fill="#f8fafc"/>
+<text x="40" y="53" class="title">Recover source, site intent and access separately.</text>
+<text x="40" y="88" class="sub">A restored file or registered scale set is not a runtime acceptance result.</text>
+<rect x="40" y="130" width="340" height="175" rx="18" fill="#eaf2ff" stroke="#92b6ee" stroke-width="2"/>
+<text x="62" y="166" class="head">Public source</text><text x="62" y="202" class="body">Pinned Git / verified source archive</text><text x="62" y="232" class="body">Build recipes, versions and tests</text><text x="62" y="272" class="small">No site secrets in the checkout</text>
+<rect x="430" y="130" width="340" height="175" rx="18" fill="#fff5db" stroke="#dbb45b" stroke-width="2"/>
+<text x="452" y="166" class="head">Protected site configuration</text><text x="452" y="202" class="body">Inventory, placement and bindings</text><text x="452" y="232" class="body">Image archives and exact digests</text><text x="452" y="272" class="small">Versioned intent + private receipts</text>
+<rect x="820" y="130" width="340" height="175" rx="18" fill="#f3edff" stroke="#b89ade" stroke-width="2"/>
+<text x="842" y="166" class="head">Encrypted secret custody</text><text x="842" y="202" class="body">Catalogs and private asset backup</text><text x="842" y="232" class="body">Recovery identity held separately</text><text x="842" y="272" class="small">Reissue expired or revoked access</text>
+<path d="M210 305 V340 H600 V375" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/><path d="M600 305 V375" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/><path d="M990 305 V340 H600" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<rect x="40" y="390" width="340" height="150" rx="18" fill="#e5f6f2" stroke="#7fc3b3" stroke-width="2"/>
+<text x="62" y="427" class="head">1. Render and compare</text><text x="62" y="463" class="body">Admission held; public mode github</text><text x="62" y="496" class="body">Review surviving resources first</text>
+<rect x="430" y="390" width="340" height="150" rx="18" fill="#e5f6f2" stroke="#7fc3b3" stroke-width="2"/>
+<text x="452" y="427" class="head">2. Prove the intended scope</text><text x="452" y="463" class="body">Isolation, image and real JIT jobs</text><text x="452" y="496" class="body">Artifacts, profiles and cleanup</text>
+<rect x="820" y="390" width="340" height="150" rx="18" fill="#e5f6f2" stroke="#7fc3b3" stroke-width="2"/>
+<text x="842" y="427" class="head">3. Activate deliberately</text><text x="842" y="463" class="body">Only after applicable checks pass</text><text x="842" y="496" class="body">Save a new recovery generation</text>
+<path d="M600 375 H210 V383" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/><path d="M385 465 H424" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/><path d="M775 465 H814" fill="none" stroke="#475569" stroke-width="2.5" marker-end="url(#arrow)"/>
+<text x="40" y="592" class="sub">Unknown or failed evidence → keep admission held, preserve receipts, fix the cause.</text>
+<text x="40" y="623" class="small">Git ignore is not encryption or backup. Linux/x64 success does not qualify other platforms or every application.</text>
+</svg>

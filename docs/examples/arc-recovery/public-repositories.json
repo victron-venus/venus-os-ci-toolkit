@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "default_mode": "github",
+  "organizations": ["example-org"],
+  "profiles": {
+    "ci": "example-reserve-ci-x64",
+    "automation": "example-reserve-automation-x64",
+    "release": "example-reserve-release-x64"
+  },
+  "repositories": [
+    {"name": "example-org/application", "default_branch": "main"},
+    {"name": "example-person/application", "default_branch": "main"}
+  ],
+  "organization_secrets": {"example-org": "example-org-app"}
+}
