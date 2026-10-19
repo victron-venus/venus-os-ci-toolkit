@@ -301,7 +301,9 @@ def profile_result(entry, profile, labels, collections, fresh):
     matches, configuration = [], 'unknown'
     if selector == 'configured':
         matches, configuration = matching_pools(repository, labels, collections)
-    state = matches[0]['state'] if configuration == 'matched' else 'unknown'
+    state = 'unknown'
+    if configuration == 'matched' and len(matches) == 1:
+        state = matches[0]['state']
     demand = entry.get('queued_jobs', {}).get(profile)
     if demand is not None and (type(demand) is not int or demand < 0):
         raise ValueError('Invalid queued job count')

@@ -210,15 +210,33 @@ commands, permissions and event filters. Review platform exceptions and qualify
 the actual workflow graph before activation. No mode or runner registration is
 changed by this command.
 
+Shared RC fuzzing also uses the CI profile, because it builds and executes the
+candidate's fuzz targets. Its public-repository, default-branch RC-dispatch guard
+and read-only permissions remain unchanged; it does not use the release pool.
+
 OpenSSF Scorecard publication also stays on its required literal `ubuntu-latest`
 runner. Its publishing service validates the workflow's hosted-runner identity;
 the reserve must not weaken that contract. Local scan/completeness jobs can use
 the CI pool, but public Scorecard publication remains a hosted-service dependency.
 
-The GitHub App specifications in `deploy/runner-reserve/github-apps.json` keep
-organization runner administration separate from the repository administration
-permission GitHub requires for personal repository runners. Install only for the
-listed public projects. Do not copy a developer PAT or `BOT_PAT` into the runner
+The GitHub App specifications in `deploy/runner-reserve/github-apps.json` map
+`organizations.victron-venus`, `organizations.ha-homelab` and
+`organizations.open-ott-play` to three separately owned private Apps with distinct
+organization-prefixed names. Create each under its matching organization, using
+only that entry as the App manifest. Each requests only organization self-hosted
+runner administration, with no repository permissions, events or webhook. Limit
+each organization's runner groups to its listed public projects; an App installation
+alone does not impose that runner-group restriction.
+
+The separate `personal` App retains only the repository administration permission
+GitHub requires for personal repository runners. Install it under `4alvit` with
+**Only select repositories**, selecting the 19 personal public repositories in
+`repositories.json`, not all repositories. App names must be globally available
+when created and no longer than 34 characters; record any naming adjustment with
+the corresponding owner entry. See [GitHub App registration](https://docs.github.com/en/apps/creating-github-apps/registering-a-github-app/registering-a-github-app).
+These source specifications do not create Apps or grant access.
+
+Do not copy a developer PAT or `BOT_PAT` into the runner
 controller, worker image, workspace or source repository. Private keys belong in
 controller-only secrets; workers receive ephemeral registration material.
 The catalog's `organization_secrets` binds each organization to a distinct

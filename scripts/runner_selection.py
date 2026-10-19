@@ -35,7 +35,7 @@ METADATA_EVENT = TRUSTED_EVENT.replace(
 ACTIVE_WORKFLOWS = {
     "python-ci.yml": "ci", "go-ci.yml": "ci", "typescript-ci.yml": "ci",
     "rust-ci.yml": "ci", "terraform-ci.yml": "ci", "security-scan.yml": "ci",
-    "ci.yml": "ci", "contract-tests.yml": "ci",
+    "ci.yml": "ci", "contract-tests.yml": "ci", "fuzz.yml": "ci",
     "auto-approve-reusable.yml": "automation", "auto-merge.yml": "automation",
     "coderabbit-review-reusable.yml": "automation", "renovate.yml": "automation",
     "coderabbit-autofix-reusable.yml": "automation",

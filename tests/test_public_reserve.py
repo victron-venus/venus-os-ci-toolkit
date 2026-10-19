@@ -347,6 +347,22 @@ class StandbyPoolTests(unittest.TestCase):
                 pool_module.pool_values('victron-venus', 'ci', self.image, 'mp', '10.66.10.2',
                                         inventory)
 
+    def test_app_specs_keep_each_owner_and_permission_boundary_explicit(self):
+        apps = json.loads((ROOT / 'deploy/runner-reserve/github-apps.json').read_text())
+        self.assertEqual(set(apps['organizations']), set(self.inventory['organizations']))
+        specs = [*apps['organizations'].values(), apps['personal']]
+        self.assertEqual(len({spec['name'].casefold() for spec in specs}), len(specs))
+        for owner, spec in apps['organizations'].items():
+            with self.subTest(owner=owner):
+                self.assertTrue(spec['name'].startswith(owner + ' '))
+                self.assertEqual(spec['default_permissions'], {'organization_self_hosted_runners': 'write'})
+        self.assertEqual(apps['personal']['default_permissions'], {'administration': 'write'})
+        for spec in specs:
+            self.assertLessEqual(len(spec['name']), 34)
+            self.assertIs(spec['public'], False)
+            self.assertEqual(spec['default_events'], [])
+            self.assertEqual(spec['hook_attributes'], {'active': False})
+
     def test_original_single_organization_inventory_remains_supported(self):
         inventory = dict(self.inventory, organizations=['victron-venus'])
         inventory.pop('organization_secrets')
