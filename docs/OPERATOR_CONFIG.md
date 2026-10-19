@@ -76,3 +76,11 @@ smoke no older than 24 hours, actual runner/group evidence and an explicit
 Preparing the JSON files does not change any runner mode, workflow, permission,
 registration or running job. See [runner admission](ottplay-k3s-runners.md) and
 the separate [public-project reserve](RUNNERS.md).
+
+## Runner recovery generations
+
+The [ARC recovery index](ARC_RECOVERY.md) connects public source, the existing
+protected site configuration repository and separate encrypted credential
+custody. Keep site-specific adapters versioned with their reviewed prerequisites.
+The ignored `operator-config/` area is disposable non-secret workspace only; it
+is not encryption, off-device backup or a replacement for the canonical site store.

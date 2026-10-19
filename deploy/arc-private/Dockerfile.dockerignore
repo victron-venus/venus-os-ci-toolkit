@@ -1,0 +1,11 @@
+# Repository-root context: only exact private image build inputs are available.
+# The public guard CA is inherited from BASE_IMAGE; no local key or CA is copied.
+**
+!.github/gh/release.json
+!scripts/install_release_gh.py
+!deploy/arc-private/Dockerfile
+!deploy/arc-private/Dockerfile.dockerignore
+!deploy/arc-private/sandbox-docker.sh
+!deploy/runner-reserve/start-runner.sh
+!deploy/runner-reserve/sandbox-docker.sh
+!deploy/runner-reserve/qualify.sh

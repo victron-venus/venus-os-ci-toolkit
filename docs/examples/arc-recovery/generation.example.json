@@ -1,0 +1,40 @@
+{
+  "schema": 1,
+  "example_only": true,
+  "generation": "REPLACE_WITH_UNIQUE_GENERATION",
+  "source": {
+    "toolkit_commit": null,
+    "toolkit_bundle_sha256": null,
+    "site_configuration_commit": null,
+    "site_adapter_commit": null
+  },
+  "files": [
+    {"path": "site/public-repositories.json", "sha256": null},
+    {"path": "site/listener-placement.json", "sha256": null},
+    {"path": "site/approved-render-plan.json", "sha256": null},
+    {"path": "images/worker.oci.tar", "sha256": null}
+  ],
+  "worker_image": {
+    "manifest_digest": null,
+    "platform": "linux/amd64",
+    "source_revision": null,
+    "guard_ca_sha256": null,
+    "bootstrap_sha256": null,
+    "qualification_status": "NOT_EVALUATED"
+  },
+  "credentials": {
+    "catalog_generation": null,
+    "catalog_ciphertext_sha256": null,
+    "app_asset_checkpoint_sha256": null,
+    "recovery_identity_custody": "SEPARATE_CUSTODY_REFERENCE_ONLY"
+  },
+  "acceptance": {
+    "inventory_and_access": "NOT_EVALUATED",
+    "node_and_network_isolation": "NOT_EVALUATED",
+    "worker_image_probe": "NOT_EVALUATED",
+    "github_jit_and_cleanup": "NOT_EVALUATED",
+    "cross_owner_and_profiles": "NOT_EVALUATED",
+    "supported_application_jobs": "NOT_EVALUATED"
+  },
+  "routing": {"public_mode": "github", "recovery_pools_held": true}
+}
