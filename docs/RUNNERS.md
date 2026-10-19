@@ -371,6 +371,51 @@ python3 deploy/runner-reserve/render_pool.py \
   --output /path/to/new-reserve-plan
 ```
 
+#### Distribute listeners separately from workers
+
+Each scale set needs a listener Pod in `runner-reserve-system`, even while its
+workers are held at zero. The 66-set inventory therefore needs 66 listener Pod
+slots, with aggregate requests of 660m CPU and 2640Mi memory. Worker namespace
+quotas do not include these listeners. Account for both populations and reserve
+headroom before selecting nodes; free memory alone does not imply free Pod slots.
+
+By default listeners use the worker's `--node`. To distribute them, provide
+`--listener-placement /path/to/listener-placement.json`. This changes only
+`listenerTemplate.spec.nodeSelector.kubernetes.io/hostname`. Worker placement,
+guard address, image, runtime, security settings and `--held` limits are preserved.
+No-map output remains unchanged.
+
+The JSON format is `{"schema": 1, "placements": {"SCOPE": {"PROFILE": "NODE"}}}`.
+It must include every current scope and all three profiles (`ci`, `automation`,
+`release`); there is no partial-map fallback. A scope is an organization name or
+the full name of a personal repository from `repositories.json`. Duplicate,
+unknown or missing entries and invalid node names fail before output is created.
+
+From the repository root, generate a complete starting map into a **new file**:
+
+```bash
+python3 - <<'PY'
+import json
+from pathlib import Path
+catalog = json.loads(Path('deploy/runner-reserve/repositories.json').read_text())
+scopes = [*catalog['organizations'], *[
+    repo['name'] for repo in catalog['repositories']
+    if repo['name'].split('/')[0] not in catalog['organizations']]]
+plan = {'schema': 1, 'placements': {
+    scope: {profile: 'choose-listener-node' for profile in catalog['profiles']}
+    for scope in scopes}}
+with open('listener-placement.json', 'x') as output:
+    output.write(json.dumps(plan, indent=2) + '\n')
+PY
+```
+
+Replace each placeholder with a reviewed node hostname, then pass the file to
+the existing render command along with `--held` during registration preparation.
+Inspect the resulting values and current node capacity before any installation.
+The renderer checks structure; it does not contact Kubernetes, verify that nodes
+exist, or certify their capacity or the worker image. A placement map alone does
+not make the reserve ready.
+
 The renderer validates the inventory and digest format, creates a new output
 directory, and never installs resources or changes Actions variables. Its
 `foundations.json` contains namespaces, no-permission worker service accounts,
