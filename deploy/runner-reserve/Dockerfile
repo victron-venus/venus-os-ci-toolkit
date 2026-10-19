@@ -11,7 +11,6 @@ RUN apt-get update && apt-get -o Dpkg::Options::=--force-unsafe-io install -y --
     ca-certificates \
     cmake \
     curl \
-    gh \
     git \
     iproute2 \
     iptables \
@@ -47,6 +46,22 @@ RUN apt-get update && apt-get -o Dpkg::Options::=--force-unsafe-io install -y --
     chmod 0440 /etc/sudoers.d/runner && \
     mkdir -p /opt/hostedtoolcache && \
     chown runner:runner /opt/hostedtoolcache
+# Shared automation requires gh api --slurp, absent from Ubuntu's gh 2.45.
+# Verify the existing release manifest's archive, binary and version pins.
+COPY .github/gh/release.json /tmp/reserve-gh/.github/gh/release.json
+COPY scripts/install_release_gh.py /tmp/reserve-gh/scripts/install_release_gh.py
+RUN arch="$(dpkg --print-architecture)" \
+    && case "$arch" in amd64|arm64) ;; *) exit 1 ;; esac \
+    && curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
+        --connect-timeout 15 --max-time 180 --max-filesize 33554432 \
+        "https://github.com/cli/cli/releases/download/v2.102.0/gh_2.102.0_linux_${arch}.tar.gz" \
+        --output /tmp/reserve-gh/archive.tar.gz \
+    && GODEBUG=fips140=on python3 /tmp/reserve-gh/scripts/install_release_gh.py \
+        --archive /tmp/reserve-gh/archive.tar.gz --output /usr/local/bin/gh \
+    && test "$(command -v gh)" = /usr/local/bin/gh \
+    && gh api --paginate --slurp --help >/dev/null \
+    && gh api --help | grep -F -- '--slurp' >/dev/null \
+    && rm -rf /tmp/reserve-gh
 COPY --from=docker /usr/local/bin/ /usr/local/bin/
 COPY --from=docker /usr/local/libexec/docker/cli-plugins/ /usr/local/libexec/docker/cli-plugins/
 COPY --from=node /usr/local/bin/node /usr/local/bin/node
@@ -54,7 +69,8 @@ COPY --from=node /usr/local/lib/node_modules/ /usr/local/lib/node_modules/
 RUN ln -s /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm && \
     ln -s /usr/local/lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx
 COPY --from=runner --chown=1001:1001 /home/runner/ /home/runner/
-COPY start-runner.sh sandbox-docker.sh qualify.sh guard-ca.crt /opt/victron-ci-reserve/
+COPY deploy/runner-reserve/start-runner.sh deploy/runner-reserve/sandbox-docker.sh \
+    deploy/runner-reserve/qualify.sh deploy/runner-reserve/guard-ca.crt /opt/victron-ci-reserve/
 RUN chmod 0755 /opt/victron-ci-reserve/*.sh && \
     node --version && docker --version && /home/runner/bin/Runner.Listener --version
 ENV HOME=/home/runner RUNNER_TOOL_CACHE=/opt/hostedtoolcache AGENT_TOOLSDIRECTORY=/opt/hostedtoolcache ImageOS=ubuntu24

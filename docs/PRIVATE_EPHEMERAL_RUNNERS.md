@@ -5,8 +5,9 @@ using the archive and executable hashes in `.github/gh/release.json` and the
 existing `scripts/install_release_gh.py` offline archive mode. Its build checks
 `gh api --paginate --slurp` without an API call: the inherited Ubuntu CLI 2.45
 lacks this option, which the approval, merge and CodeRabbit metadata workflows
-require. The public base image is unchanged. A CLI-only overlay on an existing
-private image must record its exact parent digest and verified CLI payload;
+require. The public base and private derivative have separate build recipes and
+digest identities. A CLI-only overlay on an existing private image must record
+its exact parent digest and verified CLI payload;
 that derived image is not a rebuild of all current source and needs its own
 image identity and actual automation validation before promotion.
 
@@ -148,13 +149,21 @@ the installed guard CA and toolchains, adds the document/test utilities, and
 bakes the current checked-in bootstrap. Older bases that copied the runner at
 startup are normalized at build time. A historical image tag is not evidence
 that its baked bootstrap matches the current source.
+The Dockerfile-specific `deploy/arc-private/Dockerfile.dockerignore` admits only
+the exact build inputs from that root context. Local inventories, Git history,
+credentials and certificate files are excluded; the public guard CA is inherited
+from the pinned base image and must match the selected node's guard.
 
 ```sh
-docker build --file deploy/arc-private/Dockerfile \
+docker build --platform linux/amd64 --file deploy/arc-private/Dockerfile \
   --build-arg BASE_IMAGE=REGISTRY/BASE@sha256:DIGEST \
   --tag REGISTRY/PRIVATE_SANDBOX:VERSION .
 ```
 
+Verify that the selected base platform and resulting image manifest are
+`linux/amd64`, matching the sandbox RuntimeClass and worker node. Do not infer
+the target architecture from the build host; native ARM64 profiles use their
+separate image and policy.
 Preload the resulting digest on every eligible sandbox node, then run the
 sandbox qualification probe before installing pools; sandbox workers use
 `imagePullPolicy: Never`.

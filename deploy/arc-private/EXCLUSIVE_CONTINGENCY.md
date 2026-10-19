@@ -231,9 +231,13 @@ not apply the whole foundations list without reviewing every object.
    1900m standard request, 100m RuntimeClass overhead, limits, emptyDir and network
    fence. Use the fixed bootstrap's existing qualification mode. Do not relax admission to
    inject a different command, init container, helper mount or extra secret.
-   The canonical Docker/PostgreSQL qualification keeps the same **1800-second
-   (30-minute)** overall deadline as V7; do not change the comparison contract.
-   Keep its BusyBox build,
+   Historical V7 comparisons used an **1800-second (30-minute) outer budget**.
+   The current shared bootstrap instead bounds the probe itself to **600 seconds
+   plus a 15-second forced-termination grace**, after TLS admission and Docker
+   startup. An outer budget does not extend this inner deadline. Record the
+   exact image/bootstrap and both applicable budgets; do not describe a current
+   rebuild as preserving V7's timing contract or bypass the inner timeout to make
+   a comparison pass. Keep its BusyBox build,
    deletion/opaque-layer assertions, PostgreSQL SQL and published-port checks.
 9. Complete the readback cases below in separate sequential disposable pods if
    different termination outcomes are required. Use bounded trusted operator

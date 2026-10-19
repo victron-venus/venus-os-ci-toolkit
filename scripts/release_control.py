@@ -410,7 +410,10 @@ class GitHub:
         )
         endpoint = f"{self.base}/{path}".rstrip("/")
         if mode == "pages":
-            endpoint += ("&" if "?" in endpoint else "?") + "per_page=100"
+            # Large job pages can fail for partially rerun reusable workflows.
+            # Keep --paginate so smaller responses retain the full inventory.
+            page_size = 20 if path.endswith("/jobs") else 100
+            endpoint += ("&" if "?" in endpoint else "?") + f"per_page={page_size}"
         method_args = {
             "GET": ["--method", "GET"],
             "POST": ["--method", "POST"],
