@@ -1,6 +1,10 @@
 """Public workers must be fenced before admission, without affecting private pools."""
 import importlib.util
+import io
 import json
+import os
+import subprocess
+import sys
 import tempfile
 import tomllib
 from pathlib import Path
@@ -394,6 +398,116 @@ class StandbyPoolTests(unittest.TestCase):
         self.assertIn("size(c.env.filter(e, e.name == 'ACTIONS_RUNNER_INPUT_JITCONFIG')) <= 1", expressions)
         binding = next(d for d in docs if d['kind'] == 'ValidatingAdmissionPolicyBinding')
         self.assertEqual(binding['spec']['validationActions'], ['Deny'])
+
+
+class ListenerPlacementTests(unittest.TestCase):
+    def setUp(self):
+        self.inventory = json.loads((ROOT / 'deploy/runner-reserve/repositories.json').read_text())
+        self.scopes = [*self.inventory['organizations'], *[
+            entry['name'] for entry in self.inventory['repositories']
+            if entry['name'].split('/')[0] not in self.inventory['organizations']]]
+        self.plan = {'schema': 1, 'placements': {
+            scope: {profile: 'listener-node' for profile in self.inventory['profiles']}
+            for scope in self.scopes}}
+        self.root = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        self.path = self.root / 'placement.json'
+
+    def render(self, output, extra=()):
+        args = ['render_pool.py', '--worker-image', 'localhost/reserve@sha256:' + 'a' * 64,
+                '--node', 'mp', '--node-ip', '192.0.2.1', '--held', '--output', str(output),
+                *extra]
+        with patch('sys.argv', args), patch('sys.stdout', new_callable=io.StringIO):
+            pool_module.main()
+
+    def test_complete_map_changes_only_listener_placement(self):
+        self.path.write_text(json.dumps(self.plan))
+        default, placed = self.root / 'default', self.root / 'placed'
+        self.render(default)
+        self.render(placed, ['--listener-placement', str(self.path)])
+        self.assertEqual({p.name for p in default.iterdir()}, {p.name for p in placed.iterdir()})
+        index = json.loads((placed / 'index.json').read_text())
+        self.assertEqual(len(index), len(self.scopes) * len(self.inventory['profiles']))
+        for name in ('index.json', 'foundations.json'):
+            self.assertEqual((default / name).read_bytes(), (placed / name).read_bytes())
+        for entry in index:
+            before = json.loads((default / entry['values']).read_text())
+            after = json.loads((placed / entry['values']).read_text())
+            self.assertEqual((after['minRunners'], after['maxRunners']), (0, 0))
+            selector = after['listenerTemplate']['spec']['nodeSelector']
+            self.assertEqual(selector['kubernetes.io/hostname'], 'listener-node')
+            selector['kubernetes.io/hostname'] = 'mp'
+            self.assertEqual(before, after)
+
+    def test_explicit_default_map_preserves_every_output_byte(self):
+        for profiles in self.plan['placements'].values():
+            profiles.update(dict.fromkeys(profiles, 'mp'))
+        self.path.write_text(json.dumps(self.plan))
+        default, placed = self.root / 'default', self.root / 'placed'
+        self.render(default)
+        self.render(placed, ['--listener-placement', str(self.path)])
+        for path in default.iterdir():
+            self.assertEqual(path.read_bytes(), (placed / path.name).read_bytes())
+
+    def test_invalid_plans_fail_before_output_creation(self):
+        scope = self.scopes[0]
+        invalid = [None, [], {}, {'schema': True, 'placements': self.plan['placements']},
+                   {**self.plan, 'extra': True}, {**self.plan, 'schema': 2},
+                   {**self.plan, 'placements': {}},
+                   {**self.plan, 'placements': {**self.plan['placements'], 'unknown/repo': {}}}]
+        for entries in (None, [], {}, {'ci': 'node'},
+                        {**self.plan['placements'][scope], 'unknown': 'node'}):
+            invalid.append({**self.plan, 'placements': {**self.plan['placements'], scope: entries}})
+        for node in ('', 'bad node', '-node', 'node-', 'node..name', 'node.', 'A', 'a' * 64,
+                     'node/x', True, None, [], {}):
+            invalid.append({**self.plan, 'placements': {**self.plan['placements'], scope: {
+                **self.plan['placements'][scope], 'ci': node}}})
+        for number, plan in enumerate(invalid):
+            with self.subTest(plan=plan):
+                self.path.write_text(json.dumps(plan))
+                output = self.root / str(number)
+                with patch('sys.stderr', new_callable=io.StringIO), self.assertRaises(SystemExit) as error:
+                    self.render(output, ['--listener-placement', str(self.path)])
+                self.assertEqual(error.exception.code, 2)
+                self.assertFalse(output.exists())
+
+    def test_duplicate_keys_at_every_level_are_rejected(self):
+        raw = json.dumps(self.plan)
+        scope = self.scopes[0]
+        for duplicate in (raw.replace('"schema": 1', '"schema": 1, "schema": 1'),
+                          raw.replace('"placements": {', '"placements": {' + json.dumps(scope) + ': {},'),
+                          raw.replace('"ci": "listener-node"',
+                                      '"ci": "listener-node", "ci": "listener-node"', 1)):
+            self.path.write_text(duplicate)
+            with self.assertRaisesRegex(ValueError, 'Duplicate'):
+                pool_module.load_listener_placement(self.path, self.scopes, self.inventory['profiles'])
+
+    def test_oversized_or_malformed_json_is_rejected(self):
+        for raw in (b' ' * 131073, b'{', b'\xff'):
+            self.path.write_bytes(raw)
+            with self.assertRaises(ValueError):
+                pool_module.load_listener_placement(self.path, self.scopes, self.inventory['profiles'])
+
+    def test_direct_pool_call_rejects_invalid_listener_node(self):
+        with self.assertRaisesRegex(ValueError, 'listener node'):
+            pool_module.pool_values(self.scopes[0], 'ci', 'localhost/reserve@sha256:' + 'a' * 64,
+                                    'mp', '192.0.2.1', self.inventory, listener_node='node-')
+
+    def test_nonregular_inputs_fail_without_blocking_or_output(self):
+        self.path.write_text(json.dumps(self.plan))
+        link = self.root / 'link.json'
+        link.symlink_to(self.path)
+        fifo = self.root / 'pipe.json'
+        os.mkfifo(fifo)
+        for number, path in enumerate((link, fifo, self.root, Path(os.devnull))):
+            with self.subTest(path=path):
+                output = self.root / ('refused-' + str(number))
+                result = subprocess.run([
+                    sys.executable, str(ROOT / 'deploy/runner-reserve/render_pool.py'),
+                    '--worker-image', 'localhost/reserve@sha256:' + 'a' * 64,
+                    '--node-ip', '192.0.2.1', '--output', str(output),
+                    '--listener-placement', str(path)], capture_output=True, timeout=3, check=False)
+                self.assertEqual(result.returncode, 2)
+                self.assertFalse(output.exists())
 
 
 class TLSAdmissionTests(unittest.TestCase):
