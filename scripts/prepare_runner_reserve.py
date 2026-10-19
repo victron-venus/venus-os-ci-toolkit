@@ -9,6 +9,7 @@ import re
 from pathlib import Path
 
 from runner_selection import ConsumerRunnerAdapter, adapt_jobs, yaml_editor
+from workflow_contracts import validate_fuzz_pins
 
 TOOLKIT = "victron-venus/venus-os-ci-toolkit/.github/workflows/"
 AUTOMATION = {"auto-approve.yml", "auto-merge.yml", "coderabbit-review.yml", "coderabbit-autofix.yml"}
@@ -26,7 +27,19 @@ def select_profile(name, workflow, profiles):
     return profiles.get(name, "ci")
 
 
-def update_pins(workflow, toolkit_ref):
+def update_fuzz_runtime(job, old_ref, fuzz_ref, toolkit_ref):
+    """Keep the reviewed wrapper, helper checkout and policy on one revision."""
+    parameters = job.get("with")
+    if (old_ref != fuzz_ref or not isinstance(parameters, dict)
+            or parameters.get("toolkit-ref") != fuzz_ref):
+        raise ValueError("Existing fuzz workflow, runtime and policy pins must match")
+    if parameters["toolkit-ref"] == toolkit_ref:
+        return False
+    parameters["toolkit-ref"] = toolkit_ref
+    return True
+
+
+def update_pins(workflow, toolkit_ref, fuzz_ref):
     """Pin only reusable calls belonging to this toolkit."""
     changed = False
     for job in workflow["jobs"].values():
@@ -36,13 +49,15 @@ def update_pins(workflow, toolkit_ref):
         name, separator, old_ref = reference[len(TOOLKIT):].partition("@")
         if not separator or not re.fullmatch(r"[A-Za-z0-9_-]+\.ya?ml", name):
             raise ValueError("Invalid reusable workflow reference")
+        if name == "fuzz.yml":
+            changed = update_fuzz_runtime(job, old_ref, fuzz_ref, toolkit_ref) or changed
         if old_ref != toolkit_ref:
             job["uses"] = TOOLKIT + name + "@" + toolkit_ref
             changed = True
     return changed
 
 
-def render_workflow(path, profiles, toolkit_ref):
+def render_workflow(path, profiles, toolkit_ref, fuzz_ref):
     """Preserve syntax/comments and refuse file or parent-directory symlinks."""
     if path.resolve() != path:
         raise ValueError("Refusing workflow symlink: " + path.name)
@@ -51,12 +66,36 @@ def render_workflow(path, profiles, toolkit_ref):
     if not isinstance(workflow, dict) or not isinstance(workflow.get("jobs"), dict):
         raise ValueError("Invalid workflow: " + path.name)
     changed = adapt_jobs(workflow, select_profile(path.name, workflow, profiles), path.name)
-    pinned = update_pins(workflow, toolkit_ref)
+    pinned = update_pins(workflow, toolkit_ref, fuzz_ref)
     if not (changed or pinned):
         return None
     output = io.StringIO()
     editor.dump(workflow, output)
     return output.getvalue()
+
+
+def existing_fuzz_reference(directory, policy):
+    """Validate the existing consumer contract before preparing any updates."""
+    if policy.get("fuzzing") is None:
+        return None
+    path = directory / ".github/workflows/release-pipeline.yml"
+    if path.resolve() != path or not path.is_file():
+        raise ValueError("A regular release pipeline is required for fuzzing")
+    workflow = yaml_editor().load(path.read_text())
+    if not isinstance(workflow, dict) or not isinstance(workflow.get("jobs"), dict):
+        raise ValueError("Invalid release pipeline")
+    validate_fuzz_pins(directory, {"release-pipeline.yml": workflow})
+    return policy["fuzzing"]["toolkit_ref"]
+
+
+def update_policy_pins(policy, toolkit_ref):
+    """Refresh owned helper pins without changing the release engine revision."""
+    changed = False
+    for section in ("coverage", "fuzzing"):
+        if policy.get(section) and policy[section]["toolkit_ref"] != toolkit_ref:
+            policy[section]["toolkit_ref"] = toolkit_ref
+            changed = True
+    return changed
 
 
 def render(directory, toolkit_ref):
@@ -68,6 +107,7 @@ def render(directory, toolkit_ref):
     if policy_path.is_symlink():
         raise ValueError("Refusing policy symlink")
     policy = json.loads(policy_path.read_text()) if policy_path.exists() else {}
+    fuzz_ref = existing_fuzz_reference(directory, policy)
     profiles = {}
     if policy.get("single_entry_ci"):
         adapter = ConsumerRunnerAdapter(directory, policy)
@@ -78,11 +118,10 @@ def render(directory, toolkit_ref):
     for path in sorted((directory / ".github/workflows").glob("*")):
         if path.suffix not in {".yml", ".yaml"}:
             continue
-        text = render_workflow(path, profiles, toolkit_ref)
+        text = render_workflow(path, profiles, toolkit_ref, fuzz_ref)
         if text is not None:
             files[str(path.relative_to(directory))] = text
-    if policy.get("coverage") and policy["coverage"]["toolkit_ref"] != toolkit_ref:
-        policy["coverage"]["toolkit_ref"] = toolkit_ref
+    if update_policy_pins(policy, toolkit_ref):
         files[".release-policy.json"] = json.dumps(policy, indent=2) + "\n"
     return files
 

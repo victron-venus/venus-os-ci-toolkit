@@ -204,7 +204,9 @@ python3 scripts/prepare_runner_reserve.py /path/to/consumer --toolkit-ref REVIEW
 ```
 
 This uses the existing runner-expression generator, updates shared workflow pins
-and keeps a coverage policy's pin consistent. It preserves the release engine
+and keeps coverage and fuzzing policy pins consistent. A configured fuzz workflow,
+its helper checkout input and its policy must already agree; all three are updated
+together or adoption refuses the edit set. It preserves the release engine
 revision, platform matrices, fixed Ubuntu images, hardware/private selections,
 commands, permissions and event filters. Review platform exceptions and qualify
 the actual workflow graph before activation. No mode or runner registration is
