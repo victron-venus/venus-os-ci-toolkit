@@ -14,7 +14,7 @@ from workflow_contracts import validate_fuzz_pins
 TOOLKIT = "victron-venus/venus-os-ci-toolkit/.github/workflows/"
 AUTOMATION = {"auto-approve.yml", "auto-merge.yml", "coderabbit-review.yml", "coderabbit-autofix.yml"}
 JOB_PROFILE = re.compile(r"([A-Za-z0-9_-]+\.ya?ml):([A-Za-z_][A-Za-z0-9_-]*)=(ci|automation|release|hosted|preserve)")
-CREDENTIAL = re.compile(r"secrets\s*(?:\.|\[)|github\s*(?:\.\s*token\b|\[\s*\\?['\"]token\\?['\"])|"
+CREDENTIAL = re.compile(r"\bsecrets\b|github\s*(?:\.\s*token\b|\[\s*\\?['\"]token\\?['\"])|"
                         r'"[^"\s]*(?:token|password|private[_-]?key|api[_-]?key|credentials)[^"\s]*"\s*:', re.I)
 PUBLISH = re.compile(r"deploy-pages|gh-action-pypi-publish|docker/(?:login|build-push)-action|"
                      r"action-gh-release|upload-release-action|actions-gh-pages|wrangler-action|"

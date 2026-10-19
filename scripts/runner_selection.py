@@ -160,7 +160,9 @@ def can_adapt_job(job):
            for step in job.get("steps", [])):
         return False
     runner = job.get("runs-on")
-    return runner == "ubuntu-latest" or runner in [runner_labels(profile) for profile in PROFILES]
+    return runner == "ubuntu-latest" or runner in [
+        *(runner_labels(profile) for profile in PROFILES), runner_labels(hosted_budget=True)
+    ]
 
 
 def adapt_jobs(workflow, profile, name, *, job_profiles=None):
@@ -176,6 +178,10 @@ def adapt_jobs(workflow, profile, name, *, job_profiles=None):
         if any(getattr(getattr(item, "anchor", None), "value", None) or getattr(item, "merge", None)
                for item in (workflow, workflow["jobs"], job)):
             raise ValueError("Review aliased/merged runner adapters explicitly: " + name)
+        if runner == runner_labels(hosted_budget=True):
+            if selected_profile != "ci":
+                raise ValueError("Keep hosted-budget selection on CI or preserve it: " + name + ":" + job_name)
+            continue
         selected = "ubuntu-latest" if selected_profile == "hosted" else runner_labels(selected_profile)
         if runner != selected:
             job["runs-on"] = selected

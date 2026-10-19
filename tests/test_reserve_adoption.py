@@ -214,6 +214,43 @@ jobs:
         result = render(self.root, 'b' * 40, job_profiles=['ci.yml:test=ci'])
         self.assertEqual(yaml_editor().load(result['.github/workflows/ci.yml'])['jobs']['test']['runs-on'], runner_labels('ci'))
 
+    def test_whole_secret_context_requires_review_before_any_write(self):
+        for expression in ('${{ toJSON(secrets) }}', '${{ toJSON(SECRETS) }}', '${{ secrets[inputs.name] }}'):
+            for location in ('workflow-env', 'step-with', 'multiline-run'):
+                source = {'permissions': {'contents': 'read'}, 'jobs': {
+                    'test': {'runs-on': 'ubuntu-latest', 'steps': [{'run': 'pytest'}]}}}
+                if location == 'workflow-env':
+                    source['env'] = {'CONTEXT': expression}
+                elif location == 'step-with':
+                    source['jobs']['test']['steps'][0]['with'] = {'context': expression}
+                else:
+                    source['jobs']['test']['steps'][0]['run'] = 'echo start\necho ' + expression
+                path = self.write_workflow(source)
+                before = path.read_bytes()
+                with self.subTest(expression=expression, location=location), self.assertRaisesRegex(
+                        ValueError, 'credential reference'):
+                    render(self.root, 'b' * 40)
+                self.assertEqual(path.read_bytes(), before)
+
+    def test_hosted_budget_canonical_keeps_budget_and_requires_ci_role(self):
+        source = {'permissions': {'contents': 'read'}, 'jobs': {
+            'test': {'runs-on': runner_labels(hosted_budget=True), 'steps': [{'run': 'pytest'}]}}}
+        path = self.write_workflow(source)
+        before = path.read_bytes()
+        for role in ('ci', 'preserve'):
+            with self.subTest(role=role):
+                self.assertEqual(render(self.root, 'b' * 40, job_profiles=['ci.yml:test=' + role]), {})
+        for role in ('automation', 'release', 'hosted'):
+            with self.subTest(role=role), self.assertRaisesRegex(ValueError, 'hosted-budget'):
+                render(self.root, 'b' * 40, job_profiles=['ci.yml:test=' + role])
+        self.assertEqual(path.read_bytes(), before)
+        source['jobs']['test']['env'] = {'CONTEXT': '${{ toJSON(secrets) }}'}
+        self.write_workflow(source)
+        before = path.read_bytes()
+        with self.assertRaisesRegex(ValueError, 'credential reference'):
+            render(self.root, 'b' * 40)
+        self.assertEqual(path.read_bytes(), before)
+
     def test_workflow_run_publisher_requires_hosted_exception(self):
         source = {'on': {'workflow_run': {}}, 'permissions': {'packages': 'write'}, 'jobs': {
             'publish': {'runs-on': 'ubuntu-latest', 'steps': [{'run': 'docker push example'}]}}}
