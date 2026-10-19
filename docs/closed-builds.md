@@ -33,6 +33,16 @@ successful source run, current attempt and both public gates before staging publ
 inputs for `action=rebuild`. Missing or expired evidence requires a newly qualified
 public release; a closed rebuild cannot repair a failed source run.
 
+Byte promotion keeps the public RC manifest unchanged. After publication the
+stable job stores a separate public `release-promotion-evidence` artifact with
+`promotion.json`, binding the stable release ID/tag and RC manifest digest to the
+promotion run, attempt and workflow source. The release-body promotion link is
+only a locator: resolution requires the immutable artifact digest, exact receipt
+bindings, successful stable validation and final whole-run success. A failed
+publisher post-job or a later rerun invalidates qualification. Previously promoted
+stable releases without this retained receipt cannot be used for closed rebuilds;
+this extension does not rewrite or retrofit their tags or manifests.
+
 `closed_request` is an optional opaque identifier of at most 80 ASCII letters,
 digits, underscores or hyphens, starting with a letter or digit. Empty stays empty
 in the public graph; the protected worker selects the approved default envelope.
@@ -44,6 +54,11 @@ the verified flat public `payloads/` inventory. Context binds repository, workfl
 decimal-string source run ID/attempt, source SHA, plan digest, payload sizes/digests,
 mode and exact public release tag. The worker must authenticate the resolver's
 current run/attempt and producer identity before consuming that artifact.
+For a byte-promoted stable release, `release_tag` remains the selected stable tag,
+the plan retains its original RC identity, and an additional `promotion` object
+contains the verified public promotion receipt. All receipt IDs and attempts are
+decimal strings. The deployment client must independently verify this receipt
+when accepting an RC candidate against its later stable publication.
 
 The workflow keeps `cancel-in-progress: false` and opts into `queue: max`.
 [GitHub limits this queue to 100 pending runs](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency).

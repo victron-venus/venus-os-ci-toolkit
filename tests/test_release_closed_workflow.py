@@ -66,6 +66,11 @@ class ClosedWorkflowTests(unittest.TestCase):
         self.assertIn("operation == 'release'", jobs["prepare"]["if"])
         self.assertIn("closed_stable_validate", jobs["stable"]["needs"])
         self.assertIn("!cancelled()", jobs["stable"]["if"])
+        promotion = jobs["stable"]["steps"][-2:]
+        self.assertIn("record-promotion", promotion[0]["run"])
+        self.assertEqual(promotion[1]["with"]["name"], "release-promotion-evidence")
+        self.assertNotIn("if", promotion[0])
+        self.assertNotIn("continue-on-error", promotion[0])
 
     def test_disabled_rollout_keeps_the_same_graph_for_source_controlled_selection(self):
         enabled, disabled = policy(), policy()
@@ -108,6 +113,7 @@ class ClosedWorkflowTests(unittest.TestCase):
         first = fixture.render()
         self.assertEqual(first, installer.render(fixture.root))
         self.assertIn("scripts/release_closed.py", first)
+        self.assertIn("scripts/release_promotion.py", first)
         self.assertIn(".github/release-tests/test_release_closed.py", first)
         self.assertIn("docs/closed-builds.md", first)
         self.assertNotIn(".github/workflows/closed-build.yml", first)

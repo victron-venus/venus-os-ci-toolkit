@@ -174,3 +174,13 @@ def apply(workflow: dict, policy: dict, pins: dict) -> None:
     job = jobs["stable"]
     job["needs"] = ["prepare", "closed_stable_validate"]
     job["if"] = condition("!cancelled() && needs.prepare.result == 'success' && " + job["if"][3:-3].strip() + " && " + closed_result("closed_stable_validate"))
+    job["steps"].extend([{
+        "name": "Bind the unchanged RC to this public promotion",
+        "env": {"GH_TOKEN": "${{ github.token }}"},
+        "run": 'python3 scripts/release_closed.py record-promotion --output "$RUNNER_TEMP/release-promotion/promotion.json"',
+    }, {
+        "name": "Store immutable public promotion evidence",
+        "uses": pins["actions/upload-artifact"],
+        "with": {"name": "release-promotion-evidence", "path": "${{ runner.temp }}/release-promotion/promotion.json",
+                 "if-no-files-found": "error", "retention-days": 90},
+    }])

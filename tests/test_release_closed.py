@@ -1,12 +1,14 @@
 """Closed requests and public-only resolution fail before releasing credentials."""
 
 import copy
+import io
 import json
 import os
 from pathlib import Path
 import sys
 import tempfile
 import unittest
+import zipfile
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
@@ -117,12 +119,15 @@ class PublicResolutionTests(unittest.TestCase):
         self.fixture.setUp()
         self.addCleanup(self.fixture.doCleanups)
         self.fixture.policy["versioning"]["promotion"] = "promote-bytes"
+        self.fixture.policy["closed_build"] = policy()["closed_build"]
+        self.fixture.gh.source_policies[fixtures.SHA] = copy.deepcopy(self.fixture.policy)
         (self.fixture.root / ".release-policy.json").write_text(json.dumps(self.fixture.policy))
         self.result, self.plan = self.fixture.qualify_schedule_fixture()
         self.gh = self.fixture.gh
         self.gh.info["private"] = False
         self.output = self.fixture.root / "resolved"
         self.enterContext(patch.object(closed, "rc", fixtures.rc))
+        self.enterContext(patch.object(closed.release_promotion, "rc", fixtures.rc))
         self.gh.writes.clear()
         self.gh.ledger_writes.clear()
 
@@ -208,6 +213,93 @@ class PublicResolutionTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.resolve()
         self.assertEqual((self.output / "keep").read_text(), "original")
+
+    def promote(self):
+        self.fixture.start_run("stable", 101, self.result["tag"])
+        fixtures.lifecycle.prepare(self.fixture.args)
+        arguments = fixtures.argparse.Namespace(repo=fixtures.REPO, rc=self.result["tag"], run_id="101")
+        with patch.object(fixtures.rc, "GitHub", return_value=self.gh):
+            stable = fixtures.rc.promote(arguments)
+        for assets in self.gh.assets.values():
+            for asset in assets:
+                asset["digest"] = "sha256:" + fixtures.rc.digest(self.gh.files[asset["id"]])
+        record = closed.release_promotion.record(
+            self.gh, self.gh.info, self.gh.runs[101], self.result["tag"], self.fixture.root / "promotion.json")
+        self.result = stable
+        self.promotion_archive(record)
+        self.gh.runs[101].update(status="completed", conclusion="success")
+        self.gh.jobs_by_run[101] = [{
+            "name": name, "status": "completed", "conclusion": "success", "head_sha": fixtures.SHA,
+        } for name in ("stable", "closed_stable_validate / package")]
+        self.gh.writes.clear()
+        self.gh.ledger_writes.clear()
+        return record
+
+    def promotion_archive(self, record):
+        stream = io.BytesIO()
+        with zipfile.ZipFile(stream, "w") as zipped:
+            zipped.writestr("promotion.json", fixtures.rc.json_bytes(record))
+        raw = stream.getvalue()
+        self.gh.evidence_archives[1101] = raw
+        self.gh.evidence_by_run[101] = [{
+            "id": 1101, "name": "release-promotion-evidence", "expired": False,
+            "size_in_bytes": len(raw), "digest": "sha256:" + fixtures.rc.digest(raw),
+            "workflow_run": {"id": 101, "head_sha": fixtures.SHA},
+        }]
+
+    def test_promoted_stable_requires_its_own_completed_run_and_bound_receipt(self):
+        record = self.promote()
+        context = self.resolve()
+        self.assertEqual(context["release_tag"], "v1.2.3")
+        self.assertEqual(context["run_id"], "100")
+        self.assertEqual(context["promotion"], record)
+        self.assertEqual(record["promotion_run_id"], "101")
+        self.assertEqual(record["promotion_run_attempt"], "1")
+        self.assertEqual(json.loads((self.output / "version-plan.json").read_text())["channel"], "rc")
+        self.assertEqual(self.gh.writes, [])
+
+    def test_promoted_stable_rejects_missing_stale_failed_and_mismatched_evidence(self):
+        record = self.promote()
+        original = copy.deepcopy(self.gh)
+        cases = {
+            "pending": lambda gh: gh.runs[101].update(status="in_progress", conclusion=None),
+            "post_job_failure": lambda gh: gh.runs[101].update(conclusion="failure"),
+            "rerun": lambda gh: gh.runs[101].update(run_attempt=2),
+            "other_workflow": lambda gh: gh.runs[101].update(path=".github/workflows/other.yml"),
+            "other_event": lambda gh: gh.runs[101].update(event="push"),
+            "missing": lambda gh: gh.evidence_by_run[101].clear(),
+            "expired": lambda gh: gh.evidence_by_run[101][0].update(expired=True),
+            "digest": lambda gh: gh.evidence_by_run[101][0].update(digest="sha256:" + "0" * 64),
+            "wrong_producer": lambda gh: gh.evidence_by_run[101][0]["workflow_run"].update(id=100),
+            "oversized": lambda gh: gh.evidence_by_run[101][0].update(size_in_bytes=100_000),
+            "failed_stable": lambda gh: gh.jobs_by_run[101][0].update(conclusion="failure"),
+            "skipped_required_closed": lambda gh: gh.jobs_by_run[101][1].update(conclusion="skipped"),
+        }
+        for name, mutate in cases.items():
+            self.gh = copy.deepcopy(original)
+            mutate(self.gh)
+            with self.subTest(name=name), self.assertRaises(fixtures.rc.ReleaseError):
+                self.resolve()
+            self.assertFalse(self.output.exists())
+        for field in ("release_id", "release_tag", "rc_manifest_sha256", "promotion_run_attempt", "workflow_source_sha"):
+            self.gh = copy.deepcopy(original)
+            self.promotion_archive({**record, field: "wrong"})
+            with self.subTest(field=field), self.assertRaises(fixtures.rc.ReleaseError):
+                self.resolve()
+            self.assertFalse(self.output.exists())
+
+    def test_late_promotion_rerun_cleans_partial_context(self):
+        self.promote()
+        transfer = self.gh.download_asset
+
+        def late_rerun(path, stream):
+            transfer(path, stream)
+            self.gh.runs[101]["run_attempt"] = 2
+
+        with patch.object(self.gh, "download_asset", side_effect=late_rerun), self.assertRaises(fixtures.rc.ReleaseError):
+            self.resolve()
+        self.assertFalse(self.output.exists())
+        self.assertEqual(list(self.output.parent.glob("closed-public-*")), [])
 
 
 if __name__ == "__main__":

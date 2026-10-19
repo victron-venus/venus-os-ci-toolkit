@@ -1543,6 +1543,7 @@ def release_files(directory: Path, policy: dict) -> dict[str, str]:
     files["scripts/release_validation.py"] = (ROOT / "scripts/release_validation.py").read_text()
     if policy.get("closed_build"):
         files["scripts/release_closed.py"] = (ROOT / "scripts/release_closed.py").read_text()
+        files["scripts/release_promotion.py"] = (ROOT / "scripts/release_promotion.py").read_text()
         files["docs/closed-builds.md"] = (ROOT / "docs/closed-builds.md").read_text()
         files[".github/release-tests/test_release_closed.py"] = (
             (ROOT / "tests/test_release_closed.py").read_text().replace(
