@@ -212,6 +212,37 @@ commands, permissions and event filters. Review platform exceptions and qualify
 the actual workflow graph before activation. No mode or runner registration is
 changed by this command.
 
+Migration only adapts literal `ubuntu-latest` and the generator's exact canonical
+expressions. Fixed platform labels and custom expressions retain their selection.
+Before moving a local job, the generator requires review when permissions are
+unknown or writable, credentials are referenced, or publication/deployment
+indicators are present. A job-level permission map replaces the workflow map.
+These checks identify reasons for review; they cannot prove arbitrary scripts
+safe. Inspect the job's commands and credentials before assigning its role.
+
+Record reviewed exceptions on the existing command, repeating `--job-profile`:
+
+```sh
+python3 scripts/prepare_runner_reserve.py /path/to/consumer --toolkit-ref REVIEWED_40_CHARACTER_SHA \
+  --job-profile ci.yml:publish=release \
+  --job-profile scorecards.yml:analysis=hosted \
+  --job-profile auto-approve.yml:approve=preserve
+```
+
+Roles are `ci`, `automation`, `release`, `hosted` and `preserve`. `hosted` keeps a
+literal hosted selector or restores an exact canonical expression to its known
+`ubuntu-latest` fallback. `preserve` acknowledges a reviewed job while keeping its
+selector unchanged; it makes no claim about where that selector runs. Unknown
+workflows/jobs, repeated overrides and overrides of reusable-call jobs fail.
+An override for an existing fixed-platform job may deliberately make no change.
+Use the same arguments with `--check` to verify the result.
+
+Review short-lived scan/upload credentials before allowing them in the CI pool.
+Long-lived deployment credentials or `BOT_PAT` belong only to their reviewed
+release or metadata automation job, never to a candidate-code CI job. Privileged
+`workflow_run` jobs require `hosted` or an independently reviewed `preserve`
+exception; migration does not expand the shared event trust boundary.
+
 Shared RC fuzzing also uses the CI profile, because it builds and executes the
 candidate's fuzz targets. Its public-repository, default-branch RC-dispatch guard
 and read-only permissions remain unchanged; it does not use the release pool.

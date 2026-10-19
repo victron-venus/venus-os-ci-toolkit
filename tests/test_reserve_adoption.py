@@ -1,5 +1,6 @@
 """Consumer adoption preserves all fields except explicitly owned routing and pins."""
 import json
+import copy
 import sys
 import tempfile
 import unittest
@@ -8,7 +9,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'scripts'))
 from prepare_runner_reserve import render  # noqa: E402 - Import the source scripts after adding their directory.
-from runner_selection import yaml_editor  # noqa: E402 - Import the source scripts after adding their directory.
+from runner_selection import runner_labels, yaml_editor  # noqa: E402 - Import the source scripts after adding their directory.
 from workflow_contracts import validate_fuzz_pins  # noqa: E402 - Exercise the consumer's actual pin contract.
 
 
@@ -134,7 +135,8 @@ jobs:
 
     def test_scorecard_publisher_keeps_provider_required_hosted_label(self):
         path = self.workflows / 'scorecards.yml'
-        path.write_text('''jobs:
+        path.write_text('''permissions: {contents: read}
+jobs:
   scorecard:
     runs-on: ubuntu-latest
     steps:
@@ -147,3 +149,117 @@ jobs:
         workflow = yaml_editor().load(render(self.root, 'b' * 40)['.github/workflows/scorecards.yml'])
         self.assertEqual(workflow['jobs']['scorecard']['runs-on'], 'ubuntu-latest')
         self.assertIn('vars.CI_RUNNER_LABELS', workflow['jobs']['analysis']['runs-on'])
+
+    def write_workflow(self, workflow, name='ci.yml'):
+        path = self.workflows / name
+        path.write_text(json.dumps(workflow))
+        return path
+
+    def test_mixed_ci_publisher_requires_exact_reviewed_release_role(self):
+        source = {'on': {'push': {}}, 'permissions': {'contents': 'read'}, 'jobs': {
+            'test': {'runs-on': 'ubuntu-latest', 'steps': [{'run': 'pytest'}]},
+            'publish': {'runs-on': 'ubuntu-latest', 'permissions': {'id-token': 'write'},
+                        'steps': [{'uses': 'pypa/gh-action-pypi-publish@' + 'a' * 40}]}}}
+        path = self.write_workflow(source)
+        with self.assertRaisesRegex(ValueError, 'Review job profile ci.yml:publish'):
+            render(self.root, 'b' * 40)
+        result = render(self.root, 'b' * 40, job_profiles=['ci.yml:publish=release'])
+        actual = yaml_editor().load(result['.github/workflows/ci.yml'])
+        self.assertEqual(actual['jobs']['test']['runs-on'], runner_labels('ci'))
+        self.assertEqual(actual['jobs']['publish']['runs-on'], runner_labels('release'))
+        for job in actual['jobs'].values():
+            job['runs-on'] = 'ubuntu-latest'
+        self.assertEqual(actual, source)
+        self.assertEqual(json.loads(path.read_text()), source)
+        path.write_text(result['.github/workflows/ci.yml'])
+        self.assertEqual(render(self.root, 'b' * 40, job_profiles=['ci.yml:publish=release']), {})
+
+    def test_unknown_permissions_and_referenced_credentials_need_review(self):
+        baseline = {'permissions': {'contents': 'read'}, 'jobs': {
+            'test': {'runs-on': 'ubuntu-latest', 'steps': [{'run': 'pytest'}]}}}
+        cases = []
+        unknown = copy.deepcopy(baseline)
+        del unknown['permissions']
+        cases.append(unknown)
+        for location in ('workflow', 'job', 'step', 'container', 'services'):
+            source = copy.deepcopy(baseline)
+            job = source['jobs']['test']
+            if location == 'workflow':
+                source['env'] = {'AUTH': '${{ secrets.UPLOAD_TOKEN }}'}
+            elif location == 'job':
+                job['env'] = {'AUTH': '${{ github["token"] }}'}
+            elif location == 'step':
+                job['steps'][0]['with'] = {'token': '${{ inputs.token }}'}
+            elif location == 'container':
+                job['container'] = {'image': 'example', 'credentials': {'password': '${{ inputs.password }}'}}
+            else:
+                job['services'] = {'db': {'image': 'example', 'credentials': {'password': '${{ secrets.DB }}'}}}
+            cases.append(source)
+        for source in cases:
+            path = self.write_workflow(source)
+            before = path.read_bytes()
+            with self.subTest(source=source), self.assertRaisesRegex(ValueError, 'Review job profile'):
+                render(self.root, 'b' * 40)
+            self.assertEqual(path.read_bytes(), before)
+
+    def test_job_permissions_replace_inherited_write_and_ci_override_is_explicit(self):
+        source = {'permissions': 'write-all', 'jobs': {
+            'test': {'runs-on': 'ubuntu-latest', 'permissions': {'contents': 'read'}, 'steps': [{'run': 'pytest'}]}}}
+        self.write_workflow(source)
+        self.assertIn('.github/workflows/ci.yml', render(self.root, 'b' * 40))
+        source['jobs']['test']['permissions'] = {'contents': 'read', 'security-events': 'write'}
+        self.write_workflow(source)
+        with self.assertRaisesRegex(ValueError, 'Review job profile'):
+            render(self.root, 'b' * 40)
+        result = render(self.root, 'b' * 40, job_profiles=['ci.yml:test=ci'])
+        self.assertEqual(yaml_editor().load(result['.github/workflows/ci.yml'])['jobs']['test']['runs-on'], runner_labels('ci'))
+
+    def test_workflow_run_publisher_requires_hosted_exception(self):
+        source = {'on': {'workflow_run': {}}, 'permissions': {'packages': 'write'}, 'jobs': {
+            'publish': {'runs-on': 'ubuntu-latest', 'steps': [{'run': 'docker push example'}]}}}
+        self.write_workflow(source)
+        for role in ('ci', 'automation', 'release'):
+            with self.subTest(role=role), self.assertRaisesRegex(ValueError, 'Keep workflow_run publisher'):
+                render(self.root, 'b' * 40, job_profiles=['ci.yml:publish=' + role])
+        self.assertEqual(render(self.root, 'b' * 40, job_profiles=['ci.yml:publish=hosted']), {})
+
+    def test_reviewed_custom_automation_and_fixed_platforms_remain_unchanged(self):
+        custom = runner_labels('automation').replace('"ubuntu-latest"', '"ubuntu-24.04"')
+        custom = custom.replace("github.event_name)", "github.event_name) && github.event_name != 'workflow_run'")
+        for runner, role in [('ubuntu-24.04', 'automation'), (custom, 'preserve')]:
+            source = {'permissions': {'contents': 'write'}, 'jobs': {
+                'approve': {'runs-on': runner, 'steps': [{'run': 'python reviewed_metadata_only.py',
+                             'env': {'GH_TOKEN': '${{ secrets.BOT_PAT }}'}}]}}}
+            path = self.write_workflow(source, 'auto-approve.yml')
+            with self.assertRaisesRegex(ValueError, 'Review local automation steps'):
+                render(self.root, 'b' * 40)
+            self.assertEqual(render(self.root, 'b' * 40, job_profiles=['auto-approve.yml:approve=' + role]), {})
+            self.assertEqual(json.loads(path.read_text()), source)
+        with self.assertRaisesRegex(ValueError, 'Use preserve'):
+            render(self.root, 'b' * 40, job_profiles=['auto-approve.yml:approve=hosted'])
+
+    def test_overrides_reject_typos_duplicates_and_reusable_jobs(self):
+        source = {'permissions': {'contents': 'read'}, 'jobs': {
+            'test': {'runs-on': 'ubuntu-24.04', 'steps': [{'run': 'pytest'}]},
+            'shared': {'uses': 'owner/repo/.github/workflows/ci.yml@' + 'a' * 40}}}
+        self.write_workflow(source)
+        for options in (['typo.yml:test=ci'], ['ci.yml:missing=ci'], ['ci.yml:shared=ci'],
+                        ['ci.yml:test=ci', 'ci.yml:test=release'], ['ci.yml:test=typo']):
+            with self.subTest(options=options), self.assertRaises(ValueError):
+                render(self.root, 'b' * 40, job_profiles=options)
+        self.assertEqual(render(self.root, 'b' * 40, job_profiles=['ci.yml:test=hosted']), {})
+
+    def test_similar_custom_expression_is_not_a_canonical_selection(self):
+        custom = runner_labels('ci').replace('"ubuntu-latest"', '"ubuntu-24.04"')
+        source = {'permissions': {'contents': 'read'}, 'jobs': {
+            'test': {'runs-on': custom, 'steps': [{'run': 'pytest'}]}}}
+        self.write_workflow(source)
+        self.assertEqual(render(self.root, 'b' * 40), {})
+
+    def test_publishing_command_needs_review_even_with_read_permissions(self):
+        for command in ('npm publish', 'git push', 'docker push example', 'twine upload dist/*'):
+            for prefix in ('', 'echo ok\n', 'echo ok\r\n  ', 'echo ok\n\t'):
+                self.write_workflow({'permissions': {'contents': 'read'}, 'jobs': {
+                    'publish': {'runs-on': 'ubuntu-latest', 'steps': [{'run': prefix + command}]}}})
+                with self.subTest(command=command, prefix=prefix), self.assertRaisesRegex(ValueError, 'publication or deployment'):
+                    render(self.root, 'b' * 40)

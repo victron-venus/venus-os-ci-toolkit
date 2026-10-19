@@ -153,26 +153,30 @@ def render_consumer(directory, policy):
     return adapter.files
 
 
-def adapt_jobs(workflow, profile, name):
+def can_adapt_job(job):
+    """Recognize only owned canonical selections, never similar custom expressions."""
+    if any(step.get("uses", "").startswith("ossf/scorecard-action@")
+           and str(step.get("with", {}).get("publish_results", "")).lower() == "true"
+           for step in job.get("steps", [])):
+        return False
+    runner = job.get("runs-on")
+    return runner == "ubuntu-latest" or runner in [runner_labels(profile) for profile in PROFILES]
+
+
+def adapt_jobs(workflow, profile, name, *, job_profiles=None):
     """Edit owned Linux selections while preserving matrices and other platforms."""
     changed = False
-    for job in workflow["jobs"].values():
+    for job_name, job in workflow["jobs"].items():
         # OpenSSF's publishing service verifies this exact hosted runner label.
         # Keep its publication identity contract even during a compute outage.
-        if any(step.get("uses", "").startswith("ossf/scorecard-action@")
-               and str(step.get("with", {}).get("publish_results", "")).lower() == "true"
-               for step in job.get("steps", [])):
+        selected_profile = (job_profiles or {}).get(job_name, profile)
+        if selected_profile == "preserve" or not can_adapt_job(job):
             continue
         runner = job.get("runs-on")
-        managed = isinstance(runner, str) and runner.startswith(
-            "${{ fromJSON((vars.CI_RUNNER_MODE == 'self-hosted' || vars.CI_RUNNER_MODE == 'k3s') && "
-        )
-        if runner != "ubuntu-latest" and not managed:
-            continue
         if any(getattr(getattr(item, "anchor", None), "value", None) or getattr(item, "merge", None)
                for item in (workflow, workflow["jobs"], job)):
             raise ValueError("Review aliased/merged runner adapters explicitly: " + name)
-        selected = runner_labels(profile)
+        selected = "ubuntu-latest" if selected_profile == "hosted" else runner_labels(selected_profile)
         if runner != selected:
             job["runs-on"] = selected
             changed = True
