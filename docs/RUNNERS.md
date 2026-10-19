@@ -98,6 +98,80 @@ GitHub outage. No automatic failover is enabled.
 
 ## Toolkit checks
 
+### Inspect ARC snapshots without changing routing
+
+`scripts/arc_readiness.py` evaluates sanitized inventory files with Python's
+standard library. It makes no API requests, changes no variables or pools, and
+starts no jobs. Keep inventories and reports containing private repository names
+outside public source trees.
+
+The two paths are chosen by the local operator; this is not an HTTP endpoint or
+an LLM tool with delegated filesystem access. Parent directories must be controlled
+by that operator. On Linux/macOS the reader opens each final file without following
+symlinks, rejects nonregular files (including FIFOs/devices) without blocking, and
+limits reads to 8 MB. It emits selected inventory fields, never raw file contents.
+
+```sh
+python3 scripts/arc_readiness.py --repositories repositories.json --cluster cluster.json
+```
+
+The repository input declares the expected profiles rather than guessing them
+from existing workers. Use effective Actions variables after repository overrides:
+
+```json
+{"schema":1,"observed_at":"2026-01-01T00:00:00Z","complete":true,
+ "repositories":[{"repository":"example/project","mode":"self-hosted",
+   "profiles":{"ci":["example-ci"],"automation":[]},"queued_jobs":{"ci":2}}]}
+```
+
+Each profile is an exact label array; an empty array means missing configuration
+and `null` means unknown. An empty profile object is listed under
+`profiles_not_declared`, without inventing requirements. `queued_jobs` is optional and must describe the same
+profile; absent demand remains unknown. A hosted/default mode is reported without
+enabling the declared reserve. This checks declared selectors, not every caller's
+workflow expression, event eligibility or explicit runner override.
+
+The cluster input has `schema: 1`, a timezone-bearing `observed_at`, and
+`collections.asrs`, `.listeners` and `.pods`. Each collection contains sanitized
+Kubernetes `items`, `complete`, `source_metadata` (including any unconsumed
+`continue` token) and `scope: "cluster-all"`. For filtered Pod collections use
+`namespace_prefixes`, for example `["arc-", "runner-reserve"]`, instead of claiming
+cluster-wide coverage. Collect every page before marking a collection complete.
+Omitted collections, partial pages and namespaces outside the declared coverage
+cannot establish absence or zero workers.
+
+Preserve object metadata names, namespaces, UIDs, generations, linking labels,
+owner references and deletion timestamps. ASRS objects need `githubConfigUrl`,
+`runnerScaleSetName`, optional `runnerScaleSetLabels`, `minRunners`, `maxRunners`
+and status `observedGeneration`. Listeners need scope and `runnerScaleSetId`.
+Pods need phase, readiness conditions and container readiness. Listener capacity
+must also be captured: differing explicit limits mean pending reconciliation;
+a missing maximum cannot establish available capacity. Do not include
+Secret objects, Pod environment values or JIT credentials. Preserve absent,
+explicit `null` and zero fields separately; never normalize them with a default
+that fabricates a hold or an empty worker population.
+
+The report separates matching ASRS configuration, observed scale-set registration
+IDs, configured admission, listener Pod readiness and worker Pod counts. A listener
+is joined by both scale-set name and namespace; its Pod must have the matching
+owner UID. An organization scope remains `organization-access-unverified` until
+runner-group access is checked separately. Zero GitHub runner registrations alone
+are not evidence that an ARC pool is missing. A complete Pod census with no workers,
+current controller generation, a uniquely matched ready listener, matching
+listener capacity and an enabled zero-minimum pool is
+reported as `idle-scale-to-zero`. A configured `maxRunners: 0` is `held`, or
+`held-with-queued-demand` when demand is supplied; existing workers may still drain.
+Unset limits, missing registration evidence and incomplete snapshots remain unknown.
+Positive observations from partial collections are retained, but cannot establish
+uniqueness or readiness when additional matching objects may have been omitted.
+
+Freshness defaults to 15 minutes (`--max-age-seconds` accepts 1–86400). Stale or
+future snapshots retain their historical observations but set `evidence_fresh`
+false. The command's zero exit status means valid input was evaluated, not that
+CI is ready. Every report says `qualification: "not-assessed"`: registration,
+listener health and idle capacity cannot prove toolchain compatibility, isolation,
+job execution or cleanup. Those still require the trusted smoke checks above.
+
 `scripts/runner_selection.py --check` verifies the shared declarations.
 `tools/runner-expressions/test.mjs` evaluates dispatch using the pinned official
 `@actions/expressions` parser/evaluator, including defaults, profile separation,
@@ -112,6 +186,10 @@ References: [reusable workflow runners and variables](https://docs.github.com/en
 
 The public reserve inventory is `deploy/runner-reserve/repositories.json`.
 It is separate from private runner groups and the Renovate repository inventory.
+The catalog contains 78 repositories: 19 personal repositories and selected
+projects in three organizations. It renders 66 scope/profile registrations across
+separate CI, automation and release profiles. Catalog membership does not prove
+that any corresponding pool is registered or qualified.
 Organization variables must have selected-repository visibility matching that
 inventory; personal-account repositories need their own variables. Prepare all
 four variables with `CI_RUNNER_MODE=github`. The label values alone do not prove
@@ -126,23 +204,78 @@ python3 scripts/prepare_runner_reserve.py /path/to/consumer --toolkit-ref REVIEW
 ```
 
 This uses the existing runner-expression generator, updates shared workflow pins
-and keeps a coverage policy's pin consistent. It preserves the release engine
+and keeps coverage and fuzzing policy pins consistent. A configured fuzz workflow,
+its helper checkout input and its policy must already agree; all three are updated
+together or adoption refuses the edit set. It preserves the release engine
 revision, platform matrices, fixed Ubuntu images, hardware/private selections,
 commands, permissions and event filters. Review platform exceptions and qualify
 the actual workflow graph before activation. No mode or runner registration is
 changed by this command.
+
+Migration only adapts literal `ubuntu-latest` and the generator's exact canonical
+expressions. Fixed platform labels and custom expressions retain their selection.
+Before moving a local job, the generator requires review when permissions are
+unknown or writable, credentials are referenced, or publication/deployment
+indicators are present. A job-level permission map replaces the workflow map.
+These checks identify reasons for review; they cannot prove arbitrary scripts
+safe. Inspect the job's commands and credentials before assigning its role.
+
+Record reviewed exceptions on the existing command, repeating `--job-profile`:
+
+```sh
+python3 scripts/prepare_runner_reserve.py /path/to/consumer --toolkit-ref REVIEWED_40_CHARACTER_SHA \
+  --job-profile ci.yml:publish=release \
+  --job-profile scorecards.yml:analysis=hosted \
+  --job-profile auto-approve.yml:approve=preserve
+```
+
+Roles are `ci`, `automation`, `release`, `hosted` and `preserve`. `hosted` keeps a
+literal hosted selector or restores an exact canonical expression to its known
+`ubuntu-latest` fallback. `preserve` acknowledges a reviewed job while keeping its
+selector unchanged; it makes no claim about where that selector runs. Unknown
+workflows/jobs, repeated overrides and overrides of reusable-call jobs fail.
+An override for an existing fixed-platform job may deliberately make no change.
+Use the same arguments with `--check` to verify the result.
+
+Review short-lived scan/upload credentials before allowing them in the CI pool.
+Long-lived deployment credentials or `BOT_PAT` belong only to their reviewed
+release or metadata automation job, never to a candidate-code CI job. Privileged
+`workflow_run` jobs require `hosted` or an independently reviewed `preserve`
+exception; migration does not expand the shared event trust boundary.
+
+Shared RC fuzzing also uses the CI profile, because it builds and executes the
+candidate's fuzz targets. Its public-repository, default-branch RC-dispatch guard
+and read-only permissions remain unchanged; it does not use the release pool.
 
 OpenSSF Scorecard publication also stays on its required literal `ubuntu-latest`
 runner. Its publishing service validates the workflow's hosted-runner identity;
 the reserve must not weaken that contract. Local scan/completeness jobs can use
 the CI pool, but public Scorecard publication remains a hosted-service dependency.
 
-The GitHub App specifications in `deploy/runner-reserve/github-apps.json` keep
-organization runner administration separate from the repository administration
-permission GitHub requires for personal repository runners. Install only for the
-listed public projects. Do not copy a developer PAT or `BOT_PAT` into the runner
+The GitHub App specifications in `deploy/runner-reserve/github-apps.json` map
+`organizations.victron-venus`, `organizations.ha-homelab` and
+`organizations.open-ott-play` to three separately owned private Apps with distinct
+organization-prefixed names. Create each under its matching organization, using
+only that entry as the App manifest. Each requests only organization self-hosted
+runner administration, with no repository permissions, events or webhook. Limit
+each organization's runner groups to its listed public projects; an App installation
+alone does not impose that runner-group restriction.
+
+The separate `personal` App retains only the repository administration permission
+GitHub requires for personal repository runners. Install it under `4alvit` with
+**Only select repositories**, selecting the 19 personal public repositories in
+`repositories.json`, not all repositories. App names must be globally available
+when created and no longer than 34 characters; record any naming adjustment with
+the corresponding owner entry. See [GitHub App registration](https://docs.github.com/en/apps/creating-github-apps/registering-a-github-app/registering-a-github-app).
+These source specifications do not create Apps or grant access.
+
+Do not copy a developer PAT or `BOT_PAT` into the runner
 controller, worker image, workspace or source repository. Private keys belong in
 controller-only secrets; workers receive ephemeral registration material.
+The catalog's `organization_secrets` binds each organization to a distinct
+namespace-local Secret reference and installation identity. Do not reuse private
+runner credentials for these public pools. Keep `CI_RUNNER_MODE=github` during
+registration and qualification.
 
 Prepared variable values, a merged adoption PR, or downloaded ARC/gVisor versions
 are not a readiness certificate. Readiness requires registered pools, admission
@@ -154,13 +287,19 @@ Keep normal routing on `github` until all applicable checks are evidenced.
 
 The files under `deploy/runner-reserve/` prepare the public reserve independently
 of normal GitHub routing. `render_pool.py` reads the same public inventory and
-renders three organization scale sets and three per personal repository (51 for
-the current inventory). Kubernetes scale-set names include the repository scope;
+renders three scale sets per organization and personal repository (66 across
+three organizations and 19 personal repositories). Kubernetes scale-set names include the repository scope;
 ARC 0.15 custom `scaleSetLabels` preserve the shared Actions-variable labels
 without collisions between personal repositories in the same namespace. Each set has `minRunners: 0`, `maxRunners: 1`: standby can
 accept selected jobs without another Helm change. Namespace quotas bound the
 combined worker population to two jobs per profile, including gVisor overhead.
 This is reduced emergency capacity, not a replacement for GitHub's fleet size.
+
+For registration-only preparation, pass `--held` to `render_pool.py`. Every
+generated pool then has `minRunners: 0` and `maxRunners: 0`; the existing default
+remains zero/one. The flag only creates held values files and never changes GitHub
+routing or deploys them. Open admission only after separate acceptance; do not
+apply generated foundations blindly over existing infrastructure.
 
 The node runtime uses the pinned gVisor release with `systrap`, which works in a
 nested VM without KVM. `containerd-config.toml.tmpl` extends K3s's base template;

@@ -309,8 +309,8 @@ class StandbyPoolTests(unittest.TestCase):
                              'containerd clears every bootstrap capability for add/drop ALL')
 
     def test_shared_routing_labels_do_not_collide_in_kubernetes(self):
-        scopes = ['victron-venus'] + [r['name'] for r in self.inventory['repositories']
-                                      if r['name'].startswith('4alvit/')]
+        scopes = self.inventory['organizations'] + [r['name'] for r in self.inventory['repositories']
+                    if r['name'].split('/')[0] not in self.inventory['organizations']]
         names = set()
         for scope in scopes:
             for profile, label in self.inventory['profiles'].items():
@@ -319,7 +319,57 @@ class StandbyPoolTests(unittest.TestCase):
                 self.assertLessEqual(len(values['runnerScaleSetName']), 45)
                 names.add(values['runnerScaleSetName'])
                 self.assertEqual(values['scaleSetLabels'], [label])
-        self.assertEqual(len(names), 51)
+        self.assertEqual(len(names), len(scopes) * len(self.inventory['profiles']))
+
+    def test_held_pools_preserve_everything_except_maximum(self):
+        for scope in [*self.inventory['organizations'], '4alvit/mcp-venus-os']:
+            for profile in self.inventory['profiles']:
+                active = self.values(scope, profile)
+                held = pool_module.pool_values(scope, profile, self.image, 'mp', '10.66.10.2',
+                                               self.inventory, held=True)
+                self.assertEqual(held['minRunners'], 0)
+                self.assertEqual(held['maxRunners'], 0)
+                held['maxRunners'] = 1
+                self.assertEqual(active, held)
+        with self.assertRaises(ValueError):
+            pool_module.pool_values('victron-venus', 'ci', self.image, 'mp', '10.66.10.2',
+                                    self.inventory, held='false')
+
+    def test_organizations_have_separate_explicit_installation_secrets(self):
+        secrets = [self.values(scope)['githubConfigSecret']
+                   for scope in self.inventory['organizations']]
+        self.assertEqual(len(set(secrets)), len(self.inventory['organizations']))
+        self.assertEqual(self.values('victron-venus')['githubConfigSecret'], 'reserve-org-app')
+        for overrides in [None, {}, {'victron-venus': 'shared'},
+                          dict.fromkeys(self.inventory['organizations'], 'shared')]:
+            inventory = dict(self.inventory, organization_secrets=overrides)
+            with self.subTest(overrides=overrides), self.assertRaises(ValueError):
+                pool_module.pool_values('victron-venus', 'ci', self.image, 'mp', '10.66.10.2',
+                                        inventory)
+
+    def test_app_specs_keep_each_owner_and_permission_boundary_explicit(self):
+        apps = json.loads((ROOT / 'deploy/runner-reserve/github-apps.json').read_text())
+        self.assertEqual(set(apps['organizations']), set(self.inventory['organizations']))
+        specs = [*apps['organizations'].values(), apps['personal']]
+        self.assertEqual(len({spec['name'].casefold() for spec in specs}), len(specs))
+        for owner, spec in apps['organizations'].items():
+            with self.subTest(owner=owner):
+                self.assertTrue(spec['name'].startswith(owner + ' '))
+                self.assertEqual(spec['default_permissions'], {'organization_self_hosted_runners': 'write'})
+        self.assertEqual(apps['personal']['default_permissions'], {'administration': 'write'})
+        for spec in specs:
+            self.assertLessEqual(len(spec['name']), 34)
+            self.assertIs(spec['public'], False)
+            self.assertEqual(spec['default_events'], [])
+            self.assertEqual(spec['hook_attributes'], {'active': False})
+
+    def test_original_single_organization_inventory_remains_supported(self):
+        inventory = dict(self.inventory, organizations=['victron-venus'])
+        inventory.pop('organization_secrets')
+        values = pool_module.pool_values('victron-venus', 'ci', self.image, 'mp', '10.66.10.2',
+                                         inventory)
+        self.assertEqual(values['githubConfigSecret'], 'reserve-org-app')
+        self.assertEqual(values['maxRunners'], 1)
 
     def test_foundations_fail_closed_and_preserve_three_profile_boundaries(self):
         docs = pool_module.foundations(self.inventory['profiles'], self.image, '10.66.10.2')['items']

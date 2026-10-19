@@ -82,6 +82,40 @@ console.log(JSON.stringify(evaluate(p.github, p.vars, JSON.parse, JSON.stringify
                         self.assertEqual(step["uses"], HARDEN_RUNNER)
                     self.assertNotIn("checkout", step.get("run", ""))
 
+    def test_rc_fuzz_routes_candidate_code_to_ci_and_keeps_event_boundary(self):
+        workflow = yaml.load((ROOT / ".github/workflows/fuzz.yml").read_text(), Loader=yaml.BaseLoader)
+        job = workflow['jobs']['campaign']
+        self.assertEqual(ACTIVE_WORKFLOWS['fuzz.yml'], 'ci')
+        self.assertEqual(job['runs-on'], runner_labels('ci'))
+        self.assertEqual(workflow['permissions'], {'contents': 'read'})
+        self.assertEqual(job['permissions'], {'contents': 'read'})
+        javascript = """
+const p = JSON.parse(process.argv[1]);
+const evaluate = source => new Function('github', 'vars', 'fromJSON', 'contains', 'format',
+  'return ' + source)(p.github, p.vars, JSON.parse,
+  (values, value) => values.includes(value), (s, value) => s.replace('{0}', value));
+console.log(JSON.stringify([evaluate(p.condition), evaluate(p.runner)]));
+"""
+        github = {'event_name': 'workflow_dispatch', 'ref': 'refs/heads/main', 'repository': 'owner/project',
+                  'event': {'inputs': {'channel': 'rc'}, 'repository': {'private': False, 'default_branch': 'main'}}}
+        cases = [(github, 'self-hosted', True, ['candidate-ci']),
+                 (github, 'github', True, ['ubuntu-latest']),
+                 (github | {'ref': 'refs/heads/topic'}, 'self-hosted', False, ['ubuntu-latest']),
+                 (github | {'event_name': 'schedule'}, 'self-hosted', False, ['candidate-ci']),
+                 (github | {'event': github['event'] | {'inputs': {'channel': 'beta'}}},
+                  'self-hosted', False, ['candidate-ci']),
+                 (github | {'event': github['event'] | {'repository': {'private': True, 'default_branch': 'main'}}},
+                  'self-hosted', False, ['candidate-ci'])]
+        for event, mode, enabled, labels in cases:
+            payload = {'github': event, 'vars': {'CI_RUNNER_MODE': mode, 'CI_RUNNER_LABELS': '["candidate-ci"]',
+                       'CI_RUNNER_RELEASE_LABELS': '["privileged-release"]'},
+                       'condition': job['if'].removeprefix('${{ ').removesuffix(' }}'),
+                       'runner': job['runs-on'].removeprefix('${{ ').removesuffix(' }}')}
+            with self.subTest(event=event, mode=mode):
+                result = subprocess.run(['node', '-e', javascript, json.dumps(payload)],
+                                        capture_output=True, text=True, check=True)
+                self.assertEqual(json.loads(result.stdout), [enabled, labels])
+
 
 class ConsumerRunnerAdoptionTests(unittest.TestCase):
     def setUp(self):

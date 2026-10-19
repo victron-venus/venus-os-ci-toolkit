@@ -19,13 +19,37 @@ def release_name(scope, profile):
     return 'reserve-' + profile + '-' + hashlib.sha256(scope.encode()).hexdigest()[:12]
 
 
-def pool_values(scope, profile, image, node, node_ip, inventory):
+def installation_secret(scope, inventory):
+    """Validate separate organization installations before choosing a Secret."""
+    organizations = inventory['organizations']
+    organization_secrets = inventory.get('organization_secrets')
+    if organization_secrets is not None:
+        if (not isinstance(organization_secrets, dict)
+                or set(organization_secrets) != set(organizations)
+                or any(not isinstance(value, str)
+                       or not re.fullmatch(r'[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?', value)
+                       for value in organization_secrets.values())
+                or len(set(organization_secrets.values())) != len(organization_secrets)):
+            raise ValueError('Each organization needs an explicit valid Secret name')
+    elif len(organizations) > 1:
+        raise ValueError('Multiple organizations need separate installation Secret references')
+    if scope not in organizations:
+        return 'reserve-personal-app'
+    if organization_secrets is not None:
+        return organization_secrets[scope]
+    return 'reserve-org-app'
+
+
+def pool_values(scope, profile, image, node, node_ip, inventory, *, held=False):
     """Separate profiles and owners; all workers start from a fresh filesystem."""
     organizations = inventory['organizations']
     personal = [r['name'] for r in inventory['repositories']
                 if r['name'].split('/')[0] not in organizations]
     if scope not in [*organizations, *personal] or profile not in inventory['profiles']:
         raise ValueError('Scope/profile is not in the public reserve inventory')
+    if type(held) is not bool:
+        raise ValueError('Held state must be a boolean')
+    secret = installation_secret(scope, inventory)
     if not re.fullmatch(r'[a-z0-9./:_-]+@sha256:[0-9a-f]{64}', image):
         raise ValueError('A qualified image pinned by digest is required')
     ipaddress.IPv4Address(node_ip)
@@ -44,9 +68,9 @@ def pool_values(scope, profile, image, node, node_ip, inventory):
                  'securityContext': {'runAsUser': 0, 'privileged': False,
                                      'capabilities': {'add': ['ALL']}}}
     result = {'githubConfigUrl': 'https://github.com/' + scope,
-              'githubConfigSecret': 'reserve-org-app' if scope in organizations else 'reserve-personal-app',
+              'githubConfigSecret': secret,
               'runnerScaleSetName': release_name(scope, profile),
-              'scaleSetLabels': [profile_label], 'minRunners': 0, 'maxRunners': 1,
+              'scaleSetLabels': [profile_label], 'minRunners': 0, 'maxRunners': 0 if held else 1,
               'controllerServiceAccount': {'namespace': 'runner-reserve-system',
                                            'name': 'victron-reserve-controller'},
               'listenerTemplate': {'spec': {'nodeSelector': {'kubernetes.io/hostname': node},
@@ -136,6 +160,8 @@ def main():
     parser.add_argument('--node', default='mp')
     parser.add_argument('--node-ip', required=True, help='Address covered by the guard certificate')
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--held', action='store_true',
+                        help='Render registration-only pools with minRunners=maxRunners=0')
     args = parser.parse_args()
     inventory = json.loads((ROOT / 'repositories.json').read_text())
     scopes = [*inventory['organizations'], *[r['name'] for r in inventory['repositories']
@@ -145,7 +171,8 @@ def main():
     for scope in scopes:
         for profile in inventory['profiles']:
             release = release_name(scope, profile)
-            values = pool_values(scope, profile, args.worker_image, args.node, args.node_ip, inventory)
+            values = pool_values(scope, profile, args.worker_image, args.node, args.node_ip, inventory,
+                                 held=args.held)
             rendered[release + '.json'] = values
             index.append({'scope': scope, 'profile': profile, 'release': release,
                           'namespace': 'runner-reserve-' + profile, 'values': release + '.json'})

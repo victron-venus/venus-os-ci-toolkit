@@ -2,7 +2,9 @@
   "schema": 1,
   "default_mode": "github",
   "organizations": [
-    "victron-venus"
+    "victron-venus",
+    "ha-homelab",
+    "open-ott-play"
   ],
   "profiles": {
     "ci": "victron-reserve-ci-x64",
@@ -19,6 +21,10 @@
       "default_branch": "main"
     },
     {
+      "name": "4alvit/cisco-home-telephony",
+      "default_branch": "main"
+    },
+    {
       "name": "4alvit/dbus-service-template",
       "default_branch": "main"
     },
@@ -28,6 +34,10 @@
     },
     {
       "name": "4alvit/energy-data-rag-pipeline",
+      "default_branch": "main"
+    },
+    {
+      "name": "4alvit/epg-voice-gateway",
       "default_branch": "main"
     },
     {
@@ -59,6 +69,10 @@
       "default_branch": "main"
     },
     {
+      "name": "4alvit/speeddial",
+      "default_branch": "main"
+    },
+    {
       "name": "4alvit/terraform-github-4alvit",
       "default_branch": "main"
     },
@@ -72,6 +86,138 @@
     },
     {
       "name": "4alvit/terraform-github-victron",
+      "default_branch": "main"
+    },
+    {
+      "name": "ha-homelab/.github",
+      "default_branch": "main"
+    },
+    {
+      "name": "ha-homelab/assist-scenario-lab",
+      "default_branch": "main"
+    },
+    {
+      "name": "ha-homelab/asterisk-telephony",
+      "default_branch": "main"
+    },
+    {
+      "name": "ha-homelab/ha-access-session",
+      "default_branch": "main"
+    },
+    {
+      "name": "ha-homelab/ha-desloc",
+      "default_branch": "main"
+    },
+    {
+      "name": "ha-homelab/ha-desloc-card",
+      "default_branch": "main"
+    },
+    {
+      "name": "ha-homelab/ha-echo-dot",
+      "default_branch": "main"
+    },
+    {
+      "name": "ha-homelab/ha-echo-show-5",
+      "default_branch": "main"
+    },
+    {
+      "name": "ha-homelab/ha-echomuse",
+      "default_branch": "main"
+    },
+    {
+      "name": "ha-homelab/ha-entity-migrations",
+      "default_branch": "main"
+    },
+    {
+      "name": "ha-homelab/ha-lg-tv-capture",
+      "default_branch": "main"
+    },
+    {
+      "name": "ha-homelab/ha-meter-contracts",
+      "default_branch": "main"
+    },
+    {
+      "name": "ha-homelab/ha-onvif-room-direction",
+      "default_branch": "main"
+    },
+    {
+      "name": "ha-homelab/ha-radio-hub",
+      "default_branch": "main"
+    },
+    {
+      "name": "ha-homelab/ha-scenario-tests",
+      "default_branch": "main"
+    },
+    {
+      "name": "ha-homelab/ha-tuya-esphome",
+      "default_branch": "main"
+    },
+    {
+      "name": "ha-homelab/home-assistant",
+      "default_branch": "main"
+    },
+    {
+      "name": "ha-homelab/home-studio",
+      "default_branch": "main"
+    },
+    {
+      "name": "ha-homelab/k3s-self-healing",
+      "default_branch": "main"
+    },
+    {
+      "name": "ha-homelab/rf-airbridge",
+      "default_branch": "main"
+    },
+    {
+      "name": "ha-homelab/ruview-home-assistant",
+      "default_branch": "main"
+    },
+    {
+      "name": "ha-homelab/ruview-home-sensing",
+      "default_branch": "main"
+    },
+    {
+      "name": "ha-homelab/sensing-evidence-kit",
+      "default_branch": "main"
+    },
+    {
+      "name": "ha-homelab/slzb-06-recovery",
+      "default_branch": "main"
+    },
+    {
+      "name": "ha-homelab/zac93-esp32",
+      "default_branch": "main"
+    },
+    {
+      "name": "ha-homelab/zigbee-direct-button",
+      "default_branch": "main"
+    },
+    {
+      "name": "open-ott-play/.github",
+      "default_branch": "main"
+    },
+    {
+      "name": "open-ott-play/ottplay-android",
+      "default_branch": "main"
+    },
+    {
+      "name": "open-ott-play/ottplay-control-server",
+      "default_branch": "main"
+    },
+    {
+      "name": "open-ott-play/ottplay-core",
+      "default_branch": "main"
+    },
+    {
+      "name": "open-ott-play/ottplay-foss",
+      "default_branch": "main"
+    },
+    {
+      "name": "open-ott-play/ottplay-swop",
+      "default_branch": "main"
+    },
+    {
+      "name": "open-ott-play/ottplay-web-vitrine",
       "default_branch": "main"
     },
     {
@@ -178,5 +324,10 @@
       "name": "victron-venus/victron-venus.github.io",
       "default_branch": "feature/redirect"
     }
-  ]
+  ],
+  "organization_secrets": {
+    "victron-venus": "reserve-org-app",
+    "ha-homelab": "reserve-ha-org-app",
+    "open-ott-play": "reserve-ott-org-app"
+  }
 }
