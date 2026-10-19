@@ -207,7 +207,11 @@ This uses the existing runner-expression generator, updates shared workflow pins
 and keeps coverage and fuzzing policy pins consistent. A configured fuzz workflow,
 its helper checkout input and its policy must already agree; all three are updated
 together or adoption refuses the edit set. It preserves the release engine
-revision, platform matrices, fixed Ubuntu images, hardware/private selections,
+revision. A `vendor-update.yml` call and its required `toolkit-revision` input
+must also agree on an immutable SHA; both advance together so delivery executes
+the helper belonging to its reviewed workflow. Missing or inconsistent inputs
+stop adoption before any files are written. The command preserves
+platform matrices, fixed Ubuntu images, hardware/private selections,
 commands, permissions and event filters. Review platform exceptions and qualify
 the actual workflow graph before activation. No mode or runner registration is
 changed by this command.
