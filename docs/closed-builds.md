@@ -26,7 +26,8 @@ blocks publication. A disabled policy accepts only a skipped closed dependency.
 Stable promotion first resolves the exact public RC, then calls the worker with
 `action=validate` to verify and reuse the accepted closed RC bytes without rebuilding.
 
-`operation=closed-rebuild` requires an exact `existing_release` tag. It skips public
+`operation=closed-rebuild` requires an exact `existing_release` tag, including the
+full timestamp/run/attempt suffix for a published nightly. It skips public
 version allocation, build, validation and publication. The secretless resolver
 checks the release's complete immutable inventory, retained Actions evidence,
 successful source run, current attempt and both public gates before staging public

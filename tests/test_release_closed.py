@@ -40,6 +40,9 @@ class RequestTests(unittest.TestCase):
         self.assertEqual(result["operation"], "closed-rebuild")
         self.assertEqual(result["closed_request"], "request_012")
         self.assertEqual(result["release_tag"], "v1.2.3-rc.2")
+        nightly = "v1.2.3-nightly.20261019230000.101.1"
+        self.event["inputs"]["existing_release"] = nightly
+        self.assertEqual(closed.request(policy(), self.event, self.env)["release_tag"], nightly)
 
     def test_disabled_policy_requires_exact_skipped_path(self):
         absent, disabled = policy(), policy()
@@ -173,6 +176,17 @@ class PublicResolutionTests(unittest.TestCase):
         self.assertEqual(context["run_id"], "101")
         self.assertIn("fuzz-report.json", context["payloads"])
         self.assertIn("release-inputs-fuzz.json", context["payloads"])
+
+    def test_published_nightly_uses_the_same_verified_release_contract(self):
+        self.result, self.plan, _ = self.fixture.release_run("nightly", 101)
+        self.gh.jobs_by_run[101] = copy.deepcopy(self.gh.jobs_by_run[100])
+        for assets in self.gh.assets.values():
+            for asset in assets:
+                asset["digest"] = "sha256:" + fixtures.rc.digest(self.gh.files[asset["id"]])
+        context = self.resolve()
+        self.assertEqual(context["release_tag"], self.plan["tag"])
+        self.assertIn("-nightly.", context["release_tag"])
+        self.assertEqual(context["run_id"], "101")
 
     def test_failed_rerun_expired_wrong_workflow_and_failed_gate_never_stage_context(self):
         cases = {

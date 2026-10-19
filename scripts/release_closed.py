@@ -24,7 +24,7 @@ else:
     from version_receipt import verify_declared_artifacts, verify_receipts
 
 REQUEST = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,79}", re.ASCII)
-TAG = re.compile(r"v" + rc.VERSION_PATTERN + r"(?:-(?:beta|rc)\.[1-9]\d*)?", re.ASCII)
+TAG = rc.TAG_RE
 INPUTS = ("action", "closed_request", "release_plan_artifact", "release_tag", "public_context_artifact")
 
 
