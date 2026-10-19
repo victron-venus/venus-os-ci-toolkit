@@ -1,6 +1,6 @@
 """Queue compatibility cannot hide unrelated linter findings or edit sources."""
 
-from contextlib import redirect_stderr
+from contextlib import chdir, redirect_stderr
 import io
 from pathlib import Path
 import shutil
@@ -54,6 +54,7 @@ class QueueCompatibilityTests(unittest.TestCase):
     def test_invalid_or_unverifiable_queue_fails_before_lint(self):
         for source in (WORKFLOW.replace("queue: max", "queue: unknown"),
                        WORKFLOW.replace("queue: max", "queue: [max]"),
+                       WORKFLOW.replace("queue: max", "queue: !custom max"),
                        WORKFLOW.replace("queue: max", "queue: '${{ vars.QUEUE }}'"),
                        WORKFLOW.replace("cancel-in-progress: false", "cancel-in-progress: true"),
                        WORKFLOW.replace("cancel-in-progress: false", "cancel-in-progress: '${{ vars.CANCEL }}'"),
@@ -69,8 +70,11 @@ class QueueCompatibilityTests(unittest.TestCase):
         self.assertIn("queue: other", compat.lint_copy("jobs: {a: {queue: other}}"))
 
     def test_original_paths_and_all_files_reach_linter_without_mutation(self):
-        root = Path(self.enterContext(tempfile.TemporaryDirectory()))
-        paths = [root / "first.yml", root / "second.yml"]
+        root = Path(self.enterContext(tempfile.TemporaryDirectory())).resolve()
+        directory = root / ".github/workflows"
+        directory.mkdir(parents=True)
+        self.enterContext(chdir(root))
+        paths = [directory / "first.yml", directory / "second.yml"]
         for path in paths:
             path.write_text(WORKFLOW)
         with patch.object(compat.subprocess, "run", side_effect=[subprocess.CompletedProcess([], 1), subprocess.CompletedProcess([], 0)]) as run:
@@ -88,14 +92,31 @@ class QueueCompatibilityTests(unittest.TestCase):
 
     @unittest.skipUnless(shutil.which("actionlint"), "actionlint is not installed")
     def test_real_linter_preserves_unrelated_error_and_original_position(self):
-        root = Path(self.enterContext(tempfile.TemporaryDirectory()))
-        path = root / "workflow.yml"
+        root = Path(self.enterContext(tempfile.TemporaryDirectory())).resolve()
+        directory = root / ".github/workflows"
+        directory.mkdir(parents=True)
+        path = directory / "workflow.yml"
         source = WORKFLOW.replace("github.ref", "github.not_a_real_property")
         path.write_text(source)
         result = subprocess.run([sys.executable, str(Path(compat.__file__)), str(path)],
-                                capture_output=True, text=True, check=False)
+                                cwd=root, capture_output=True, text=True, check=False)
         self.assertEqual(result.returncode, 1)
         self.assertIn(f"{path}:11:", result.stdout)
         self.assertIn('property "not_a_real_property"', result.stdout)
         self.assertNotIn('unexpected key "queue"', result.stdout)
         self.assertEqual(path.read_text(), source)
+
+    def test_cli_cannot_read_outside_discovered_workflow_inventory(self):
+        root = Path(self.enterContext(tempfile.TemporaryDirectory())).resolve()
+        directory = root / ".github/workflows"
+        directory.mkdir(parents=True)
+        self.enterContext(chdir(root))
+        (directory / "good.yml").write_text(WORKFLOW)
+        (root / "outside.yml").write_text("OUTSIDE_CANARY")
+        (directory / "linked.yml").symlink_to(root / "outside.yml")
+        for name in (str(root / "outside.yml"), "../outside.yml", "-ignore", str(directory / "linked.yml")):
+            with self.subTest(name=name), patch.object(compat.subprocess, "run") as run, \
+                    redirect_stderr(io.StringIO()) as error:
+                self.assertEqual(compat.main([name]), 1)
+                run.assert_not_called()
+                self.assertNotIn("OUTSIDE_CANARY", error.getvalue())

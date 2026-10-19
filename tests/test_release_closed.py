@@ -29,6 +29,10 @@ class RequestTests(unittest.TestCase):
     def test_default_release_and_explicit_rebuild(self):
         self.assertEqual(closed.request(policy(), self.event, self.env), {
             "operation": "release", "closed_required": "true", "closed_request": "", "release_tag": ""})
+        for event_name in ("push", "schedule"):
+            result = closed.request(policy(), self.event, {**self.env, "GITHUB_EVENT_NAME": event_name})
+            self.assertEqual(result["closed_request"], "")
+            self.assertEqual(result["closed_required"], "true")
         self.event["inputs"].update(operation="closed-rebuild", existing_release="v1.2.3-rc.2", closed_request="request_012")
         result = closed.request(policy(), self.event, self.env)
         self.assertEqual(result["operation"], "closed-rebuild")
@@ -58,16 +62,18 @@ class RequestTests(unittest.TestCase):
             closed.configuration(config)
 
     def test_untrusted_events_refs_repositories_and_sha_are_rejected(self):
+        config = policy()
         for field, value in (("GITHUB_EVENT_NAME", "pull_request"), ("GITHUB_EVENT_NAME", "workflow_run"),
                              ("GITHUB_REF", "refs/heads/topic"), ("GITHUB_REPOSITORY", "fork/project"),
                              ("GITHUB_SHA", "b" * 40)):
             with self.subTest(field=field), self.assertRaises(ValueError):
-                closed.request(policy(), self.event, {**self.env, field: value})
+                closed.request(config, self.event, {**self.env, field: value})
         self.event["repository"]["private"] = True
         with self.assertRaises(ValueError):
-            closed.request(policy(), self.event, self.env)
+            closed.request(config, self.event, self.env)
 
     def test_dispatch_is_a_bounded_identifier_interface(self):
+        config = policy()
         for key, value in (("closed_request", "https://host/secret"), ("closed_request", "x\ny"),
                            ("closed_request", "x" * 81), ("closed_request", "-request"),
                            ("closed_request", "_request"), ("closed_request", {}),
@@ -75,7 +81,7 @@ class RequestTests(unittest.TestCase):
             event = copy.deepcopy(self.event)
             event["inputs"][key] = value
             with self.subTest(key=key, value=value), self.assertRaises((ValueError, TypeError)):
-                closed.request(policy(), event, self.env)
+                closed.request(config, event, self.env)
         for value in ("a", "a" * 80, "Request_012-xyz"):
             event = copy.deepcopy(self.event)
             event["inputs"]["closed_request"] = value
@@ -84,7 +90,7 @@ class RequestTests(unittest.TestCase):
             event = copy.deepcopy(self.event)
             event["inputs"].update(operation="closed-rebuild", existing_release=tag)
             with self.subTest(tag=tag), self.assertRaises(ValueError):
-                closed.request(policy(), event, self.env)
+                closed.request(config, event, self.env)
 
     def test_cli_does_not_echo_invalid_dispatch_values(self):
         import io

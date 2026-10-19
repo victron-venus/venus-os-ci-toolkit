@@ -50,12 +50,10 @@ def configuration(policy: dict) -> dict | None:
     return value
 
 
-def request(policy: dict, event: dict, environ: dict) -> dict[str, str]:
-    """Reject invalid dispatches before any release allocation or secret access."""
+def caller(policy: dict, event: dict, environ: dict) -> tuple[str, str]:
+    """Validate the trusted workflow identity before interpreting its inputs."""
     if not isinstance(event, dict) or not isinstance(event.get("repository"), dict):
         raise ValueError("Invalid closed-build event")
-    config = configuration(policy)
-    enabled = config is not None and config["enabled"]
     repository = event.get("repository", {})
     kind = environ.get("GITHUB_EVENT_NAME")
     sha = environ.get("GITHUB_SHA", "")
@@ -69,6 +67,14 @@ def request(policy: dict, event: dict, environ: dict) -> dict[str, str]:
         or not rc.SHA_RE.fullmatch(sha)
     ):
         raise ValueError("Invalid closed-build caller")
+    return kind, sha
+
+
+def request(policy: dict, event: dict, environ: dict) -> dict[str, str]:
+    """Reject invalid dispatches before any release allocation or secret access."""
+    config = configuration(policy)
+    enabled = config is not None and config["enabled"]
+    kind, sha = caller(policy, event, environ)
     inputs = event.get("inputs") or {}
     if not isinstance(inputs, dict):
         raise ValueError("Invalid dispatch inputs")

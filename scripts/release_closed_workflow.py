@@ -10,6 +10,8 @@ import yaml
 from release_closed import INPUTS, configuration
 from workflow_contracts import UniqueKeyLoader
 
+RUNNER = "ubuntu-24.04"
+
 
 def validate_adapter(root: Path, policy: dict) -> None:
     config = configuration(policy)
@@ -32,7 +34,7 @@ def validate_adapter(root: Path, policy: dict) -> None:
         raise ValueError("Closed worker must declare only the reviewed reusable interface")
     job = next(iter(jobs.values()))
     if (
-        job.get("runs-on") != "ubuntu-24.04"
+        job.get("runs-on") != RUNNER
         or job.get("environment") != config["environment"]
         or "uses" in job or "outputs" in job or "container" in job or "services" in job
         or job.get("continue-on-error", "false") != "false"
@@ -47,7 +49,7 @@ def validate_adapter(root: Path, policy: dict) -> None:
         ):
             raise ValueError("Closed worker permissions must be read-only")
     for step in job.get("steps", []):
-        if re.match(r"actions/(?:upload-artifact|upload-pages-artifact|cache)(?:@|/)", step.get("uses", "")):
+        if re.match(r"actions/(?:upload-artifact|upload-pages-artifact|cache)[@/]", step.get("uses", "")):
             raise ValueError("Closed worker cannot upload public artifacts or cache its workspace")
 
 
@@ -80,7 +82,7 @@ def apply(workflow: dict, policy: dict, pins: dict) -> None:
     })
     checkout = {"uses": pins["actions/checkout"], "with": {"persist-credentials": False}}
     request = {
-        "runs-on": "ubuntu-24.04", "timeout-minutes": 5,
+        "runs-on": RUNNER, "timeout-minutes": 5,
         "permissions": {"contents": "read"},
         "outputs": {key: condition(f"steps.request.outputs.{key}")
                     for key in ("operation", "closed_required", "closed_request", "release_tag")},
@@ -119,6 +121,9 @@ def apply(workflow: dict, policy: dict, pins: dict) -> None:
         return "closed-public-context-" + purpose + "-${{ github.run_id }}-${{ github.run_attempt }}"
 
     def worker(action: str, needs: list[str], predicate: str, context: str = "") -> dict:
+        release_tag = "${{ inputs.rc_tag }}" if action == "validate" else ""
+        if action == "rebuild":
+            release_tag = condition("needs.closed_request.outputs.release_tag")
         return {
             "needs": needs, "if": condition(predicate),
             "uses": "./.github/workflows/" + config["workflow"],
@@ -127,7 +132,7 @@ def apply(workflow: dict, policy: dict, pins: dict) -> None:
                 "action": action,
                 "closed_request": condition("needs.closed_request.outputs.closed_request" if action == "rebuild" else "needs.prepare.outputs.closed_request"),
                 "release_plan_artifact": condition("needs.prepare.outputs.plan_artifact") if action == "build" else "",
-                "release_tag": condition("needs.closed_request.outputs.release_tag") if action == "rebuild" else ("${{ inputs.rc_tag }}" if action == "validate" else ""),
+                "release_tag": release_tag,
                 "public_context_artifact": context,
             },
         }
@@ -137,7 +142,7 @@ def apply(workflow: dict, policy: dict, pins: dict) -> None:
         # closed credentials are available to this job or its artifact uploader.
         result = {
             "needs": needs, "if": condition(predicate),
-            "runs-on": "ubuntu-24.04", "timeout-minutes": 20,
+            "runs-on": RUNNER, "timeout-minutes": 20,
             "permissions": {"contents": "read", "actions": "read"},
             "steps": [checkout, {
                 "name": "Verify the existing public release",

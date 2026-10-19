@@ -73,6 +73,7 @@ class ClosedWorkflowTests(unittest.TestCase):
         self.assertEqual(installer.release(enabled), installer.release(disabled))
 
     def test_adapter_rejects_dynamic_runners_unprotected_jobs_and_public_outputs(self):
+        config = policy()
         root = Path(self.enterContext(tempfile.TemporaryDirectory()))
         directory = root / ".github/workflows"
         directory.mkdir(parents=True)
@@ -87,16 +88,16 @@ class ClosedWorkflowTests(unittest.TestCase):
             bad["jobs"]["worker"][field] = value
             path.write_text(installer.dump(bad))
             with self.subTest(field=field, value=value), self.assertRaises(ValueError):
-                generator.validate_adapter(root, policy())
+                generator.validate_adapter(root, config)
         for action in ("actions/upload-artifact@" + "a" * 40, "actions/cache@" + "a" * 40):
             bad = copy.deepcopy(good)
             bad["jobs"]["worker"]["steps"].append({"uses": action})
             path.write_text(installer.dump(bad))
             with self.assertRaises(ValueError):
-                generator.validate_adapter(root, policy())
+                generator.validate_adapter(root, config)
         path.write_text(installer.dump(good) + "jobs: {}\n")
         with self.assertRaises(ValueError):
-            generator.validate_adapter(root, policy())
+            generator.validate_adapter(root, config)
 
     def test_rendered_opt_in_is_idempotent_and_contains_runtime_closure(self):
         fixture = channel_fixtures.ChannelValidationTests()
