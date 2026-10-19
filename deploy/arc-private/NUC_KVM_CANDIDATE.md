@@ -11,7 +11,7 @@ declare earlier failed capabilities supported. Keep the candidate unqualified
 until the actual node, image, network and unchanged application jobs pass review.
 
 The fixed worker contract is `nuc`/`amd64`, RuntimeClass and handler
-`victron-private-nuc-kvm`, CPU request `1250m` / limit `2`, memory request `3Gi` /
+`victron-private-nuc-kvm`, CPU request `600m` / limit `2`, memory request `3Gi` /
 limit `6Gi`, and RuntimeClass overhead `100m` / `128Mi`. The existing private
 `ci-tmpfs-2gi` bootstrap uses a guest-only 2 GiB / 262144-inode tmpfs with the
 containerd `overlayfs` image store. There is no new Docker wrapper or qualifier.
@@ -61,8 +61,10 @@ shortcut. Keep snapshots and an exact rollback for each staged change.
 ## Host and network prerequisites
 
 - Establish fresh scheduler fit and no node pressure. One worker requests
-  1350m and 3 GiB + 128 MiB including overhead. It fits the existing CI namespace
-  request ceiling of 2 CPU; two do not. Account separately for a new listener
+  700m and 3 GiB + 128 MiB including overhead. It fits the existing CI namespace
+  request ceiling of 2 CPU; CPU quota alone does not serialize two workers.
+  Required cross-namespace anti-affinity still permits only one running worker.
+  Account separately for a new listener
   and host guard. Do not change neighbours' requests or assume historical fit.
 - Verify actual KVM access on the host. The runtime uses KVM; the job gets no
   host `/dev/kvm`, host socket, host namespace or privileged native container.

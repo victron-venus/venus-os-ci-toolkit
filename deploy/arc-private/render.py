@@ -557,7 +557,7 @@ def nuc_kvm_value(value, config):
     runner = spec['containers'][0]
     runner['image'] = config.image
     if labels[PROFILE_LABEL] == 'ci':
-        runner['resources']['requests']['cpu'] = '1250m'
+        runner['resources']['requests']['cpu'] = '600m'
         runner['resources']['limits']['cpu'] = '2'
     for env in runner['env']:
         if env['name'] == 'RUNNER_RESERVE_NODE_IP':

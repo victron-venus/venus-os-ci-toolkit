@@ -123,7 +123,7 @@ class NucKvmTests(unittest.TestCase):
         self.assertEqual(spec['runtimeClassName'], arc.NUC_RUNTIME)
         self.assertEqual(spec['nodeSelector'], {'kubernetes.io/hostname': 'nuc', 'kubernetes.io/arch': 'amd64'})
         self.assertEqual(spec['containers'][0]['resources'], {
-            'requests': {'cpu': '1250m', 'memory': '3Gi', 'ephemeral-storage': '1Gi'},
+            'requests': {'cpu': '600m', 'memory': '3Gi', 'ephemeral-storage': '1Gi'},
             'limits': {'cpu': '2', 'memory': '6Gi', 'ephemeral-storage': '20Gi'}})
         for field in ['runtimeClassName', 'nodeSelector']:
             spec[field] = before['template']['spec'][field]
@@ -208,7 +208,7 @@ class NucKvmTests(unittest.TestCase):
                      '== "ci"']:
             self.assertIn(text, tuple_rule)
         self.assertIn(json.dumps(NUC), rules['Only the reviewed pinned worker image is allowed'])
-        self.assertIn('1250m', tuple_rule)
+        self.assertIn('600m', tuple_rule)
         self.assertIn('dyn(c.resources).requests ==', tuple_rule)
         self.assertIn('dyn(c.resources).limits ==', tuple_rule)
         self.assertIn("oldObject.spec.nodeName == 'nuc'", rules['NUC KVM cannot select another node or scheduler'])
