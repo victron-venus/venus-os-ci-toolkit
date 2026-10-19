@@ -98,6 +98,74 @@ GitHub outage. No automatic failover is enabled.
 
 ## Toolkit checks
 
+### Inspect ARC snapshots without changing routing
+
+`scripts/arc_readiness.py` evaluates sanitized inventory files with Python's
+standard library. It makes no API requests, changes no variables or pools, and
+starts no jobs. Keep inventories and reports containing private repository names
+outside public source trees.
+
+```sh
+python3 scripts/arc_readiness.py --repositories repositories.json --cluster cluster.json
+```
+
+The repository input declares the expected profiles rather than guessing them
+from existing workers. Use effective Actions variables after repository overrides:
+
+```json
+{"schema":1,"observed_at":"2026-01-01T00:00:00Z","complete":true,
+ "repositories":[{"repository":"example/project","mode":"self-hosted",
+   "profiles":{"ci":["example-ci"],"automation":[]},"queued_jobs":{"ci":2}}]}
+```
+
+Each profile is an exact label array; an empty array means missing configuration
+and `null` means unknown. An empty profile object is listed under
+`profiles_not_declared`, without inventing requirements. `queued_jobs` is optional and must describe the same
+profile; absent demand remains unknown. A hosted/default mode is reported without
+enabling the declared reserve. This checks declared selectors, not every caller's
+workflow expression, event eligibility or explicit runner override.
+
+The cluster input has `schema: 1`, a timezone-bearing `observed_at`, and
+`collections.asrs`, `.listeners` and `.pods`. Each collection contains sanitized
+Kubernetes `items`, `complete`, `source_metadata` (including any unconsumed
+`continue` token) and `scope: "cluster-all"`. For filtered Pod collections use
+`namespace_prefixes`, for example `["arc-", "runner-reserve"]`, instead of claiming
+cluster-wide coverage. Collect every page before marking a collection complete.
+Omitted collections, partial pages and namespaces outside the declared coverage
+cannot establish absence or zero workers.
+
+Preserve object metadata names, namespaces, UIDs, generations, linking labels,
+owner references and deletion timestamps. ASRS objects need `githubConfigUrl`,
+`runnerScaleSetName`, optional `runnerScaleSetLabels`, `minRunners`, `maxRunners`
+and status `observedGeneration`. Listeners need scope and `runnerScaleSetId`.
+Pods need phase, readiness conditions and container readiness. Listener capacity
+must also be captured: differing explicit limits mean pending reconciliation;
+a missing maximum cannot establish available capacity. Do not include
+Secret objects, Pod environment values or JIT credentials. Preserve absent,
+explicit `null` and zero fields separately; never normalize them with a default
+that fabricates a hold or an empty worker population.
+
+The report separates matching ASRS configuration, observed scale-set registration
+IDs, configured admission, listener Pod readiness and worker Pod counts. A listener
+is joined by both scale-set name and namespace; its Pod must have the matching
+owner UID. An organization scope remains `organization-access-unverified` until
+runner-group access is checked separately. Zero GitHub runner registrations alone
+are not evidence that an ARC pool is missing. A complete Pod census with no workers,
+current controller generation, a uniquely matched ready listener, matching
+listener capacity and an enabled zero-minimum pool is
+reported as `idle-scale-to-zero`. A configured `maxRunners: 0` is `held`, or
+`held-with-queued-demand` when demand is supplied; existing workers may still drain.
+Unset limits, missing registration evidence and incomplete snapshots remain unknown.
+Positive observations from partial collections are retained, but cannot establish
+uniqueness or readiness when additional matching objects may have been omitted.
+
+Freshness defaults to 15 minutes (`--max-age-seconds` accepts 1–86400). Stale or
+future snapshots retain their historical observations but set `evidence_fresh`
+false. The command's zero exit status means valid input was evaluated, not that
+CI is ready. Every report says `qualification: "not-assessed"`: registration,
+listener health and idle capacity cannot prove toolchain compatibility, isolation,
+job execution or cleanup. Those still require the trusted smoke checks above.
+
 `scripts/runner_selection.py --check` verifies the shared declarations.
 `tools/runner-expressions/test.mjs` evaluates dispatch using the pinned official
 `@actions/expressions` parser/evaluator, including defaults, profile separation,
@@ -112,6 +180,10 @@ References: [reusable workflow runners and variables](https://docs.github.com/en
 
 The public reserve inventory is `deploy/runner-reserve/repositories.json`.
 It is separate from private runner groups and the Renovate repository inventory.
+The catalog contains 78 repositories: 19 personal repositories and selected
+projects in three organizations. It renders 66 scope/profile registrations across
+separate CI, automation and release profiles. Catalog membership does not prove
+that any corresponding pool is registered or qualified.
 Organization variables must have selected-repository visibility matching that
 inventory; personal-account repositories need their own variables. Prepare all
 four variables with `CI_RUNNER_MODE=github`. The label values alone do not prove
@@ -143,6 +215,10 @@ permission GitHub requires for personal repository runners. Install only for the
 listed public projects. Do not copy a developer PAT or `BOT_PAT` into the runner
 controller, worker image, workspace or source repository. Private keys belong in
 controller-only secrets; workers receive ephemeral registration material.
+The catalog's `organization_secrets` binds each organization to a distinct
+namespace-local Secret reference and installation identity. Do not reuse private
+runner credentials for these public pools. Keep `CI_RUNNER_MODE=github` during
+registration and qualification.
 
 Prepared variable values, a merged adoption PR, or downloaded ARC/gVisor versions
 are not a readiness certificate. Readiness requires registered pools, admission
@@ -154,13 +230,19 @@ Keep normal routing on `github` until all applicable checks are evidenced.
 
 The files under `deploy/runner-reserve/` prepare the public reserve independently
 of normal GitHub routing. `render_pool.py` reads the same public inventory and
-renders three organization scale sets and three per personal repository (51 for
-the current inventory). Kubernetes scale-set names include the repository scope;
+renders three scale sets per organization and personal repository (66 across
+three organizations and 19 personal repositories). Kubernetes scale-set names include the repository scope;
 ARC 0.15 custom `scaleSetLabels` preserve the shared Actions-variable labels
 without collisions between personal repositories in the same namespace. Each set has `minRunners: 0`, `maxRunners: 1`: standby can
 accept selected jobs without another Helm change. Namespace quotas bound the
 combined worker population to two jobs per profile, including gVisor overhead.
 This is reduced emergency capacity, not a replacement for GitHub's fleet size.
+
+For registration-only preparation, pass `--held` to `render_pool.py`. Every
+generated pool then has `minRunners: 0` and `maxRunners: 0`; the existing default
+remains zero/one. The flag only creates held values files and never changes GitHub
+routing or deploys them. Open admission only after separate acceptance; do not
+apply generated foundations blindly over existing infrastructure.
 
 The node runtime uses the pinned gVisor release with `systrap`, which works in a
 nested VM without KVM. `containerd-config.toml.tmpl` extends K3s's base template;
