@@ -76,9 +76,9 @@ Resources follow the selected profile and its existing inventory storage mode;
 the plan does not accept arbitrary CPU, memory or security settings.
 
 - Standard CI requires `ci_storage: tmpfs-2gi` and the standard resource class.
-  It requests 1250m CPU and 3 GiB memory, with limits of 2 CPU and 6 GiB memory.
+  It requests 600m CPU and 3 GiB memory, with limits of 2 CPU and 6 GiB memory.
 - Heavy CI requires `ci_resource_class: heavy` and
-  `ci_storage: tmpfs-6gi-heavy`. It requests 1250m CPU and 13 GiB memory, with
+  `ci_storage: tmpfs-6gi-heavy`. It requests 600m CPU and 13 GiB memory, with
   limits of 2 CPU and 16 GiB memory. Its Docker guest tmpfs remains 6 GiB.
 - Automation requires `automation_storage: tmpfs-3gi`. It requests 50m CPU and
   5 GiB memory, with limits of 1 CPU and 6 GiB memory. Its Docker guest tmpfs
@@ -100,6 +100,14 @@ manual draft-release job may verify an existing tag, build packages and upload
 draft assets; running it still creates external state and needs the intended
 release authorization. Preserve its tag/source checks and timeouts. A manual
 smoke can test routing without proving those publishing operations.
+
+The 600m CI request reserves less CPU beside persistent services while the
+2 CPU limit still permits bursts when capacity is available. This changes
+scheduling share under contention, not application deadlines or memory limits.
+Before installing this revision, drain assignments and wait for existing workers
+to finish; then update the exact admission tuple and selected worker templates
+together before resuming assignments. Existing images and RuntimeClasses stay
+unchanged. Qualify an actual job with the co-located services running.
 
 The RuntimeClass adds 100m CPU and 128 MiB memory per worker. Account for
 listeners, the guard, and other workloads separately. A CPU request that fits the
@@ -142,11 +150,11 @@ cover all namespaces and the `kubernetes.io/hostname` topology key. The admissio
 contract requires this exact rule, its label, and the default scheduler.
 
 Quota admission happens before scheduling. With the 2 CPU request quota in the
-CI namespace, two CI workers would request `2 * (1250m + 100m) = 2700m`. A
-second same-namespace CI worker therefore receives an API quota rejection and
-must wait for a later creation retry; there is no second Pod to remain Pending.
-An admitted second worker in another selected namespace remains Pending under
-the required anti-affinity until the first leaves the node. Neither path
+CI namespace, two CI workers request `2 * (600m + 100m) = 1400m`. CPU quota
+alone therefore no longer rejects the second worker; other quota dimensions
+may still reject it. Every admitted second worker, in either the same or another
+selected namespace, remains Pending under required anti-affinity until the first
+leaves the node. Neither path
 assigns a new execution node or a broader runner label.
 
 The global NUC admission policy binds each allowed repository, namespace,
@@ -213,10 +221,10 @@ slot; establish that its runtime and temporary storage are gone first.
 5. With controlled synthetic workers, verify both scheduling orders across
    profile namespaces, after checking quota headroom for each: the admitted
    second Pod remains Pending because of anti-affinity, then starts after the
-   first runtime and Pod are fully removed. Separately verify that a second
-   same-namespace CI creation is quota-rejected while the first remains
-   nonterminal and its usage is charged, then succeeds on retry after quota is
-   released. Keep the synthetic worker active until the rejection is recorded.
+   first runtime and Pod are fully removed. Separately record whether a second same-namespace CI creation is rejected
+   by another quota dimension or admitted Pending under anti-affinity. CPU quota
+   alone is not the serialization control. Keep the synthetic worker active
+   until its exact rejection or Pending reason is recorded.
    Distinguish API creation errors
    from scheduler Pending events. Record actual Pod identity, node, image and
    runtime for each admitted worker.

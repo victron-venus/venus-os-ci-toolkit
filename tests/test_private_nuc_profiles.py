@@ -37,9 +37,9 @@ ROWS = [
 ]
 TARGETS = (('example/standard', 'ci'), ('example/heavy', 'ci'), ('example/heavy', 'automation'))
 RESOURCE_TUPLES = {
-    TARGETS[0]: {'requests': {'cpu': '1250m', 'memory': '3Gi', 'ephemeral-storage': '1Gi'},
+    TARGETS[0]: {'requests': {'cpu': '600m', 'memory': '3Gi', 'ephemeral-storage': '1Gi'},
                  'limits': {'cpu': '2', 'memory': '6Gi', 'ephemeral-storage': '20Gi'}},
-    TARGETS[1]: {'requests': {'cpu': '1250m', 'memory': '13Gi', 'ephemeral-storage': '2Gi'},
+    TARGETS[1]: {'requests': {'cpu': '600m', 'memory': '13Gi', 'ephemeral-storage': '2Gi'},
                  'limits': {'cpu': '2', 'memory': '16Gi', 'ephemeral-storage': '30Gi'}},
     TARGETS[2]: {'requests': {'cpu': '50m', 'memory': '5Gi', 'ephemeral-storage': '1Gi'},
                  'limits': {'cpu': '1', 'memory': '6Gi', 'ephemeral-storage': '20Gi'}},
@@ -248,13 +248,17 @@ class NucProfileOutputTests(unittest.TestCase):
         self.assertEqual(charge['limits.memory'], quantity('6272Mi'))
         self.assertGreater(charge['requests.memory'], quantity(previous['requests.memory']))
 
-    def test_same_namespace_quota_denial_is_distinct_from_cross_namespace_scheduling(self):
+    def test_cpu_headroom_does_not_replace_cross_namespace_serialization(self):
         documents = render(plan())
         standard, heavy, automation = [quota_charge(documents, target) for target in TARGETS]
         ci = namespace_budget(documents, 'ci')
         auto = namespace_budget(documents, 'automation')
-        self.assertEqual(standard['requests.cpu'] + heavy['requests.cpu'], Decimal('2.7'))
-        self.assertGreater(2 * standard['requests.cpu'], quantity(ci['requests.cpu']))
+        self.assertEqual(standard['requests.cpu'] + heavy['requests.cpu'], Decimal('1.4'))
+        self.assertLessEqual(2 * standard['requests.cpu'], quantity(ci['requests.cpu']))
+        for target in TARGETS:
+            self.assertEqual(worker(documents, target)['template']['spec']['affinity'], AFFINITY)
+        # Leave capacity for persistent services on a small shared node.
+        self.assertLessEqual(quantity('2750m') + standard['requests.cpu'], quantity('3500m'))
         self.assertGreater(2 * automation['requests.memory'], quantity(auto['requests.memory']))
         # Cross-namespace quota is independent: admission can pass for both.
         # Their actual Pending reason still requires live scheduler evidence.
