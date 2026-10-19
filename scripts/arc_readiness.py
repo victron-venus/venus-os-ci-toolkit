@@ -7,8 +7,10 @@ import argparse
 from collections import Counter
 from datetime import datetime, timezone
 import json
+import os
 from pathlib import Path
 import re
+import stat
 
 LIMIT = 8_000_000
 PREFIX = 'actions.github.com/'
@@ -17,7 +19,12 @@ REPO = re.compile(r'[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}')
 
 
 def load(path):
-    """Bound input size and reject duplicate JSON keys."""
+    """Read an operator-selected regular file, never a terminal link or device.
+
+    CLI paths are intentional local input, not remote/LLM requests. The operator
+    controls their parent directories; this utility does not grant file access
+    to another principal or return raw input contents.
+    """
     def unique(pairs):
         result = {}
         for key, value in pairs:
@@ -25,7 +32,11 @@ def load(path):
                 raise ValueError('Duplicate JSON key')
             result[key] = value
         return result
-    with Path(path).open('rb') as stream:
+    flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
+    fd = os.open(path, flags)
+    with os.fdopen(fd, 'rb') as stream:
+        if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+            raise ValueError('Snapshot must be a regular file')
         raw = stream.read(LIMIT + 1)
     if len(raw) > LIMIT:
         raise ValueError('Snapshot exceeds size limit')
@@ -110,83 +121,215 @@ def ready(pod):
             and bool(states) and all(c.get('ready') is True for c in states))
 
 
+def admission_state(spec):
+    """Describe configured capacity without defaulting omitted fields to zero."""
+    maximum = spec.get('maxRunners')
+    if 'maxRunners' not in spec:
+        return 'unspecified'
+    if type(maximum) is not int or maximum < 0:
+        return 'unknown'
+    if maximum == 0:
+        return 'held'
+    return 'enabled'
+
+
+def listener_capacity(spec, listener_spec):
+    """An omitted ARC listener minimum represents zero, never an arbitrary minimum."""
+    maximum, minimum = spec.get('maxRunners'), spec.get('minRunners')
+    listener_maximum = listener_spec.get('maxRunners')
+    if type(listener_maximum) is not int or type(maximum) is not int:
+        return 'unknown'
+    if type(minimum) is not int or minimum < 0:
+        return 'pending'
+    if 'minRunners' not in listener_spec:
+        minimum_matches = minimum == 0
+    else:
+        listener_minimum = listener_spec['minRunners']
+        minimum_matches = type(listener_minimum) is int and listener_minimum == minimum
+    if listener_maximum == maximum and minimum_matches:
+        return 'matched'
+    return 'pending'
+
+
+def owned_by(item, kind, uid=None):
+    """Bind a controller-owned object to its exact owner when known."""
+    return any(owner.get('kind') == kind and owner.get('controller') is True
+               and (uid is None or owner.get('uid') == uid)
+               for owner in item.get('metadata', {}).get('ownerReferences', []))
+
+
+def listener_pod_state(listener, pool, listeners, pods):
+    """Keep observed ready Pods separate from proven unique ready listeners."""
+    meta = listener['metadata']
+    owned = [pod for pod in pods.get('items', [])
+             if pod.get('metadata', {}).get('namespace') == meta['namespace']
+             and linked(pod, pool) and owned_by(pod, 'AutoscalingListener', meta['uid'])]
+    if meta.get('deletionTimestamp'):
+        return 'terminating'
+    if len(owned) > 1:
+        return 'ambiguous'
+    if not owned:
+        return 'pod-absent' if covers(pods, meta['namespace']) else 'unknown'
+    if not ready(owned[0]):
+        return 'not-ready'
+    if covers(listeners) and covers(pods, meta['namespace']):
+        return 'ready'
+    return 'observed-ready'
+
+
+def describe_listener(pool, listeners, pods):
+    """Require exact scale-set links and scope before using listener evidence."""
+    result = {'listener': 'unknown', 'registration': 'unknown', 'listener_limit_reconciliation': 'unknown'}
+    candidates = [item for item in listeners.get('items', []) if linked(item, pool)]
+    if not candidates:
+        if covers(listeners):
+            result['listener'] = 'absent'
+        return result
+    if len(candidates) > 1:
+        result['listener'] = 'ambiguous'
+        return result
+    listener = candidates[0]
+    meta, spec = listener.get('metadata', {}), listener.get('spec', {})
+    if not all(isinstance(meta.get(key), str) and meta[key] for key in ('name', 'namespace', 'uid')):
+        return result
+    if spec.get('githubConfigUrl') != pool.get('spec', {}).get('githubConfigUrl'):
+        result['listener'] = 'scope-mismatch'
+        return result
+    registered = spec.get('runnerScaleSetId')
+    if type(registered) is int and registered > 0:
+        result['registration'] = 'observed-scale-set-id'
+    result['listener_limit_reconciliation'] = listener_capacity(pool.get('spec', {}), spec)
+    result['listener'] = listener_pod_state(listener, pool, listeners, pods)
+    return result
+
+
+def pool_state(meta, current, result):
+    """Only a complete, reconciled observation can describe idle scale-to-zero."""
+    if meta.get('deletionTimestamp'):
+        return 'terminating'
+    if result['admission'] == 'held':
+        return 'held'
+    operational = (result['admission'] == 'enabled' and current
+                   and result['listener'] == 'ready' and result['registration'] != 'unknown'
+                   and result['listener_limit_reconciliation'] == 'matched')
+    if not operational:
+        return 'unknown'
+    count, minimum = result['worker_pods'], result['min_runners']
+    if count == 0 and type(minimum) is int and minimum == 0:
+        return 'idle-scale-to-zero'
+    if count is not None and count > 0:
+        return 'workers-observed'
+    return 'unknown'
+
+
 def describe_pool(pool, repository, listeners, pods):
     """Keep configuration, registration evidence, admission and workers separate."""
     meta, spec = pool.get('metadata', {}), pool.get('spec', {})
     namespace, name = meta.get('namespace'), meta.get('name')
-    if not all(isinstance(x, str) and NAME.fullmatch(x) for x in (namespace, name)):
+    if not all(isinstance(value, str) and NAME.fullmatch(value) for value in (namespace, name)):
         raise ValueError('Invalid scale-set identity')
-    maximum, minimum = spec.get('maxRunners'), spec.get('minRunners')
-    admission = ('held' if type(maximum) is int and maximum == 0 else
-                 'enabled' if type(maximum) is int and maximum > 0 else
-                 'unspecified' if 'maxRunners' not in spec else 'unknown')
-    candidates = [item for item in listeners.get('items', []) if linked(item, pool)]
-    listener_state, registration, reconciliation = 'unknown', 'unknown', 'unknown'
-    if not candidates and covers(listeners):
-        listener_state = 'absent'
-    elif len(candidates) > 1:
-        listener_state = 'ambiguous'
-    elif len(candidates) == 1:
-        listener = candidates[0]
-        lmeta, lspec = listener.get('metadata', {}), listener.get('spec', {})
-        if not all(isinstance(lmeta.get(key), str) and lmeta[key] for key in ('name', 'namespace', 'uid')):
-            listener_state = 'unknown'
-        elif lspec.get('githubConfigUrl') != spec.get('githubConfigUrl'):
-            listener_state = 'scope-mismatch'
-        else:
-            listener_max = lspec.get('maxRunners')
-            listener_min = lspec.get('minRunners')
-            if type(listener_max) is int and type(maximum) is int:
-                minimum_matches = (type(minimum) is int and minimum >= 0
-                                   and (minimum == 0 if 'minRunners' not in lspec else
-                                        type(listener_min) is int and listener_min == minimum))
-                reconciliation = ('matched' if listener_max == maximum
-                                  and minimum_matches
-                                  else 'pending')
-            registered = lspec.get('runnerScaleSetId')
-            if type(registered) is int and registered > 0:
-                registration = 'observed-scale-set-id'
-            owned = [p for p in pods.get('items', [])
-                     if p.get('metadata', {}).get('namespace') == lmeta.get('namespace')
-                     and linked(p, pool)
-                     and any(o.get('uid') == lmeta.get('uid') and o.get('kind') == 'AutoscalingListener'
-                             and o.get('controller') is True
-                             for o in p.get('metadata', {}).get('ownerReferences', []))]
-            if lmeta.get('deletionTimestamp'):
-                listener_state = 'terminating'
-            elif len(owned) > 1:
-                listener_state = 'ambiguous'
-            elif len(owned) == 1:
-                complete = covers(listeners) and covers(pods, lmeta.get('namespace'))
-                listener_state = ('ready' if complete else 'observed-ready') if ready(owned[0]) else 'not-ready'
-            elif covers(pods, lmeta.get('namespace')):
-                listener_state = 'pod-absent'
-    workers = [p for p in pods.get('items', [])
-               if p.get('metadata', {}).get('namespace') == namespace and linked(p, pool)
-               and any(o.get('kind') == 'EphemeralRunner' and o.get('controller') is True
-                       for o in p.get('metadata', {}).get('ownerReferences', []))]
-    worker_count = len(workers) if covers(pods, namespace) else None
+    workers = [pod for pod in pods.get('items', [])
+               if pod.get('metadata', {}).get('namespace') == namespace
+               and linked(pod, pool) and owned_by(pod, 'EphemeralRunner')]
     generation = meta.get('generation')
     observed = pool.get('status', {}).get('observedGeneration')
     current = type(generation) is int and generation > 0 and type(observed) is int and observed == generation
-    terminating = bool(meta.get('deletionTimestamp'))
-    state = 'unknown'
-    if terminating:
-        state = 'terminating'
-    elif admission == 'held':
-        state = 'held'
-    elif (admission == 'enabled' and current and listener_state == 'ready'
-          and registration != 'unknown' and reconciliation == 'matched'):
-        if worker_count == 0 and type(minimum) is int and minimum == 0:
-            state = 'idle-scale-to-zero'
-        elif worker_count is not None and worker_count > 0:
-            state = 'workers-observed'
-    return {'namespace': namespace, 'name': name, 'scope': scope(pool, repository),
-            'registration': registration, 'admission': admission, 'min_runners': minimum,
-            'max_runners': maximum, 'controller_observed_generation': current,
-            'listener': listener_state, 'listener_limit_reconciliation': reconciliation, 'worker_pods': worker_count,
-            'observed_worker_pods': len(workers), 'ready_worker_pods': sum(ready(p) for p in workers),
-            'state': state}
+    result = {'namespace': namespace, 'name': name, 'scope': scope(pool, repository),
+              'admission': admission_state(spec), 'min_runners': spec.get('minRunners'),
+              'max_runners': spec.get('maxRunners'), 'controller_observed_generation': current,
+              'worker_pods': len(workers) if covers(pods, namespace) else None,
+              'observed_worker_pods': len(workers), 'ready_worker_pods': sum(ready(pod) for pod in workers)}
+    result.update(describe_listener(pool, listeners, pods))
+    result['state'] = pool_state(meta, current, result)
+    return result
+
+
+def selector_state(labels):
+    """Differentiate missing, unknown and malformed label arrays."""
+    if labels is None:
+        return 'unknown'
+    if labels == []:
+        return 'missing'
+    if not isinstance(labels, list) or not all(isinstance(label, str) and NAME.fullmatch(label) for label in labels):
+        return 'invalid'
+    if len(labels) != len(set(labels)):
+        return 'invalid'
+    return 'configured'
+
+
+def configuration_state(matches, unknown, elsewhere):
+    """Known duplicate matches stay ambiguous even in an incomplete census."""
+    if len(matches) > 1:
+        return 'ambiguous'
+    if unknown:
+        return 'unknown'
+    if matches:
+        return 'matched'
+    if elsewhere:
+        return 'scope-mismatch'
+    return 'absent'
+
+
+def matching_pools(repository, labels, collections):
+    """Inspect label and repository scope without assuming organization access."""
+    pools, listeners, pods = collections
+    matches, elsewhere = [], False
+    unknown = not covers(pools)
+    for pool in pools.get('items', []):
+        available = pool_labels(pool)
+        if available is None:
+            unknown = True
+            continue
+        if not set(labels) <= available:
+            continue
+        binding = scope(pool, repository)
+        if binding == 'different':
+            elsewhere = True
+        elif binding == 'unknown':
+            unknown = True
+        else:
+            matches.append(describe_pool(pool, repository, listeners, pods))
+    return matches, configuration_state(matches, unknown, elsewhere)
+
+
+def profile_result(entry, profile, labels, collections, fresh):
+    """Summarize one declared profile without interpreting arbitrary workflow code."""
+    if not NAME.fullmatch(profile):
+        raise ValueError('Invalid profile')
+    repository = entry['repository']
+    selector = selector_state(labels)
+    matches, configuration = [], 'unknown'
+    if selector == 'configured':
+        matches, configuration = matching_pools(repository, labels, collections)
+    state = matches[0]['state'] if configuration == 'matched' else 'unknown'
+    demand = entry.get('queued_jobs', {}).get(profile)
+    if demand is not None and (type(demand) is not int or demand < 0):
+        raise ValueError('Invalid queued job count')
+    if state == 'held' and demand:
+        state = 'held-with-queued-demand'
+    mode = entry.get('mode')
+    return {'repository': repository, 'profile': profile,
+            'mode': mode if mode in ('', 'github', 'self-hosted', 'k3s', None) else 'invalid',
+            'self_hosted_selected': mode in ('self-hosted', 'k3s'),
+            'selector': selector, 'configuration': configuration, 'pools': matches,
+            'queued_jobs': demand, 'observed_state': state, 'evidence_fresh': fresh,
+            'qualification': 'not-assessed'}
+
+
+def repository_entries(repositories):
+    """Validate explicit repository/profile inventory before emitting results."""
+    entries = repositories.get('repositories')
+    if not isinstance(entries, list) or len(entries) > 10000:
+        raise ValueError('Invalid repository inventory')
+    seen = set()
+    for entry in entries:
+        repository = entry.get('repository')
+        if not isinstance(repository, str) or not REPO.fullmatch(repository) or repository.casefold() in seen:
+            raise ValueError('Invalid or repeated repository')
+        seen.add(repository.casefold())
+        if not isinstance(entry.get('profiles'), dict):
+            raise ValueError('Explicit expected profiles are required')
+    return entries
 
 
 def evaluate(repositories, cluster, *, now=None, max_age_seconds=900):
@@ -197,62 +340,13 @@ def evaluate(repositories, cluster, *, now=None, max_age_seconds=900):
     now = now or datetime.now(timezone.utc)
     ages = [(now - timestamp(value.get('observed_at'))).total_seconds() for value in (repositories, cluster)]
     fresh = all(0 <= age <= max_age_seconds for age in ages)
-    entries = repositories.get('repositories')
-    if not isinstance(entries, list) or len(entries) > 10000:
-        raise ValueError('Invalid repository inventory')
-    pools, listeners, pods = (collection(cluster, key) for key in ('asrs', 'listeners', 'pods'))
-    rows, seen, unprofiled = [], set(), []
-    for entry in entries:
-        repository = entry.get('repository')
-        if not isinstance(repository, str) or not REPO.fullmatch(repository) or repository.casefold() in seen:
-            raise ValueError('Invalid or repeated repository')
-        seen.add(repository.casefold())
-        profiles = entry.get('profiles')
-        if not isinstance(profiles, dict):
-            raise ValueError('Explicit expected profiles are required')
-        if not profiles:
-            unprofiled.append(repository)
-        for profile, labels in profiles.items():
-            if not NAME.fullmatch(profile):
-                raise ValueError('Invalid profile')
-            selector = ('unknown' if labels is None else 'missing' if labels == [] else
-                        'configured' if isinstance(labels, list) and all(isinstance(x, str) and NAME.fullmatch(x) for x in labels)
-                        and len(labels) == len(set(labels)) else 'invalid')
-            matches, elsewhere = [], False
-            unknown = not covers(pools)
-            if selector == 'configured':
-                for pool in pools.get('items', []):
-                    available = pool_labels(pool)
-                    if available is None:
-                        unknown = True
-                        continue
-                    if not set(labels) <= available:
-                        continue
-                    binding = scope(pool, repository)
-                    if binding == 'different':
-                        elsewhere = True
-                    elif binding == 'unknown':
-                        unknown = True
-                    else:
-                        matches.append(describe_pool(pool, repository, listeners, pods))
-            configuration = ('ambiguous' if len(matches) > 1 else 'unknown' if unknown else 'matched' if matches else
-                             'scope-mismatch' if elsewhere else 'absent')
-            state = matches[0]['state'] if configuration == 'matched' else 'unknown'
-            demand = entry.get('queued_jobs', {}).get(profile)
-            if demand is not None and (type(demand) is not int or demand < 0):
-                raise ValueError('Invalid queued job count')
-            if state == 'held' and demand:
-                state = 'held-with-queued-demand'
-            mode = entry.get('mode')
-            rows.append({'repository': repository, 'profile': profile,
-                         'mode': mode if mode in ('', 'github', 'self-hosted', 'k3s', None) else 'invalid',
-                         'self_hosted_selected': entry.get('mode') in ('self-hosted', 'k3s'),
-                         'selector': selector, 'configuration': configuration if selector == 'configured' else 'unknown',
-                         'pools': matches, 'queued_jobs': demand, 'observed_state': state,
-                         'evidence_fresh': fresh, 'qualification': 'not-assessed'})
+    collections = tuple(collection(cluster, key) for key in ('asrs', 'listeners', 'pods'))
+    entries = repository_entries(repositories)
+    rows = [profile_result(entry, profile, labels, collections, fresh)
+            for entry in entries for profile, labels in entry['profiles'].items()]
     return {'schema': 1, 'read_only': True, 'evidence_fresh': fresh,
             'repository_inventory_complete': repositories.get('complete') is True,
-            'profiles_not_declared': unprofiled,
+            'profiles_not_declared': [entry['repository'] for entry in entries if not entry['profiles']],
             'observed_at': {'repositories': repositories.get('observed_at'), 'cluster': cluster.get('observed_at')},
             'qualification': 'not-assessed', 'results': rows,
             'counts': dict(Counter(row['observed_state'] for row in rows))}

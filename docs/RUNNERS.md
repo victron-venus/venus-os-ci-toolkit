@@ -105,6 +105,12 @@ standard library. It makes no API requests, changes no variables or pools, and
 starts no jobs. Keep inventories and reports containing private repository names
 outside public source trees.
 
+The two paths are chosen by the local operator; this is not an HTTP endpoint or
+an LLM tool with delegated filesystem access. Parent directories must be controlled
+by that operator. On Linux/macOS the reader opens each final file without following
+symlinks, rejects nonregular files (including FIFOs/devices) without blocking, and
+limits reads to 8 MB. It emits selected inventory fields, never raw file contents.
+
 ```sh
 python3 scripts/arc_readiness.py --repositories repositories.json --cluster cluster.json
 ```

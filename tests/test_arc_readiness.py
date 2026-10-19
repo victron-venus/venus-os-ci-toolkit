@@ -4,6 +4,7 @@ import copy
 from datetime import datetime, timezone
 import importlib.util
 import json
+import os
 from pathlib import Path
 import tempfile
 import unittest
@@ -218,6 +219,29 @@ class ArcReadinessTests(unittest.TestCase):
                 arc.load(path)
             path.write_text(json.dumps(self.repos))
             self.assertEqual(arc.load(path), self.repos)
+
+    def test_selected_snapshot_rejects_symlink_fifo_directory_and_device(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            regular = root / 'chosen.json'
+            regular.write_text(json.dumps(self.repos))
+            link = root / 'link.json'
+            link.symlink_to(regular)
+            fifo = root / 'fifo.json'
+            os.mkfifo(fifo)
+            for path in (link, fifo, root, Path(os.devnull)):
+                with self.subTest(path=path.name), self.assertRaises((OSError, ValueError)):
+                    arc.load(path)
+            self.assertEqual(arc.load(regular), self.repos)
+
+    def test_selected_snapshot_size_limit_is_enforced(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / 'large.json'
+            with path.open('wb') as stream:
+                stream.seek(arc.LIMIT)
+                stream.write(b' ')
+            with self.assertRaisesRegex(ValueError, 'size limit'):
+                arc.load(path)
 
 
 if __name__ == '__main__':

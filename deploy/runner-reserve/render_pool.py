@@ -19,15 +19,9 @@ def release_name(scope, profile):
     return 'reserve-' + profile + '-' + hashlib.sha256(scope.encode()).hexdigest()[:12]
 
 
-def pool_values(scope, profile, image, node, node_ip, inventory, *, held=False):
-    """Separate profiles and owners; all workers start from a fresh filesystem."""
+def installation_secret(scope, inventory):
+    """Validate separate organization installations before choosing a Secret."""
     organizations = inventory['organizations']
-    personal = [r['name'] for r in inventory['repositories']
-                if r['name'].split('/')[0] not in organizations]
-    if scope not in [*organizations, *personal] or profile not in inventory['profiles']:
-        raise ValueError('Scope/profile is not in the public reserve inventory')
-    if type(held) is not bool:
-        raise ValueError('Held state must be a boolean')
     organization_secrets = inventory.get('organization_secrets')
     if organization_secrets is not None:
         if (not isinstance(organization_secrets, dict)
@@ -39,8 +33,23 @@ def pool_values(scope, profile, image, node, node_ip, inventory, *, held=False):
             raise ValueError('Each organization needs an explicit valid Secret name')
     elif len(organizations) > 1:
         raise ValueError('Multiple organizations need separate installation Secret references')
-    secret = ('reserve-personal-app' if scope not in organizations else
-              organization_secrets[scope] if organization_secrets is not None else 'reserve-org-app')
+    if scope not in organizations:
+        return 'reserve-personal-app'
+    if organization_secrets is not None:
+        return organization_secrets[scope]
+    return 'reserve-org-app'
+
+
+def pool_values(scope, profile, image, node, node_ip, inventory, *, held=False):
+    """Separate profiles and owners; all workers start from a fresh filesystem."""
+    organizations = inventory['organizations']
+    personal = [r['name'] for r in inventory['repositories']
+                if r['name'].split('/')[0] not in organizations]
+    if scope not in [*organizations, *personal] or profile not in inventory['profiles']:
+        raise ValueError('Scope/profile is not in the public reserve inventory')
+    if type(held) is not bool:
+        raise ValueError('Held state must be a boolean')
+    secret = installation_secret(scope, inventory)
     if not re.fullmatch(r'[a-z0-9./:_-]+@sha256:[0-9a-f]{64}', image):
         raise ValueError('A qualified image pinned by digest is required')
     ipaddress.IPv4Address(node_ip)
