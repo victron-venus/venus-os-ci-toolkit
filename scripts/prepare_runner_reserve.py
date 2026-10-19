@@ -122,6 +122,18 @@ def update_fuzz_runtime(job, old_ref, fuzz_ref, toolkit_ref):
     return True
 
 
+def update_vendor_runtime(job, old_ref, toolkit_ref):
+    """Preserve the verified delivery workflow/helper revision binding."""
+    parameters = job.get("with")
+    if (not re.fullmatch(r"[0-9a-f]{40}", old_ref) or not isinstance(parameters, dict)
+            or parameters.get("toolkit-revision") != old_ref):
+        raise ValueError("Existing vendor-update workflow and runtime pins must match")
+    if old_ref == toolkit_ref:
+        return False
+    parameters["toolkit-revision"] = toolkit_ref
+    return True
+
+
 def update_pins(workflow, toolkit_ref, fuzz_ref):
     """Pin only reusable calls belonging to this toolkit."""
     changed = False
@@ -134,6 +146,8 @@ def update_pins(workflow, toolkit_ref, fuzz_ref):
             raise ValueError("Invalid reusable workflow reference")
         if name == "fuzz.yml":
             changed = update_fuzz_runtime(job, old_ref, fuzz_ref, toolkit_ref) or changed
+        if name == "vendor-update.yml":
+            changed = update_vendor_runtime(job, old_ref, toolkit_ref) or changed
         if old_ref != toolkit_ref:
             job["uses"] = TOOLKIT + name + "@" + toolkit_ref
             changed = True
