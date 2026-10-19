@@ -18,7 +18,7 @@ def installer() -> dict:
 
 
 def apply(workflow: dict, pins: dict) -> None:
-    for name in ("prepare", "candidate", "stable", "final"):
+    for name in ("prepare", "candidate", "stable", "final", "closed_stable_resolve", "closed_existing_resolve"):
         if name not in workflow["jobs"]:
             continue
         steps = workflow["jobs"][name]["steps"]

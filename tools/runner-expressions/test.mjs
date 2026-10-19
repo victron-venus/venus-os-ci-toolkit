@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import { Lexer, Parser, Evaluator, data } from '@actions/expressions';
+import './test-closed-release.mjs';
 
 const expected = JSON.parse(await readFile(new URL('./package.json', import.meta.url), 'utf8')).dependencies['@actions/expressions'];
 const actual = JSON.parse(await readFile(new URL('./node_modules/@actions/expressions/package.json', import.meta.url), 'utf8')).version;
