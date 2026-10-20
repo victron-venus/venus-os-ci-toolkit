@@ -11,6 +11,16 @@ from release_closed import INPUTS, configuration
 from workflow_contracts import UniqueKeyLoader
 
 RUNNER = "ubuntu-24.04"
+SECRETS = (
+    "CLOSED_INPUT_READ_URL",
+    "CLOSED_OUTPUT_WRITE_URL",
+    "CLOSED_OUTPUT_READ_URL",
+    "CLOSED_ACCEPTANCE_READ_URL",
+    "CLOSED_INPUT_DECRYPT_KEY",
+    "CLOSED_INPUT_VERIFY_KEY",
+    "CLOSED_OUTPUT_ENCRYPT_KEY",
+    "CLOSED_OUTPUT_SIGN_KEY",
+)
 
 
 def validate_adapter(root: Path, policy: dict) -> None:
@@ -28,10 +38,21 @@ def validate_adapter(root: Path, policy: dict) -> None:
         set(workflow.get("on", {})) != {"workflow_call"}
         or set(call.get("inputs", {})) != set(INPUTS)
         or any(value.get("type") != "string" for value in call["inputs"].values())
-        or call.get("secrets")
         or len(jobs) != 1
     ):
         raise ValueError("Closed worker must declare only the reviewed reusable interface")
+    secrets = call.get("secrets")
+    if (
+        not isinstance(secrets, dict)
+        or set(secrets) != set(SECRETS)
+        or any(
+            not isinstance(value, dict)
+            or set(value) - {"required", "description"}
+            or value.get("required") != "true"
+            for value in secrets.values()
+        )
+    ):
+        raise ValueError("Closed worker must declare the eight required named environment secrets")
     job = next(iter(jobs.values()))
     if (
         job.get("runs-on") != RUNNER
@@ -128,6 +149,7 @@ def apply(workflow: dict, policy: dict, pins: dict) -> None:
             "needs": needs, "if": condition(predicate),
             "uses": "./.github/workflows/" + config["workflow"],
             "permissions": {"contents": "read", "actions": "read"},
+            "secrets": {name: condition(f"secrets.{name}") for name in SECRETS},
             "with": {
                 "action": action,
                 "closed_request": condition("needs.closed_request.outputs.closed_request" if action == "rebuild" else "needs.prepare.outputs.closed_request"),

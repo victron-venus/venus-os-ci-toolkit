@@ -15,8 +15,22 @@ The request job freezes this source-controlled selection for the release graph.
 The worker is a reusable
 workflow with one `ubuntu-24.04` job in the literal `closed-build` environment.
 Its string inputs are `action`, `closed_request`, `release_plan_artifact`,
-`release_tag`, and `public_context_artifact`. It reads narrowly scoped secrets
-from that protected environment, does not inherit caller secrets, and has only
+`release_tag`, and `public_context_artifact`. Its `workflow_call.secrets` must
+declare exactly these eight names with `required: true`: `CLOSED_INPUT_READ_URL`,
+`CLOSED_OUTPUT_WRITE_URL`, `CLOSED_OUTPUT_READ_URL`, `CLOSED_ACCEPTANCE_READ_URL`,
+`CLOSED_INPUT_DECRYPT_KEY`, `CLOSED_INPUT_VERIFY_KEY`, `CLOSED_OUTPUT_ENCRYPT_KEY`,
+and `CLOSED_OUTPUT_SIGN_KEY`.
+
+All three generated worker callers forward only those names, each through its
+matching `secrets.NAME` expression. GitHub requires this explicit forwarding even
+for secrets stored only in the child's protected environment; without it, the
+values are empty. The child's `environment: closed-build` selects the protected
+values after approval. No caller uses `secrets: inherit`, and the public resolver
+jobs receive no closed secrets. See [GitHub's reusable workflow secret contract](https://docs.github.com/en/actions/how-tos/reuse-automations/reuse-workflows).
+
+The declaration is required even while `enabled: false` so the generated calls
+remain valid; skipped closed jobs do not require configured secret values.
+Consumers without `closed_build` remain unchanged. The worker has only
 read access to repository contents and Actions metadata. The wrapper must contain
 all closed output, including failures, outside public logs, artifacts and caches.
 
