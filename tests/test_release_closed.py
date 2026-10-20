@@ -244,6 +244,7 @@ class PublicResolutionTests(unittest.TestCase):
         self.gh.runs[101].update(status="completed", conclusion="success")
         self.gh.jobs_by_run[101] = [{
             "name": name, "status": "completed", "conclusion": "success", "head_sha": fixtures.SHA,
+            "started_at": "2026-10-19T12:00:00Z", "completed_at": "2026-10-19T12:01:00Z",
         } for name in ("stable", "closed_stable_validate / package")]
         self.gh.writes.clear()
         self.gh.ledger_writes.clear()
@@ -259,6 +260,7 @@ class PublicResolutionTests(unittest.TestCase):
             "id": 1101, "name": "release-promotion-evidence", "expired": False,
             "size_in_bytes": len(raw), "digest": "sha256:" + fixtures.rc.digest(raw),
             "workflow_run": {"id": 101, "head_sha": fixtures.SHA},
+            "created_at": "2026-10-19T12:00:30Z",
         }]
 
     def test_promoted_stable_requires_its_own_completed_run_and_bound_receipt(self):
@@ -301,6 +303,38 @@ class PublicResolutionTests(unittest.TestCase):
             with self.subTest(field=field), self.assertRaises(fixtures.rc.ReleaseError):
                 self.resolve()
             self.assertFalse(self.output.exists())
+
+    def test_promotion_receipt_must_be_created_within_exact_publisher_job(self):
+        self.promote()
+        original = copy.deepcopy(self.gh)
+        cases = {
+            "before": lambda gh: gh.evidence_by_run[101][0].update(created_at="2026-10-19T11:59:59Z"),
+            "after": lambda gh: gh.evidence_by_run[101][0].update(created_at="2026-10-19T12:01:01Z"),
+            "missing_created": lambda gh: gh.evidence_by_run[101][0].pop("created_at"),
+            "invalid_created": lambda gh: gh.evidence_by_run[101][0].update(created_at="invalid"),
+            "naive_created": lambda gh: gh.evidence_by_run[101][0].update(created_at="2026-10-19T12:00:30"),
+            "missing_start": lambda gh: gh.jobs_by_run[101][0].pop("started_at"),
+            "missing_end": lambda gh: gh.jobs_by_run[101][0].pop("completed_at"),
+            "inverted_window": lambda gh: gh.jobs_by_run[101][0].update(started_at="2026-10-19T12:02:00Z"),
+        }
+        for name, mutate in cases.items():
+            self.gh = copy.deepcopy(original)
+            mutate(self.gh)
+            with self.subTest(name=name), self.assertRaises(fixtures.rc.ReleaseError):
+                self.resolve()
+            self.assertFalse(self.output.exists())
+            self.assertEqual(self.gh.writes, [])
+
+    def test_promotion_receipt_accepts_equal_precision_boundaries_and_timezones(self):
+        record = self.promote()
+        original = copy.deepcopy(self.gh)
+        for index, created in enumerate(("2026-10-19T12:00:00Z", "2026-10-19T12:01:00Z",
+                                         "2026-10-19T05:00:30.123-07:00")):
+            self.gh = copy.deepcopy(original)
+            self.gh.evidence_by_run[101][0]["created_at"] = created
+            self.output = self.fixture.root / f"resolved-time-{index}"
+            with self.subTest(created=created):
+                self.assertEqual(self.resolve()["promotion"], record)
 
     def test_late_promotion_rerun_cleans_partial_context(self):
         self.promote()
