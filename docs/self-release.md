@@ -11,13 +11,14 @@ candidate does not update a consumer or install an action into GitHub.
 Download the candidate's source tarball and `SHA256SUMS` from the same release,
 check the archive hash, and extract it into a new directory. The Python tools
 require Python 3.12 or newer. Create an environment and install the included
-generator dependencies before running the contracts:
+generator and secret-adapter test dependencies before running the contracts:
 
 ```sh
 cd venus-os-ci-toolkit
 python3.12 -m venv .venv
 .venv/bin/python -m pip install --require-hashes --only-binary=:all: \
-  -r .github/requirements-generator.txt
+  -r .github/requirements-generator.txt \
+  -r tools/secret_control/requirements-github-lock.txt
 .venv/bin/python -m unittest discover -s tests -p 'test_*.py' -v
 ```
 
