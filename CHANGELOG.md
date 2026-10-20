@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.1.6] - 2026-10-20
+
+### Changed
+
+- Reserve 250m CPU for native LAN CI workers to improve startup under contention; the CPU limit and isolation settings remain unchanged.
+- Add explicit Linux browser scope and unavailable-runner handling while retaining the separate release qualification requirements.
+- Extend opt-in ARC configuration with reviewed listener placement, physical-capacity budgets, held reserve inventories and recovery guidance. Add bounded multi-profile NUC configuration and isolated gVisor candidate build artifacts.
+- Support optional closed build workers for qualified published tags, including named environment secrets, nightly rebuilds and promotion receipts bound to the publisher's time window.
+
+### Fixed
+
+- Prevent the macOS output-limit regression fixture from blocking on a full pipe before its simulated process wait, while retaining the output-limit assertion.
+- Preserve native ARC listener failure exit codes and bound admission checks without treating runner registration as accepted runtime capacity.
+- Read all paginated jobs after partial workflow reruns and validate every Scorecard result before upload.
+- Keep workflow/helper pins aligned and preserve consumer policy formatting during explicit runner adoption.
+- Document both shipped dependency locks needed to run the source distribution's generator and secret-adapter contracts.
+
+### Upgrade
+
+The source package version remains independent of consumer workflow pins. Review and adopt an immutable commit explicitly; publishing this candidate does not change existing runner routing, release policies or credentials.
+
+### Security
+
+Runner pools and candidate runtimes retain their existing admission holds. Source packaging, repository CI and beta publication do not establish isolation, storage, concurrency or workload acceptance, and do not authorize infrastructure activation.
+
 ## [0.1.5] - 2026-10-18
 
 ### Changed
