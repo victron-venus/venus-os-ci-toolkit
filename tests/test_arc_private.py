@@ -265,11 +265,24 @@ class PrivatePoolTests(unittest.TestCase):
             with self.subTest(profile=profile):
                 pod = arc.values(ROW, profile, SANDBOX, NATIVE, '10.66.10.2')['template']['spec']
                 resources = pod['containers'][0]['resources']
-                self.assertEqual(resources['requests']['cpu'], '50m')
+                self.assertEqual(resources['requests']['cpu'], '250m' if profile == 'lan' else '50m')
                 self.assertEqual(resources['limits']['cpu'], '1' if profile in ('automation', 'release') else '2')
                 if profile == 'arm64':
                     self.assertEqual(pod['initContainers'][0]['resources']['requests']['cpu'], '50m')
                     self.assertEqual(pod['initContainers'][0]['resources']['limits']['cpu'], '1')
+
+    def test_lan_cpu_quota_admits_one_replacement_but_not_a_third_worker(self):
+        pool = arc.values(ROW, 'lan', SANDBOX, NATIVE, '10.66.10.2')
+        pod = pool['template']['spec']
+        quota = next(item for item in arc.foundations([ROW], SANDBOX, '10.66.10.2')['items']
+                     if item['kind'] == 'ResourceQuota' and item['metadata']['namespace'] == 'arc-private-lan')
+        self.assertEqual((pool['minRunners'], pool['maxRunners']), (0, 1))
+        self.assertEqual(quota['spec']['hard']['requests.cpu'], '500m')
+        self.assertEqual(pod['containers'][0]['resources']['requests']['cpu'], '250m')
+        request = int(pod['containers'][0]['resources']['requests']['cpu'].removesuffix('m'))
+        budget = int(quota['spec']['hard']['requests.cpu'].removesuffix('m'))
+        self.assertLessEqual(2 * request, budget)
+        self.assertGreater(3 * request, budget)
 
     def test_routing_uses_concrete_unique_labels_and_explicit_mode(self):
         row = {**ROW, 'profiles': ['ci', 'automation', 'lan', 'arm64']}
