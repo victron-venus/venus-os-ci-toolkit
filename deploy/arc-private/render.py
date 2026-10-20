@@ -30,6 +30,7 @@ NUC_RUNTIME = 'victron-private-nuc-kvm'
 SCOPE_LABEL = 'private-runners.github.io/scope'
 PROFILE_LABEL = 'private-runners.github.io/profile'
 SERIAL_LABEL = 'private-runners.github.io/serial-domain'
+CONCURRENCY_LABEL = 'private-runners.github.io/concurrency'
 DOCKER_DATA = '/var/lib/docker'
 DOCKER_SCRATCH_SIZE = '16Gi'
 # Embed the checked startup code; native workers have no ConfigMap dependency.
@@ -75,6 +76,7 @@ class NucKvmPlan(NamedTuple):
     targets: tuple[NucKvmTarget, ...]
     image: str
     node_ip: str
+    light_ci_scopes: tuple[str, ...] = ()
 
 
 def load_nuc_kvm_plan(path):
@@ -88,15 +90,20 @@ def load_nuc_kvm_plan(path):
         return result
 
     data = json.loads(path.read_text(), object_pairs_hook=unique_object)
-    if not isinstance(data, dict) or set(data) != {'targets', 'image', 'node_ip'}:
-        raise ValueError('NUC KVM plan requires exactly targets, image and node_ip')
+    required = {'targets', 'image', 'node_ip'}
+    if (not isinstance(data, dict) or not required <= set(data)
+            or set(data) - required - {'light_ci_scopes'}):
+        raise ValueError('NUC KVM plan requires targets, image and node_ip, with optional light_ci_scopes')
     if not isinstance(data['targets'], list) or not data['targets']:
         raise ValueError('NUC KVM plan requires an explicit nonempty target list')
     if any(not isinstance(target, dict) or set(target) != {'scope', 'profile'}
            for target in data['targets']):
         raise ValueError('Each NUC KVM target requires exactly scope and profile')
+    light = data.get('light_ci_scopes', [])
+    if not isinstance(light, list) or any(not isinstance(scope, str) for scope in light):
+        raise ValueError('light_ci_scopes must be an explicit list of repository scopes')
     return NucKvmPlan(tuple(NucKvmTarget(**target) for target in data['targets']),
-                      data['image'], data['node_ip'])
+                      data['image'], data['node_ip'], tuple(light))
 
 
 def validate_nuc_kvm(rows, config, sandbox_runtime, node_ip):
@@ -122,6 +129,13 @@ def validate_nuc_kvm(rows, config, sandbox_runtime, node_ip):
         raise ValueError('NUC KVM requires explicit typed CI, automation or release targets')
     if len(set(plan.targets)) != len(plan.targets):
         raise ValueError('Duplicate NUC KVM target')
+    if (not isinstance(plan.light_ci_scopes, tuple)
+            or any(not isinstance(scope, str) or not SCOPE.fullmatch(scope)
+                   for scope in plan.light_ci_scopes)
+            or len(set(plan.light_ci_scopes)) != len(plan.light_ci_scopes)):
+        raise ValueError('light_ci_scopes requires unique typed repository scopes')
+    if any(NucKvmTarget(scope, 'ci') not in plan.targets for scope in plan.light_ci_scopes):
+        raise ValueError('Every light CI scope must already be a selected NUC CI target')
     address = ipaddress.IPv4Address(plan.node_ip)
     if address.is_unspecified or address.is_loopback or address.is_multicast or address.is_link_local:
         raise ValueError('NUC guard requires a unicast node address')
@@ -140,9 +154,12 @@ def validate_nuc_kvm(rows, config, sandbox_runtime, node_ip):
                 raise ValueError('Legacy NUC KVM supports only explicit standard CI tmpfs-2gi')
             if mode not in (('standard', 'tmpfs-2gi'), ('heavy', 'tmpfs-6gi-heavy')):
                 raise ValueError('NUC KVM CI requires standard tmpfs-2gi or heavy tmpfs-6gi-heavy')
+            if target.scope in plan.light_ci_scopes and mode != ('standard', 'tmpfs-2gi'):
+                raise ValueError('Light concurrency supports only standard CI with tmpfs-2gi')
         elif target.profile == 'automation' and validate_automation_storage(row) != 'tmpfs-3gi':
             raise ValueError('NUC KVM automation requires explicit tmpfs-3gi')
-    return NucKvmPlan(tuple(sorted(plan.targets)), plan.image, plan.node_ip)
+    return NucKvmPlan(tuple(sorted(plan.targets)), plan.image, plan.node_ip,
+                      tuple(sorted(plan.light_ci_scopes)))
 
 
 def name(scope, profile):
@@ -516,14 +533,19 @@ def foundations(rows, sandbox_image, node_ip, sandbox_runtime=SHARED_RUNTIME):
     return {'apiVersion': 'v1', 'kind': 'List', 'items': resources}
 
 
-def nuc_serial_affinity():
-    """All NUC private workers share one scheduler-enforced slot."""
+def nuc_serial_affinity(light=False):
+    """Light CI may share; every other NUC worker excludes every peer."""
+    selector = {'matchLabels': {SERIAL_LABEL: 'nuc-kvm'}}
+    if light:
+        # NotIn matches absent labels, including pre-existing exclusive workers.
+        selector['matchExpressions'] = [
+            {'key': CONCURRENCY_LABEL, 'operator': 'NotIn', 'values': ['light']}]
     return {'podAntiAffinity': {'requiredDuringSchedulingIgnoredDuringExecution': [{
-        'labelSelector': {'matchLabels': {SERIAL_LABEL: 'nuc-kvm'}},
+        'labelSelector': selector,
         'namespaceSelector': {}, 'topologyKey': HOSTNAME_LABEL}]}}
 
 
-def nuc_serial_validation():
+def nuc_serial_validation(light=False):
     """Require the complete affinity shape, including the all-namespace selector."""
     return (
         'has(object.metadata.labels) && '
@@ -539,7 +561,12 @@ def nuc_serial_validation():
         't.topologyKey == ' + json.dumps(HOSTNAME_LABEL) + ' && '
         'has(t.labelSelector) && has(t.labelSelector.matchLabels) && '
         't.labelSelector.matchLabels == ' + json.dumps({SERIAL_LABEL: 'nuc-kvm'}) + ' && '
-        '(!has(t.labelSelector.matchExpressions) || size(t.labelSelector.matchExpressions) == 0) && '
+        + ('has(t.labelSelector.matchExpressions) && size(t.labelSelector.matchExpressions) == 1 && '
+           't.labelSelector.matchExpressions.all(e, e.key == ' + json.dumps(CONCURRENCY_LABEL)
+           + ' && e.operator == "NotIn" && has(e.values) && e.values == ["light"])'
+           if light else
+           '(!has(t.labelSelector.matchExpressions) || size(t.labelSelector.matchExpressions) == 0)')
+        + ' && '
         'has(t.namespaceSelector) && '
         '(!has(t.namespaceSelector.matchLabels) || size(t.namespaceSelector.matchLabels) == 0) && '
         '(!has(t.namespaceSelector.matchExpressions) || size(t.namespaceSelector.matchExpressions) == 0) && '
@@ -554,14 +581,19 @@ def nuc_kvm_value(value, config):
     spec['runtimeClassName'] = NUC_RUNTIME
     spec['nodeSelector'] = {HOSTNAME_LABEL: 'nuc', 'kubernetes.io/arch': 'amd64'}
     spec['schedulerName'] = 'default-scheduler'
-    spec['affinity'] = nuc_serial_affinity()
     labels = value['template']['metadata']['labels']
+    light = (labels[PROFILE_LABEL] == 'ci' and labels[SCOPE_LABEL]
+             in {name(scope, 'scope') for scope in config.light_ci_scopes})
+    spec['affinity'] = nuc_serial_affinity(light)
     labels[SERIAL_LABEL] = 'nuc-kvm'
+    if light:
+        labels[CONCURRENCY_LABEL] = 'light'
+        value['maxRunners'] = 2
     runner = spec['containers'][0]
     runner['image'] = config.image
     if labels[PROFILE_LABEL] == 'ci':
-        runner['resources']['requests']['cpu'] = '600m'
-        runner['resources']['limits']['cpu'] = '2'
+        runner['resources']['requests']['cpu'] = '200m' if light else '600m'
+        runner['resources']['limits']['cpu'] = '1' if light else '2'
     for env in runner['env']:
         if env['name'] == 'RUNNER_RESERVE_NODE_IP':
             env['value'] = config.node_ip
@@ -605,12 +637,19 @@ def nuc_environment_validation(expected):
             + json.dumps(names) + ') && ' + ' && '.join('(' + x + ')' for x in clauses) + ')')
 
 
-def nuc_target_validation(target, value, scopes=None):
+def nuc_target_validation(target, value, scopes=None, concurrency=False):
     """Keep identity, resources and bootstrap environment in one allowed branch."""
     runner = value['template']['spec']['containers'][0]
     namespace = json.dumps('arc-private-' + target.profile)
     scope_check = (' == ' + json.dumps(name(target.scope, 'scope')) if scopes is None
                    else ' in ' + json.dumps([name(scope, 'scope') for scope in scopes]))
+    light = value['template']['metadata']['labels'].get(CONCURRENCY_LABEL) == 'light'
+    concurrency_check = ''
+    if concurrency:
+        key = json.dumps(CONCURRENCY_LABEL)
+        concurrency_check = ((key + ' in object.metadata.labels && object.metadata.labels['
+                              + key + '] == "light" && ') if light else
+                             '!(' + key + ' in object.metadata.labels) && ')
     return (
         'request.namespace == ' + namespace + ' && object.metadata.namespace == ' + namespace + ' && '
         'has(object.metadata.labels) && '
@@ -619,6 +658,7 @@ def nuc_target_validation(target, value, scopes=None):
         'object.metadata.labels[' + json.dumps(SCOPE_LABEL) + ']' + scope_check + ' && '
         'object.metadata.labels[' + json.dumps(PROFILE_LABEL) + '] == '
         + json.dumps(target.profile) + ' && '
+        + concurrency_check +
         'object.spec.containers.all(c, has(c.resources) && '
         'has(dyn(c.resources).requests) && has(dyn(c.resources).limits) && '
         'dyn(c.resources).requests == ' + json.dumps(runner['resources']['requests']) + ' && '
@@ -629,16 +669,19 @@ def nuc_target_validation(target, value, scopes=None):
 def nuc_targets_validation(values_by_target):
     """Share a branch only when every non-scope contract field is identical."""
     groups = {}
+    concurrency = any(CONCURRENCY_LABEL in value['template']['metadata']['labels']
+                      for value in values_by_target.values())
     for target in sorted(values_by_target):
         value = values_by_target[target]
         runner = value['template']['spec']['containers'][0]
-        key = json.dumps([target.profile, runner['resources'], runner['env']], sort_keys=True)
+        key = json.dumps([target.profile, runner['resources'], runner['env'],
+                          value['template']['metadata']['labels'].get(CONCURRENCY_LABEL)], sort_keys=True)
         groups.setdefault(key, []).append(target)
     branches = []
     for targets in groups.values():
         first = targets[0]
         scopes = [target.scope for target in targets] if len(targets) > 1 else None
-        branches.append('(' + nuc_target_validation(first, values_by_target[first], scopes) + ')')
+        branches.append('(' + nuc_target_validation(first, values_by_target[first], scopes, concurrency) + ')')
     return ' || '.join(branches)
 
 
@@ -648,6 +691,14 @@ def nuc_kvm_foundations(document, config, values_by_target):
     private = next(x for x in items if x['kind'] == 'ValidatingAdmissionPolicy'
                    and x['metadata']['name'] == PRIVATE_ADMISSION)
     guard = copy.deepcopy(private)
+    concurrency_key = json.dumps(CONCURRENCY_LABEL)
+    light_check = (concurrency_key + ' in object.metadata.labels && object.metadata.labels['
+                   + concurrency_key + '] == "light"')
+    scheduling = nuc_serial_validation()
+    if config.light_ci_scopes:
+        scheduling = ('has(object.metadata.labels) && (((' + light_check + ') && ('
+                      + nuc_serial_validation(light=True) + ')) || (!('
+                      + concurrency_key + ' in object.metadata.labels) && (' + scheduling + ')))')
     guard['metadata']['name'] = NUC_RUNTIME + '-workers'
     guard['spec']['matchConstraints'].pop('namespaceSelector')
     runtime_match = "has(object.spec.runtimeClassName) && object.spec.runtimeClassName == " + json.dumps(NUC_RUNTIME)
@@ -703,6 +754,12 @@ def nuc_kvm_foundations(document, config, values_by_target):
                            f'{json.dumps(key)} in object.metadata.labels && '
                            f'object.metadata.labels[{json.dumps(key)}] == oldObject.metadata.labels[{json.dumps(key)}]'
                            for key in (SCOPE_LABEL, PROFILE_LABEL, 'runner-reserve.github.io/role', SERIAL_LABEL))
+                       + ((' && ((' + concurrency_key + ' in oldObject.metadata.labels) == ('
+                           + concurrency_key + ' in object.metadata.labels)) && (!('
+                           + concurrency_key + ' in oldObject.metadata.labels) || '
+                           'object.metadata.labels[' + concurrency_key + '] == '
+                           'oldObject.metadata.labels[' + concurrency_key + '])')
+                          if config.light_ci_scopes else '')
                        + " && (!has(oldObject.spec.nodeName) || oldObject.spec.nodeName == '' || "
                        "(has(object.spec.nodeName) && object.spec.nodeName == oldObject.spec.nodeName)))",
          'message': 'NUC updates preserve scope, profile, worker identity and the bound node'},
@@ -716,8 +773,9 @@ def nuc_kvm_foundations(document, config, values_by_target):
                        "(has(oldObject.spec.nodeName) && oldObject.spec.nodeName == 'nuc' && "
                        "has(object.spec.nodeName) && object.spec.nodeName == oldObject.spec.nodeName))))",
          'message': 'NUC KVM cannot select another node or scheduler'},
-        {'expression': nuc_serial_validation(),
-         'message': 'NUC workers require cross-namespace serialization'},
+        {'expression': scheduling,
+         'message': ('NUC workers require bounded light concurrency or exclusive execution'
+                     if config.light_ci_scopes else 'NUC workers require cross-namespace serialization')},
         {'expression': "has(object.spec.restartPolicy) && object.spec.restartPolicy == 'Never' && "
                        "has(object.spec.activeDeadlineSeconds) && object.spec.activeDeadlineSeconds == 14400 && "
                        "has(object.spec.terminationGracePeriodSeconds) && object.spec.terminationGracePeriodSeconds == 30 && "
