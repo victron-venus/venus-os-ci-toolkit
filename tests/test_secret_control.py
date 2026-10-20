@@ -293,7 +293,12 @@ class PrivateIOTests(unittest.TestCase):
             stack.enter_context(patch.object(private_io.os, "killpg", side_effect=kill_exited_group))
             try:
                 with self.assertRaisesRegex(catalog.ControlError, "output limit"):
-                    private_io.process([sys.executable, "-c", 'print("x"*10000)'], limit=100)
+                    # Stay within PIPE_BUF so the child can exit without another
+                    # parent read, while still exceeding the output limit.
+                    private_io.process(
+                        [sys.executable, "-c", 'import os; os.write(1, b"x" * 101)'],
+                        limit=100,
+                    )
                 self.assertEqual(captured.child.returncode, 0)
                 self._assert_cleanup_resources_closed(captured)
             finally:
