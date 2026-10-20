@@ -300,16 +300,21 @@ of normal GitHub routing. `render_pool.py` reads the same public inventory and
 renders three scale sets per organization and personal repository (66 across
 three organizations and 19 personal repositories). Kubernetes scale-set names include the repository scope;
 ARC 0.15 custom `scaleSetLabels` preserve the shared Actions-variable labels
-without collisions between personal repositories in the same namespace. Each set has `minRunners: 0`, `maxRunners: 1`: standby can
-accept selected jobs without another Helm change. Namespace quotas bound the
-combined worker population to two jobs per profile, including gVisor overhead.
-This is reduced emergency capacity, not a replacement for GitHub's fleet size.
+without collisions between personal repositories in the same namespace.
+Active rendering requires a fresh physical-host capacity plan with an explicit
+zero/one allocation for every scope/profile. Each set has `minRunners: 0` and the
+allocated `maxRunners`; namespace quotas match the per-profile allocation sums
+and include gVisor overhead. There is no implicit six-worker budget.
+See [the capacity-plan contract](../deploy/runner-reserve/CAPACITY-PLAN.md) for
+measurement freshness, growth allowances, limits, and offline validation.
 
 For registration-only preparation, pass `--held` to `render_pool.py`. Every
-generated pool then has `minRunners: 0` and `maxRunners: 0`; the existing default
-remains zero/one. The flag only creates held values files and never changes GitHub
-routing or deploys them. Open admission only after separate acceptance; do not
-apply generated foundations blindly over existing infrastructure.
+generated pool then has `minRunners: 0` and `maxRunners: 0`; this mode requires no
+capacity plan and preserves its previous outputs. The flag only creates held
+values files and never changes GitHub routing or deploys them. Open admission
+only after separate acceptance; do not apply generated foundations blindly over
+existing infrastructure. Capacity-plan acceptance is not runtime qualification
+or continuous physical-disk admission control.
 
 The node runtime uses the pinned gVisor release with `systrap`, which works in a
 nested VM without KVM. `containerd-config.toml.tmpl` extends K3s's base template;
