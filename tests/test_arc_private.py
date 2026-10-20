@@ -1,8 +1,13 @@
 """Private ARC rendering keeps scope, lifecycle and network boundaries explicit."""
 import importlib.util
 import json
+import os
 from decimal import Decimal
 from pathlib import Path
+import shlex
+import subprocess
+import tempfile
+import time
 import unittest
 
 import yaml
@@ -16,6 +21,79 @@ NATIVE = 'example/runner@sha256:' + 'b' * 64
 ROW = {'name': 'owner/private', 'visibility': 'private',
        'profiles': ['ci', 'automation', 'release', 'lan', 'arm64'],
        'lan_egress': [{'cidr': '192.0.2.10/32', 'port': 9443}]}
+
+
+class NativeRunnerExitTests(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        source = self.root / 'source'
+        (source / 'bin').mkdir(parents=True)
+        home = self.root / 'home'
+        home.mkdir()
+        listener = source / 'bin/Runner.Listener'
+        listener.write_text('''#!/bin/bash
+set -eu
+test "$#" = 1
+test "$1" = run
+test -n "${ACTIONS_RUNNER_INPUT_JITCONFIG:-}"
+printf '%s' "$$" > "$NATIVE_TEST_PID.tmp"
+mv "$NATIVE_TEST_PID.tmp" "$NATIVE_TEST_PID"
+printf 'listener-started\\n'
+if [ "$NATIVE_TEST_WAIT" = 1 ]; then
+  read -r release
+  test "$release" = finish
+fi
+exit "$NATIVE_TEST_EXIT"
+''')
+        listener.chmod(0o755)
+        # The image's service wrapper hides terminal listener errors.
+        wrapper = source / 'run.sh'
+        wrapper.write_text('#!/bin/bash\n./bin/Runner.Listener run\nexit 0\n')
+        wrapper.chmod(0o755)
+        self.boot = (arc.NATIVE_BOOT
+                     .replace('/actions-runner', shlex.quote(str(source)))
+                     .replace('/home/runner', shlex.quote(str(home)))
+                     .replace('/opt/hostedtoolcache', shlex.quote(str(self.root / 'tools'))))
+        self.environment = {
+            'PATH': os.defpath,
+            'ACTIONS_RUNNER_INPUT_JITCONFIG': 'synthetic-jit-input',
+            'NATIVE_TEST_PID': str(self.root / 'listener.pid'),
+            'NATIVE_TEST_WAIT': '0',
+        }
+
+    def test_listener_failures_reach_arc_without_becoming_success(self):
+        for code in (1, 2, 3, 4, 5, 7, 42, 137):
+            with self.subTest(code=code):
+                result = subprocess.run(
+                    ['bash', '-c', self.boot],
+                    env={**self.environment, 'NATIVE_TEST_EXIT': str(code)},
+                    capture_output=True, text=True, timeout=30)
+                self.assertEqual(result.returncode, code, result.stderr)
+                self.assertNotIn('synthetic-jit-input', result.stdout + result.stderr)
+
+    def test_success_waits_for_listener_completion_in_the_same_process(self):
+        process = subprocess.Popen(
+            ['bash', '-c', self.boot],
+            env={**self.environment, 'NATIVE_TEST_EXIT': '0', 'NATIVE_TEST_WAIT': '1'},
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        try:
+            deadline = time.monotonic() + 30
+            marker = self.root / 'listener.pid'
+            while not marker.exists() and process.poll() is None and time.monotonic() < deadline:
+                time.sleep(0.01)
+            self.assertTrue(marker.exists(), 'Listener did not start within 30 seconds')
+            self.assertIsNone(process.poll())
+            self.assertEqual(int(marker.read_text()), process.pid)
+            stdout, stderr = process.communicate('finish\n', timeout=30)
+            self.assertEqual(process.returncode, 0, stderr)
+            self.assertEqual(stdout, 'listener-started\n')
+            self.assertNotIn('synthetic-jit-input', stdout + stderr)
+        finally:
+            if process.poll() is None:
+                process.kill()
+            process.communicate()
 
 
 class PrivatePoolTests(unittest.TestCase):
