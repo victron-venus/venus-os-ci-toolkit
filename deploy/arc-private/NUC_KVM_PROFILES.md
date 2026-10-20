@@ -9,7 +9,10 @@ Use this option when a small dedicated node has enough memory for one large job
 but cannot run several private jobs concurrently. Every selected worker keeps
 its repository-specific route and disposable sandbox. Kubernetes schedules at
 most one of these workers on the node at a time, including workers from different
-profile namespaces. Listeners remain independent and lightweight.
+profile namespaces. Listeners remain independent and lightweight. This remains
+the default. The separate [light CI opt-in](NUC_LIGHT_CI.md) permits up to two
+explicitly selected standard CI workers while retaining exclusive heavy,
+automation and release workers.
 
 ## Describe the complete target set
 
