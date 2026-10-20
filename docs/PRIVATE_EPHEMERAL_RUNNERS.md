@@ -126,6 +126,14 @@ and repeat the quota-wait-and-recovery check. See Kubernetes documentation on
 [requests and limits](https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/)
 and [pod overhead](https://kubernetes.io/docs/concepts/scheduling-eviction/pod-overhead/).
 
+Native LAN workers request 250m CPU and retain the 2-CPU limit. The higher request
+gives them a larger relative CPU share on a busy node; it does not guarantee a
+startup time or resolve network timeouts. The unchanged 500m namespace request
+budget admits at most two such workers, while each repository pool remains
+limited to one job. Qualify a fresh worker from zero pods, record listener-to-worker
+handoff timing, and verify artifact upload and cleanup before accepting the
+capacity change. ARM64 workers retain their separate 50m request.
+
 Large build suites can declare `ci_resource_class: "heavy"` in the private
 inventory. This requests 1500m CPU (1600m including runtime overhead), reserves
 13 GiB and limits the worker to 16 GiB, covering a former
