@@ -306,7 +306,8 @@ def values(row, profile, sandbox_image, native_image, node_ip, arm_node='h7', li
                       {'name': 'RUNNER_TOOL_CACHE', 'value': TOOL_CACHE},
                       {'name': 'AGENT_TOOLSDIRECTORY', 'value': TOOL_CACHE},
                       {'name': 'ImageOS', 'value': 'ubuntu24'}],
-              'resources': {'requests': {'cpu': '50m', 'memory': '256Mi', 'ephemeral-storage': '512Mi'},
+              'resources': {'requests': {'cpu': '250m' if profile == 'lan' else '50m',
+                                         'memory': '256Mi', 'ephemeral-storage': '512Mi'},
                             'limits': {'cpu': '2', 'memory': '3Gi', 'ephemeral-storage': '12Gi'}},
               'volumeMounts': [{'name': k, 'mountPath': v} for k, v in mounts.items()]}
     spec['containers'] = [runner]
