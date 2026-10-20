@@ -26,7 +26,8 @@ blocks publication. A disabled policy accepts only a skipped closed dependency.
 Stable promotion first resolves the exact public RC, then calls the worker with
 `action=validate` to verify and reuse the accepted closed RC bytes without rebuilding.
 
-`operation=closed-rebuild` requires an exact `existing_release` tag. It skips public
+`operation=closed-rebuild` requires an exact `existing_release` tag, including the
+full timestamp/run/attempt suffix for a published nightly. It skips public
 version allocation, build, validation and publication. The secretless resolver
 checks the release's complete immutable inventory, retained Actions evidence,
 successful source run, current attempt and both public gates before staging public
@@ -38,7 +39,9 @@ stable job stores a separate public `release-promotion-evidence` artifact with
 `promotion.json`, binding the stable release ID/tag and RC manifest digest to the
 promotion run, attempt and workflow source. The release-body promotion link is
 only a locator: resolution requires the immutable artifact digest, exact receipt
-bindings, successful stable validation and final whole-run success. A failed
+bindings, creation during the exact stable publisher job, successful stable
+validation and final whole-run success. Timestamp boundaries are inclusive because
+GitHub may report job and artifact times at whole-second precision. A failed
 publisher post-job or a later rerun invalidates qualification. Previously promoted
 stable releases without this retained receipt cannot be used for closed rebuilds;
 this extension does not rewrite or retrofit their tags or manifests.

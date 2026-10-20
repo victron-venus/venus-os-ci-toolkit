@@ -40,6 +40,9 @@ class RequestTests(unittest.TestCase):
         self.assertEqual(result["operation"], "closed-rebuild")
         self.assertEqual(result["closed_request"], "request_012")
         self.assertEqual(result["release_tag"], "v1.2.3-rc.2")
+        nightly = "v1.2.3-nightly.20261019230000.101.1"
+        self.event["inputs"]["existing_release"] = nightly
+        self.assertEqual(closed.request(policy(), self.event, self.env)["release_tag"], nightly)
 
     def test_disabled_policy_requires_exact_skipped_path(self):
         absent, disabled = policy(), policy()
@@ -174,6 +177,17 @@ class PublicResolutionTests(unittest.TestCase):
         self.assertIn("fuzz-report.json", context["payloads"])
         self.assertIn("release-inputs-fuzz.json", context["payloads"])
 
+    def test_published_nightly_uses_the_same_verified_release_contract(self):
+        self.result, self.plan, _ = self.fixture.release_run("nightly", 101)
+        self.gh.jobs_by_run[101] = copy.deepcopy(self.gh.jobs_by_run[100])
+        for assets in self.gh.assets.values():
+            for asset in assets:
+                asset["digest"] = "sha256:" + fixtures.rc.digest(self.gh.files[asset["id"]])
+        context = self.resolve()
+        self.assertEqual(context["release_tag"], self.plan["tag"])
+        self.assertIn("-nightly.", context["release_tag"])
+        self.assertEqual(context["run_id"], "101")
+
     def test_failed_rerun_expired_wrong_workflow_and_failed_gate_never_stage_context(self):
         cases = {
             "rerun": lambda gh: gh.runs[100].update(run_attempt=2),
@@ -230,6 +244,7 @@ class PublicResolutionTests(unittest.TestCase):
         self.gh.runs[101].update(status="completed", conclusion="success")
         self.gh.jobs_by_run[101] = [{
             "name": name, "status": "completed", "conclusion": "success", "head_sha": fixtures.SHA,
+            "started_at": "2026-10-19T12:00:00Z", "completed_at": "2026-10-19T12:01:00Z",
         } for name in ("stable", "closed_stable_validate / package")]
         self.gh.writes.clear()
         self.gh.ledger_writes.clear()
@@ -245,6 +260,7 @@ class PublicResolutionTests(unittest.TestCase):
             "id": 1101, "name": "release-promotion-evidence", "expired": False,
             "size_in_bytes": len(raw), "digest": "sha256:" + fixtures.rc.digest(raw),
             "workflow_run": {"id": 101, "head_sha": fixtures.SHA},
+            "created_at": "2026-10-19T12:00:30Z",
         }]
 
     def test_promoted_stable_requires_its_own_completed_run_and_bound_receipt(self):
@@ -287,6 +303,38 @@ class PublicResolutionTests(unittest.TestCase):
             with self.subTest(field=field), self.assertRaises(fixtures.rc.ReleaseError):
                 self.resolve()
             self.assertFalse(self.output.exists())
+
+    def test_promotion_receipt_must_be_created_within_exact_publisher_job(self):
+        self.promote()
+        original = copy.deepcopy(self.gh)
+        cases = {
+            "before": lambda gh: gh.evidence_by_run[101][0].update(created_at="2026-10-19T11:59:59Z"),
+            "after": lambda gh: gh.evidence_by_run[101][0].update(created_at="2026-10-19T12:01:01Z"),
+            "missing_created": lambda gh: gh.evidence_by_run[101][0].pop("created_at"),
+            "invalid_created": lambda gh: gh.evidence_by_run[101][0].update(created_at="invalid"),
+            "naive_created": lambda gh: gh.evidence_by_run[101][0].update(created_at="2026-10-19T12:00:30"),
+            "missing_start": lambda gh: gh.jobs_by_run[101][0].pop("started_at"),
+            "missing_end": lambda gh: gh.jobs_by_run[101][0].pop("completed_at"),
+            "inverted_window": lambda gh: gh.jobs_by_run[101][0].update(started_at="2026-10-19T12:02:00Z"),
+        }
+        for name, mutate in cases.items():
+            self.gh = copy.deepcopy(original)
+            mutate(self.gh)
+            with self.subTest(name=name), self.assertRaises(fixtures.rc.ReleaseError):
+                self.resolve()
+            self.assertFalse(self.output.exists())
+            self.assertEqual(self.gh.writes, [])
+
+    def test_promotion_receipt_accepts_equal_precision_boundaries_and_timezones(self):
+        record = self.promote()
+        original = copy.deepcopy(self.gh)
+        for index, created in enumerate(("2026-10-19T12:00:00Z", "2026-10-19T12:01:00Z",
+                                         "2026-10-19T05:00:30.123-07:00")):
+            self.gh = copy.deepcopy(original)
+            self.gh.evidence_by_run[101][0]["created_at"] = created
+            self.output = self.fixture.root / f"resolved-time-{index}"
+            with self.subTest(created=created):
+                self.assertEqual(self.resolve()["promotion"], record)
 
     def test_late_promotion_rerun_cleans_partial_context(self):
         self.promote()

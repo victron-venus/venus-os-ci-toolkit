@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 import io
 from pathlib import Path
 import re
@@ -80,7 +81,7 @@ def record(gh: rc.GitHub, info: dict, run: dict, rc_tag: str, output: Path) -> d
     return result
 
 
-def verify_jobs(gh: rc.GitHub, run_id: int, attempt: int, source: str) -> None:
+def verify_jobs(gh: rc.GitHub, run_id: int, attempt: int, source: str) -> dict:
     """Check the source-controlled closed obligation and actual publisher job."""
     policy = rc.source_policy_snapshot(gh, source)["data"]
     rc.require_release_policy(policy, gh.repo, qualified=True)
@@ -89,15 +90,29 @@ def verify_jobs(gh: rc.GitHub, run_id: int, attempt: int, source: str) -> None:
                "Promotion source has no reviewed receipt contract")
     jobs = gh.pages(f"actions/runs/{run_id}/attempts/{attempt}/jobs", "jobs")
     expected = {"stable": "success", "closed_stable_validate": "success" if config["enabled"] else "skipped"}
+    verified = {}
     for name, conclusion in expected.items():
         matching = [job for job in jobs if job.get("name") == name or (
             name == "closed_stable_validate" and job.get("name", "").startswith(name + " / "))]
         rc.require(len(matching) == 1 and matching[0].get("status") == "completed"
                    and matching[0].get("conclusion") == conclusion and matching[0].get("head_sha") == source,
                    "Promotion has no successful exact stable validation path")
+        verified[name] = matching[0]
+    return verified["stable"]
 
 
-def read_receipt(gh: rc.GitHub, run_id: int, source: str) -> bytes:
+def evidence_time(value: object) -> datetime:
+    """Require an absolute timestamp before comparing GitHub evidence metadata."""
+    rc.require(isinstance(value, str), "Invalid promotion evidence timestamp")
+    try:
+        result = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as error:
+        raise rc.ReleaseError("Invalid promotion evidence timestamp") from error
+    rc.require(result.utcoffset() is not None, "Invalid promotion evidence timestamp")
+    return result
+
+
+def read_receipt(gh: rc.GitHub, run_id: int, source: str, producer: dict) -> bytes:
     """Read a bounded immutable artifact after authenticating its run metadata."""
     artifacts = gh.pages(f"actions/runs/{run_id}/artifacts", "artifacts")
     matching = [item for item in artifacts if item.get("name") == ARTIFACT and item.get("expired") is False]
@@ -106,6 +121,11 @@ def read_receipt(gh: rc.GitHub, run_id: int, source: str) -> bytes:
     identity = artifact.get("workflow_run", {})
     rc.require(identity.get("id") == run_id and identity.get("head_sha") == source,
                "Promotion receipt provenance mismatch")
+    # GitHub may expose these timestamps at whole-second precision. Equality
+    # at either boundary can therefore describe an upload inside the job.
+    rc.require(evidence_time(producer.get("started_at")) <= evidence_time(artifact.get("created_at"))
+               <= evidence_time(producer.get("completed_at")),
+               "Promotion receipt was not created during the stable publisher job")
     rc.require(0 < artifact.get("size_in_bytes", MAX_BYTES + 1) <= MAX_BYTES, "Promotion receipt archive is oversized")
     archive = gh.binary(f"actions/artifacts/{rc.positive(artifact.get('id'), 'artifact ID')}/zip")
     rc.require(len(archive) <= MAX_BYTES and artifact.get("digest") == "sha256:" + rc.digest(archive),
@@ -130,8 +150,8 @@ def verify(gh: rc.GitHub, info: dict, stable: tuple, manifest: dict, raw: bytes)
     rc.require(isinstance(source, str) and rc.SHA_RE.fullmatch(source), "Invalid promotion source")
     rc.validate_run(gh, run, info, source, attempt, True, gate=False)
     rc.require(run.get("event") == "workflow_dispatch", "Promotion must be explicitly requested")
-    verify_jobs(gh, run_id, attempt, source)
-    raw_receipt = read_receipt(gh, run_id, source)
+    producer = verify_jobs(gh, run_id, attempt, source)
+    raw_receipt = read_receipt(gh, run_id, source, producer)
     result = receipt(stable[1], manifest, raw, run)
     rc.require(raw_receipt == rc.json_bytes(result), "Promotion receipt binding mismatch")
     # A rerun started during verification invalidates the earlier success too.
