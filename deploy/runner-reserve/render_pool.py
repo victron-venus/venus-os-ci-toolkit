@@ -2,6 +2,7 @@
 """Render public standby pools; never changes GitHub routing or installs resources."""
 from __future__ import annotations
 import argparse
+from datetime import datetime, timezone
 import hashlib
 import ipaddress
 import json
@@ -158,8 +159,58 @@ def load_listener_placement(path, scopes, profiles):
     return placement
 
 
+GIB = 1024 ** 3
+WORKER_STORAGE_BYTES = 20 * GIB
+
+
+def load_capacity_plan(path, scopes, profiles, node, *, now=None):
+    """Validate a recent host measurement and a complete aggregate allocation.
+
+    This is a planning gate, not continuous admission or a physical disk quota.
+    """
+    data = read_operator_json(path)
+    required = {'schema', 'node', 'captured_at', 'host_available_bytes',
+                'host_reserve_bytes', 'image_growth_bytes', 'other_growth_bytes',
+                'overshoot_bytes', 'allocations'}
+    if (not isinstance(data, dict) or set(data) != required
+            or type(data['schema']) is not int or data['schema'] != 1
+            or data['node'] != node):
+        raise ValueError('Capacity plan must match schema and worker node')
+    for key in ('host_available_bytes', 'host_reserve_bytes', 'image_growth_bytes',
+                'other_growth_bytes', 'overshoot_bytes'):
+        if type(data[key]) is not int or not 0 <= data[key] <= 2 ** 63 - 1:
+            raise ValueError('Capacity byte budgets must be nonnegative integers')
+    if data['host_reserve_bytes'] < 2 * GIB or data['overshoot_bytes'] == 0:
+        raise ValueError('Reserve must cover the 2 GiB guard and overshoot must be positive')
+    try:
+        stamp = data['captured_at']
+        if not isinstance(stamp, str) or not stamp.endswith('Z'):
+            raise ValueError('UTC timestamp required')
+        measured = datetime.fromisoformat(stamp[:-1] + '+00:00')
+        age = ((now or datetime.now(timezone.utc)) - measured).total_seconds()
+        if not 0 <= age <= 300:
+            raise ValueError('Capacity measurement must be no older than 300 seconds')
+    except (TypeError, OverflowError) as error:
+        raise ValueError('Invalid capacity timestamp') from error
+    allocations = data['allocations']
+    if not isinstance(allocations, dict) or set(allocations) != set(scopes):
+        raise ValueError('Capacity allocations must name every scope exactly once')
+    totals = dict.fromkeys(profiles, 0)
+    for entries in allocations.values():
+        if (not isinstance(entries, dict) or set(entries) != set(profiles)
+                or any(type(n) is not int or n not in (0, 1) for n in entries.values())):
+            raise ValueError('Every profile needs an explicit allocation of zero or one')
+        for profile, count in entries.items():
+            totals[profile] += count
+    budget = sum(data[key] for key in ('host_reserve_bytes', 'image_growth_bytes',
+                                     'other_growth_bytes', 'overshoot_bytes'))
+    if sum(totals.values()) * WORKER_STORAGE_BYTES + budget > data['host_available_bytes']:
+        raise ValueError('Aggregate worker storage exceeds measured physical host budget')
+    return allocations, totals
+
+
 def pool_values(scope, profile, image, node, node_ip, inventory, *, held=False,
-                listener_node=None):
+                listener_node=None, max_runners=None):
     """Separate profiles and owners; all workers start from a fresh filesystem."""
     organizations = inventory['organizations']
     personal = [r['name'] for r in inventory['repositories']
@@ -168,6 +219,8 @@ def pool_values(scope, profile, image, node, node_ip, inventory, *, held=False,
         raise ValueError('Scope/profile is not in the public reserve inventory')
     if type(held) is not bool:
         raise ValueError('Held state must be a boolean')
+    if max_runners is not None and (type(max_runners) is not int or max_runners not in (0, 1)):
+        raise ValueError('Pool allocation must be zero or one')
     secret = installation_secret(scope, inventory)
     if not re.fullmatch(r'[a-z0-9./:_-]+@sha256:[0-9a-f]{64}', image):
         raise ValueError('A qualified image pinned by digest is required')
@@ -191,7 +244,7 @@ def pool_values(scope, profile, image, node, node_ip, inventory, *, held=False,
     result = {'githubConfigUrl': 'https://github.com/' + scope,
               'githubConfigSecret': secret,
               'runnerScaleSetName': release_name(scope, profile),
-              'scaleSetLabels': [profile_label], 'minRunners': 0, 'maxRunners': 0 if held else 1,
+              'scaleSetLabels': [profile_label], 'minRunners': 0, 'maxRunners': 0 if held else (1 if max_runners is None else max_runners),
               'controllerServiceAccount': {'namespace': 'runner-reserve-system',
                                            'name': 'victron-reserve-controller'},
               'listenerTemplate': {'spec': {'nodeSelector': {'kubernetes.io/hostname':
@@ -213,10 +266,11 @@ def pool_values(scope, profile, image, node, node_ip, inventory, *, held=False,
     return result
 
 
-def foundations(profiles, image, node_ip):
+def foundations(profiles, image, node_ip, profile_allocations=None):
     resources = []
     for profile in profiles:
         ns = 'runner-reserve-' + profile
+        count = 2 if profile_allocations is None else profile_allocations[profile]
         resources += [
             {'apiVersion': 'v1', 'kind': 'Namespace', 'metadata': {'name': ns, 'labels': {
                 'app.kubernetes.io/part-of': 'victron-public-reserve',
@@ -226,9 +280,12 @@ def foundations(profiles, image, node_ip):
             {'apiVersion': 'v1', 'kind': 'ServiceAccount', 'metadata': {'name': 'reserve-worker', 'namespace': ns},
              'automountServiceAccountToken': False},
             {'apiVersion': 'v1', 'kind': 'ResourceQuota', 'metadata': {'name': 'reserve-budget', 'namespace': ns},
-             'spec': {'hard': {'pods': '2', 'requests.cpu': '1200m', 'requests.memory': '4352Mi',
-                               'limits.cpu': '4200m', 'limits.memory': '8448Mi',
-                               'requests.ephemeral-storage': '10Gi', 'limits.ephemeral-storage': '40Gi'}}},
+             'spec': {'hard': {'pods': str(count), 'requests.cpu': str(600 * count) + 'm',
+                               'requests.memory': str(2176 * count) + 'Mi',
+                               'limits.cpu': str(2100 * count) + 'm',
+                               'limits.memory': str(4224 * count) + 'Mi',
+                               'requests.ephemeral-storage': str(5 * count) + 'Gi',
+                               'limits.ephemeral-storage': str(20 * count) + 'Gi'}}},
             {'apiVersion': 'networking.k8s.io/v1', 'kind': 'NetworkPolicy',
              'metadata': {'name': 'reserve-worker-isolation', 'namespace': ns}, 'spec': {
                  'podSelector': {}, 'policyTypes': ['Ingress', 'Egress'], 'ingress': [],
@@ -288,13 +345,21 @@ def main():
                         help='Render registration-only pools with minRunners=maxRunners=0')
     parser.add_argument('--listener-placement', type=Path,
                         help='Complete scope/profile listener node map; workers retain --node')
+    parser.add_argument('--capacity-plan', type=Path,
+                        help='Recent physical-host budget and complete per-pool allocation; required unless held')
     args = parser.parse_args()
     try:
+        if not args.held and args.capacity_plan is None:
+            raise ValueError('Non-held pools require --capacity-plan')
+        if args.held and args.capacity_plan is not None:
+            raise ValueError('Held pools do not consume a capacity allocation')
         inventory = load_public_inventory(args.inventory)
         scopes = [*inventory['organizations'], *[r['name'] for r in inventory['repositories']
                   if r['name'].split('/')[0] not in inventory['organizations']]]
         placement = (load_listener_placement(args.listener_placement, scopes, inventory['profiles'])
                      if args.listener_placement is not None else {})
+        allocations, totals = (load_capacity_plan(args.capacity_plan, scopes, inventory['profiles'], args.node)
+                               if not args.held else ({}, None))
     except (OSError, ValueError) as error:
         parser.error(str(error))
     rendered = {}
@@ -303,12 +368,13 @@ def main():
         for profile in inventory['profiles']:
             release = release_name(scope, profile)
             values = pool_values(scope, profile, args.worker_image, args.node, args.node_ip, inventory,
-                                 held=args.held, listener_node=placement.get((scope, profile)))
+                                 held=args.held, listener_node=placement.get((scope, profile)),
+                                 max_runners=None if args.held else allocations[scope][profile])
             rendered[release + '.json'] = values
             index.append({'scope': scope, 'profile': profile, 'release': release,
                           'namespace': 'runner-reserve-' + profile, 'values': release + '.json'})
     rendered['index.json'] = index
-    rendered['foundations.json'] = foundations(inventory['profiles'], args.worker_image, args.node_ip)
+    rendered['foundations.json'] = foundations(inventory['profiles'], args.worker_image, args.node_ip, totals)
     # Do not overwrite an earlier deployment plan or any credential file.
     args.output.mkdir(parents=True, exist_ok=False)
     for name, data in rendered.items():
