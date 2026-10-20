@@ -163,6 +163,33 @@ GIB = 1024 ** 3
 WORKER_STORAGE_BYTES = 20 * GIB
 
 
+def validate_capacity_timestamp(stamp, *, now=None):
+    """Require a recent UTC measurement without accepting future timestamps."""
+    try:
+        if not isinstance(stamp, str) or not stamp.endswith('Z'):
+            raise ValueError('UTC timestamp required')
+        measured = datetime.fromisoformat(stamp[:-1] + '+00:00')
+        age = ((now or datetime.now(timezone.utc)) - measured).total_seconds()
+        if not 0 <= age <= 300:
+            raise ValueError('Capacity measurement must be no older than 300 seconds')
+    except (TypeError, OverflowError) as error:
+        raise ValueError('Invalid capacity timestamp') from error
+
+
+def capacity_allocation_totals(allocations, scopes, profiles):
+    """Validate the complete scope/profile map and sum each profile."""
+    if not isinstance(allocations, dict) or set(allocations) != set(scopes):
+        raise ValueError('Capacity allocations must name every scope exactly once')
+    totals = dict.fromkeys(profiles, 0)
+    for entries in allocations.values():
+        if (not isinstance(entries, dict) or set(entries) != set(profiles)
+                or any(type(n) is not int or n not in (0, 1) for n in entries.values())):
+            raise ValueError('Every profile needs an explicit allocation of zero or one')
+        for profile, count in entries.items():
+            totals[profile] += count
+    return totals
+
+
 def load_capacity_plan(path, scopes, profiles, node, *, now=None):
     """Validate a recent host measurement and a complete aggregate allocation.
 
@@ -182,26 +209,9 @@ def load_capacity_plan(path, scopes, profiles, node, *, now=None):
             raise ValueError('Capacity byte budgets must be nonnegative integers')
     if data['host_reserve_bytes'] < 2 * GIB or data['overshoot_bytes'] == 0:
         raise ValueError('Reserve must cover the 2 GiB guard and overshoot must be positive')
-    try:
-        stamp = data['captured_at']
-        if not isinstance(stamp, str) or not stamp.endswith('Z'):
-            raise ValueError('UTC timestamp required')
-        measured = datetime.fromisoformat(stamp[:-1] + '+00:00')
-        age = ((now or datetime.now(timezone.utc)) - measured).total_seconds()
-        if not 0 <= age <= 300:
-            raise ValueError('Capacity measurement must be no older than 300 seconds')
-    except (TypeError, OverflowError) as error:
-        raise ValueError('Invalid capacity timestamp') from error
+    validate_capacity_timestamp(data['captured_at'], now=now)
     allocations = data['allocations']
-    if not isinstance(allocations, dict) or set(allocations) != set(scopes):
-        raise ValueError('Capacity allocations must name every scope exactly once')
-    totals = dict.fromkeys(profiles, 0)
-    for entries in allocations.values():
-        if (not isinstance(entries, dict) or set(entries) != set(profiles)
-                or any(type(n) is not int or n not in (0, 1) for n in entries.values())):
-            raise ValueError('Every profile needs an explicit allocation of zero or one')
-        for profile, count in entries.items():
-            totals[profile] += count
+    totals = capacity_allocation_totals(allocations, scopes, profiles)
     budget = sum(data[key] for key in ('host_reserve_bytes', 'image_growth_bytes',
                                      'other_growth_bytes', 'overshoot_bytes'))
     if sum(totals.values()) * WORKER_STORAGE_BYTES + budget > data['host_available_bytes']:
