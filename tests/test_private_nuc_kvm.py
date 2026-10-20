@@ -91,7 +91,7 @@ def identity_expression(expression, context):
 
 class NucKvmTests(unittest.TestCase):
     def test_no_opt_in_preserves_base_rendered_bytes(self):
-        # Canonical serialized output from the pre-NUC renderer at 6b6cc55.
+        # Canonical base output, updated for native listener exit propagation.
         # Cover disk, both CI tmpfs sizes, automation tmpfs, release and native.
         rows = [
             {'name': 'owner/standard', 'visibility': 'private',
@@ -105,7 +105,7 @@ class NucKvmTests(unittest.TestCase):
         documents = arc.render({'repositories': rows}, MP, NATIVE, '192.0.2.1', listener_node='nuc')
         payload = json.dumps(documents, sort_keys=True, separators=(',', ':')).encode()
         self.assertEqual(hashlib.sha256(payload).hexdigest(),
-                         '27d6170b7f92aed10426b2777b93bf2ef2843e21670b283143cda4e1c99b9e64')
+                         '1e7db9a3f8bd9461de099b9ab4fb7c9c74393f5f1f3c33497fb3e7a9d835587f')
 
     def test_opt_in_changes_only_selected_worker_and_keeps_routing(self):
         rows = [copy.deepcopy(ROW), {**ROW, 'name': 'other/private',
