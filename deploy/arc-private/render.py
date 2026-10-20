@@ -51,7 +51,9 @@ fi
 # Jobs need normal checkout modes so Docker COPY works for non-root image users.
 # The pod filesystem is disposable and never shared with another job.
 umask 022
-exec ./run.sh
+# ARC's ephemeral JIT configuration disables self-update. Run the listener as
+# PID 1 so its failures reach ARC; run.sh maps several listener failures to 0.
+exec ./bin/Runner.Listener run
 '''
 
 
