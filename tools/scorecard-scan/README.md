@@ -57,3 +57,6 @@ go mod verify
 Regression tests check incomplete scans, stale output removal, commit mismatch,
 a single scan invocation, the exact upstream reporting policy, and official
 SARIF generation for both clean results and findings with file locations.
+The SARIF version must match the selected, unreplaced Scorecard module. When
+updating Scorecard, update its version and upstream commit stamp in `main.go`
+together and verify that the upstream tag resolves to that commit.

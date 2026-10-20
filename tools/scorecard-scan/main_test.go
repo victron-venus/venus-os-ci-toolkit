@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -130,12 +131,12 @@ func officialSARIFResult(t *testing.T, failing bool) scorecard.Result {
 	return result
 }
 
-func assertOfficialSARIFRun(t *testing.T, run map[string]interface{}, categories map[string]bool) bool {
+func assertOfficialSARIFRun(t *testing.T, run map[string]interface{}, categories map[string]bool, wantVersion string) bool {
 	t.Helper()
 	found := false
 	driver := run["tool"].(map[string]interface{})["driver"].(map[string]interface{})
-	if driver["name"] != "Scorecard" || driver["semanticVersion"] != "v5.5.0" {
-		t.Fatalf("changed tool identity: %v", driver)
+	if driver["name"] != "Scorecard" || driver["semanticVersion"] != wantVersion {
+		t.Fatalf("changed tool identity: %v; expected Scorecard %s", driver, wantVersion)
 	}
 	id := run["automationDetails"].(map[string]interface{})["id"].(string)
 	parts := strings.SplitN(id, "/", 3)
@@ -161,12 +162,12 @@ func assertOfficialSARIFRun(t *testing.T, run map[string]interface{}, categories
 	return found
 }
 
-func assertOfficialSARIFFindings(t *testing.T, sarif map[string]interface{}, failing bool) {
+func assertOfficialSARIFFindings(t *testing.T, sarif map[string]interface{}, failing bool, wantVersion string) {
 	t.Helper()
 	found := false
 	categories := map[string]bool{"supply-chain/local": false, "supply-chain/online-scm": false, "supply-chain/branch-protection": false}
 	for _, raw := range sarif["runs"].([]interface{}) {
-		runFound := assertOfficialSARIFRun(t, raw.(map[string]interface{}), categories)
+		runFound := assertOfficialSARIFRun(t, raw.(map[string]interface{}), categories, wantVersion)
 		found = found || runFound
 	}
 	for category, present := range categories {
@@ -180,6 +181,30 @@ func assertOfficialSARIFFindings(t *testing.T, sarif map[string]interface{}, fai
 }
 
 func TestOfficialSARIFPreservesFindingsAndHistoricalIdentity(t *testing.T) {
+	// Query the selected dependency instead of repeating the stamp in main.go,
+	// so a dependency update cannot silently misidentify the scanner in SARIF.
+	// Track module metadata changes in Go's test-result cache, too.
+	if _, err := os.ReadFile("go.mod"); err != nil {
+		t.Fatal(err)
+	}
+	const modulePath = "github.com/ossf/scorecard/v5"
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	data, err := exec.CommandContext(ctx, "go", "list", "-mod=readonly", "-m", "-json", modulePath).Output()
+	if err != nil {
+		t.Fatalf("read selected Scorecard module: %v", err)
+	}
+	var dependency struct {
+		Path    string
+		Version string
+		Replace *struct{}
+	}
+	if err := json.Unmarshal(data, &dependency); err != nil {
+		t.Fatal(err)
+	}
+	if dependency.Path != modulePath || dependency.Version == "" || dependency.Replace != nil {
+		t.Fatalf("expected an unreplaced versioned Scorecard module: %s", data)
+	}
 	for _, failing := range []bool{false, true} {
 		result := officialSARIFResult(t, failing)
 		output := filepath.Join(t.TempDir(), "results.sarif")
@@ -201,7 +226,7 @@ func TestOfficialSARIFPreservesFindingsAndHistoricalIdentity(t *testing.T) {
 		if err := json.Unmarshal(data, &sarif); err != nil {
 			t.Fatal(err)
 		}
-		assertOfficialSARIFFindings(t, sarif, failing)
+		assertOfficialSARIFFindings(t, sarif, failing, dependency.Version)
 	}
 }
 
