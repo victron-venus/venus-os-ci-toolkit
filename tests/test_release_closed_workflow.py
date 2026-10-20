@@ -14,11 +14,18 @@ import release_closed_workflow as generator  # noqa: E402
 from test_release_closed import policy  # noqa: E402
 import test_channel_validation as channel_fixtures  # noqa: E402
 
+EXPECTED_SECRETS = (
+    "CLOSED_INPUT_READ_URL", "CLOSED_OUTPUT_WRITE_URL", "CLOSED_OUTPUT_READ_URL",
+    "CLOSED_ACCEPTANCE_READ_URL", "CLOSED_INPUT_DECRYPT_KEY", "CLOSED_INPUT_VERIFY_KEY",
+    "CLOSED_OUTPUT_ENCRYPT_KEY", "CLOSED_OUTPUT_SIGN_KEY",
+)
+
 
 def adapter():
     return {"on": {"workflow_call": {"inputs": {
         name: {"type": "string", "required": name == "action"} for name in closed.INPUTS
-    }}}, "permissions": {"contents": "read", "actions": "read"}, "jobs": {"worker": {
+    }, "secrets": {name: {"required": True} for name in EXPECTED_SECRETS}}},
+    "permissions": {"contents": "read", "actions": "read"}, "jobs": {"worker": {
         "runs-on": "ubuntu-24.04", "environment": "closed-build", "timeout-minutes": 30,
         "steps": [{"run": "python3 scripts/closed_build.py", "env": {"CLOSED_INPUT_READ_URL": "${{ secrets.CLOSED_INPUT_READ_URL }}"}}],
     }}}
@@ -58,7 +65,9 @@ class ClosedWorkflowTests(unittest.TestCase):
             job = jobs[name]
             self.assertEqual(job["uses"], "./.github/workflows/closed-build.yml")
             self.assertEqual(job["with"]["action"], action)
-            self.assertNotIn("secrets", job)
+            self.assertEqual(job["secrets"], {
+                secret: "${{ secrets." + secret + " }}" for secret in EXPECTED_SECRETS
+            })
             self.assertNotIn("outputs", job)
         self.assertEqual(jobs["closed_rebuild"]["needs"], ["closed_request", "closed_existing_resolve"])
         self.assertNotIn("prepare", jobs["closed_existing_resolve"]["needs"])
@@ -76,6 +85,55 @@ class ClosedWorkflowTests(unittest.TestCase):
         enabled, disabled = policy(), policy()
         disabled["closed_build"]["enabled"] = False
         self.assertEqual(installer.release(enabled), installer.release(disabled))
+
+    def test_adapter_requires_exact_named_secrets_even_when_disabled(self):
+        root = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        directory = root / ".github/workflows"
+        directory.mkdir(parents=True)
+        path = directory / "closed-build.yml"
+        good = adapter()
+        for enabled in (True, False):
+            config = policy()
+            config["closed_build"]["enabled"] = enabled
+            path.write_text(installer.dump(good))
+            generator.validate_adapter(root, config)
+            for secret in EXPECTED_SECRETS:
+                for change in ("missing", "wrong-name", "optional", "missing-required", "additional-field"):
+                    bad = copy.deepcopy(good)
+                    declarations = bad["on"]["workflow_call"]["secrets"]
+                    if change == "missing":
+                        del declarations[secret]
+                    elif change == "wrong-name":
+                        declarations["OTHER_SECRET"] = declarations.pop(secret)
+                    elif change == "optional":
+                        declarations[secret]["required"] = False
+                    elif change == "missing-required":
+                        declarations[secret] = {}
+                    else:
+                        declarations[secret]["default"] = "unexpected"
+                    path.write_text(installer.dump(bad))
+                    with self.subTest(enabled=enabled, secret=secret, change=change), self.assertRaises(ValueError):
+                        generator.validate_adapter(root, config)
+            for declarations in (None, {}, "inherit", {**good["on"]["workflow_call"]["secrets"], "OTHER_SECRET": {"required": True}}):
+                bad = copy.deepcopy(good)
+                bad["on"]["workflow_call"]["secrets"] = declarations
+                path.write_text(installer.dump(bad))
+                with self.subTest(enabled=enabled, declarations=declarations), self.assertRaises(ValueError):
+                    generator.validate_adapter(root, config)
+        config = policy()
+        del config["closed_build"]
+        path.unlink()
+        generator.validate_adapter(root, config)
+
+    def test_adapter_accepts_descriptions_without_widening_secret_names(self):
+        root = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        directory = root / ".github/workflows"
+        directory.mkdir(parents=True)
+        worker = adapter()
+        for declaration in worker["on"]["workflow_call"]["secrets"].values():
+            declaration["description"] = "Protected closed-build environment value"
+        (directory / "closed-build.yml").write_text(installer.dump(worker))
+        generator.validate_adapter(root, policy())
 
     def test_adapter_rejects_dynamic_runners_unprotected_jobs_and_public_outputs(self):
         config = policy()
