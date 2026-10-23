@@ -1974,6 +1974,37 @@ class ExecutingRunStatusTests(unittest.TestCase):
         self.assertEqual(self.sleep.call_count, 4)
         self.assertEqual(self.gh.writes, [])
 
+    def test_running_publication_survives_aggregate_delay_beyond_one_minute(self):
+        """An executing job can see stale aggregate status beyond the old limit."""
+        responses = [{**run(99, False), "status": "queued"} for _ in range(40)] + [
+            run(99, False)
+        ]
+        with (
+            patch.object(self.gh, "api", side_effect=responses) as api,
+            patch.object(rc.sys, "stderr", new_callable=io.StringIO) as diagnostics,
+        ):
+            result = self.wait()
+        self.assertEqual(result["status"], "in_progress")
+        self.assertEqual(self.now, 80)
+        self.assertEqual(api.call_count, 41)
+        self.assertEqual(self.checkout.call_count, 41)
+        self.assertEqual(diagnostics.getvalue().count("Waiting for Actions run"), 1)
+        self.assertIn("attempt 1", diagnostics.getvalue())
+        self.assertEqual(self.gh.writes, [])
+
+    def test_extended_wait_still_rejects_changed_attempt(self):
+        """The extra wait never authorizes a response from a later rerun."""
+        responses = [{**run(99, False), "status": "queued"} for _ in range(40)] + [
+            {**run(99, False), "run_attempt": 2}
+        ]
+        with (
+            patch.object(self.gh, "api", side_effect=responses),
+            self.assertRaisesRegex(rc.ReleaseError, "attempt mismatch"),
+        ):
+            self.wait()
+        self.assertEqual(self.now, 80)
+        self.assertEqual(self.gh.writes, [])
+
     def test_every_refreshed_identity_field_is_rechecked(self):
         """A newly active response cannot swap a run, source, workflow or attempt."""
         changes = [
@@ -2055,13 +2086,13 @@ class ExecutingRunStatusTests(unittest.TestCase):
                 self.gh, "api", return_value={**run(99, False), "status": "waiting"}
             ) as api,
             self.assertRaisesRegex(
-                rc.ReleaseError, "within 60 seconds.*waiting.*99.*1"
+                rc.ReleaseError, "within 300 seconds.*waiting.*99.*1"
             ),
         ):
             self.wait()
-        self.assertEqual(self.now, 60)
-        self.assertEqual(api.call_count, 31)
-        self.assertEqual(self.sleep.call_count, 30)
+        self.assertEqual(self.now, 300)
+        self.assertEqual(api.call_count, 151)
+        self.assertEqual(self.sleep.call_count, 150)
         self.assertEqual(self.gh.writes, [])
 
     def test_completed_candidate_validation_does_not_poll(self):

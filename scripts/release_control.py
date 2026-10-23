@@ -104,6 +104,7 @@ ASSET_CHUNK_SIZE = 1024 * 1024
 ASSET_DOWNLOAD_TIMEOUT = 900
 API_READ_TIMEOUT = 30
 API_READ_ATTEMPTS = 3
+EXECUTING_RUN_WAIT_SECONDS = 300
 
 
 class ReleaseError(RuntimeError):
@@ -1106,13 +1107,14 @@ def wait_for_executing_run(
     attempt: int,
     gate: bool = True,
 ) -> JSONObject:
-    """Wait at most 60 seconds for Actions' aggregate status to catch up.
+    """Allow five minutes for Actions' aggregate status to catch up.
 
     A running job may still be reported as queued or waiting after environment
     approval. Those states never authorize publication: only a fresh, fully
     bound in_progress run can pass. Completed RC validation does not wait.
     """
-    deadline = time.monotonic() + 60
+    deadline = time.monotonic() + EXECUTING_RUN_WAIT_SECONDS
+    reported_status = None
     while True:
         run = cast(JSONObject, gh.api(f"actions/runs/{run_id}"))
         require(run.get("id") == run_id, "Execution run identity mismatch")
@@ -1132,9 +1134,16 @@ def wait_for_executing_run(
         remaining = deadline - time.monotonic()
         require(
             remaining > 0,
-            f"Publication run did not become in_progress within 60 seconds; "
+            f"Publication run did not become in_progress within {EXECUTING_RUN_WAIT_SECONDS} seconds; "
             f"last status: {status!r}, run: {run_id}, attempt: {attempt}",
         )
+        if status != reported_status:
+            print(
+                f"Waiting for Actions run {run_id}, attempt {attempt}: "
+                f"aggregate status {status!r}; at most {remaining:.0f}s remaining",
+                file=sys.stderr,
+            )
+            reported_status = status
         time.sleep(min(2, remaining))
 
 
