@@ -173,8 +173,8 @@ class InstallReleaseGhTests(unittest.TestCase):
 
     def test_downloader_requires_exact_toolchain_before_network(self):
         with patch.object(installer.subprocess, "run") as run:
-            run.return_value.stdout = "go version go1.26.4 linux/amd64\n"
-            with self.assertRaisesRegex(ValueError, "exactly Go 1.27.2"):
+            run.return_value.stdout = "go version go1.27.2 linux/amd64\n"
+            with self.assertRaisesRegex(ValueError, "exactly Go 1.27.3"):
                 installer.download("https://example.invalid/test")
             self.assertEqual(run.call_count, 1)
             env = run.call_args.kwargs["env"]
@@ -187,7 +187,7 @@ class InstallReleaseGhTests(unittest.TestCase):
         workflow = {"jobs": {name: {"steps": [{"uses": "actions/checkout@pin"}, {"run": "publish"}]} for name in names}}
         release_gh_workflow.apply(workflow, {"actions/setup-go": "actions/setup-go@pin"})
         for job in workflow["jobs"].values():
-            self.assertEqual(job["steps"][1]["with"]["go-version"], "1.27.2")
+            self.assertEqual(job["steps"][1]["with"]["go-version"], "1.27.3")
             self.assertEqual(job["steps"][2], release_gh_workflow.installer())
             self.assertEqual(job["steps"][3], {"run": "publish"})
 

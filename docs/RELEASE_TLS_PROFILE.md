@@ -1,7 +1,7 @@
 # Release helper TLS profile
 
 The release helpers delegate GitHub API transport to `gh`. The verified profile
-below applies to GitHub CLI 2.102.0 built with Go 1.27.1 and the normal
+below applies to GitHub CLI 2.103.0 built with Go 1.27.3 and the normal
 `api.github.com` endpoint. It supplies a way to reject smaller certificate keys
 for an individual command while preserving certificate and hostname validation.
 
@@ -14,8 +14,8 @@ gh --version
 go version -m "$(command -v gh)"
 ```
 
-The first command must identify `gh` 2.102.0; the first line of the second must
-identify `go1.27.1` for this verified profile. The `go` command only inspects the
+The first command must identify `gh` 2.103.0; the first line of the second must
+identify `go1.27.3` for this verified profile. The `go` command only inspects the
 executable's build information. Other toolchain versions need equivalent
 verification before this document's key restrictions can be claimed. Older Go
 runtimes may ignore settings they do not recognize.
@@ -65,12 +65,12 @@ claim FIPS certification or make FIPS certification an OpenSSF requirement.
 
 Source references:
 
-- [GitHub CLI client construction](https://github.com/cli/cli/blob/v2.102.0/api/http_client.go)
-  and [go-gh default transport](https://github.com/cli/go-gh/blob/v2.16.1/pkg/api/http_client.go).
-- [Go TLS defaults](https://github.com/golang/go/blob/go1.27.1/src/crypto/tls/defaults.go)
-  and [disabled cipher suites](https://github.com/golang/go/blob/go1.27.1/src/crypto/tls/cipher_suites.go).
-- [Go certificate-key filters](https://github.com/golang/go/blob/go1.27.1/src/crypto/tls/defaults_fips140.go)
-  and [verified-chain enforcement](https://github.com/golang/go/blob/go1.27.1/src/crypto/tls/common.go).
+- [GitHub CLI client construction](https://github.com/cli/cli/blob/v2.103.0/api/http_client.go)
+  and [go-gh default transport](https://github.com/cli/go-gh/blob/v2.17.0/pkg/api/http_client.go).
+- [Go TLS defaults](https://github.com/golang/go/blob/go1.27.3/src/crypto/tls/defaults.go)
+  and [disabled cipher suites](https://github.com/golang/go/blob/go1.27.3/src/crypto/tls/cipher_suites.go).
+- [Go certificate-key filters](https://github.com/golang/go/blob/go1.27.3/src/crypto/tls/defaults_fips140.go)
+  and [verified-chain enforcement](https://github.com/golang/go/blob/go1.27.3/src/crypto/tls/common.go).
 - [OpenSSF Passing criteria](https://www.bestpractices.dev/en/criteria/0), particularly
   `crypto_keylength` and `crypto_pfs`.
 

@@ -89,7 +89,7 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: 1.27.2
+          go-version: 1.27.3
           cache: false
       - name: Install the qualified GitHub CLI
         env:
@@ -201,7 +201,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: 1.27.2
+          go-version: 1.27.3
           cache: false
       - name: Install the qualified GitHub CLI
         env:
@@ -260,7 +260,7 @@ jobs:
       - *id001
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: 1.27.2
+          go-version: 1.27.3
           cache: false
       - name: Install the qualified GitHub CLI
         env:
@@ -300,7 +300,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: 1.27.2
+          go-version: 1.27.3
           cache: false
       - name: Install the qualified GitHub CLI
         env:

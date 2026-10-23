@@ -31,7 +31,7 @@ class BuildSignerTests(unittest.TestCase):
     def test_bad_source_and_toolchain_never_execute_build(self):
         for responses, reason in [(["wrong"], "source commit"),
                                   ([builder.SOURCE, " M main.go"], "must be clean"),
-                                  ([builder.SOURCE, "", "go1.26.4"], "Go 1.27.2")]:
+                                  ([builder.SOURCE, "", "go1.27.2"], "Go 1.27.3")]:
             with self.subTest(reason=reason), tempfile.TemporaryDirectory() as d:
                 root = Path(d)
                 (root / "src").mkdir()

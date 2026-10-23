@@ -1,7 +1,7 @@
 # Patched release signer and verifier
 
 Signed-release consumers use Cosign 3.1.3 source commit
-`11926fa5bbbbde47e88fc006b625a17769b743b2`, rebuilt with Go 1.27.2 and the
+`11926fa5bbbbde47e88fc006b625a17769b743b2`, rebuilt with Go 1.27.3 and the
 reviewed `.github/cosign/go.mod` and `go.sum`. This is a downstream patched build,
 not Sigstore's official 3.1.3 executable (which embeds Go 1.26.4). The Apache-2.0
 license and source provenance are retained beside the locked module files.
@@ -14,7 +14,7 @@ the changed dependency inputs.
 
 ## Build and use
 
-Install Go 1.27.2, clone Sigstore's repository into a fresh trusted directory and
+Install Go 1.27.3, clone Sigstore's repository into a fresh trusted directory and
 check out the exact commit above. In this project's reviewed checkout run:
 
 ```sh
@@ -77,5 +77,5 @@ Source references:
 
 - [Cosign signing key selection](https://github.com/sigstore/cosign/blob/11926fa5bbbbde47e88fc006b625a17769b743b2/cmd/cosign/cli/signcommon/common.go)
 - [Cosign bundle verification](https://github.com/sigstore/cosign/blob/11926fa5bbbbde47e88fc006b625a17769b743b2/cmd/cosign/cli/verify/verify_blob.go)
-- [Go whole-chain TLS policy](https://github.com/golang/go/blob/go1.27.2/src/crypto/tls/common.go)
-- [Go strict TLS parameters](https://github.com/golang/go/blob/go1.27.2/src/crypto/tls/defaults_fips140.go)
+- [Go whole-chain TLS policy](https://github.com/golang/go/blob/go1.27.3/src/crypto/tls/common.go)
+- [Go strict TLS parameters](https://github.com/golang/go/blob/go1.27.3/src/crypto/tls/defaults_fips140.go)

@@ -24,4 +24,4 @@ def apply(workflow: dict, pins: dict) -> None:
         steps = workflow["jobs"][name]["steps"]
         if not steps[0].get("uses", "").startswith("actions/checkout@"):
             raise ValueError(f"Review checkout order before installing release CLI in {name}")
-        steps[1:1] = [{"uses": pins["actions/setup-go"], "with": {"go-version": "1.27.2", "cache": False}}, installer()]
+        steps[1:1] = [{"uses": pins["actions/setup-go"], "with": {"go-version": "1.27.3", "cache": False}}, installer()]

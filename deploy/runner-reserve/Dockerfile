@@ -54,7 +54,7 @@ RUN arch="$(dpkg --print-architecture)" \
     && case "$arch" in amd64|arm64) ;; *) exit 1 ;; esac \
     && curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
         --connect-timeout 15 --max-time 180 --max-filesize 33554432 \
-        "https://github.com/cli/cli/releases/download/v2.102.0/gh_2.102.0_linux_${arch}.tar.gz" \
+        "https://github.com/cli/cli/releases/download/v2.103.0/gh_2.103.0_linux_${arch}.tar.gz" \
         --output /tmp/reserve-gh/archive.tar.gz \
     && GODEBUG=fips140=on python3 /tmp/reserve-gh/scripts/install_release_gh.py \
         --archive /tmp/reserve-gh/archive.tar.gz --output /usr/local/bin/gh \

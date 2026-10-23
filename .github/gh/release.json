@@ -1,32 +1,32 @@
 {
-  "version": "2.102.0",
-  "source_commit": "fc4b137cdef0a6bd28fd461b7cf9c84a5812a8cd",
-  "go_version": "go1.27.1",
-  "reviewed_on": "2026-10-16",
+  "version": "2.103.0",
+  "source_commit": "7948e8056e45ac3c729b829e0eafe2d0797a95c6",
+  "go_version": "go1.27.3",
+  "reviewed_on": "2026-10-22",
   "artifacts": {
     "linux_amd64": {
-      "asset": "gh_2.102.0_linux_amd64.tar.gz",
-      "member": "gh_2.102.0_linux_amd64/bin/gh",
-      "archive_sha256": "bb766f710eef8ede859c18578c72c327597cd4c8a85b06001b1f3843c6019386",
-      "binary_sha256": "7469124f706944133d6a169691dd1c6c3511b12e85878d255e044e2948df4c9b"
+      "asset": "gh_2.103.0_linux_amd64.tar.gz",
+      "member": "gh_2.103.0_linux_amd64/bin/gh",
+      "archive_sha256": "fdd768eb70f6409f80fcfa9f3a1c0adf0fc98d827ab3ce0bed2ac22762c5d786",
+      "binary_sha256": "011adf6809c50c89a70f2e367f2658a2fd7c2fcf7dfc705bfe8049e6e4c731b2"
     },
     "linux_arm64": {
-      "asset": "gh_2.102.0_linux_arm64.tar.gz",
-      "member": "gh_2.102.0_linux_arm64/bin/gh",
-      "archive_sha256": "7862c86c72f43df3a2d93ddde6f473285b4e2af61b494849846827e513ef6484",
-      "binary_sha256": "93308395c2d296a63a662742c6366e4db413d2a4870d07bd9b84e491c065d65d"
+      "asset": "gh_2.103.0_linux_arm64.tar.gz",
+      "member": "gh_2.103.0_linux_arm64/bin/gh",
+      "archive_sha256": "7f322df34e624d14f5ec0c4acb121fd6dfa14392fdbbd1066aa8e0a05ac3721e",
+      "binary_sha256": "27423d635fd0093474b9ac4786e20d57325250021206983930aa9d8477fd60c6"
     },
     "macOS_amd64": {
-      "asset": "gh_2.102.0_macOS_amd64.zip",
-      "member": "gh_2.102.0_macOS_amd64/bin/gh",
-      "archive_sha256": "b245f24eb2bf5f75b426b4c26da3651a107f8d5b6f4fddfbfccc5679041378b3",
-      "binary_sha256": "df615405bcf707c5855f22c8be477c62cd7f7af743de75c4805c2b375b3a479c"
+      "asset": "gh_2.103.0_macOS_amd64.zip",
+      "member": "gh_2.103.0_macOS_amd64/bin/gh",
+      "archive_sha256": "64d1734941f104f996271c820daa50e96902c2618f9b4c1e63c41519517a9c6b",
+      "binary_sha256": "7d209771083d0c886c0b0b88b0b6c89ed0019c8b4ae4ca40659cd1e91ebf0289"
     },
     "macOS_arm64": {
-      "asset": "gh_2.102.0_macOS_arm64.zip",
-      "member": "gh_2.102.0_macOS_arm64/bin/gh",
-      "archive_sha256": "da922c20d1792e5b2cbf375593d7a658acf034c12c84e007e71c76ef959c337e",
-      "binary_sha256": "8a4258433c81106343144857750316241759d06dcf16265cf3c4864a8f2f2ad6"
+      "asset": "gh_2.103.0_macOS_arm64.zip",
+      "member": "gh_2.103.0_macOS_arm64/bin/gh",
+      "archive_sha256": "54be566e9f614bea5de8021e95b9ad33dfee3b9d2ea120c9c294c00defaa5014",
+      "binary_sha256": "1ffcdcff76db02ff4f9de0fbf784ed4b6d18e434e89450db314b3f77d0f9443b"
     }
   }
 }
