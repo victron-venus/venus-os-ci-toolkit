@@ -142,7 +142,7 @@ input rather than using vulnerable compatibility pins. CI exercises Python
 the tested matrix, not every architecture or future interpreter release.
 
 To update the common tools, edit `actions/setup-python/requirements.in` and
-regenerate the hash lock using the exact command in its header with uv 0.12.18.
+regenerate the hash lock using the exact command in its header with uv 0.13.4.
 Review all version changes and run the action matrix, the offline path/hash
 regressions and a vulnerability audit of every locked version, including
 platform-specific dependencies. Consumer application locks remain independent.

@@ -494,7 +494,7 @@ jobs:
                     if step.get("uses", "").startswith("astral-sh/setup-uv@")]
         self.assertEqual(len(setup_uv), 1)
         self.assertEqual(setup_uv[0]["uses"], installer.ACTION_REFS["astral-sh/setup-uv"])
-        self.assertEqual(setup_uv[0]["with"], {"version": "0.12.18"})
+        self.assertEqual(setup_uv[0]["with"], {"version": "0.13.4"})
         consumer = installer.release_contract_job(self.policy, None)
         self.assertFalse(any(step.get("uses", "").startswith("astral-sh/setup-uv@")
                              for step in consumer["steps"]))

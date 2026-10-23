@@ -682,7 +682,7 @@ def release_contract_job(policy, directory):
         job["steps"].insert(2, {
             "name": "Install uv for locked dependency contracts",
             "uses": ACTION_REFS["astral-sh/setup-uv"],
-            "with": {"version": "0.12.18"},
+            "with": {"version": "0.13.4"},
         })
     return job
 
