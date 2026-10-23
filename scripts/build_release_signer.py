@@ -10,7 +10,7 @@ import subprocess
 import sys
 
 SOURCE = "11926fa5bbbbde47e88fc006b625a17769b743b2"
-GO_VERSION = "go1.27.2"
+GO_VERSION = "go1.27.3"
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -45,7 +45,7 @@ def build(source: Path, output: Path) -> None:
     if run(["git", "status", "--porcelain", "--untracked-files=all"], source, env):
         raise ValueError("Cosign source checkout must be clean")
     if run(["go", "env", "GOVERSION"], source, env) != GO_VERSION:
-        raise ValueError("Release signer requires Go 1.27.2 exactly")
+        raise ValueError("Release signer requires Go 1.27.3 exactly")
     original = {name: (source / name).read_bytes() for name in ("go.mod", "go.sum")}
     locked = {name: (ROOT / ".github/cosign" / name).read_bytes() for name in original}
     try:

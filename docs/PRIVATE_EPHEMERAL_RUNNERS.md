@@ -1,6 +1,6 @@
 # Private ephemeral runners
 
-The private image installs official GitHub CLI 2.102.0 at `/usr/local/bin/gh`,
+The private image installs official GitHub CLI 2.103.0 at `/usr/local/bin/gh`,
 using the archive and executable hashes in `.github/gh/release.json` and the
 existing `scripts/install_release_gh.py` offline archive mode. Its build checks
 `gh api --paginate --slurp` without an API call: the inherited Ubuntu CLI 2.45

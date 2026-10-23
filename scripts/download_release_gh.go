@@ -17,8 +17,8 @@ import (
 const maxArchive = 32 * 1024 * 1024
 
 func download(address, output string) error {
-	if runtime.Version() != "go1.27.2" || !fips140.Enabled() {
-		return errors.New("downloader requires Go 1.27.2 and GODEBUG=fips140=on")
+	if runtime.Version() != "go1.27.3" || !fips140.Enabled() {
+		return errors.New("downloader requires Go 1.27.3 and GODEBUG=fips140=on")
 	}
 	parsed, err := url.Parse(address)
 	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil {

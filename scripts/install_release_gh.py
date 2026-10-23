@@ -34,8 +34,8 @@ def download(url: str) -> bytes:
     env.update({"GOTOOLCHAIN": "local", "GO111MODULE": "off", "GOWORK": "off", "GOENV": "off",
                 "CGO_ENABLED": "0", "GODEBUG": "fips140=on", "GOMAXPROCS": "2", "GOFLAGS": "-p=2"})
     result = subprocess.run(["go", "version"], env=env, text=True, capture_output=True, check=True, timeout=15)
-    if not result.stdout.startswith("go version go1.27.2 "):
-        raise ValueError("Release CLI downloader requires exactly Go 1.27.2")
+    if not result.stdout.startswith("go version go1.27.3 "):
+        raise ValueError("Release CLI downloader requires exactly Go 1.27.3")
     with tempfile.TemporaryDirectory(prefix="release-gh-download-") as directory:
         output = Path(directory) / "artifact"
         subprocess.run(["go", "run", str(ROOT / "scripts/download_release_gh.go"), url, str(output)],

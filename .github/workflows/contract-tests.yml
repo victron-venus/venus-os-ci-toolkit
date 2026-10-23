@@ -78,7 +78,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
-          go-version: '1.27.2'
+          go-version: '1.27.3'
           cache-dependency-path: tools/scorecard-scan/go.sum
       - name: Test the scan-completeness and SARIF contracts
         working-directory: tools/scorecard-scan
@@ -162,7 +162,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: 1.27.2
+          go-version: 1.27.3
           cache-dependency-path: .github/cosign/go.sum
       - name: Build the reviewed patched release signer
         run: 'python3 scripts/build_release_signer.py --source .release-cosign-source --output "$RUNNER_TEMP/release-signer/cosign"
@@ -192,7 +192,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: 1.27.2
+          go-version: 1.27.3
           cache: false
       - name: Install the qualified GitHub CLI
         env:

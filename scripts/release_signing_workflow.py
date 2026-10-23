@@ -34,7 +34,7 @@ def installer(pins: dict) -> list[dict]:
             "repository": "sigstore/cosign", "ref": COSIGN_SOURCE,
             "path": ".release-cosign-source", "persist-credentials": False}},
         {"uses": pins["actions/setup-go"], "with": {
-            "go-version": "1.27.2", "cache-dependency-path": ".github/cosign/go.sum"}},
+            "go-version": "1.27.3", "cache-dependency-path": ".github/cosign/go.sum"}},
         {"name": "Build the reviewed patched release signer", "run": (
             'python3 scripts/build_release_signer.py --source .release-cosign-source '
             '--output "$RUNNER_TEMP/release-signer/cosign"\n'

@@ -17,6 +17,21 @@ INSTALL = next(step['run'] for step in ACTION['runs']['steps'] if step['name'] =
 
 
 class GoToolInstallationTests(unittest.TestCase):
+    def test_default_toolchains_match_the_qualified_compatibility_generation(self):
+        def workflow(name):
+            return yaml.load((ROOT / '.github/workflows' / name).read_text(), Loader=yaml.BaseLoader)
+
+        matrix = workflow('contract-tests.yml')['jobs']['go-tools-contract']['strategy']['matrix']['include']
+        generation = ACTION['inputs']['golangci-lint-major']['default']
+        qualified = [item['go'] for item in matrix if item['lint'] == generation]
+        self.assertEqual(len(qualified), 1)
+        self.assertEqual(ACTION['inputs']['go-version']['default'], qualified[0])
+        inputs = workflow('go-ci.yml')['on']['workflow_call']['inputs']
+        self.assertEqual(inputs['go-version']['default'], qualified[0])
+        fuzz_steps = workflow('fuzz.yml')['jobs']['campaign']['steps']
+        fallback = next(step for step in fuzz_steps if step.get('name') == 'Set up default Go')
+        self.assertEqual(fallback['with']['go-version'], qualified[0])
+
     @unittest.skipUnless(shutil.which('go'), 'Go is required for the checksum boundary test')
     def test_tampered_module_is_rejected_before_tool_installation(self):
         with tempfile.TemporaryDirectory(prefix='go action ') as temporary:
