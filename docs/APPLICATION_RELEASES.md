@@ -59,6 +59,22 @@ from the clean current checkout. Both use the checked-in version. Follow the exa
 requested run in Actions and check its final result; dispatch acceptance is not
 publication success. All declared checks, platforms and Release gate must pass.
 
+## Delayed Actions run status
+
+GitHub can report an executing release run as `queued` or `waiting` while its
+current job is already running. Release preparation and publication allow up to
+five minutes for the aggregate status to become `in_progress`. The log identifies
+the run, attempt and each observed status transition; no credentials are logged.
+Every response rechecks the repository, workflow, ref, event, source commit and
+attempt. Queued status never authorizes publication, terminal failures are rejected
+immediately, and completed RC verification still requires successful completion.
+
+If the bounded wait expires, inspect the run and retry failed jobs once GitHub's
+status reporting has recovered. Do not bypass the gate or manually create a tag.
+Consumers vendor this helper: regenerating its source and release-contract test
+is required to adopt a changed wait budget; changing only a workflow SHA is not
+sufficient.
+
 ## Automatic nightly publication reuse
 
 Versioned repositories still allocate a fresh plan and run all required checks,
