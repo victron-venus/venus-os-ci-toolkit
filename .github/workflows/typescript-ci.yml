@@ -80,9 +80,13 @@ on:
         type: string
         default: 'all'
       browser-release-channel:
-        description: 'Optional release qualification: nightly/beta require 5 targets, rc/stable require all 35'
+        description: 'Optional release qualification: nightly/beta require the declared profile, rc/stable require all 35'
         type: string
         default: ''
+      browser-required-profile:
+        description: 'Required target profile: baseline or windows-firefox-1.62.1 (adds the exact historical Windows Firefox target)'
+        type: string
+        default: 'baseline'
       browser-prepare-command:
         description: 'Prepare the application and synthetic fixtures in each browser job'
         type: string
@@ -189,6 +193,7 @@ jobs:
           CI_RUNNER_LABELS: ${{ vars.CI_RUNNER_LABELS }}
           RUNNER_ENVIRONMENT: ${{ runner.environment }}
           BROWSER_RELEASE_CHANNEL: ${{ inputs.browser-release-channel }}
+          BROWSER_REQUIRED_PROFILE: ${{ inputs.browser-required-profile }}
           BROWSER_COMMAND: ${{ inputs.browser-test-command }}
           BROWSER_ARTIFACT_ID: ${{ inputs.browser-artifact-id }}
           BROWSER_EVIDENCE_PREFIX: ${{ inputs.browser-evidence-prefix }}
@@ -230,6 +235,12 @@ jobs:
             if (!['', 'chrome', 'chrome-beta', 'msedge', 'msedge-beta'].includes(row.channel) || (row.channel && row.engine !== 'chromium')) fail('Invalid branded browser channel');
             if (row.channel ? row.browser_version !== 'installed' : typeof row.browser_version !== 'string' || !/^\d+(?:\.\d+){1,3}$/.test(row.browser_version)) fail('Pin the bundled browser version, or record the installed branded channel');
           }
+          const requiredProfile = process.env.BROWSER_REQUIRED_PROFILE ?? 'baseline';
+          if (!['baseline', 'windows-firefox-1.62.1'].includes(requiredProfile)) fail('Unknown browser required profile');
+          const regressionProfile = requiredProfile === 'windows-firefox-1.62.1';
+          const requiredCount = regressionProfile ? 6 : 5;
+          const isRegression = row => row.os === 'windows-2022' && row.engine === 'firefox' && row.playwright === '1.62.1' && !row.channel;
+          if (regressionProfile && (rows.filter(isRegression).length !== 1 || rows.find(isRegression).tier !== 'required')) fail('The historical Windows Firefox profile requires its exact target');
           const requestedScope = process.env.BROWSER_PLATFORM_SCOPE ?? 'all';
           if (!['all', 'linux'].includes(requestedScope)) fail('Browser platform scope must be all or linux');
           const hostedSetting = process.env.CI_HOSTED_RUNNERS_ENABLED || 'true';
@@ -249,8 +260,8 @@ jobs:
           if (releaseChannel && requestedScope !== 'all') fail('Release inventory selection requires all platforms; use the explicit hosted budget policy for unavailable runners');
           if (releaseChannel) {
             const full = ['rc', 'stable'].includes(releaseChannel);
-            if (rows.length !== 35 || rows.filter(row => row.tier === 'required').length !== 5) fail('Release qualification requires the reviewed 35-target inventory with 5 required targets');
-            if ((process.env.BROWSER_EXTENDED === 'true') !== full || requested.length !== (full ? 35 : 5)) fail('Release channel does not match the required qualification breadth');
+            if (rows.length !== 35 || rows.filter(row => row.tier === 'required').length !== requiredCount) fail('Release qualification requires the reviewed 35-target inventory and declared required profile');
+            if ((process.env.BROWSER_EXTENDED === 'true') !== full || requested.length !== (full ? 35 : requiredCount)) fail('Release channel does not match the required qualification breadth');
             const platformIdentity = os => os === 'macos-15-intel' ? 'macos-15' : os === 'ubuntu-26.04' ? 'ubuntu-latest' : os;
             const identity = row => JSON.stringify([platformIdentity(row.os), row.engine, row.playwright, row.channel]);
             const identities = new Set(rows.map(identity));
@@ -271,6 +282,11 @@ jobs:
             }
             for (const os of platforms) for (const channel of (os === 'ubuntu-latest' ? ['chrome', 'msedge', 'chrome-beta', 'msedge-beta'] : ['chrome', 'msedge'])) {
               expected.set(identity({os, engine: 'chromium', playwright: current, channel}), 'extended');
+            }
+            if (regressionProfile) {
+              const regressionIdentity = identity({os: 'windows-2022', engine: 'firefox', playwright: '1.62.1', channel: ''});
+              if (expected.get(regressionIdentity) !== 'extended') fail('Historical regression must add a distinct target to the baseline');
+              expected.set(regressionIdentity, 'required');
             }
             if (rows.some(row => expected.get(identity(row)) !== row.tier) || expected.size !== rows.length) fail('Release inventory must cover the complete three-OS, three-engine, three-generation product and current branded channels');
             for (const engine of engines) {
@@ -532,6 +548,7 @@ jobs:
           BROWSER_COVERAGE: ${{ needs.browser-plan.outputs.coverage }}
           CI_HOSTED_RUNNERS_ENABLED: ${{ vars.CI_HOSTED_RUNNERS_ENABLED }}
           BROWSER_RELEASE_CHANNEL: ${{ inputs.browser-release-channel }}
+          BROWSER_REQUIRED_PROFILE: ${{ inputs.browser-required-profile }}
           BROWSER_ARTIFACT_ID: ${{ inputs.browser-artifact-id }}
           BROWSER_EVIDENCE_PREFIX: ${{ inputs.browser-evidence-prefix }}
           BROWSER_EVIDENCE_DIRECTORY: ${{ runner.temp }}/browser-release-evidence
@@ -545,12 +562,20 @@ jobs:
           const releaseChannel = process.env.BROWSER_RELEASE_CHANNEL;
           if (!['nightly', 'beta', 'rc', 'stable'].includes(releaseChannel)) fail('Unknown release channel');
           const rows = JSON.parse(process.env.BROWSER_MATRIX).include;
+          const requiredProfile = process.env.BROWSER_REQUIRED_PROFILE ?? 'baseline';
+          if (!['baseline', 'windows-firefox-1.62.1'].includes(requiredProfile)) fail('Unknown browser required profile');
+          const regressionProfile = requiredProfile === 'windows-firefox-1.62.1';
+          const requiredCount = regressionProfile ? 6 : 5;
           const full = ['rc', 'stable'].includes(releaseChannel);
           const reduced = process.env.CI_HOSTED_RUNNERS_ENABLED === 'false';
           const coverage = JSON.parse(process.env.BROWSER_COVERAGE || 'null');
-          if (!Array.isArray(rows) || rows.length !== (reduced ? (full ? 13 : 3) : (full ? 35 : 5)) || new Set(rows.map(row => row.id)).size !== rows.length) fail('Incorrect or duplicate release target set');
-          if (rows.filter(row => row.tier === 'required').length !== (reduced ? 3 : 5) || (!full && rows.some(row => row.tier !== 'required'))) fail('Incorrect required release targets');
-          if (reduced && (rows.some(row => row.os !== 'ubuntu-latest') || coverage?.hostedRunnersEnabled !== false || coverage.platformScope !== 'linux' || coverage.releaseChannel !== releaseChannel || JSON.stringify(coverage.selectedTargetIds) !== JSON.stringify(rows.map(row => row.id)) || coverage.skippedTargets?.length !== (full ? 22 : 2))) fail('Missing explicit reduced-platform evidence');
+          if (!Array.isArray(rows) || rows.length !== (reduced ? (full ? 13 : 3) : (full ? 35 : requiredCount)) || new Set(rows.map(row => row.id)).size !== rows.length) fail('Incorrect or duplicate release target set');
+          if (rows.filter(row => row.tier === 'required').length !== (reduced ? 3 : requiredCount) || (!full && rows.some(row => row.tier !== 'required'))) fail('Incorrect required release targets');
+          if (reduced && (rows.some(row => row.os !== 'ubuntu-latest') || coverage?.hostedRunnersEnabled !== false || coverage.platformScope !== 'linux' || coverage.releaseChannel !== releaseChannel || JSON.stringify(coverage.selectedTargetIds) !== JSON.stringify(rows.map(row => row.id)) || coverage.skippedTargets?.length !== (full ? 22 : requiredCount - 3))) fail('Missing explicit reduced-platform evidence');
+          if (regressionProfile && !reduced) {
+            const matches = rows.filter(row => row.os === 'windows-2022' && row.engine === 'firefox' && row.playwright === '1.62.1' && !row.channel);
+            if (matches.length !== 1 || matches[0].tier !== 'required') fail('Missing exact historical Windows Firefox result');
+          }
           const binding = {schema: 1, sourceSha: process.env.GITHUB_SHA, runId: process.env.GITHUB_RUN_ID, runAttempt: process.env.GITHUB_RUN_ATTEMPT, releaseChannel, candidateArtifactId: process.env.BROWSER_ARTIFACT_ID || ''};
           const directory = process.env.BROWSER_EVIDENCE_DIRECTORY;
           const artifactName = row => `${process.env.BROWSER_EVIDENCE_PREFIX}-${row.id}-${binding.runAttempt}`;
@@ -581,7 +606,7 @@ jobs:
             if (!Number.isSafeInteger(result.testsPassed) || result.testsPassed < 1 || result.testsFailed !== 0 || !Array.isArray(result.scenarios) || result.scenarios.length !== result.testsPassed || new Set(result.scenarios).size !== result.scenarios.length || result.scenarios.some(name => typeof name !== 'string' || !name.trim())) fail('Missing or failed application scenarios');
             return {id: row.id, os: row.os, engine: row.engine, channel: row.channel, playwrightVersion: runtime.playwrightVersion, browserVersion: runtime.browserVersion, testsPassed: result.testsPassed, scenarios: result.scenarios, evidenceSha256: digest};
           });
-          fs.writeFileSync(process.env.BROWSER_VERDICT_FILE, JSON.stringify({...binding, targets, platformCoverage: reduced ? 'reduced-linux' : 'all-requested', fullPlatformQualified: !reduced, skippedTargets: coverage?.skippedTargets || []}, null, 2) + '\n');
+          fs.writeFileSync(process.env.BROWSER_VERDICT_FILE, JSON.stringify({...binding, requiredProfile, targets, platformCoverage: reduced ? 'reduced-linux' : 'all-requested', fullPlatformQualified: !reduced, skippedTargets: coverage?.skippedTargets || []}, null, 2) + '\n');
           NODE
       - name: Preserve verified release qualification
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

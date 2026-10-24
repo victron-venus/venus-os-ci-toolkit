@@ -47,6 +47,32 @@ binary installation follows Playwright's pinned revision catalog. Branded Stable
 and Beta channels follow the vendor's installed current release and record its
 actual version; they are not advertised as historically pinned Chrome/Edge builds.
 
+### Keep a historical regression in the required subset
+
+`browser-required-profile` defaults to `baseline`, preserving the five required
+current-browser targets. A consumer that must exercise the historical Windows
+Firefox regression on every PR and beta can set:
+
+```yaml
+with:
+  browser-required-profile: windows-firefox-1.62.1
+```
+
+Mark exactly the bundled `windows-2022` / `firefox` / Playwright `1.62.1` row as
+`required` in that consumer's existing matrix. The profile adds this sixth target
+without removing any of the five baseline targets. Nightly/beta qualification
+requires all six; RC and freshly built stable qualification still require the
+same complete 35-target inventory. Omitted input retains the baseline contract. Ordinary custom matrices remain
+supported without a release channel; the complete 35-target topology and baseline
+tiers are enforced in release mode. Unknown profiles or a missing/substituted
+regression target fail before browser jobs in every mode. The evidence gate checks the same profile and
+exact current-run/current-attempt results, recording `requiredProfile` in its
+verdict. Selecting a profile does not itself edit the consumer matrix or locks.
+
+The explicit hosted-budget policy below still reports unavailable Windows and
+macOS targets as omitted. Such a reduced result never establishes this Windows
+regression's acceptance or full release qualification.
+
 An application may explicitly select `macos-15-intel` instead of `macos-15` for
 an individual target when its browser generation needs the Intel environment.
 Use a distinct target ID that identifies that runner and keep the engine,
@@ -162,8 +188,8 @@ the checkout root.
 
 The caller owns scheduled/manual source audits: leave `browser-release-channel`
 empty and select the extended tier explicitly. A release caller must pass its
-actual `browser-release-channel`: `nightly` and `beta` require exactly the five
-required targets, while `rc` and a freshly built `stable` require all 35. Set
+actual `browser-release-channel`: `nightly` and `beta` require every target in the declared required
+profile (five by default, six for the historical Firefox profile), while `rc` and a freshly built `stable` require all 35. Set
 `browser-extended` to true only for `rc`/`stable`; conflicting settings fail before
 jobs start. A stable promotion reuses an accepted RC's unchanged artifact and
 qualification; it must not substitute a smaller beta run. If ordinary CI is
@@ -203,7 +229,8 @@ each admitted target definition, actual browser version, successful named
 scenarios, source SHA, run ID, run attempt, channel and candidate artifact ID.
 The release plan also checks the full three-OS, three-engine, three-generation
 cross-product, consistent distinct browser pins, the five current required
-targets, and all eight current branded-channel targets. Keeping only the target
+targets plus any explicitly selected historical profile, and all eight current
+branded-channel targets. Keeping only the target
 count while removing a platform or engine is rejected.
 Missing, duplicate, extra or stale evidence fails qualification. Its aggregate
 receipt records the verified targets and each result's SHA-256 digest. Source
