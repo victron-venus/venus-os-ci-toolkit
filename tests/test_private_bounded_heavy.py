@@ -99,7 +99,9 @@ class BoundedHeavyTests(unittest.TestCase):
             cases = [dict(data, bounded_heavy_ci_scopes=[]), dict(data, bounded_heavy_image=None),
                      dict(data, bounded_heavy_ci_scopes='example/heavy'), dict(data, unknown=True)]
             for missing in ('bounded_heavy_ci_scopes', 'bounded_heavy_image'):
-                case = dict(data); del case[missing]; cases.append(case)
+                case = dict(data)
+                del case[missing]
+                cases.append(case)
             for case in cases:
                 with self.subTest(case=case), self.assertRaises(ValueError):
                     path.write_text(json.dumps(case))
@@ -136,9 +138,11 @@ class BoundedHeavyTests(unittest.TestCase):
                  if e['name'] == 'RUNNER_PRIVATE_DOCKER_STORAGE')['value'] = mode
             self.assertFalse(accepted(ctx))
         for key in (arc.SCOPE_LABEL, arc.PROFILE_LABEL):
-            ctx = context((SCOPES[0], 'ci')); del ctx['object']['metadata']['labels'][key]
+            ctx = context((SCOPES[0], 'ci'))
+            del ctx['object']['metadata']['labels'][key]
             self.assertFalse(accepted(ctx))
-        ctx = context((SCOPES[0], 'ci')); ctx['request']['namespace'] = 'arc-private-automation'
+        ctx = context((SCOPES[0], 'ci'))
+        ctx['request']['namespace'] = 'arc-private-automation'
         self.assertFalse(accepted(ctx))
 
     def test_absent_opt_in_preserves_existing_nuc_bytes(self):
