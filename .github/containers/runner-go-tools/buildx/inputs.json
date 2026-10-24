@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repository": "docker/buildx",
+    "release_tag": "v0.38.1",
+    "commit": "0dbe87f36ed472fe36b6796c3f70b4210a731fc5",
+    "archive_sha256": "c5c810b083ed3725f7d4299ba01505b5891d164cf81c3398ea4c3b27a3b71149"
+  },
+  "go_version": "go1.26.10",
+  "original_locks": {
+    "go.mod": "a93029abb94e88ddaa532ddeaab4802259a1025408f1eac417a9886e140067ef",
+    "go.sum": "c8541a1b2469760b360c480270742a4a0f3202b651e354078db7e35c23dadffe"
+  },
+  "fixed_locks": {
+    "go.mod": "fb738392367d61cd40435825e9840dbdba3ce3e52c2440e3528571a0343b7579",
+    "go.sum": "b016df41b7aa851ae4d1b52a78987ef17ab85807273ed157efa2cacf9ad5cef5"
+  },
+  "updates": [
+    "golang.org/x/net@v0.60.0",
+    "github.com/moby/go-archive@v0.3.0"
+  ],
+  "qualification": "Lock preparation only. Source tests and final image acceptance are separate required gates."
+}

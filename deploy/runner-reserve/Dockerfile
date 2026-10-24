@@ -1,3 +1,22 @@
+FROM --platform=$BUILDPLATFORM docker.io/library/golang@sha256:672c944cfd07599b5f1bb179869270cdc94c6254e41db4d431259693cb286b82 AS patched-go-tools
+ARG TARGETARCH
+RUN apt-get update && apt-get install -y --no-install-recommends python3 ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /opt/victron-go-tools-inputs
+COPY scripts/build_runner_go_tools.py scripts/build_runner_go_tools.py
+COPY .github/containers/runner-go-tools.json .github/containers/runner-go-tools.json
+COPY .github/containers/runner-go-tools/containerd/go.mod .github/containers/runner-go-tools/containerd/go.mod
+COPY .github/containers/runner-go-tools/containerd/go.sum .github/containers/runner-go-tools/containerd/go.sum
+COPY .github/containers/runner-go-tools/containerd/inputs.json .github/containers/runner-go-tools/containerd/inputs.json
+COPY .github/containers/runner-go-tools/buildx/go.mod .github/containers/runner-go-tools/buildx/go.mod
+COPY .github/containers/runner-go-tools/buildx/go.sum .github/containers/runner-go-tools/buildx/go.sum
+COPY .github/containers/runner-go-tools/buildx/inputs.json .github/containers/runner-go-tools/buildx/inputs.json
+COPY .github/containers/runner-go-tools/compose/go.mod .github/containers/runner-go-tools/compose/go.mod
+COPY .github/containers/runner-go-tools/compose/go.sum .github/containers/runner-go-tools/compose/go.sum
+COPY .github/containers/runner-go-tools/compose/inputs.json .github/containers/runner-go-tools/compose/inputs.json
+RUN python3 scripts/build_runner_go_tools.py containerd
+RUN python3 scripts/build_runner_go_tools.py buildx
+RUN python3 scripts/build_runner_go_tools.py compose
 FROM docker.io/library/docker@sha256:9e79b879b177fbd72c34376a3dd3d91747da5db49e1f560f76aea59561471977 AS docker
 FROM docker.io/library/node@sha256:55fb5f5a527ea2c5c4a95f963e48ef90aa38c7b346054fdc8ee9957a2b55d205 AS node
 FROM ghcr.io/actions/actions-runner@sha256:e275409999c37162649aa050ca573f03eab2eabcb3a1e7fcc47548de6b4f9690 AS runner
@@ -64,20 +83,11 @@ RUN arch="$(dpkg --print-architecture)" \
     && rm -rf /tmp/reserve-gh
 COPY --from=docker /usr/local/bin/ /usr/local/bin/
 COPY --from=docker /usr/local/libexec/docker/cli-plugins/ /usr/local/libexec/docker/cli-plugins/
-# Docker 29.9 dind omits standalone containerd. Keep our independently
-# supervised sandbox daemon, using the same official Docker static bundle.
-COPY .github/containers/runner-containerd.json /opt/victron-image-build/containerd/.github/containers/runner-containerd.json
-COPY scripts/install_runner_containerd.py /opt/victron-image-build/containerd/scripts/install_runner_containerd.py
-RUN arch="$(dpkg --print-architecture)" \
-    && case "$arch" in amd64) platform=x86_64 ;; arm64) platform=aarch64 ;; *) exit 1 ;; esac \
-    && curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
-        --connect-timeout 15 --max-time 240 --max-filesize 157286400 \
-        "https://download.docker.com/linux/static/stable/${platform}/docker-29.9.2.tgz" \
-        --output /opt/victron-image-build/containerd/archive.tgz \
-    && python3 /opt/victron-image-build/containerd/scripts/install_runner_containerd.py \
-        --architecture "$arch" \
-    && containerd --version \
-    && rm -rf /opt/victron-image-build/containerd
+# Replace the affected executables, including the separately supervised daemon.
+# Official runc is retained; its affected-package applicability is documented.
+COPY --from=patched-go-tools /opt/victron-go-tools/bin/ /usr/local/bin/
+COPY --from=patched-go-tools /opt/victron-go-tools/cli-plugins/ /usr/local/libexec/docker/cli-plugins/
+COPY --from=patched-go-tools /opt/victron-go-tools/notices/ /usr/local/share/licenses/victron-go-tools/
 COPY --from=node /usr/local/bin/node /usr/local/bin/node
 # Keep npm 11's CLI contract; replace only its two selected bundled dependencies with the
 # reviewed upstream security release. No lifecycle hooks or package resolution.

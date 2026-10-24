@@ -1,0 +1,21 @@
+{
+  "source": {
+    "repository": "docker/compose",
+    "release_tag": "v5.6.1",
+    "commit": "6cbc19a3fd59e305fb814dca4d854a4fb67d2941",
+    "archive_sha256": "2293b570f258dfc6e38e0bfdd3fa0e710324a7cf0449994304b524af8fb4f06c"
+  },
+  "go_version": "go1.26.10",
+  "original_locks": {
+    "go.mod": "4af3e0f8be78563fb4793b24f38d9efa51bb07147d4bcfbfe5751be47f7bbd62",
+    "go.sum": "c7958ca4e417c9da1dc013e51923633385fe1e7814f651cdc432719bb0607dd8"
+  },
+  "fixed_locks": {
+    "go.mod": "4fc4a43a1c6d22f08ceae0ab0cebfb35af6d4c99d1b83a79c749b088b8a7748c",
+    "go.sum": "4fab90ed241d7edaacb92b2c500225d0ad03e2c4e46dffe81011d686d58e9f47"
+  },
+  "updates": [
+    "golang.org/x/net@v0.60.0"
+  ],
+  "qualification": "Lock preparation only. Source tests and final image acceptance are separate required gates."
+}

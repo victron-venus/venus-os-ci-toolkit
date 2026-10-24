@@ -1,0 +1,22 @@
+{
+  "source": {
+    "repository": "containerd/containerd",
+    "release_tag": "v2.4.2",
+    "commit": "b7a25261e029d68978bbf290df0a62fc819b3c51",
+    "archive_sha256": "e38df0eeb40d2304f3450edb148aee838cb0a57f3976a47c78870f92c80f1796"
+  },
+  "go_version": "go1.26.10",
+  "original_locks": {
+    "go.mod": "160493ce61c5b7a0639dcc4dc3cba19958384db3dd51d63c5e7b087d67e687cc",
+    "go.sum": "a38ac3f5c1c0a5ea2747e12b57fbd3547703251bfe02e49647939bec8860b4ff"
+  },
+  "fixed_locks": {
+    "go.mod": "c914e0b5f06866f41e26dcd9db3b7fe60f5dce3958245bfa55f6b17c22a8438a",
+    "go.sum": "53f8f1b12719ef15e15e80b1ecf17ae8b248ba588518e9577785400c5269847f"
+  },
+  "updates": [
+    "golang.org/x/net@v0.60.0"
+  ],
+  "qualification": "Lock preparation only. Source tests and final image acceptance are separate required gates.",
+  "upstream_backport": "https://github.com/containerd/containerd/commit/1350ed10d68320f0f3e944b86b92c4dfdf4791a3"
+}
