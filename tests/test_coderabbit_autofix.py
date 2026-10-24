@@ -299,6 +299,7 @@ class ApiReadRetry(unittest.TestCase):
         for error in (self.failure("unexpected end of JSON input"),
                       self.failure("Get endpoint: unexpected EOF"),
                       self.failure("read: connection reset by peer"),
+                      self.failure("dial tcp api.github.com:443: connect: connection refused"),
                       self.failure("upstream unavailable (HTTP 503)"),
                       subprocess.TimeoutExpired(self.command, 30)):
             with self.subTest(error=error), patch("subprocess.run", side_effect=[error, error, self.success]) as run, \

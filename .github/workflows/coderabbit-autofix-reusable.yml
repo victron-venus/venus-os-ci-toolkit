@@ -79,7 +79,7 @@ jobs:
                   return 500 <= int(status[1]) <= 599
               return any(fragment in detail.lower() for fragment in (
                   "unexpected end of json input", "unexpected eof", "connection reset",
-                  "connection timed out", "i/o timeout", "tls handshake timeout",
+                  "connection refused", "connection timed out", "i/o timeout", "tls handshake timeout",
                   "context deadline exceeded", "temporary failure in name resolution",
               )) or re.search(r"\bEOF\b", detail) is not None
 
