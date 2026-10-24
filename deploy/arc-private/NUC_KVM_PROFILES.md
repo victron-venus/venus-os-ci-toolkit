@@ -118,6 +118,39 @@ scheduler does not prove sufficient throughput; application deadlines remain
 unchanged. Namespace quotas and `maxRunners: 1` alone do not serialize workers
 across namespaces.
 
+### Opt-in lower CPU share for an exclusive CI worker
+
+For a measured, bursty standard CI workload, the complete private plan may add
+`"low_share_ci_scopes": ["example-owner/application"]`. Every listed scope must
+already be a selected NUC `ci` target with standard resources and `tmpfs-2gi`.
+The list is optional and empty by default. It cannot overlap `light_ci_scopes`,
+which enables a different, concurrent execution contract.
+
+This option changes only the selected CI worker's CPU request from 600m to 100m.
+Its 2 CPU limit, 3 GiB memory request, 6 GiB memory limit, image, private network,
+bootstrap, storage and job deadlines remain unchanged. It still has
+`maxRunners: 1` and excludes every other NUC private worker through the original
+cross-namespace anti-affinity. Automation and release workers are unchanged.
+Admission binds the new exact resource tuple to the selected scope; another
+repository cannot borrow it by changing its resources or labels.
+
+Including RuntimeClass overhead, scheduling needs 200m CPU and 3200 MiB memory.
+This is a smaller CPU scheduling share, not a guarantee of faster execution or
+extra physical capacity. Under contention the job may progress more slowly.
+Do not enable it to suppress failures or extend deadlines: qualify the real CI
+matrix with the co-located services running, and retain the default if it cannot
+finish within the existing timeouts. Inspect CPU usage and pressure as well as
+requests. A single idle sample is not a performance qualification.
+
+Render and compare the entire plan before installation. Only the selected CI
+value and its exact admission branch should change. Pause new assignments to
+that pool, wait for its existing worker to finish and fully disappear, then
+apply the reviewed policy and worker-template changes together. Preserve all
+other scopes and validate positive and negative Pod dry-runs on the actual
+cluster. Resume the pool for real CI and verify its runtime cleanup afterward.
+Rollback follows the same drain-first process; never change the expected tuple
+while a worker with the other tuple still exists.
+
 Before qualification, read all ResourceQuota and LimitRange objects in each
 affected namespace, including quota `spec.hard`, `status.hard`, `status.used`,
 and any scopes. The admission evaluator uses `status.hard`; wait for it to

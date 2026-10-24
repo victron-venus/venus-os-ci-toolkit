@@ -77,6 +77,7 @@ class NucKvmPlan(NamedTuple):
     image: str
     node_ip: str
     light_ci_scopes: tuple[str, ...] = ()
+    low_share_ci_scopes: tuple[str, ...] = ()
 
 
 def load_nuc_kvm_plan(path):
@@ -92,8 +93,8 @@ def load_nuc_kvm_plan(path):
     data = json.loads(path.read_text(), object_pairs_hook=unique_object)
     required = {'targets', 'image', 'node_ip'}
     if (not isinstance(data, dict) or not required <= set(data)
-            or set(data) - required - {'light_ci_scopes'}):
-        raise ValueError('NUC KVM plan requires targets, image and node_ip, with optional light_ci_scopes')
+            or set(data) - required - {'light_ci_scopes', 'low_share_ci_scopes'}):
+        raise ValueError('NUC KVM plan requires targets, image and node_ip, with optional CI scope lists')
     if not isinstance(data['targets'], list) or not data['targets']:
         raise ValueError('NUC KVM plan requires an explicit nonempty target list')
     if any(not isinstance(target, dict) or set(target) != {'scope', 'profile'}
@@ -102,8 +103,11 @@ def load_nuc_kvm_plan(path):
     light = data.get('light_ci_scopes', [])
     if not isinstance(light, list) or any(not isinstance(scope, str) for scope in light):
         raise ValueError('light_ci_scopes must be an explicit list of repository scopes')
+    low_share = data.get('low_share_ci_scopes', [])
+    if not isinstance(low_share, list) or any(not isinstance(scope, str) for scope in low_share):
+        raise ValueError('low_share_ci_scopes must be an explicit list of repository scopes')
     return NucKvmPlan(tuple(NucKvmTarget(**target) for target in data['targets']),
-                      data['image'], data['node_ip'], tuple(light))
+                      data['image'], data['node_ip'], tuple(light), tuple(low_share))
 
 
 def validate_nuc_kvm(rows, config, sandbox_runtime, node_ip):
@@ -136,6 +140,15 @@ def validate_nuc_kvm(rows, config, sandbox_runtime, node_ip):
         raise ValueError('light_ci_scopes requires unique typed repository scopes')
     if any(NucKvmTarget(scope, 'ci') not in plan.targets for scope in plan.light_ci_scopes):
         raise ValueError('Every light CI scope must already be a selected NUC CI target')
+    if (not isinstance(plan.low_share_ci_scopes, tuple)
+            or any(not isinstance(scope, str) or not SCOPE.fullmatch(scope)
+                   for scope in plan.low_share_ci_scopes)
+            or len(set(plan.low_share_ci_scopes)) != len(plan.low_share_ci_scopes)):
+        raise ValueError('low_share_ci_scopes requires unique typed repository scopes')
+    if any(NucKvmTarget(scope, 'ci') not in plan.targets for scope in plan.low_share_ci_scopes):
+        raise ValueError('Every low-share CI scope must already be a selected NUC CI target')
+    if set(plan.light_ci_scopes) & set(plan.low_share_ci_scopes):
+        raise ValueError('Light concurrency and low-share exclusive CI cannot overlap')
     address = ipaddress.IPv4Address(plan.node_ip)
     if address.is_unspecified or address.is_loopback or address.is_multicast or address.is_link_local:
         raise ValueError('NUC guard requires a unicast node address')
@@ -156,10 +169,12 @@ def validate_nuc_kvm(rows, config, sandbox_runtime, node_ip):
                 raise ValueError('NUC KVM CI requires standard tmpfs-2gi or heavy tmpfs-6gi-heavy')
             if target.scope in plan.light_ci_scopes and mode != ('standard', 'tmpfs-2gi'):
                 raise ValueError('Light concurrency supports only standard CI with tmpfs-2gi')
+            if target.scope in plan.low_share_ci_scopes and mode != ('standard', 'tmpfs-2gi'):
+                raise ValueError('Low-share CI supports only standard CI with tmpfs-2gi')
         elif target.profile == 'automation' and validate_automation_storage(row) != 'tmpfs-3gi':
             raise ValueError('NUC KVM automation requires explicit tmpfs-3gi')
     return NucKvmPlan(tuple(sorted(plan.targets)), plan.image, plan.node_ip,
-                      tuple(sorted(plan.light_ci_scopes)))
+                      tuple(sorted(plan.light_ci_scopes)), tuple(sorted(plan.low_share_ci_scopes)))
 
 
 def name(scope, profile):
@@ -584,6 +599,8 @@ def nuc_kvm_value(value, config):
     labels = value['template']['metadata']['labels']
     light = (labels[PROFILE_LABEL] == 'ci' and labels[SCOPE_LABEL]
              in {name(scope, 'scope') for scope in config.light_ci_scopes})
+    low_share = (labels[PROFILE_LABEL] == 'ci' and labels[SCOPE_LABEL]
+                 in {name(scope, 'scope') for scope in config.low_share_ci_scopes})
     spec['affinity'] = nuc_serial_affinity(light)
     labels[SERIAL_LABEL] = 'nuc-kvm'
     if light:
@@ -592,7 +609,7 @@ def nuc_kvm_value(value, config):
     runner = spec['containers'][0]
     runner['image'] = config.image
     if labels[PROFILE_LABEL] == 'ci':
-        runner['resources']['requests']['cpu'] = '200m' if light else '600m'
+        runner['resources']['requests']['cpu'] = '200m' if light else ('100m' if low_share else '600m')
         runner['resources']['limits']['cpu'] = '1' if light else '2'
     for env in runner['env']:
         if env['name'] == 'RUNNER_RESERVE_NODE_IP':
