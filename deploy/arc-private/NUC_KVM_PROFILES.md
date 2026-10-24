@@ -120,21 +120,27 @@ across namespaces.
 
 ### Opt-in lower CPU share for an exclusive CI worker
 
-For a measured, bursty standard CI workload, the complete private plan may add
+For a measured, bursty CI workload, the complete private plan may add
 `"low_share_ci_scopes": ["example-owner/application"]`. Every listed scope must
-already be a selected NUC `ci` target with standard resources and `tmpfs-2gi`.
+already be a selected NUC `ci` target with one of the validated resource/storage
+pairs: standard with `tmpfs-2gi`, or heavy with `tmpfs-6gi-heavy`.
 The list is optional and empty by default. It cannot overlap `light_ci_scopes`,
 which enables a different, concurrent execution contract.
 
 This option changes only the selected CI worker's CPU request from 600m to 100m.
-Its 2 CPU limit, 3 GiB memory request, 6 GiB memory limit, image, private network,
-bootstrap, storage and job deadlines remain unchanged. It still has
+Its 2 CPU limit, image, private network, bootstrap, storage and job deadlines
+remain unchanged. Standard CI retains its 3/6 GiB memory request/limit and
+1/20 GiB disk request/limit. Heavy CI retains its 13/16 GiB memory request/limit,
+2/30 GiB disk request/limit and 6 GiB Docker tmpfs. It still has
 `maxRunners: 1` and excludes every other NUC private worker through the original
 cross-namespace anti-affinity. Automation and release workers are unchanged.
 Admission binds the new exact resource tuple to the selected scope; another
 repository cannot borrow it by changing its resources or labels.
 
-Including RuntimeClass overhead, scheduling needs 200m CPU and 3200 MiB memory.
+Including RuntimeClass overhead, scheduling needs 200m CPU and 3200 MiB memory
+for standard CI, or 13440 MiB memory for heavy CI. The heavy worker still reserves
+its full namespace quota and excludes other private workers; reducing CPU does
+not make it eligible for concurrent light execution.
 This is a smaller CPU scheduling share, not a guarantee of faster execution or
 extra physical capacity. Under contention the job may progress more slowly.
 Do not enable it to suppress failures or extend deadlines: qualify the real CI
