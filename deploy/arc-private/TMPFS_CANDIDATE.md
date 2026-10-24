@@ -241,3 +241,9 @@ and inode use, cgroup memory peak/OOM events,
 image/source digests, and cleanup. Repeat the relevant functional and network
 checks for the candidate image. A passing synthetic fixture does not replace
 current application CI, and does not qualify the other profiles.
+## Optional bounded-heavy candidate
+
+[Bounded heavy CI v1](BOUNDED_HEAVY.md) adds an explicit NUC-only candidate
+selection with 6 GiB tmpfs and a 9/12 GiB memory tuple. It uses a versioned
+wrapper mode and separately pinned image; source support is not runtime
+qualification, and the existing 13/16 GiB heavy profile remains the default.

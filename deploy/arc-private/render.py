@@ -72,12 +72,14 @@ class NucKvmTarget(NamedTuple):
 
 
 class NucKvmPlan(NamedTuple):
-    """Complete NUC target set sharing one reviewed image and guard address."""
+    """Complete NUC target set with explicitly scoped image/resource choices."""
     targets: tuple[NucKvmTarget, ...]
     image: str
     node_ip: str
     light_ci_scopes: tuple[str, ...] = ()
     low_share_ci_scopes: tuple[str, ...] = ()
+    bounded_heavy_ci_scopes: tuple[str, ...] = ()
+    bounded_heavy_image: str | None = None
 
 
 def load_nuc_kvm_plan(path):
@@ -93,7 +95,8 @@ def load_nuc_kvm_plan(path):
     data = json.loads(path.read_text(), object_pairs_hook=unique_object)
     required = {'targets', 'image', 'node_ip'}
     if (not isinstance(data, dict) or not required <= set(data)
-            or set(data) - required - {'light_ci_scopes', 'low_share_ci_scopes'}):
+            or set(data) - required - {'light_ci_scopes', 'low_share_ci_scopes',
+                                      'bounded_heavy_ci_scopes', 'bounded_heavy_image'}):
         raise ValueError('NUC KVM plan requires targets, image and node_ip, with optional CI scope lists')
     if not isinstance(data['targets'], list) or not data['targets']:
         raise ValueError('NUC KVM plan requires an explicit nonempty target list')
@@ -106,8 +109,16 @@ def load_nuc_kvm_plan(path):
     low_share = data.get('low_share_ci_scopes', [])
     if not isinstance(low_share, list) or any(not isinstance(scope, str) for scope in low_share):
         raise ValueError('low_share_ci_scopes must be an explicit list of repository scopes')
+    bounded = data.get('bounded_heavy_ci_scopes', [])
+    if not isinstance(bounded, list) or any(not isinstance(scope, str) for scope in bounded):
+        raise ValueError('bounded_heavy_ci_scopes must be an explicit list of repository scopes')
+    if ('bounded_heavy_ci_scopes' in data) != ('bounded_heavy_image' in data):
+        raise ValueError('Bounded heavy scopes and image must be specified together')
+    if 'bounded_heavy_image' in data and (not bounded or data['bounded_heavy_image'] is None):
+        raise ValueError('Bounded heavy selection must not be empty')
     return NucKvmPlan(tuple(NucKvmTarget(**target) for target in data['targets']),
-                      data['image'], data['node_ip'], tuple(light), tuple(low_share))
+                      data['image'], data['node_ip'], tuple(light), tuple(low_share),
+                      tuple(bounded), data.get('bounded_heavy_image'))
 
 
 def validate_nuc_kvm(rows, config, sandbox_runtime, node_ip):
@@ -149,6 +160,22 @@ def validate_nuc_kvm(rows, config, sandbox_runtime, node_ip):
         raise ValueError('Every low-share CI scope must already be a selected NUC CI target')
     if set(plan.light_ci_scopes) & set(plan.low_share_ci_scopes):
         raise ValueError('Light concurrency and low-share exclusive CI cannot overlap')
+    if (not isinstance(plan.bounded_heavy_ci_scopes, tuple)
+            or any(not isinstance(scope, str) or not SCOPE.fullmatch(scope)
+                   for scope in plan.bounded_heavy_ci_scopes)
+            or len(set(plan.bounded_heavy_ci_scopes)) != len(plan.bounded_heavy_ci_scopes)):
+        raise ValueError('bounded_heavy_ci_scopes requires unique typed repository scopes')
+    if bool(plan.bounded_heavy_ci_scopes) != (plan.bounded_heavy_image is not None):
+        raise ValueError('Bounded heavy scopes and image must be specified together')
+    if plan.bounded_heavy_ci_scopes:
+        if (not isinstance(plan.bounded_heavy_image, str)
+                or not PINNED.fullmatch(plan.bounded_heavy_image)
+                or plan.bounded_heavy_image == plan.image):
+            raise ValueError('Bounded heavy requires its distinct digest-pinned derivative image')
+        if any(NucKvmTarget(scope, 'ci') not in plan.targets for scope in plan.bounded_heavy_ci_scopes):
+            raise ValueError('Every bounded heavy scope must already be a selected NUC CI target')
+        if set(plan.bounded_heavy_ci_scopes) & set(plan.light_ci_scopes):
+            raise ValueError('Bounded heavy cannot use light concurrency')
     address = ipaddress.IPv4Address(plan.node_ip)
     if address.is_unspecified or address.is_loopback or address.is_multicast or address.is_link_local:
         raise ValueError('NUC guard requires a unicast node address')
@@ -169,13 +196,16 @@ def validate_nuc_kvm(rows, config, sandbox_runtime, node_ip):
                 raise ValueError('NUC KVM CI requires standard tmpfs-2gi or heavy tmpfs-6gi-heavy')
             if target.scope in plan.light_ci_scopes and mode != ('standard', 'tmpfs-2gi'):
                 raise ValueError('Light concurrency supports only standard CI with tmpfs-2gi')
+            if target.scope in plan.bounded_heavy_ci_scopes and mode != ('heavy', 'tmpfs-6gi-heavy'):
+                raise ValueError('Bounded heavy requires an explicitly heavy CI inventory row')
             # Low-share keeps the exclusive worker contract and changes only
             # CPU reservation; both validated storage/resource pairs retain
             # their full memory, disk and tmpfs budgets.
         elif target.profile == 'automation' and validate_automation_storage(row) != 'tmpfs-3gi':
             raise ValueError('NUC KVM automation requires explicit tmpfs-3gi')
     return NucKvmPlan(tuple(sorted(plan.targets)), plan.image, plan.node_ip,
-                      tuple(sorted(plan.light_ci_scopes)), tuple(sorted(plan.low_share_ci_scopes)))
+                      tuple(sorted(plan.light_ci_scopes)), tuple(sorted(plan.low_share_ci_scopes)),
+                      tuple(sorted(plan.bounded_heavy_ci_scopes)), plan.bounded_heavy_image)
 
 
 def name(scope, profile):
@@ -612,6 +642,13 @@ def nuc_kvm_value(value, config):
     if labels[PROFILE_LABEL] == 'ci':
         runner['resources']['requests']['cpu'] = '200m' if light else ('100m' if low_share else '600m')
         runner['resources']['limits']['cpu'] = '1' if light else '2'
+        if labels[SCOPE_LABEL] in {name(scope, 'scope') for scope in config.bounded_heavy_ci_scopes}:
+            runner['image'] = config.bounded_heavy_image
+            runner['resources']['requests']['memory'] = '9Gi'
+            runner['resources']['limits']['memory'] = '12Gi'
+            for env in runner['env']:
+                if env['name'] == 'RUNNER_PRIVATE_DOCKER_STORAGE':
+                    env['value'] = 'ci-bounded-heavy-v1-tmpfs-6gi'
     for env in runner['env']:
         if env['name'] == 'RUNNER_RESERVE_NODE_IP':
             env['value'] = config.node_ip
@@ -703,6 +740,26 @@ def nuc_targets_validation(values_by_target):
     return ' || '.join(branches)
 
 
+def nuc_scoped_image_validation(values_by_target):
+    """Bind each image to its exact namespace/profile/scope, never a global allowlist."""
+    groups = {}
+    for target, value in sorted(values_by_target.items()):
+        image = value['template']['spec']['containers'][0]['image']
+        groups.setdefault((target.profile, image), []).append(name(target.scope, 'scope'))
+    branches = []
+    for (profile, image), scopes in groups.items():
+        branches.append('(' + ' && '.join([
+            'request.namespace == ' + json.dumps('arc-private-' + profile),
+            'object.metadata.namespace == ' + json.dumps('arc-private-' + profile),
+            'object.metadata.labels[' + json.dumps(PROFILE_LABEL) + '] == ' + json.dumps(profile),
+            'object.metadata.labels[' + json.dumps(SCOPE_LABEL) + '] in ' + json.dumps(scopes),
+            'object.spec.containers[0].image == ' + json.dumps(image),
+        ]) + ')')
+    return ('size(object.spec.containers) == 1 && object.spec.containers[0].name == "runner" && '
+            'has(object.metadata.labels) && ' + json.dumps(PROFILE_LABEL) + ' in object.metadata.labels && '
+            + json.dumps(SCOPE_LABEL) + ' in object.metadata.labels && (' + ' || '.join(branches) + ')')
+
+
 def nuc_kvm_foundations(document, config, values_by_target):
     """Delegate only this runtime to a global exact contract, never a name exception."""
     items = document['items']
@@ -758,8 +815,11 @@ def nuc_kvm_foundations(document, config, values_by_target):
         if rule['message'] == 'gVisor is mandatory':
             rule['expression'] = runtime_match
         elif rule['message'] == 'Only the reviewed pinned worker image is allowed':
-            rule['expression'] = ("size(object.spec.containers) == 1 && object.spec.containers[0].name == 'runner' && "
-                                  "object.spec.containers[0].image == " + json.dumps(config.image))
+            if config.bounded_heavy_ci_scopes:
+                rule['expression'] = nuc_scoped_image_validation(values_by_target)
+            else:
+                rule['expression'] = ("size(object.spec.containers) == 1 && object.spec.containers[0].name == 'runner' && "
+                                      "object.spec.containers[0].image == " + json.dumps(config.image))
         elif rule['message'] == 'The tmpfs candidate requires its exact private profile and resource tuple':
             # Dynamic Quantity maps retain the Kubernetes 1.31 advisory workaround.
             rule['expression'] = nuc_targets_validation(values_by_target)

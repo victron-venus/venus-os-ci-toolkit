@@ -16,6 +16,10 @@ private_tmpfs_storage() {
       capacity=6442450944; inode_cap=524288; namespace=arc-private-ci; profile=ci
       memory_request=13958643712; memory_limit=17179869184
       ;;
+    ci-bounded-heavy-v1-tmpfs-6gi)
+      capacity=6442450944; inode_cap=524288; namespace=arc-private-ci; profile=ci
+      memory_request=9663676416; memory_limit=12884901888
+      ;;
     automation-tmpfs-3gi)
       capacity=3221225472; inode_cap=262144; namespace=arc-private-automation; profile=automation
       memory_request=5368709120; memory_limit=6442450944
@@ -75,7 +79,7 @@ private_tmpfs_storage() {
 private_start_docker() {
   case "${RUNNER_PRIVATE_DOCKER_STORAGE:-disk}" in
     disk) exec /opt/victron-ci-reserve/sandbox-docker-base.sh "$@" ;;
-    ci-tmpfs-2gi|ci-heavy-tmpfs-6gi|automation-tmpfs-3gi)
+    ci-tmpfs-2gi|ci-heavy-tmpfs-6gi|ci-bounded-heavy-v1-tmpfs-6gi|automation-tmpfs-3gi)
       # Reuse readiness, lifecycle and daemon configuration without modifying
       # the public helper. Only this private mode replaces its storage gate.
       # shellcheck source-path=SCRIPTDIR
