@@ -87,6 +87,12 @@ stars, including drafts and forks. Copy the [pinned caller template](docs/exampl
 after installing the CodeRabbit app. It verifies repository visibility and bot
 identity and avoids duplicate requests without checking out PR code.
 
+The optional [Review policy](docs/REVIEW_POLICY.md) requires a current-head
+independent approval and can explicitly accept a verified CodeRabbit rate-limit
+status. It preserves required CI and unresolved-thread protections without
+manufacturing an approval. Adoption changes native approval rules deliberately;
+copy both trusted-evaluator and unprivileged review-event caller templates.
+
 ## CI and release documentation
 
 The [private OTTPlay k3s runner configuration](docs/ottplay-k3s-runners.md) adds

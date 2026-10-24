@@ -1,0 +1,38 @@
+name: Review policy
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, ready_for_review, converted_to_draft, edited]
+  status:
+  schedule:
+    - cron: '7,22,37,52 * * * *'
+  workflow_run:
+    workflows: [Review policy events]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      pull-request-number:
+        description: Open PR number to reevaluate
+        required: true
+        type: string
+
+permissions: {}
+
+jobs:
+  review-policy:
+    # Status events are handled only for the authentic CodeRabbit app. Our own
+    # Review policy status cannot trigger another evaluation.
+    if: >-
+      github.event_name != 'status' ||
+      (github.event.context == 'CodeRabbit' &&
+       github.event.sender.login == 'coderabbitai[bot]' &&
+       github.event.sender.id == 136622811 && github.event.sender.type == 'Bot')
+    permissions:
+      contents: read
+      pull-requests: read
+      statuses: write
+    # Replace this pin with the reviewed toolkit commit containing this workflow.
+    uses: victron-venus/venus-os-ci-toolkit/.github/workflows/review-policy-reusable.yml@REPLACE_WITH_REVIEWED_TOOLKIT_COMMIT
+    with:
+      allow-coderabbit-rate-limit: true
+      pull-request-number: ${{ inputs.pull-request-number || '' }}
