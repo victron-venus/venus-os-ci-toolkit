@@ -6,6 +6,7 @@
   "ha-homelab/ha-desloc-card",
   "open-ott-play/ottplay-control-server",
   "open-ott-play/ottplay-foss",
+  "open-ott-play/outpace-acestream",
   "victron-venus/dbus-ev",
   "victron-venus/dbus-event-log",
   "victron-venus/dbus-mqtt-battery",
