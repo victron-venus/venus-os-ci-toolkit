@@ -9,3 +9,9 @@
 !deploy/runner-reserve/sandbox-docker.sh
 !deploy/runner-reserve/qualify.sh
 !deploy/runner-reserve/guard-ca.crt
+!.github/containers/runner-containerd.json
+!scripts/install_runner_containerd.py
+!.github/containers/runner-npm.json
+!scripts/install_runner_npm.py
+!scripts/prune_runner_npm.py
+!deploy/runner-reserve/qualify-npm.cjs

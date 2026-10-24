@@ -1,7 +1,7 @@
-FROM docker.io/library/docker@sha256:7dcdfc4a20246236f558175182ccace1eb15a41bd3eb119dd2284f393498b7c1 AS docker
-FROM docker.io/library/node@sha256:0e0ff40c39bc087845bfb27465a0df4ea419520094bc35842ff83dd8cbe6f9b6 AS node
-FROM ghcr.io/actions/actions-runner@sha256:e5496277be5d09bc968b3d64911b74e219ac4a3f2edce956a3ecf9271bea1ef4 AS runner
-FROM docker.io/library/ubuntu@sha256:534baea6a22c03a63003dbc8dbe78fe34bc0d7e595d9a9dc9834884ff530eb55
+FROM docker.io/library/docker@sha256:9e79b879b177fbd72c34376a3dd3d91747da5db49e1f560f76aea59561471977 AS docker
+FROM docker.io/library/node@sha256:55fb5f5a527ea2c5c4a95f963e48ef90aa38c7b346054fdc8ee9957a2b55d205 AS node
+FROM ghcr.io/actions/actions-runner@sha256:e275409999c37162649aa050ca573f03eab2eabcb3a1e7fcc47548de6b4f9690 AS runner
+FROM docker.io/library/ubuntu@sha256:68ee22004a9109b44973313b02ff7b1de250f1de0f5ecb628d73f579aaff33ac
 SHELL ["/bin/bash", "-eo", "pipefail", "-c"]
 ENV DEBIAN_FRONTEND=noninteractive
 # This disposable build layer is exported only after package installation succeeds.
@@ -64,11 +64,50 @@ RUN arch="$(dpkg --print-architecture)" \
     && rm -rf /tmp/reserve-gh
 COPY --from=docker /usr/local/bin/ /usr/local/bin/
 COPY --from=docker /usr/local/libexec/docker/cli-plugins/ /usr/local/libexec/docker/cli-plugins/
+# Docker 29.9 dind omits standalone containerd. Keep our independently
+# supervised sandbox daemon, using the same official Docker static bundle.
+COPY .github/containers/runner-containerd.json /tmp/reserve-containerd/.github/containers/runner-containerd.json
+COPY scripts/install_runner_containerd.py /tmp/reserve-containerd/scripts/install_runner_containerd.py
+RUN arch="$(dpkg --print-architecture)" \
+    && case "$arch" in amd64) platform=x86_64 ;; arm64) platform=aarch64 ;; *) exit 1 ;; esac \
+    && curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
+        --connect-timeout 15 --max-time 240 --max-filesize 157286400 \
+        "https://download.docker.com/linux/static/stable/${platform}/docker-29.9.2.tgz" \
+        --output /tmp/reserve-containerd/archive.tgz \
+    && python3 /tmp/reserve-containerd/scripts/install_runner_containerd.py \
+        --archive /tmp/reserve-containerd/archive.tgz --architecture "$arch" --output /usr/local/bin/containerd \
+    && containerd --version \
+    && rm -rf /tmp/reserve-containerd
 COPY --from=node /usr/local/bin/node /usr/local/bin/node
-COPY --from=node /usr/local/lib/node_modules/ /usr/local/lib/node_modules/
-RUN ln -s /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm && \
-    ln -s /usr/local/lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx
+# Keep npm 11's CLI contract; replace only its two selected bundled dependencies with the
+# reviewed upstream security release. No lifecycle hooks or package resolution.
+COPY .github/containers/runner-npm.json /tmp/reserve-npm/.github/containers/runner-npm.json
+COPY scripts/install_runner_npm.py /tmp/reserve-npm/scripts/install_runner_npm.py
+COPY deploy/runner-reserve/qualify-npm.cjs /tmp/reserve-npm/qualify-npm.cjs
+RUN mkdir -p /usr/local/lib/node_modules \
+    && curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
+        --connect-timeout 15 --max-time 180 --max-filesize 20971520 \
+        https://registry.npmjs.org/npm/-/npm-11.21.1.tgz --output /tmp/reserve-npm/npm.tgz \
+    && curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
+        --connect-timeout 15 --max-time 180 --max-filesize 20971520 \
+        https://registry.npmjs.org/undici/-/undici-6.29.1.tgz --output /tmp/reserve-npm/undici.tgz \
+    && curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
+        --connect-timeout 15 --max-time 180 --max-filesize 20971520 \
+        https://registry.npmjs.org/ip-address/-/ip-address-10.7.4.tgz --output /tmp/reserve-npm/ip-address.tgz \
+    && python3 /tmp/reserve-npm/scripts/install_runner_npm.py \
+        --npm /tmp/reserve-npm/npm.tgz --undici /tmp/reserve-npm/undici.tgz \
+        --ip-address /tmp/reserve-npm/ip-address.tgz \
+        --output /usr/local/lib/node_modules/npm \
+    && ln -s /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
+    && ln -s /usr/local/lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx \
+    && node /tmp/reserve-npm/qualify-npm.cjs \
+    && rm -rf /tmp/reserve-npm
 COPY --from=runner --chown=1001:1001 /home/runner/ /home/runner/
+COPY scripts/prune_runner_npm.py /tmp/prune_runner_npm.py
+RUN python3 /tmp/prune_runner_npm.py /home/runner \
+    && rm /tmp/prune_runner_npm.py \
+    && /home/runner/externals/node20/bin/node -e 'require("node:crypto"); require("node:fs"); console.log(process.version)' \
+    && /home/runner/externals/node24/bin/node -e 'require("node:crypto"); require("node:fs"); console.log(process.version)'
 COPY deploy/runner-reserve/start-runner.sh deploy/runner-reserve/sandbox-docker.sh \
     deploy/runner-reserve/qualify.sh deploy/runner-reserve/guard-ca.crt /opt/victron-ci-reserve/
 RUN chmod 0755 /opt/victron-ci-reserve/*.sh && \
