@@ -134,9 +134,9 @@ def main():
     parser.parse_args()
     pins = json.loads((ROOT / ".github/containers/runner-npm.json").read_text())
     # Fixed image-build locations prevent CLI input from selecting read/write targets.
-    install(Path("/tmp/reserve-npm/npm.tgz"),
-            {"undici": Path("/tmp/reserve-npm/undici.tgz"),
-             "ip-address": Path("/tmp/reserve-npm/ip-address.tgz")},
+    install(Path("/opt/victron-image-build/npm/npm.tgz"),
+            {"undici": Path("/opt/victron-image-build/npm/undici.tgz"),
+             "ip-address": Path("/opt/victron-image-build/npm/ip-address.tgz")},
             Path("/usr/local/lib/node_modules/npm"), pins)
 
 

@@ -78,7 +78,7 @@ def main():
     args = parser.parse_args()
     pins = json.loads((ROOT / ".github/containers/runner-containerd.json").read_text())
     # The image recipe owns these paths; CLI input cannot select filesystem targets.
-    install(Path("/tmp/reserve-containerd/archive.tgz"), Path("/usr/local/bin/containerd"),
+    install(Path("/opt/victron-image-build/containerd/archive.tgz"), Path("/usr/local/bin/containerd"),
             pins, args.architecture)
 
 

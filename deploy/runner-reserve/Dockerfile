@@ -66,44 +66,45 @@ COPY --from=docker /usr/local/bin/ /usr/local/bin/
 COPY --from=docker /usr/local/libexec/docker/cli-plugins/ /usr/local/libexec/docker/cli-plugins/
 # Docker 29.9 dind omits standalone containerd. Keep our independently
 # supervised sandbox daemon, using the same official Docker static bundle.
-COPY .github/containers/runner-containerd.json /tmp/reserve-containerd/.github/containers/runner-containerd.json
-COPY scripts/install_runner_containerd.py /tmp/reserve-containerd/scripts/install_runner_containerd.py
+COPY .github/containers/runner-containerd.json /opt/victron-image-build/containerd/.github/containers/runner-containerd.json
+COPY scripts/install_runner_containerd.py /opt/victron-image-build/containerd/scripts/install_runner_containerd.py
 RUN arch="$(dpkg --print-architecture)" \
     && case "$arch" in amd64) platform=x86_64 ;; arm64) platform=aarch64 ;; *) exit 1 ;; esac \
     && curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
         --connect-timeout 15 --max-time 240 --max-filesize 157286400 \
         "https://download.docker.com/linux/static/stable/${platform}/docker-29.9.2.tgz" \
-        --output /tmp/reserve-containerd/archive.tgz \
-    && python3 /tmp/reserve-containerd/scripts/install_runner_containerd.py \
+        --output /opt/victron-image-build/containerd/archive.tgz \
+    && python3 /opt/victron-image-build/containerd/scripts/install_runner_containerd.py \
         --architecture "$arch" \
     && containerd --version \
-    && rm -rf /tmp/reserve-containerd
+    && rm -rf /opt/victron-image-build/containerd
 COPY --from=node /usr/local/bin/node /usr/local/bin/node
 # Keep npm 11's CLI contract; replace only its two selected bundled dependencies with the
 # reviewed upstream security release. No lifecycle hooks or package resolution.
-COPY .github/containers/runner-npm.json /tmp/reserve-npm/.github/containers/runner-npm.json
-COPY scripts/install_runner_npm.py /tmp/reserve-npm/scripts/install_runner_npm.py
-COPY deploy/runner-reserve/qualify-npm.cjs /tmp/reserve-npm/qualify-npm.cjs
+COPY .github/containers/runner-npm.json /opt/victron-image-build/npm/.github/containers/runner-npm.json
+COPY scripts/install_runner_npm.py /opt/victron-image-build/npm/scripts/install_runner_npm.py
+COPY deploy/runner-reserve/qualify-npm.cjs /opt/victron-image-build/npm/qualify-npm.cjs
 RUN mkdir -p /usr/local/lib/node_modules \
     && curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
         --connect-timeout 15 --max-time 180 --max-filesize 20971520 \
-        https://registry.npmjs.org/npm/-/npm-11.21.1.tgz --output /tmp/reserve-npm/npm.tgz \
+        https://registry.npmjs.org/npm/-/npm-11.21.1.tgz --output /opt/victron-image-build/npm/npm.tgz \
     && curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
         --connect-timeout 15 --max-time 180 --max-filesize 20971520 \
-        https://registry.npmjs.org/undici/-/undici-6.29.1.tgz --output /tmp/reserve-npm/undici.tgz \
+        https://registry.npmjs.org/undici/-/undici-6.29.1.tgz --output /opt/victron-image-build/npm/undici.tgz \
     && curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
         --connect-timeout 15 --max-time 180 --max-filesize 20971520 \
-        https://registry.npmjs.org/ip-address/-/ip-address-10.7.4.tgz --output /tmp/reserve-npm/ip-address.tgz \
-    && python3 /tmp/reserve-npm/scripts/install_runner_npm.py \
+        https://registry.npmjs.org/ip-address/-/ip-address-10.7.4.tgz --output /opt/victron-image-build/npm/ip-address.tgz \
+    && python3 /opt/victron-image-build/npm/scripts/install_runner_npm.py \
     && ln -s /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
     && ln -s /usr/local/lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx \
-    && node /tmp/reserve-npm/qualify-npm.cjs \
-    && rm -rf /tmp/reserve-npm
+    && node /opt/victron-image-build/npm/qualify-npm.cjs \
+    && rm -rf /opt/victron-image-build/npm
 COPY --from=runner --chown=1001:1001 /home/runner/ /home/runner/
 COPY scripts/prune_runner_npm.py /tmp/prune_runner_npm.py
 RUN python3 /tmp/prune_runner_npm.py /home/runner \
     && rm /tmp/prune_runner_npm.py \
-    && /home/runner/externals/node20/bin/node -e 'require("node:crypto"); require("node:fs"); console.log(process.version)' \
+    && /home/runner/externals/node20/bin/node \
+        -e 'require("node:crypto"); require("node:fs"); console.log(process.version)' \
     && /home/runner/externals/node24/bin/node \
         -e 'require("node:crypto"); require("node:fs"); console.log(process.version)'
 COPY deploy/runner-reserve/start-runner.sh deploy/runner-reserve/sandbox-docker.sh \
