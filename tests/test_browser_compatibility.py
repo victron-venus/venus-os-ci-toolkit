@@ -164,6 +164,103 @@ class BrowserCompatibilityTests(unittest.TestCase):
         self.assertNotEqual(self.plan(duplicate_identity, BROWSER_RELEASE_CHANNEL="rc",
                                      BROWSER_EXTENDED="true").returncode, 0)
 
+    def regression_targets(self):
+        rows = self.release_targets()
+        regression = next(row for row in rows if row["os"] == "windows-2022"
+                          and row["engine"] == "firefox" and row["playwright"] == "1.62.1")
+        regression["tier"] = "required"
+        return rows
+
+    def test_required_profile_is_declared_and_bound_to_both_actual_scripts(self):
+        declaration = WORKFLOW["on"]["workflow_call"]["inputs"]["browser-required-profile"]
+        self.assertEqual(declaration["default"], "baseline")
+        for job, name in (("browser-plan", "Validate and select the explicit compatibility inventory"),
+                          ("browser-verdict", "Verify the exact release target set and evidence identity")):
+            step = next(row for row in WORKFLOW["jobs"][job]["steps"] if row.get("name") == name)
+            self.assertEqual(step["env"]["BROWSER_REQUIRED_PROFILE"], "${{ inputs.browser-required-profile }}")
+
+    def test_historical_profile_preserves_all_baseline_targets_and_full_release_inventory(self):
+        rows = self.regression_targets()
+        for channel in ("", "nightly", "beta", "rc", "stable"):
+            with self.subTest(channel=channel):
+                (self.root / "output").unlink(missing_ok=True)
+                full = channel in ("rc", "stable")
+                result = self.plan(rows, BROWSER_REQUIRED_PROFILE="windows-firefox-1.62.1",
+                                   BROWSER_RELEASE_CHANNEL=channel, BROWSER_EXTENDED=str(full).lower())
+                self.assertEqual(result.returncode, 0, result.stderr)
+                selected = self.output()["include"]
+                self.assertEqual(len(selected), 35 if full else 6)
+                baseline = {row["id"] for row in self.release_targets() if row["tier"] == "required"}
+                self.assertTrue(baseline.issubset({row["id"] for row in selected if row["tier"] == "required"}))
+                self.assertEqual(selected, [row | {"channel": row.get("channel", "")} for row in rows
+                                            if full or row["tier"] == "required"])
+
+    def test_required_profile_rejects_unknown_missing_swapped_or_undeclared_regression(self):
+        for profile, rows in (("unknown", self.regression_targets()), ("", self.regression_targets()),
+                              ("windows-firefox-1.62.1", self.release_targets()),
+                              ("baseline", self.regression_targets())):
+            result = self.plan(rows, BROWSER_REQUIRED_PROFILE=profile, BROWSER_RELEASE_CHANNEL="rc",
+                               BROWSER_EXTENDED="true")
+            self.assertNotEqual(result.returncode, 0)
+            self.assertFalse((self.root / "output").exists())
+        for changed in ({"playwright": "1.63.0"}, {"engine": "webkit"}, {"os": "ubuntu-latest"},
+                        {"tier": "extended"}):
+            rows = self.regression_targets()
+            target = next(row for row in rows if row["os"] == "windows-2022" and row["engine"] == "firefox"
+                          and row["playwright"] == "1.62.1")
+            target.update(changed)
+            self.assertNotEqual(self.plan(rows, BROWSER_REQUIRED_PROFILE="windows-firefox-1.62.1",
+                                          BROWSER_RELEASE_CHANNEL="rc", BROWSER_EXTENDED="true").returncode, 0)
+        rows = self.regression_targets()
+        # Keep the count at six while removing a mandatory current target.
+        baseline = next(row for row in rows if row["tier"] == "required" and row["os"] == "ubuntu-latest")
+        other = next(row for row in rows if row["tier"] == "extended")
+        baseline["tier"], other["tier"] = "extended", "required"
+        self.assertNotEqual(self.plan(rows, BROWSER_REQUIRED_PROFILE="windows-firefox-1.62.1",
+                                      BROWSER_RELEASE_CHANNEL="rc", BROWSER_EXTENDED="true").returncode, 0)
+
+    def test_historical_profile_verdict_requires_exact_sixth_result_and_attempt(self):
+        for channel in ("beta", "rc"):
+            with self.subTest(channel=channel):
+                import shutil
+                shutil.rmtree(self.root / "evidence", ignore_errors=True)
+                rows, directory = self.release_evidence(channel, self.regression_targets())
+                env = {"BROWSER_REQUIRED_PROFILE": "windows-firefox-1.62.1"}
+                result = self.verdict(rows, directory, channel=channel, **env)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                receipt = json.loads((self.root / "verdict.json").read_text())
+                self.assertEqual(receipt["requiredProfile"], "windows-firefox-1.62.1")
+                self.assertEqual(len(receipt["targets"]), 6 if channel == "beta" else 35)
+                self.assertNotEqual(self.verdict(rows, directory, channel=channel).returncode, 0)
+                self.assertNotEqual(self.verdict(rows, directory, channel=channel,
+                                                BROWSER_REQUIRED_PROFILE="unknown").returncode, 0)
+                target = next(row for row in rows if row["os"] == "windows-2022" and row["engine"] == "firefox"
+                              and row["playwright"] == "1.62.1")
+                file = directory / f"browser-release-{target['id']}-2" / "result.json"
+                data = json.loads(file.read_text())
+                file.write_text(json.dumps(data | {"runAttempt": "1"}))
+                self.assertNotEqual(self.verdict(rows, directory, channel=channel, **env).returncode, 0)
+                file.write_text(json.dumps(data))
+                swapped = copy.deepcopy(rows)
+                next(row for row in swapped if row["id"] == target["id"])["engine"] = "webkit"
+                self.assertNotEqual(self.verdict(swapped, directory, channel=channel, **env).returncode, 0)
+
+    def test_historical_profile_reduced_scope_never_claims_windows_qualification(self):
+        rows = self.regression_targets()
+        env = {"BROWSER_REQUIRED_PROFILE": "windows-firefox-1.62.1"}
+        result = self.plan(rows, BROWSER_RELEASE_CHANNEL="beta", **(self.reserve_env() | env))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        coverage = self.output("coverage")
+        self.assertEqual(len(coverage["skippedTargets"]), 3)
+        rows, directory = self.release_evidence("beta", self.output()["include"])
+        result = self.verdict(rows, directory, channel="beta", **(env | {
+            "CI_HOSTED_RUNNERS_ENABLED": "false", "BROWSER_COVERAGE": json.dumps(coverage)}))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        receipt = json.loads((self.root / "verdict.json").read_text())
+        self.assertFalse(receipt["fullPlatformQualified"])
+        self.assertEqual(len(receipt["targets"]), 3)
+        self.assertEqual(len(receipt["skippedTargets"]), 3)
+
     def test_linux_scope_preserves_every_selected_linux_target(self):
         rows = self.release_targets()
         for extended in (False, True):
