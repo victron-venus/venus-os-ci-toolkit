@@ -73,7 +73,7 @@ jobs:
         working-directory: ${{ inputs.working-directory }}
     steps:
       - name: Harden the runner (Audit all outbound calls)
-        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
         with:
           egress-policy: audit
 
@@ -81,7 +81,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup Go
-        uses: victron-venus/venus-os-ci-toolkit/actions/setup-go@dff3879fcdaf0d0eeb0145e50f7f034ab2e87b93 # main
+        uses: victron-venus/venus-os-ci-toolkit/actions/setup-go@e71559f44e41f39ad0037bf13c7f43bbbb2ec9af # main
         with:
           go-version: ${{ inputs.go-version }}
           golangci-lint-major: ${{ inputs.golangci-lint-major }}
