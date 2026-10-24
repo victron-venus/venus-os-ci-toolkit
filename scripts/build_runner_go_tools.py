@@ -196,7 +196,8 @@ def retained_utility_notices(source, destination, spec, packages):
 def go_environment(architecture=None):
     env = dict(os.environ, GOTOOLCHAIN="local", GOWORK="off", GOFLAGS="-mod=readonly",
                GOPROXY="https://proxy.golang.org", GOSUMDB="sum.golang.org",
-               GOENV="off", GOMAXPROCS="2", CGO_ENABLED="0", GOOS="linux")
+               GOENV="off", GOMAXPROCS="2", CGO_ENABLED="0", GOOS="linux",
+               GOAMD64="v1", GOARM64="v8.0")
     for name in ("GOARCH", "GOPRIVATE", "GONOPROXY", "GONOSUMDB", "GOINSECURE",
                  "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"):
         env.pop(name, None)

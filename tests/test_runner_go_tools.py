@@ -252,6 +252,14 @@ class RunnerGoToolTests(unittest.TestCase):
         self.assertEqual(environment['GOPROXY'], 'https://proxy.golang.org')
         self.assertEqual(environment['GOSUMDB'], 'sum.golang.org')
 
+    def test_target_cpu_baselines_do_not_inherit_builder_settings(self):
+        with patch.dict(os.environ, {'GOAMD64': 'v4', 'GOARM64': 'v9.5'}):
+            for architecture in (None, 'amd64', 'arm64'):
+                with self.subTest(architecture=architecture):
+                    environment = TOOLS.go_environment(architecture)
+                    self.assertEqual(environment['GOAMD64'], 'v1')
+                    self.assertEqual(environment['GOARM64'], 'v8.0')
+
     def test_ci_mode_is_exclusive_and_requires_linux_worker_temp(self):
         with patch.dict(os.environ, {}, clear=True), self.assertRaises(ValueError):
             TOOLS.ci_directories('buildx')
