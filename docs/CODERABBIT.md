@@ -130,9 +130,24 @@ on its permissions. PR authors are not used as an identity signal for CodeRabbit
 
 The job paginates reviews, threads and comments, verifies the bot's login and
 account ID for deduplication, and rechecks the head and findings before writing.
-Concurrent events for the same head are serialized. An API failure stops the job;
-it never blindly retries a comment POST. As with review requests, external changes
+Concurrent events for the same head are serialized. Safe REST GET reads make at
+most three attempts for transient transport errors, HTTP 5xx, and empty or
+malformed JSON, with one- and two-second waits. Each `gh api` invocation has a 30-second
+timeout, including all pages of a paginated read; a retry starts that read over
+and discards the incomplete result. The complete job retains its five-minute
+limit. Retry progress appears in the job log without response bodies or tokens.
+HTTP 4xx failures (including rate limits and denied permissions) stop immediately.
+No POST is replayed, including GraphQL queries and comment writes. As with review requests, external changes
 between the last API read and the comment write cannot be locked by Actions.
+
+If a read still fails after the bounded retries, inspect GitHub availability and
+the bot's permissions, then rerun the failed job or use the dry run below. For
+`unexpected end of JSON input`, make sure the caller pins a reviewed toolkit
+revision with this retry handling; older pins do not acquire the fix automatically.
+If a comment POST times out or returns an invalid response, first inspect the PR
+comments for the hidden Autofix marker. The request may already have arrived.
+Do not remove the marker or blindly send another command: the next invocation
+rechecks the comments and deduplication limits before it can write.
 
 For an existing reviewed PR, validate eligibility without a comment:
 

@@ -2,10 +2,12 @@
 
 import copy
 import hashlib
+import io
 import json
 import os
 import subprocess
 import unittest
+from contextlib import redirect_stderr
 from pathlib import Path
 from unittest.mock import patch
 
@@ -276,6 +278,94 @@ class AutofixContract(unittest.TestCase):
             self.assertIn("github.event.sender.login == 'coderabbitai[bot]'", job["if"])
             self.assertIn("github.event.sender.type == 'Bot'", job["if"])
             self.assertEqual(set(job["secrets"]), {"BOT_PAT"})
+
+
+class ApiReadRetry(unittest.TestCase):
+    """Exercise the real inline API helper without replaying the workflow task."""
+
+    def setUp(self):
+        workflow = yaml.load(WORKFLOW.read_text(), Loader=yaml.BaseLoader)
+        code = next(s["run"] for s in workflow["jobs"]["request-autofix"]["steps"] if "run" in s)
+        scope = {"__name__": "api_contract_test"}
+        exec(compile(code, str(WORKFLOW), "exec"), scope)  # noqa: S102
+        self.api = scope["api"]
+        self.command = ["gh", "api", "user"]
+        self.success = subprocess.CompletedProcess(self.command, 0, '{"id": 123}', "")
+
+    def failure(self, message):
+        return subprocess.CalledProcessError(1, self.command, stderr=message)
+
+    def test_transient_reads_retry_with_bounded_backoff(self):
+        for error in (self.failure("unexpected end of JSON input"),
+                      self.failure("Get endpoint: unexpected EOF"),
+                      self.failure("read: connection reset by peer"),
+                      self.failure("dial tcp api.github.com:443: connect: connection refused"),
+                      self.failure("upstream unavailable (HTTP 503)"),
+                      subprocess.TimeoutExpired(self.command, 30)):
+            with self.subTest(error=error), patch("subprocess.run", side_effect=[error, error, self.success]) as run, \
+                    patch("time.sleep") as sleep, redirect_stderr(io.StringIO()) as log:
+                self.assertEqual(self.api("user", "test-token"), {"id": 123})
+                self.assertEqual(run.call_count, 3)
+                self.assertEqual([call.args for call in sleep.call_args_list], [(1,), (2,)])
+                self.assertTrue(all(call.kwargs["timeout"] == 30 for call in run.call_args_list))
+                self.assertIn("retry 2/3", log.getvalue())
+                self.assertIn("retry 3/3", log.getvalue())
+                self.assertNotIn("test-token", log.getvalue())
+
+    def test_empty_and_malformed_json_are_retried_for_reads(self):
+        for output in ("", " ", '{"partial":', '<html>Bad gateway</html>'):
+            with self.subTest(output=output), patch("subprocess.run", side_effect=[
+                    subprocess.CompletedProcess(self.command, 0, output, ""), self.success]) as run, \
+                    patch("time.sleep"), redirect_stderr(io.StringIO()):
+                self.assertEqual(self.api("user", "test-token"), {"id": 123})
+                self.assertEqual(run.call_count, 2)
+
+    def test_failed_reads_stop_after_three_attempts_and_redact_token(self):
+        with patch("subprocess.run", side_effect=self.failure("connection reset test-token")) as run, \
+                patch("time.sleep") as sleep, redirect_stderr(io.StringIO()) as log:
+            with self.assertRaisesRegex(RuntimeError, r"connection reset \*\*\*"):
+                self.api("user", "test-token")
+            self.assertEqual(run.call_count, 3)
+            self.assertEqual(sleep.call_count, 2)
+            self.assertNotIn("test-token", log.getvalue())
+
+    def test_permanent_errors_do_not_retry_even_with_transient_text(self):
+        for detail in ("denied (HTTP 401)", "rate limit (HTTP 403)", "missing (HTTP 404)",
+                       "invalid (HTTP 422)", "rate limit (HTTP 429)",
+                       "unexpected end of JSON input (HTTP 403)", "unknown failure"):
+            with self.subTest(detail=detail), patch("subprocess.run", side_effect=self.failure(detail)) as run, \
+                    patch("time.sleep") as sleep:
+                with self.assertRaises(RuntimeError):
+                    self.api("user", "test-token")
+                self.assertEqual(run.call_count, 1)
+                sleep.assert_not_called()
+
+    def test_paginated_read_restarts_without_partial_results(self):
+        partial = subprocess.CompletedProcess(self.command, 0, '[[{"id": 999}],', "")
+        complete = subprocess.CompletedProcess(self.command, 0, '[[{"id": 123}], []]', "")
+        with patch("subprocess.run", side_effect=[partial, complete]) as run, patch("time.sleep"), \
+                redirect_stderr(io.StringIO()):
+            self.assertEqual(self.api("user", "test-token", paginate=True), [[{"id": 123}], []])
+            self.assertEqual(run.call_count, 2)
+            self.assertEqual(run.call_args_list[0].args, run.call_args_list[1].args)
+            self.assertEqual(run.call_args.args[0][-2:], ["--paginate", "--slurp"])
+
+    def test_no_post_is_retried_for_transient_or_malformed_response(self):
+        for path, payload in (("graphql", {"query": "query { viewer { login } }"}),
+                              ("repos/example/project/issues/17/comments", {"body": "test"})):
+            for response in (self.failure("unavailable test-token (HTTP 502)"),
+                             self.failure("unexpected end of JSON input"),
+                             subprocess.TimeoutExpired(self.command, 30),
+                             subprocess.CompletedProcess(self.command, 0, "", ""),
+                             subprocess.CompletedProcess(self.command, 0, '{"partial":', "")):
+                with self.subTest(path=path, response=response), \
+                        patch("subprocess.run", side_effect=[response]) as run, patch("time.sleep") as sleep:
+                    with self.assertRaises(RuntimeError) as raised:
+                        self.api(path, "test-token", payload=payload)
+                    self.assertNotIn("test-token", str(raised.exception))
+                    self.assertEqual(run.call_count, 1)
+                    self.assertEqual(run.call_args.args[0][-4:], ["--method", "POST", "--input", "-"])
+                    sleep.assert_not_called()
 
 
 if __name__ == "__main__":
