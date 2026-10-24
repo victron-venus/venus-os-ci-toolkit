@@ -37,6 +37,59 @@ CI rejects a wrapper, runtime or policy pin mismatch. Dependency-update tooling
 must update these references atomically; a standalone workflow digest update
 is not sufficient.
 
+### Standalone candidate assessment
+
+Repositories with a validation-only policy or a custom publisher can run the
+same bounded engine without adopting the toolkit's versioning or publication
+system. Add a reviewed manifest and targets, then a thin caller like this (replace
+both placeholders with the same reviewed 40-character toolkit commit):
+
+```yaml
+name: RC fuzz assessment
+on:
+  workflow_dispatch:
+    inputs:
+      channel:
+        type: choice
+        options: [rc]
+        default: rc
+        required: true
+permissions:
+  contents: read
+jobs:
+  fuzz:
+    if: ${{ github.event.repository.private == false && github.event_name == 'workflow_dispatch' && github.event.inputs.channel == 'rc' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+    uses: victron-venus/venus-os-ci-toolkit/.github/workflows/fuzz.yml@FULL_REVIEWED_TOOLKIT_COMMIT_SHA
+    with:
+      toolkit-ref: FULL_REVIEWED_TOOLKIT_COMMIT_SHA
+      evidence-mode: candidate
+```
+
+Save the caller as `.github/workflows/fuzz-candidate.yml`. After review and
+merge, request a candidate assessment explicitly:
+
+```sh
+gh workflow run fuzz-candidate.yml --repo OWNER/REPOSITORY --ref main -f channel=rc
+```
+
+Use the repository's actual default branch in place of `main` when different.
+
+The default evidence mode remains `release`, which requires the frozen
+`release-plan-artifact`. Candidate mode rejects a supplied release plan and does
+not stage release assets, create tags, publish packages, or change existing
+device, signing, and acceptance gates. It retains `fuzz-candidate-<attempt>` for
+90 days and diagnostics for 30 days. The report binds the exact source commit,
+manifest, run and attempt, along with actual engine execution counts. Candidate
+reports use schema 3 and `evidence_mode: candidate`; release verifiers reject
+them, including older verifiers that accept only schemas 1 and 2. Passing this
+assessment is not proof that an application or firmware release was accepted.
+
+Use this caller only for explicitly requested release-candidate assessments.
+It has no push, pull-request, schedule, or beta trigger. Deterministic seed
+replay can still run in ordinary CI. The reusable workflow and engine both
+enforce the public/default-branch/RC boundary. Do not migrate a validation-only
+project to synthetic releases solely to enable fuzzing.
+
 Example manifest:
 
 ```json
