@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.1.7] - 2026-10-24
+
+### Security
+
+- Ship the maintained Cosign module overlay with go-chi/chi/v5 5.4.0, replacing the version affected by GHSA-j6qf-3m9c-vwj3. The source distribution includes these canonical generator inputs. No claim is made that the Cosign CLI exposes the affected HTTP middleware.
+
+### Upgrade
+
+Use this source package when regenerating signed-release consumers. Existing immutable workflow pins and copied files require an explicit reviewed update; publishing the package does not change runner routing, credentials, or deployed services.
+
 ## [0.1.6] - 2026-10-20
 
 ### Changed
