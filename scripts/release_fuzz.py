@@ -171,6 +171,16 @@ def event_contract(event: dict, event_name: str, ref: str, repository: str, sha:
         raise ValueError("Fuzz campaigns require a public default-branch RC dispatch")
 
 
+def evidence_contract(mode: str, plan_artifact: str) -> None:
+    """Keep standalone candidate checks separate from releasable evidence."""
+    if mode not in {"release", "candidate"}:
+        raise ValueError("Unknown fuzz evidence mode")
+    if mode == "release" and not plan_artifact:
+        raise ValueError("Release fuzzing requires its frozen plan artifact")
+    if mode == "candidate" and plan_artifact:
+        raise ValueError("Standalone candidate fuzzing must not supply a release plan")
+
+
 def check_run_jobs(jobs: list[dict], channel: str, sha: str) -> None:
     matches = [j for j in jobs if j.get("name") == JOB]
     if channel == "rc":
@@ -191,6 +201,8 @@ def profile(policy: dict, channel: str) -> dict | None:
 
 def verify_report(directory: Path, root: Path, repository: str, sha: str, run: int, attempt: int) -> None:
     data = json.loads((directory / REPORT).read_bytes())
+    if data.get("evidence_mode", "release") != "release":
+        raise ValueError("Standalone candidate evidence cannot qualify a release")
     config = manifest(root)
     expected = {
         "repository": repository, "source_sha": sha,
@@ -527,7 +539,9 @@ def run_preflight(root: Path, output: Path, data: dict, *, setup: bool) -> dict:
     return evidence
 
 
-def campaign(root: Path, output: Path) -> None:
+def campaign(root: Path, output: Path, evidence_mode: str = "release") -> None:
+    if evidence_mode not in {"release", "candidate"}:
+        raise ValueError("Unknown fuzz evidence mode")
     event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text())
     event_contract(event, os.environ["GITHUB_EVENT_NAME"], os.environ["GITHUB_REF"],
                    os.environ["GITHUB_REPOSITORY"], os.environ["GITHUB_SHA"])
@@ -539,7 +553,11 @@ def campaign(root: Path, output: Path) -> None:
         raise ValueError("Fuzz checkout differs from RC source")
     output.mkdir(parents=True, exist_ok=False)
     report = {
-        "schema": 2, "repository": os.environ["GITHUB_REPOSITORY"], "source_sha": actual,
+        # Schema 3 deliberately makes standalone evidence unacceptable to older
+        # release verifiers, which accept only release report schemas 1 and 2.
+        "schema": 3 if evidence_mode == "candidate" else 2,
+        "evidence_mode": evidence_mode,
+        "repository": os.environ["GITHUB_REPOSITORY"], "source_sha": actual,
         "run_id": int(os.environ["GITHUB_RUN_ID"]), "run_attempt": int(os.environ["GITHUB_RUN_ATTEMPT"]),
         "channel": "rc", "private": False, "network": "isolated", "status": "failed",
         "manifest_sha256": hashlib.sha256((root / MANIFEST).read_bytes()).hexdigest(),
@@ -567,9 +585,12 @@ def main() -> None:
     parser.add_argument("--root", type=Path, default=Path.cwd())
     parser.add_argument("--output", type=Path)
     parser.add_argument("--if-changed", action="store_true")
+    parser.add_argument("--evidence-mode", choices=("release", "candidate"), default="release")
+    parser.add_argument("--release-plan-artifact", default="")
     args = parser.parse_args()
     root = args.root.resolve()
     if args.action == "inspect":
+        evidence_contract(args.evidence_mode, args.release_plan_artifact)
         data = manifest(root)
         event_contract(json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text()),
                        os.environ["GITHUB_EVENT_NAME"], os.environ["GITHUB_REF"],
@@ -588,7 +609,7 @@ def main() -> None:
     else:
         if args.output is None:
             parser.error("run requires --output")
-        campaign(root, args.output.resolve())
+        campaign(root, args.output.resolve(), args.evidence_mode)
 
 
 if __name__ == "__main__":
