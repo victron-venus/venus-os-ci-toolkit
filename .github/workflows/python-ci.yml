@@ -85,7 +85,7 @@ jobs:
         working-directory: ${{ inputs.working-directory }}
     steps:
       - name: Harden the runner (Audit all outbound calls)
-        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
         with:
           egress-policy: audit
 
@@ -93,7 +93,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup Python
-        uses: victron-venus/venus-os-ci-toolkit/actions/setup-python@dff3879fcdaf0d0eeb0145e50f7f034ab2e87b93 # main
+        uses: victron-venus/venus-os-ci-toolkit/actions/setup-python@e71559f44e41f39ad0037bf13c7f43bbbb2ec9af # main
         with:
           python-version: ${{ inputs.python-version }}
 
@@ -177,7 +177,7 @@ jobs:
 
       - name: Setup uv for locked dependencies
         if: inputs.install-dependencies
-        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
         with:
           version: '0.13.4'
           enable-cache: true

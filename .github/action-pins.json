@@ -16,8 +16,8 @@
   },
   {
     "packageName": "actions/setup-python",
-    "version": "v7.0.0",
-    "digest": "5fda3b95a4ea91299a34e894583c3862153e4b97"
+    "version": "v7.1.0",
+    "digest": "6d4fd22b20465ccc0f7354476588e8df7c9ca0e0"
   },
   {
     "packageName": "codecov/codecov-action",
@@ -26,8 +26,8 @@
   },
   {
     "packageName": "step-security/harden-runner",
-    "version": "v2.22.1",
-    "digest": "ccd8616d44fd3846e67624a50d5aad6d37bf2d25"
+    "version": "v2.22.2",
+    "digest": "dc2769abcc0fcfbadfc1df54081c1608579ef6b2"
   },
   {
     "packageName": "sigstore/cosign-installer",
@@ -36,8 +36,8 @@
   },
   {
     "packageName": "astral-sh/setup-uv",
-    "version": "v10.3.0",
-    "digest": "1c37ad07a6a961277cf70c0d37d6f313000f5884"
+    "version": "v10.3.2",
+    "digest": "07a047e608db84b3d8c06cd9a7c7dcc9c355c18e"
   },
   {
     "packageName": "actions/setup-go",
