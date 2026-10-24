@@ -54,10 +54,14 @@ jobs:
           import os
           import re
           import subprocess
+          import sys
+          import time
 
           BOT = "californiantiramisu"
           REVIEWER = "coderabbitai[bot]"
           MAX_ROUNDS = 3
+          MAX_GET_ATTEMPTS = 3
+          REQUEST_TIMEOUT_SECONDS = 30
           MARKER = re.compile(r"<!-- toolkit-coderabbit-autofix:v1 head=([0-9a-f]{40}) findings=([0-9a-f]{64}) -->")
           THREADS = """query($owner:String!,$name:String!,$number:Int!,$cursor:String){
             repository(owner:$owner,name:$name){pullRequest(number:$number){
@@ -69,25 +73,49 @@ jobs:
             }}
           }"""
 
+          def transient_read_failure(detail):
+              status = re.search(r"\bHTTP\s+([1-5][0-9]{2})\b", detail, re.IGNORECASE)
+              if status:
+                  return 500 <= int(status[1]) <= 599
+              return any(fragment in detail.lower() for fragment in (
+                  "unexpected end of json input", "unexpected eof", "connection reset",
+                  "connection timed out", "i/o timeout", "tls handshake timeout",
+                  "context deadline exceeded", "temporary failure in name resolution",
+              )) or re.search(r"\bEOF\b", detail) is not None
+
           def api(path, token, *, payload=None, paginate=False):
               command = ["gh", "api", path]
               if paginate:
                   command.extend(["--paginate", "--slurp"])
               if payload is not None:
                   command.extend(["--method", "POST", "--input", "-"])
-              try:
-                  result = subprocess.run(
-                      command, input=json.dumps(payload) if payload is not None else None,
-                      text=True, capture_output=True, check=True,
-                      env={**os.environ, "GH_TOKEN": token, "GH_HOST": "github.com"},
-                  )
-              except subprocess.CalledProcessError as error:
-                  detail = (error.stderr or "GitHub API request failed").strip().replace(token, "***")
-                  raise RuntimeError(detail) from None
-              result = json.loads(result.stdout)
-              if isinstance(result, dict) and result.get("errors"):
-                  raise RuntimeError("GitHub GraphQL query failed")
-              return result
+              # Retry the complete read (including pagination), never a POST or the whole task.
+              attempts = MAX_GET_ATTEMPTS if payload is None else 1
+              for attempt in range(1, attempts + 1):
+                  try:
+                      response = subprocess.run(
+                          command, input=json.dumps(payload) if payload is not None else None,
+                          text=True, capture_output=True, check=True,
+                          timeout=REQUEST_TIMEOUT_SECONDS,
+                          env={**os.environ, "GH_TOKEN": token, "GH_HOST": "github.com"},
+                      )
+                      result = json.loads(response.stdout)
+                  except subprocess.CalledProcessError as error:
+                      detail = (error.stderr or "GitHub API request failed").strip().replace(token, "***")
+                      retryable = transient_read_failure(detail)
+                  except subprocess.TimeoutExpired:
+                      detail, retryable = "GitHub API request timed out", True
+                  except json.JSONDecodeError:
+                      detail, retryable = "GitHub API returned empty or malformed JSON", True
+                  else:
+                      if isinstance(result, dict) and result.get("errors"):
+                          raise RuntimeError("GitHub GraphQL query failed")
+                      return result
+                  if not retryable or attempt == attempts:
+                      raise RuntimeError(detail) from None
+                  print(f"Transient GitHub GET failure; retry {attempt + 1}/{attempts} in {attempt}s",
+                        file=sys.stderr, flush=True)
+                  time.sleep(attempt)
 
           def items(path, token):
               return [item for page in api(path, token, paginate=True) for item in page]
