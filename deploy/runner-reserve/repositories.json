@@ -29,10 +29,6 @@
       "default_branch": "main"
     },
     {
-      "name": "4alvit/default",
-      "default_branch": "master"
-    },
-    {
       "name": "4alvit/energy-data-rag-pipeline",
       "default_branch": "main"
     },

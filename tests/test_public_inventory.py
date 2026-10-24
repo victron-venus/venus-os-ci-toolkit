@@ -122,13 +122,20 @@ class PublicInventoryTests(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0)
                 self.assertFalse(output.exists())
 
+    def test_retired_hacs_fork_cannot_render_a_pool(self):
+        inventory = renderer.load_public_inventory(ROOT / 'deploy/runner-reserve/repositories.json')
+        for profile in inventory['profiles']:
+            with self.subTest(profile=profile), self.assertRaises(ValueError):
+                renderer.pool_values('4alvit/default', profile, IMAGE, 'worker-a',
+                                     '192.0.2.10', inventory, held=True)
+
     def test_default_catalog_render_keeps_baseline_bytes(self):
         result, output = self.run_cli()
         self.assertEqual(result.returncode, 0, result.stderr)
         payload = b''.join(path.name.encode() + b'\0' + path.read_bytes()
                            for path in sorted(output.iterdir()))
-        # Captured with the unmodified renderer at 0aa9122, same fixed arguments.
-        self.assertEqual(hashlib.sha256(payload).hexdigest(), 'c27fd45a187054cf15644b4f8199bda23eb8d33abb6e9257524ab10a2330c701')
+        # Renderer at 1969aa8, excluding the retired HACS fork; same fixed arguments.
+        self.assertEqual(hashlib.sha256(payload).hexdigest(), 'd68fafa5a393d00f94443ed1b338d8d26203bae8b9e0c67d0f8a0d218a63143c')
 
 
 if __name__ == '__main__':

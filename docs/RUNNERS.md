@@ -188,10 +188,12 @@ References: [reusable workflow runners and variables](https://docs.github.com/en
 
 The public reserve inventory is `deploy/runner-reserve/repositories.json`.
 It is separate from private runner groups and the Renovate repository inventory.
-The catalog contains 78 repositories: 19 personal repositories and selected
-projects in three organizations. It renders 66 scope/profile registrations across
+The catalog contains 77 repositories: 18 personal repositories and selected
+projects in three organizations. It renders 63 scope/profile registrations across
 separate CI, automation and release profiles. Catalog membership does not prove
 that any corresponding pool is registered or qualified.
+The retired `4alvit/default` HACS submission fork is excluded; the DESLOC
+integration and card remain covered through the `ha-homelab` organization.
 Organization variables must have selected-repository visibility matching that
 inventory; personal-account repositories need their own variables. Prepare all
 four variables with `CI_RUNNER_MODE=github`. The label values alone do not prove
@@ -273,7 +275,7 @@ alone does not impose that runner-group restriction.
 
 The separate `personal` App retains only the repository administration permission
 GitHub requires for personal repository runners. Install it under `4alvit` with
-**Only select repositories**, selecting the 19 personal public repositories in
+**Only select repositories**, selecting the 18 personal public repositories in
 `repositories.json`, not all repositories. App names must be globally available
 when created and no longer than 34 characters; record any naming adjustment with
 the corresponding owner entry. See [GitHub App registration](https://docs.github.com/en/apps/creating-github-apps/registering-a-github-app/registering-a-github-app).
@@ -297,8 +299,8 @@ Keep normal routing on `github` until all applicable checks are evidenced.
 
 The files under `deploy/runner-reserve/` prepare the public reserve independently
 of normal GitHub routing. `render_pool.py` reads the same public inventory and
-renders three scale sets per organization and personal repository (66 across
-three organizations and 19 personal repositories). Kubernetes scale-set names include the repository scope;
+renders three scale sets per organization and personal repository (63 across
+three organizations and 18 personal repositories). Kubernetes scale-set names include the repository scope;
 ARC 0.15 custom `scaleSetLabels` preserve the shared Actions-variable labels
 without collisions between personal repositories in the same namespace.
 Active rendering requires a fresh physical-host capacity plan with an explicit
@@ -413,8 +415,8 @@ Keep `--held` and `CI_RUNNER_MODE=github` while preparing and qualifying them.
 #### Distribute listeners separately from workers
 
 Each scale set needs a listener Pod in `runner-reserve-system`, even while its
-workers are held at zero. The 66-set inventory therefore needs 66 listener Pod
-slots, with aggregate requests of 660m CPU and 2640Mi memory. Worker namespace
+workers are held at zero. The 63-set inventory therefore needs 63 listener Pod
+slots, with aggregate requests of 630m CPU and 2520Mi memory. Worker namespace
 quotas do not include these listeners. Account for both populations and reserve
 headroom before selecting nodes; free memory alone does not imply free Pod slots.
 
