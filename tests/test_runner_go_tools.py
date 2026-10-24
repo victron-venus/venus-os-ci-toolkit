@@ -54,12 +54,70 @@ class RunnerGoToolTests(unittest.TestCase):
                              ('repository', 'release_tag', 'commit', 'archive_sha256')})
             self.assertEqual(origin['fixed_locks'], spec['fixed_locks'])
             self.assertEqual(origin.get('retained_namesgenerator'), spec.get('retained_namesgenerator'))
+            self.assertEqual(origin.get('runtime_test_fix'), spec.get('runtime_test_fix'))
             for lock in ('go.mod', 'go.sum'):
                 self.assertEqual(TOOLS.digest(folder / lock), spec['fixed_locks'][lock])
             self.assertIn('golang.org/x/net v0.60.0', (folder / 'go.mod').read_text())
         self.assertIn('github.com/moby/go-archive v0.3.0',
                       (TOOLS.LOCKS / 'buildx/go.mod').read_text())
         self.assertNotIn('\tgithub.com/docker/docker ', (TOOLS.LOCKS / 'buildx/go.mod').read_text())
+
+    def runtime_fixture(self):
+        path = self.root / 'pkg/shim/shim_test.go'
+        path.parent.mkdir(parents=True)
+        before = (b'func TestRuntimeWithNonEmptyMaxEnvProcs(t *testing.T) {\n'
+                  b'\tt.Setenv("GOMAXPROCS", "not_empty")\n\tsetRuntime()\n'
+                  b'\tvar oldGoMaxProcs2 = runtime.GOMAXPROCS(0)\n'
+                  b'\tif oldGoMaxProcs2 != runtime.NumCPU() {\n'
+                  b'\t\tt.Fatal("the max number CPU should be equal to available CPUs")\n\t}\n}\n')
+        after = before.replace(b'{\n', b'{\n\texpected := runtime.GOMAXPROCS(0)\n', 1).replace(
+            b'!= runtime.NumCPU()', b'!= expected').replace(
+            b'the max number CPU should be equal to available CPUs',
+            b'setRuntime should preserve configured GOMAXPROCS')
+        path.write_bytes(before)
+        spec = {'repository': 'containerd/containerd', 'runtime_test_fix': {
+            'before_sha256': hashlib.sha256(before).hexdigest(),
+            'after_sha256': hashlib.sha256(after).hexdigest()}}
+        return path, spec, before, after
+
+    def test_runtime_correction_preserves_test_and_rechecks_result(self):
+        path, spec, _, after = self.runtime_fixture()
+        TOOLS.fix_runtime_test(self.root, spec)
+        self.assertEqual(path.read_bytes(), after)
+        self.assertIn(b't.Setenv("GOMAXPROCS", "not_empty")', after)
+        TOOLS.verify_runtime_test(self.root, spec)
+        path.write_bytes(after + b'// changed')
+        with self.assertRaisesRegex(ValueError, 'changed during build'):
+            TOOLS.verify_runtime_test(self.root, spec)
+
+    def test_runtime_correction_rejects_source_or_result_drift_before_write(self):
+        path, spec, before, _ = self.runtime_fixture()
+        spec['runtime_test_fix']['after_sha256'] = '0' * 64
+        with self.assertRaisesRegex(ValueError, 'result identity'):
+            TOOLS.fix_runtime_test(self.root, spec)
+        self.assertEqual(path.read_bytes(), before)
+        path.write_text('changed')
+        with self.assertRaisesRegex(ValueError, 'source identity'):
+            TOOLS.fix_runtime_test(self.root, spec)
+
+    def test_runtime_correction_rejects_links_and_wrong_component(self):
+        path, spec, before, _ = self.runtime_fixture()
+        target = self.root / 'elsewhere'
+        target.write_bytes(before)
+        path.unlink()
+        path.symlink_to(target)
+        with self.assertRaisesRegex(ValueError, 'source identity'):
+            TOOLS.fix_runtime_test(self.root, spec)
+        spec['repository'] = 'docker/buildx'
+        with self.assertRaisesRegex(ValueError, 'test owner'):
+            TOOLS.fix_runtime_test(self.root, spec)
+        self.assertEqual(target.read_bytes(), before)
+
+    def test_runtime_correction_is_bound_to_original_source_record(self):
+        spec = copy.deepcopy(self.manifest['components']['containerd'])
+        spec['runtime_test_fix']['before_sha256'] = '0' * 64
+        with self.assertRaisesRegex(ValueError, 'Lock preparation binding'):
+            TOOLS.install_locks(self.root, TOOLS.LOCKS / 'containerd', spec)
 
     def retained_fixture(self):
         source = self.root / 'source'

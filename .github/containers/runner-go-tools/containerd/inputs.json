@@ -18,5 +18,10 @@
     "golang.org/x/net@v0.60.0"
   ],
   "qualification": "Lock preparation only. Source tests and final image acceptance are separate required gates.",
-  "upstream_backport": "https://github.com/containerd/containerd/commit/1350ed10d68320f0f3e944b86b92c4dfdf4791a3"
+  "upstream_backport": "https://github.com/containerd/containerd/commit/1350ed10d68320f0f3e944b86b92c4dfdf4791a3",
+  "runtime_test_fix": {
+    "before_sha256": "628c3641b3dbc1e636f29ed0abc8a4db89e8681c5893a21d268e6532b1fdfc4d",
+    "after_sha256": "b768a72b4943c272ceeb63ad4e0a33214646c0e0ef5ab5cc74973ef7caf0facd",
+    "contract": "A nonempty GOMAXPROCS environment must preserve the pre-call runtime value, including an explicit CPU bound."
+  }
 }

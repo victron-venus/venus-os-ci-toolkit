@@ -24,7 +24,12 @@
       },
       "downstream_version": "v2.4.2+victron.security.1",
       "backport": "https://github.com/containerd/containerd/commit/1350ed10d68320f0f3e944b86b92c4dfdf4791a3",
-      "backport_patch_sha256": "5811ab4b799ce74499b3ab78dd517c6e2a72d905e5904333f124c78976509203"
+      "backport_patch_sha256": "5811ab4b799ce74499b3ab78dd517c6e2a72d905e5904333f124c78976509203",
+      "runtime_test_fix": {
+        "before_sha256": "628c3641b3dbc1e636f29ed0abc8a4db89e8681c5893a21d268e6532b1fdfc4d",
+        "after_sha256": "b768a72b4943c272ceeb63ad4e0a33214646c0e0ef5ab5cc74973ef7caf0facd",
+        "contract": "A nonempty GOMAXPROCS environment must preserve the pre-call runtime value, including an explicit CPU bound."
+      }
     },
     "buildx": {
       "repository": "docker/buildx",

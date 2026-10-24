@@ -60,7 +60,13 @@ allows only the manifest's exact internal symlinks. It checks the original and
 fixed locks, uses the public Go checksum service without inherited private-module
 exclusions, runs the upstream root-module unit scope and builds the executables.
 Containerd excludes its integration tree; its separate API module is not part of
-this unit-test claim. Buildx uses its upstream unit-test setting
+this unit-test claim. One source-hash-bound containerd test correction checks
+that a nonempty `GOMAXPROCS` preserves the actual pre-call runtime value, instead
+of assuming it equals the machine's CPU count. This keeps the assertion valid
+under the build's explicit `GOMAXPROCS=2` bound and container-aware Go defaults;
+no production code or test selection changes. Both original/result test hashes
+are bound to the source manifest and rechecked after compilation.
+Buildx uses its upstream unit-test setting
 `SKIP_INTEGRATION_TESTS=1`; Compose excludes its daemon-dependent e2e tree. The
 build preserves the respective production build tags and version flags. Each
 result is explicitly versioned `+victron.security.1`, not presented as an unmodified

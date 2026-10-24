@@ -122,7 +122,8 @@ def install_locks(source, locks, spec):
     require(binding["go_version"] == "go1.26.10"
             and binding["original_locks"] == spec["original_locks"]
             and binding["fixed_locks"] == spec["fixed_locks"]
-            and binding.get("retained_namesgenerator") == spec.get("retained_namesgenerator"),
+            and binding.get("retained_namesgenerator") == spec.get("retained_namesgenerator")
+            and binding.get("runtime_test_fix") == spec.get("runtime_test_fix"),
             "Lock preparation binding changed")
     for name in ("go.mod", "go.sum"):
         require(digest(source / name) == spec["original_locks"][name],
@@ -131,6 +132,35 @@ def install_locks(source, locks, spec):
                 "Reviewed lock identity changed")
     for name in ("go.mod", "go.sum"):
         shutil.copyfile(locks / name, source / name)
+
+
+def fix_runtime_test(source, spec):
+    """Keep the upstream preservation check valid under explicit CPU bounds."""
+    fix = spec.get("runtime_test_fix")
+    if fix is None:
+        return
+    require(spec["repository"] == "containerd/containerd", "Unexpected runtime test owner")
+    path = source / "pkg/shim/shim_test.go"
+    require(path.is_file() and not path.is_symlink() and digest(path) == fix["before_sha256"],
+            "Runtime test source identity changed")
+    original = path.read_bytes()
+    before = b'func TestRuntimeWithNonEmptyMaxEnvProcs(t *testing.T) {\n'
+    after = before + b'\texpected := runtime.GOMAXPROCS(0)\n'
+    require(original.count(before) == 1, "Expected one runtime preservation test")
+    changed = original.replace(before, after).replace(
+        b'if oldGoMaxProcs2 != runtime.NumCPU() {', b'if oldGoMaxProcs2 != expected {').replace(
+        b't.Fatal("the max number CPU should be equal to available CPUs")',
+        b't.Fatal("setRuntime should preserve configured GOMAXPROCS")')
+    require(hashlib.sha256(changed).hexdigest() == fix["after_sha256"],
+            "Runtime test result identity changed")
+    path.write_bytes(changed)
+
+
+def verify_runtime_test(source, spec):
+    fix = spec.get("runtime_test_fix")
+    if fix is not None:
+        require(digest(source / "pkg/shim/shim_test.go") == fix["after_sha256"],
+                "Runtime test changed during build")
 
 
 def retain_namesgenerator(source, spec):
@@ -322,6 +352,7 @@ def build(name, manifest, build_root=BUILD_ROOT, output=OUTPUT):
         unpack(Path(temporary.name), source, spec)
     install_locks(source, LOCKS / name, spec)
     retain_namesgenerator(source, spec)
+    fix_runtime_test(source, spec)
     tags = {"containerd": "urfave_cli_no_docs,osusergo,netgo,static_build", "compose": "e2e"}.get(name)
     tag_arguments = ["-tags", tags] if tags else []
     packages = test_packages(name, run(["go", "list", *tag_arguments, "./..."], source, capture=True).stdout.splitlines())
@@ -351,6 +382,7 @@ def build(name, manifest, build_root=BUILD_ROOT, output=OUTPUT):
         run(command, source, architecture=architecture)
     for lock in ("go.mod", "go.sum"):
         require(digest(source / lock) == spec["fixed_locks"][lock], "Build changed reviewed locks")
+    verify_runtime_test(source, spec)
     preserve_notices(source, output / "notices" / name, name, spec, commands,
                      architecture, test_command, output, unit_dependencies)
     for lock in ("go.mod", "go.sum"):
