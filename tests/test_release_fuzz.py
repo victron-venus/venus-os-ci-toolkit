@@ -35,6 +35,68 @@ def config():
 
 
 class FuzzContracts(unittest.TestCase):
+    def test_evidence_modes_keep_candidate_checks_out_of_release_qualification(self):
+        fuzz.evidence_contract("release", "release-plan-1")
+        fuzz.evidence_contract("candidate", "")
+        for mode, plan in (("release", ""), ("candidate", "release-plan-1"),
+                           ("", ""), ("other", "")):
+            with self.subTest(mode=mode, plan=plan), self.assertRaises(ValueError):
+                fuzz.evidence_contract(mode, plan)
+
+    def test_standalone_workflow_preserves_default_release_binding_and_rc_guards(self):
+        workflow = yaml.safe_load((ROOT / ".github/workflows/fuzz.yml").read_text())
+        inputs = workflow["on"]["workflow_call"]["inputs"]
+        self.assertEqual(inputs["evidence-mode"]["default"], "release")
+        job = workflow["jobs"]["campaign"]
+        for condition in ("repository.private == false", "workflow_dispatch", "channel == 'rc'", "default_branch"):
+            self.assertIn(condition, job["if"])
+        self.assertEqual(job["permissions"], {"contents": "read"})
+        self.assertEqual(job["timeout-minutes"], 30)
+        steps = {step["name"]: step for step in job["steps"]}
+        for name in ("Download frozen RC plan", "Bind report to the release plan",
+                     "Export successful RC report for release inventory"):
+            self.assertEqual(steps[name]["if"], "${{ inputs.evidence-mode == 'release' }}")
+        candidate = steps["Export successful standalone candidate evidence"]
+        self.assertEqual(candidate["if"], "${{ inputs.evidence-mode == 'candidate' }}")
+        self.assertEqual(candidate["with"]["name"], "fuzz-candidate-${{ github.run_attempt }}")
+        self.assertNotIn("release-assets", candidate["with"]["path"])
+        self.assertIn('--release-plan-artifact "$FUZZ_RELEASE_PLAN_ARTIFACT"',
+                      steps["Validate public RC event and target contract"]["run"])
+
+    def test_candidate_report_is_source_bound_and_rejected_by_release_verifier(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / ".github").mkdir()
+            manifest = config()
+            manifest["setup"] = []
+            (root / fuzz.MANIFEST).write_text(json.dumps(manifest))
+            event = root / "event.json"
+            event.write_text(json.dumps({"inputs": {"channel": "rc"}, "repository": {
+                "private": False, "full_name": "owner/repo", "default_branch": "main"}}))
+            environment = {"GITHUB_EVENT_PATH": str(event), "GITHUB_EVENT_NAME": "workflow_dispatch",
+                           "GITHUB_REF": "refs/heads/main", "GITHUB_REPOSITORY": "owner/repo",
+                           "GITHUB_SHA": "a" * 40, "GITHUB_RUN_ID": "42", "GITHUB_RUN_ATTEMPT": "2"}
+            target = {"name": "parse", "engine": "go", "seconds": 60, "exit_code": 0, "executions": 100}
+            output = root / "evidence"
+            with patch.dict(os.environ, environment), patch.object(fuzz.subprocess, "check_output", return_value="a" * 40), \
+                    patch.object(fuzz, "run_preflight", return_value={"commands": 0, "python_targets": []}), \
+                    patch.object(fuzz, "run_target", return_value=target):
+                fuzz.campaign(root, output, "candidate")
+            report = json.loads((output / fuzz.REPORT).read_text())
+            self.assertEqual(report["schema"], 3)
+            self.assertEqual(report["evidence_mode"], "candidate")
+            self.assertEqual(report["source_sha"], "a" * 40)
+            self.assertEqual((report["run_id"], report["run_attempt"]), (42, 2))
+            self.assertEqual(report["status"], "passed")
+            with self.assertRaisesRegex(ValueError, "cannot qualify a release"):
+                fuzz.verify_report(output, root, "owner/repo", "a" * 40, 42, 2)
+            # Even removing the explicit mode cannot make the distinct schema
+            # acceptable to old or current release-verification code.
+            del report["evidence_mode"]
+            (output / fuzz.REPORT).write_text(json.dumps(report))
+            with self.assertRaisesRegex(ValueError, "identity or outcome mismatch"):
+                fuzz.verify_report(output, root, "owner/repo", "a" * 40, 42, 2)
+
     def test_jvm_workflow_provisions_java_only_for_jvm_manifests(self):
         workflow = yaml.safe_load((ROOT / ".github/workflows/fuzz.yml").read_text())
         steps = workflow["jobs"]["campaign"]["steps"]
