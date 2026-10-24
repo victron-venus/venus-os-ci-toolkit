@@ -169,8 +169,9 @@ def validate_nuc_kvm(rows, config, sandbox_runtime, node_ip):
                 raise ValueError('NUC KVM CI requires standard tmpfs-2gi or heavy tmpfs-6gi-heavy')
             if target.scope in plan.light_ci_scopes and mode != ('standard', 'tmpfs-2gi'):
                 raise ValueError('Light concurrency supports only standard CI with tmpfs-2gi')
-            if target.scope in plan.low_share_ci_scopes and mode != ('standard', 'tmpfs-2gi'):
-                raise ValueError('Low-share CI supports only standard CI with tmpfs-2gi')
+            # Low-share keeps the exclusive worker contract and changes only
+            # CPU reservation; both validated storage/resource pairs retain
+            # their full memory, disk and tmpfs budgets.
         elif target.profile == 'automation' and validate_automation_storage(row) != 'tmpfs-3gi':
             raise ValueError('NUC KVM automation requires explicit tmpfs-3gi')
     return NucKvmPlan(tuple(sorted(plan.targets)), plan.image, plan.node_ip,
