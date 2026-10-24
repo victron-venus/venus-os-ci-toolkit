@@ -1,5 +1,6 @@
 """Pinned source, archive and downstream build contracts, without native execution."""
 import copy
+import hashlib
 import importlib.util
 import io
 import json
@@ -52,11 +53,103 @@ class RunnerGoToolTests(unittest.TestCase):
             self.assertEqual(origin['source'], {k: spec[k] for k in
                              ('repository', 'release_tag', 'commit', 'archive_sha256')})
             self.assertEqual(origin['fixed_locks'], spec['fixed_locks'])
+            self.assertEqual(origin.get('retained_namesgenerator'), spec.get('retained_namesgenerator'))
             for lock in ('go.mod', 'go.sum'):
                 self.assertEqual(TOOLS.digest(folder / lock), spec['fixed_locks'][lock])
             self.assertIn('golang.org/x/net v0.60.0', (folder / 'go.mod').read_text())
         self.assertIn('github.com/moby/go-archive v0.3.0',
                       (TOOLS.LOCKS / 'buildx/go.mod').read_text())
+        self.assertNotIn('\tgithub.com/docker/docker ', (TOOLS.LOCKS / 'buildx/go.mod').read_text())
+
+    def retained_fixture(self):
+        source = self.root / 'source'
+        vendor = source / 'vendor/github.com/docker/docker'
+        (vendor / 'pkg/namesgenerator').mkdir(parents=True)
+        content = {'names-generator.go': b'package namesgenerator\n',
+                   'LICENSE': b'original license\n', 'NOTICE': b'original notice\n'}
+        for name, data in content.items():
+            path = vendor / ('pkg/namesgenerator/' + name if name.endswith('.go') else name)
+            path.write_bytes(data)
+        importer = source / 'store/util.go'
+        importer.parent.mkdir()
+        before = b'package store\nimport "github.com/docker/docker/pkg/namesgenerator"\n'
+        after = before.replace(b'github.com/docker/docker/pkg/namesgenerator',
+                               b'github.com/docker/buildx/internal/namesgenerator')
+        importer.write_bytes(before)
+        spec = {'repository': 'docker/buildx', 'retained_namesgenerator': {
+            'files': {name: hashlib.sha256(data).hexdigest() for name, data in content.items()},
+            'import_before_sha256': hashlib.sha256(before).hexdigest(),
+            'import_after_sha256': hashlib.sha256(after).hexdigest()}}
+        return source, spec, content, after
+
+    def test_retained_utility_is_exact_copy_with_original_runtime_notices(self):
+        source, spec, content, after = self.retained_fixture()
+        TOOLS.retain_namesgenerator(source, spec)
+        self.assertEqual((source / 'store/util.go').read_bytes(), after)
+        for name, data in content.items():
+            self.assertEqual((source / 'internal/namesgenerator' / name).read_bytes(), data)
+        destination = self.root / 'notices'
+        TOOLS.retained_utility_notices(source, destination, spec,
+                                      {'github.com/docker/buildx/internal/namesgenerator'})
+        for name in ('LICENSE', 'NOTICE'):
+            self.assertEqual((destination / 'retained/namesgenerator' / name).read_bytes(), content[name])
+
+    def test_changed_retained_utility_fails_before_any_copy(self):
+        source, spec, _, _ = self.retained_fixture()
+        (source / 'vendor/github.com/docker/docker/NOTICE').write_text('changed')
+        with self.assertRaisesRegex(ValueError, 'source identity'):
+            TOOLS.retain_namesgenerator(source, spec)
+        self.assertFalse((source / 'internal/namesgenerator').exists())
+
+    def test_changed_import_or_result_fails_before_any_copy(self):
+        source, spec, _, _ = self.retained_fixture()
+        spec['retained_namesgenerator']['import_after_sha256'] = '0' * 64
+        with self.assertRaisesRegex(ValueError, 'import result'):
+            TOOLS.retain_namesgenerator(source, spec)
+        self.assertFalse((source / 'internal/namesgenerator').exists())
+        (source / 'store/util.go').write_text('changed')
+        with self.assertRaisesRegex(ValueError, 'import identity'):
+            TOOLS.retain_namesgenerator(source, spec)
+
+    def test_retained_utility_rejects_links_and_existing_destination(self):
+        source, spec, _, _ = self.retained_fixture()
+        (source / 'internal').symlink_to(self.root, target_is_directory=True)
+        with self.assertRaisesRegex(ValueError, 'parent is a symlink'):
+            TOOLS.retain_namesgenerator(source, spec)
+        (source / 'internal').unlink()
+        TOOLS.retain_namesgenerator(source, spec)
+        with self.assertRaisesRegex(ValueError, 'already exists'):
+            TOOLS.retain_namesgenerator(source, spec)
+
+    def test_legacy_module_or_missing_local_utility_rejects_provenance(self):
+        source, spec, _, _ = self.retained_fixture()
+        TOOLS.retain_namesgenerator(source, spec)
+        for packages in ({'github.com/docker/buildx/internal/namesgenerator',
+                          'github.com/docker/docker/pkg/namesgenerator'}, {'example/other'}):
+            with self.subTest(packages=packages), self.assertRaisesRegex(ValueError, 'dependency graph'):
+                TOOLS.retained_utility_notices(source, self.root / 'notices', spec, packages)
+
+    def test_changed_retained_source_binding_is_rejected(self):
+        spec = copy.deepcopy(self.manifest['components']['buildx'])
+        spec['retained_namesgenerator']['import_before_sha256'] = '0' * 64
+        with self.assertRaisesRegex(ValueError, 'Lock preparation binding'):
+            TOOLS.install_locks(self.root, TOOLS.LOCKS / 'buildx', spec)
+
+    def test_changed_utility_after_build_cannot_claim_original_provenance(self):
+        source, spec, _, _ = self.retained_fixture()
+        TOOLS.retain_namesgenerator(source, spec)
+        (source / 'internal/namesgenerator/names-generator.go').write_text('changed')
+        with self.assertRaisesRegex(ValueError, 'content changed'):
+            TOOLS.retained_utility_notices(source, self.root / 'notices', spec,
+                                          {'github.com/docker/buildx/internal/namesgenerator'})
+
+    def test_changed_import_after_build_cannot_claim_reduced_graph(self):
+        source, spec, _, _ = self.retained_fixture()
+        TOOLS.retain_namesgenerator(source, spec)
+        (source / 'store/util.go').write_text('changed')
+        with self.assertRaisesRegex(ValueError, 'import changed during build'):
+            TOOLS.retained_utility_notices(source, self.root / 'notices', spec,
+                                          {'github.com/docker/buildx/internal/namesgenerator'})
 
     def test_source_change_without_lock_revalidation_fails(self):
         spec = copy.deepcopy(self.manifest['components']['buildx'])

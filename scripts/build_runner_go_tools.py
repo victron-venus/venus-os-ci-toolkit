@@ -121,7 +121,9 @@ def install_locks(source, locks, spec):
             "Lock source binding changed; revalidate locks for the new source")
     require(binding["go_version"] == "go1.26.10"
             and binding["original_locks"] == spec["original_locks"]
-            and binding["fixed_locks"] == spec["fixed_locks"], "Lock preparation binding changed")
+            and binding["fixed_locks"] == spec["fixed_locks"]
+            and binding.get("retained_namesgenerator") == spec.get("retained_namesgenerator"),
+            "Lock preparation binding changed")
     for name in ("go.mod", "go.sum"):
         require(digest(source / name) == spec["original_locks"][name],
                 "Upstream lock identity changed")
@@ -129,6 +131,66 @@ def install_locks(source, locks, spec):
                 "Reviewed lock identity changed")
     for name in ("go.mod", "go.sum"):
         shutil.copyfile(locks / name, source / name)
+
+
+def retain_namesgenerator(source, spec):
+    """Retain the exact frozen utility without importing the legacy daemon module."""
+    retained = spec.get("retained_namesgenerator")
+    if retained is None:
+        return
+    require(spec["repository"] == "docker/buildx", "Unexpected retained utility owner")
+    require(set(retained["files"]) == {"names-generator.go", "LICENSE", "NOTICE"},
+            "Retained utility inventory changed")
+    vendor = source / "vendor/github.com/docker/docker"
+    target = source / "internal/namesgenerator"
+    require(not target.exists() and not target.is_symlink(), "Retained utility already exists")
+    require(not target.parent.is_symlink(), "Retained utility parent is a symlink")
+    payloads = {}
+    for name, expected in retained["files"].items():
+        path = vendor / ("pkg/namesgenerator/names-generator.go" if name.endswith(".go") else name)
+        require(path.is_file() and not path.is_symlink() and digest(path) == expected,
+                "Retained utility source identity changed")
+        payloads[name] = path.read_bytes()
+    importer = source / "store/util.go"
+    require(importer.is_file() and not importer.is_symlink()
+            and digest(importer) == retained["import_before_sha256"],
+            "Retained utility import identity changed")
+    before = b'"github.com/docker/docker/pkg/namesgenerator"'
+    after = b'"github.com/docker/buildx/internal/namesgenerator"'
+    original = importer.read_bytes()
+    require(original.count(before) == 1, "Expected exactly one utility import")
+    changed = original.replace(before, after)
+    require(hashlib.sha256(changed).hexdigest() == retained["import_after_sha256"],
+            "Retained utility import result changed")
+    target.mkdir(parents=True)
+    for name, payload in payloads.items():
+        (target / name).write_bytes(payload)
+    importer.write_bytes(changed)
+
+
+def check_retained_graph(packages):
+    require("github.com/docker/buildx/internal/namesgenerator" in packages
+            and not any(p == "github.com/docker/docker" or
+                        p.startswith("github.com/docker/docker/") for p in packages),
+            "Legacy Docker module remains in the dependency graph")
+
+
+def retained_utility_notices(source, destination, spec, packages):
+    retained = spec.get("retained_namesgenerator")
+    if retained is None:
+        return
+    check_retained_graph(packages)
+    require(digest(source / "store/util.go") == retained["import_after_sha256"],
+            "Retained utility import changed during build")
+    directory = destination / "retained/namesgenerator"
+    for name, expected in retained["files"].items():
+        path = source / "internal/namesgenerator" / name
+        require(path.is_file() and not path.is_symlink() and digest(path) == expected,
+                "Retained utility content changed")
+    directory.mkdir(parents=True)
+    for name in ("LICENSE", "NOTICE"):
+        path = source / "internal/namesgenerator" / name
+        shutil.copyfile(path, directory / name)
 
 
 def go_environment(architecture=None):
@@ -188,7 +250,8 @@ def json_stream(text):
         text = text[offset:]
 
 
-def preserve_notices(source, destination, name, spec, commands, architecture, test_command, output):
+def preserve_notices(source, destination, name, spec, commands, architecture, test_command, output,
+                     unit_dependencies):
     destination.mkdir(parents=True, exist_ok=False)
     modules, packages = {}, set()
     for command in commands:
@@ -201,6 +264,7 @@ def preserve_notices(source, destination, name, spec, commands, architecture, te
             module = package.get("Module")
             if module:
                 modules[module["Path"]] = module
+    retained_utility_notices(source, destination, spec, packages)
     inventory = []
     for index, module in enumerate(sorted(modules.values(), key=lambda m: m["Path"])):
         actual = module.get("Replace", module)
@@ -224,6 +288,7 @@ def preserve_notices(source, destination, name, spec, commands, architecture, te
     (destination / "provenance.json").write_text(json.dumps({
         "component": name, "source": spec, "modules": inventory,
         "packages": sorted(packages), "test_command": test_command,
+        "verified_unit_dependency_packages": sorted(unit_dependencies),
         "build_commands": commands, "target_architecture": architecture,
         "binaries": {str(Path(c[c.index("-o") + 1]).relative_to(output)):
                      digest(Path(c[c.index("-o") + 1])) for c in commands},
@@ -255,9 +320,15 @@ def build(name, manifest, build_root=BUILD_ROOT, output=OUTPUT):
         require(size == spec["compressed_bytes"], "Source archive size mismatch")
         unpack(Path(temporary.name), source, spec)
     install_locks(source, LOCKS / name, spec)
+    retain_namesgenerator(source, spec)
     tags = {"containerd": "urfave_cli_no_docs,osusergo,netgo,static_build", "compose": "e2e"}.get(name)
     tag_arguments = ["-tags", tags] if tags else []
     packages = test_packages(name, run(["go", "list", *tag_arguments, "./..."], source, capture=True).stdout.splitlines())
+    unit_dependencies = set()
+    if spec.get("retained_namesgenerator"):
+        result = run(["go", "list", "-deps", "-test", "-json", *packages], source, capture=True)
+        unit_dependencies = {p["ImportPath"] for p in json_stream(result.stdout)}
+        check_retained_graph(unit_dependencies)
     test_command = ["go", "test", "-p", "2", "-timeout", "10m", *tag_arguments, *packages]
     require(packages, "No upstream unit packages selected")
     # Buildx's own unit-test target deliberately excludes external daemon integration.
@@ -280,7 +351,7 @@ def build(name, manifest, build_root=BUILD_ROOT, output=OUTPUT):
     for lock in ("go.mod", "go.sum"):
         require(digest(source / lock) == spec["fixed_locks"][lock], "Build changed reviewed locks")
     preserve_notices(source, output / "notices" / name, name, spec, commands,
-                     architecture, test_command, output)
+                     architecture, test_command, output, unit_dependencies)
     for lock in ("go.mod", "go.sum"):
         require(digest(source / lock) == spec["fixed_locks"][lock], "Notice collection changed locks")
     shutil.rmtree(source)

@@ -44,6 +44,17 @@ including the required x/crypto, x/term and x/text changes. The build uses these
 module locks with `-mod=readonly`, rather than silently relying on the old vendor
 tree. Buildx and Compose have similarly reviewed, checked-in minimal lock updates.
 
+Buildx's release imports the legacy Docker module only for its frozen
+`namesgenerator` utility. The build retains the exact vendored utility source,
+LICENSE and NOTICE under Buildx's internal package, changes its single import,
+and removes the unused legacy module requirement. The manifest binds every
+retained file and the import's before/after hashes; the separate lock record
+binds the same adjustment. The utility's code and behavior are unchanged.
+Runtime provenance rejects any remaining legacy Docker package and retains
+the original utility notices. Production and unit-test dependency graphs are
+checked with readonly locks, and the normal upstream tests still run. This
+reduces an unnecessary dependency without adding a scanner exception.
+
 `scripts/build_runner_go_tools.py` verifies the source before extraction and
 allows only the manifest's exact internal symlinks. It checks the original and
 fixed locks, uses the public Go checksum service without inherited private-module

@@ -39,10 +39,20 @@
         "go.sum": "c8541a1b2469760b360c480270742a4a0f3202b651e354078db7e35c23dadffe"
       },
       "fixed_locks": {
-        "go.mod": "fb738392367d61cd40435825e9840dbdba3ce3e52c2440e3528571a0343b7579",
+        "go.mod": "4b4e493002afcf4b996a2faef612a3072a5ac554c4288e34cbd6350628d464cc",
         "go.sum": "b016df41b7aa851ae4d1b52a78987ef17ab85807273ed157efa2cacf9ad5cef5"
       },
-      "downstream_version": "v0.38.1+victron.security.1"
+      "downstream_version": "v0.38.1+victron.security.1",
+      "retained_namesgenerator": {
+        "upstream_component": "github.com/docker/docker/pkg/namesgenerator@v28.5.2+incompatible",
+        "files": {
+          "names-generator.go": "cd2f9528ad47ae7519d78e6381e0b2313fa9b5ff541814e95e06ebb187aa9b64",
+          "LICENSE": "7c87873291f289713ac5df48b1f2010eb6963752bbd6b530416ab99fc37914a8",
+          "NOTICE": "b40ec5b16182103ef1cd69d42a21c98369e35bd483b3973902da4807c0755446"
+        },
+        "import_before_sha256": "db0bf3c553a4cb87cca464e2324156993f84721e894c7f329ebb241a1c9349cb",
+        "import_after_sha256": "fbd58878f16daf687e8dc17125982909ce41cccd62d0935c35e14afe3054d73f"
+      }
     },
     "compose": {
       "repository": "docker/compose",
