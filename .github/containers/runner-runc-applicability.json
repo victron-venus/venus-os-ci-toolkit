@@ -1,0 +1,32 @@
+{
+  "schema": 1,
+  "status": "scoped-non-applicability",
+  "component": "runc",
+  "release_tag": "v1.5.2",
+  "source_repository": "opencontainers/runc",
+  "source_commit": "29dd3dc2b13b4123162e5fe132504bb4b15569f1",
+  "source_archive_sha256": "5386e1968f70cc1482b4b2a93dc1a88ea7fa5517fba49b9e0fafe614d5a4c97a",
+  "binary_sha256": "6043541aca928890ab8ad0630cafd2b272c3880779d8ada1b3fe81bc22e80d20",
+  "go_version": "go1.26.10",
+  "platform": {
+    "GOOS": "linux",
+    "GOARCH": "amd64",
+    "GOAMD64": "v1",
+    "CGO_ENABLED": "1",
+    "tags": [
+      "seccomp",
+      "urfave_cli_no_docs",
+      "netgo",
+      "osusergo"
+    ]
+  },
+  "advisories": {
+    "GO-2026-6611": "golang.org/x/net/http2",
+    "GO-2026-5942": "golang.org/x/net/dns/dnsmessage"
+  },
+  "observed_external_x_net_packages": [
+    "golang.org/x/net/bpf"
+  ],
+  "assessment": "Matching release-source build graph and actual binary package/symbol inventory do not include the two affected external packages. Retain raw module findings. Reassess if any source, platform, build tag, binary hash or advisory changes.",
+  "automatic_scanner_ignore": false
+}
