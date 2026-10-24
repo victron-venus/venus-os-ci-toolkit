@@ -13,6 +13,7 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[1]
 MAX_ARCHIVE = 20 * 1024 * 1024
 MAX_CONTENT = 40 * 1024 * 1024
+PACKAGE_JSON = "package.json"
 
 
 def require(value, message):
@@ -46,7 +47,7 @@ def archive_files(path, pin):
             content = bundle.extractfile(member).read(member.size + 1)
             require(len(content) == member.size, "Truncated package member")
             files[name] = (content, 0o755 if member.mode & 0o111 else 0o644)
-    package = json.loads(files["package.json"][0])
+    package = json.loads(files[PACKAGE_JSON][0])
     require(package["name"] == pin["name"] and package["version"] == pin["version"],
             "Unexpected package identity")
     return files
@@ -63,6 +64,18 @@ PATCHES = {
 }
 
 
+def dependency_consumers(files, name):
+    consumers = {}
+    for path, (content, _) in files.items():
+        if not path.endswith(PACKAGE_JSON):
+            continue
+        package = json.loads(content)
+        for kind in ("dependencies", "optionalDependencies", "peerDependencies"):
+            if name in package.get(kind, {}):
+                consumers[path + ":" + kind] = package[kind][name]
+    return consumers
+
+
 def assemble(npm_archive, dependency_archives, pins):
     original = archive_files(npm_archive, pins["npm"])
     require(set(dependency_archives) == set(PATCHES), "Unexpected replacement set")
@@ -70,16 +83,10 @@ def assemble(npm_archive, dependency_archives, pins):
     constraints = {}
     for name, (old_version, fixed_version, expected_consumers) in PATCHES.items():
         prefix = "node_modules/" + name + "/"
-        current = json.loads(original[prefix + "package.json"][0])
+        current = json.loads(original[prefix + PACKAGE_JSON][0])
         require(current["name"] == name and current["version"] == old_version,
                 "Unexpected original dependency bundle")
-        consumers = {}
-        for path, (content, _) in original.items():
-            if path.endswith("package.json"):
-                package = json.loads(content)
-                for kind in ("dependencies", "optionalDependencies", "peerDependencies"):
-                    if name in package.get(kind, {}):
-                        consumers[path + ":" + kind] = package[kind][name]
+        consumers = dependency_consumers(original, name)
         require(consumers == expected_consumers, "Bundled consumers changed; review compatibility")
         require(pins[name]["version"] == fixed_version, "Unreviewed replacement version")
         replacement = archive_files(dependency_archives[name], pins[name])
@@ -124,13 +131,13 @@ def install(npm_archive, dependency_archives, output, pins):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--npm", type=Path, required=True)
-    parser.add_argument("--undici", type=Path, required=True)
-    parser.add_argument("--ip-address", type=Path, required=True)
-    parser.add_argument("--output", type=Path, required=True)
-    args = parser.parse_args()
+    parser.parse_args()
     pins = json.loads((ROOT / ".github/containers/runner-npm.json").read_text())
-    install(args.npm, {"undici": args.undici, "ip-address": args.ip_address}, args.output, pins)
+    # Fixed image-build locations prevent CLI input from selecting read/write targets.
+    install(Path("/tmp/reserve-npm/npm.tgz"),
+            {"undici": Path("/tmp/reserve-npm/undici.tgz"),
+             "ip-address": Path("/tmp/reserve-npm/ip-address.tgz")},
+            Path("/usr/local/lib/node_modules/npm"), pins)
 
 
 if __name__ == "__main__":

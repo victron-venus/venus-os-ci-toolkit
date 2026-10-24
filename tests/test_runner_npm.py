@@ -135,8 +135,10 @@ class RunnerNpmTests(unittest.TestCase):
                     output.symlink_to(self.root / "missing")
                 else:
                     output.write_text("keep")
+                archive = self.root / "npm.tgz"
+                dependencies = self.archives()
                 with self.assertRaisesRegex(ValueError, "exists"):
-                    MODULE.install(self.root / "npm.tgz", self.archives(), output, self.pins)
+                    MODULE.install(archive, dependencies, output, self.pins)
                 self.assertTrue(output.is_symlink() if linked else output.read_text() == "keep")
                 output.unlink()
 

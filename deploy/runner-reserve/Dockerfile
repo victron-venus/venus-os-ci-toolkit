@@ -75,7 +75,7 @@ RUN arch="$(dpkg --print-architecture)" \
         "https://download.docker.com/linux/static/stable/${platform}/docker-29.9.2.tgz" \
         --output /tmp/reserve-containerd/archive.tgz \
     && python3 /tmp/reserve-containerd/scripts/install_runner_containerd.py \
-        --archive /tmp/reserve-containerd/archive.tgz --architecture "$arch" --output /usr/local/bin/containerd \
+        --architecture "$arch" \
     && containerd --version \
     && rm -rf /tmp/reserve-containerd
 COPY --from=node /usr/local/bin/node /usr/local/bin/node
@@ -95,9 +95,6 @@ RUN mkdir -p /usr/local/lib/node_modules \
         --connect-timeout 15 --max-time 180 --max-filesize 20971520 \
         https://registry.npmjs.org/ip-address/-/ip-address-10.7.4.tgz --output /tmp/reserve-npm/ip-address.tgz \
     && python3 /tmp/reserve-npm/scripts/install_runner_npm.py \
-        --npm /tmp/reserve-npm/npm.tgz --undici /tmp/reserve-npm/undici.tgz \
-        --ip-address /tmp/reserve-npm/ip-address.tgz \
-        --output /usr/local/lib/node_modules/npm \
     && ln -s /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
     && ln -s /usr/local/lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx \
     && node /tmp/reserve-npm/qualify-npm.cjs \
@@ -107,7 +104,8 @@ COPY scripts/prune_runner_npm.py /tmp/prune_runner_npm.py
 RUN python3 /tmp/prune_runner_npm.py /home/runner \
     && rm /tmp/prune_runner_npm.py \
     && /home/runner/externals/node20/bin/node -e 'require("node:crypto"); require("node:fs"); console.log(process.version)' \
-    && /home/runner/externals/node24/bin/node -e 'require("node:crypto"); require("node:fs"); console.log(process.version)'
+    && /home/runner/externals/node24/bin/node \
+        -e 'require("node:crypto"); require("node:fs"); console.log(process.version)'
 COPY deploy/runner-reserve/start-runner.sh deploy/runner-reserve/sandbox-docker.sh \
     deploy/runner-reserve/qualify.sh deploy/runner-reserve/guard-ca.crt /opt/victron-ci-reserve/
 RUN chmod 0755 /opt/victron-ci-reserve/*.sh && \

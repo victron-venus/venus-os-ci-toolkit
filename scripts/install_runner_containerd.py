@@ -61,6 +61,8 @@ def install(archive, output, pins, architecture):
             temporary = Path(staged.name)
             staged.write(binary)
             staged.flush()
+            # Public, hash-verified executable must be usable by the nonroot runner.
+            # No write permission is granted to group/other; publication is exclusive.
             os.fchmod(staged.fileno(), 0o755)
             os.fsync(staged.fileno())
         # Exclusive publication refuses both existing files and raced symlinks.
@@ -72,12 +74,12 @@ def install(archive, output, pins, architecture):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--archive", type=Path, required=True)
-    parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--architecture", choices=("amd64", "arm64"), required=True)
     args = parser.parse_args()
     pins = json.loads((ROOT / ".github/containers/runner-containerd.json").read_text())
-    install(args.archive, args.output, pins, args.architecture)
+    # The image recipe owns these paths; CLI input cannot select filesystem targets.
+    install(Path("/tmp/reserve-containerd/archive.tgz"), Path("/usr/local/bin/containerd"),
+            pins, args.architecture)
 
 
 if __name__ == "__main__":
