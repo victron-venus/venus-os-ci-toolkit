@@ -1,0 +1,319 @@
+name: Review policy
+
+on:
+  workflow_call:
+    inputs:
+      allow-coderabbit-rate-limit:
+        description: Accept the latest authentic current-head CodeRabbit rate-limit status instead of an approval
+        type: boolean
+        default: false
+      pull-request-number:
+        description: Explicit PR number for trusted default-branch workflow_dispatch recovery
+        type: string
+        default: ''
+
+permissions: {}
+
+jobs:
+  review-policy:
+    name: Evaluate review policy
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: read
+      statuses: write
+    concurrency:
+      group: toolkit-review-policy-${{ github.repository }}
+      cancel-in-progress: false
+    steps:
+      # Metadata only. Never check out a PR, download its artifacts, or execute its content.
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
+      - name: Evaluate trusted current-head review evidence
+        shell: python3 -I {0}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ inputs.pull-request-number }}
+          ALLOW_CODERABBIT_RATE_LIMIT: ${{ inputs.allow-coderabbit-rate-limit }}
+        run: |
+          import datetime
+          import json
+          import os
+          import re
+          import subprocess
+          from urllib.parse import quote
+
+          CONTEXT = "Review policy"
+          BOT = {"login": "coderabbitai[bot]", "id": 136622811, "type": "Bot"}
+          SHA = re.compile(r"[0-9a-f]{40}")
+
+
+          def api(path, *, payload=None, paginate=False):
+              command = ["gh", "api", path]
+              if paginate:
+                  command.extend(["--paginate", "--slurp"])
+              if payload is not None:
+                  command.extend(["--method", "POST", "--input", "-"])
+              try:
+                  result = subprocess.run(
+                      command, input=json.dumps(payload) if payload is not None else None,
+                      text=True, capture_output=True, check=True,
+                      env={**os.environ, "GH_HOST": "github.com"},
+                  )
+              except subprocess.CalledProcessError:
+                  # API diagnostics may include credentials or untrusted response bodies.
+                  raise RuntimeError("GitHub API request failed; review policy remains blocking") from None
+              value = json.loads(result.stdout)
+              if paginate:
+                  if not isinstance(value, list) or any(not isinstance(page, list) for page in value):
+                      raise RuntimeError("Invalid paginated GitHub response")
+                  return [item for page in value for item in page]
+              return value
+
+
+          def authentic_bot(user):
+              return isinstance(user, dict) and all(user.get(key) == value for key, value in BOT.items())
+
+
+          def identity(user):
+              if not isinstance(user, dict) or type(user.get("id")) is not int or user["id"] <= 0:
+                  raise RuntimeError("Invalid GitHub identity")
+              login = user.get("login", "")
+              if not isinstance(login, str) or re.fullmatch(r"[A-Za-z0-9_\[\]-]+", login) is None:
+                  raise RuntimeError("Invalid GitHub login")
+              return user["id"], login
+
+
+          def trusted_reviewer(repository, user, author):
+              user_id, login = identity(user)
+              if user_id == author[0] or login.casefold() == author[1].casefold():
+                  return False
+              if authentic_bot(user):
+                  return True
+              if user.get("type") != "User":
+                  return False
+              permission = api(f"repos/{repository}/collaborators/{quote(login, safe='')}/permission")
+              if identity(permission.get("user")) != (user_id, login):
+                  raise RuntimeError("Reviewer identity changed during permission lookup")
+              return (permission.get("permission") in {"write", "maintain", "admin"}
+                      or permission.get("role_name") in {"write", "maintain", "admin"})
+
+
+          def ordering(item, timestamp_field):
+              item_id = item.get("id")
+              if type(item_id) is not int or item_id <= 0:
+                  raise RuntimeError("Invalid GitHub evidence identifier")
+              timestamp = item.get(timestamp_field)
+              if not isinstance(timestamp, str):
+                  raise RuntimeError("Missing GitHub evidence timestamp")
+              parsed = datetime.datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+              if parsed.tzinfo is None:
+                  raise RuntimeError("Ambiguous GitHub evidence timestamp")
+              return parsed, item_id
+
+
+          def relay_unchanged(repository, pr):
+              path = ".github/workflows/review-policy-events.yml"
+              head_repository = (pr.get("head", {}).get("repo") or {}).get("full_name", "")
+              if re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", head_repository) is None:
+                  raise RuntimeError("Invalid head repository")
+              blobs = []
+              for source_repo, commit in ((repository, pr["base"]["sha"]),
+                                          (head_repository, pr["head"]["sha"])):
+                  content = api(f"repos/{source_repo}/contents/{path}?ref={commit}")
+                  if (content.get("type") != "file" or content.get("path") != path
+                          or not SHA.fullmatch(content.get("sha", ""))):
+                      raise RuntimeError("Invalid review relay file")
+                  blobs.append(content["sha"])
+              return blobs[0] == blobs[1]
+
+
+          def evaluate(repository, pr, quota_allowed):
+              author = identity(pr.get("user"))
+              reviews = api(f"repos/{repository}/pulls/{pr['number']}/reviews?per_page=100", paginate=True)
+              effective = {}
+              # COMMENTED does not withdraw a previous decisive review; DISMISSED does.
+              decisive = [review for review in reviews
+                          if review.get("state") in {"APPROVED", "CHANGES_REQUESTED", "DISMISSED"}]
+              for review in sorted(decisive, key=lambda item: ordering(item, "submitted_at")):
+                  effective[identity(review.get("user"))[0]] = review
+              approved = False
+              for review in effective.values():
+                  if review["state"] == "DISMISSED":
+                      continue
+                  if not trusted_reviewer(repository, review.get("user"), author):
+                      continue
+                  if review["state"] == "CHANGES_REQUESTED":
+                      return "failure", "A trusted reviewer has requested changes"
+                  if review.get("commit_id") == pr["head"]["sha"]:
+                      approved = True
+              if approved:
+                  return "success", "Independent review approved the current head"
+              statuses = api(f"repos/{repository}/commits/{pr['head']['sha']}/statuses?per_page=100", paginate=True)
+              # The individual statuses endpoint includes creator identity; /status does not.
+              statuses = [status for status in statuses
+                          if status.get("context") == "CodeRabbit" and authentic_bot(status.get("creator"))]
+              latest = max(statuses, key=lambda item: ordering(item, "created_at")) if statuses else None
+              if (quota_allowed and latest and latest.get("state") == "success"
+                      and latest.get("description") == "Review rate limited"):
+                  if relay_unchanged(repository, pr):
+                      return "success", "CodeRabbit rate limit exception; required CI still applies"
+                  return "failure", "Review event relay changes require an independent approval"
+              return "pending", "Awaiting independent current-head review"
+
+
+          def snapshot(pr, repository, default_branch):
+              number = pr.get("number")
+              head = pr.get("head") or {}
+              base = pr.get("base") or {}
+              if (type(number) is not int or number <= 0
+                      or (base.get("repo") or {}).get("full_name") != repository
+                      or base.get("ref") != default_branch
+                      or not SHA.fullmatch(head.get("sha", ""))
+                      or not SHA.fullmatch(base.get("sha", ""))):
+                  raise RuntimeError("Invalid or non-default-branch pull request")
+              return (number, pr.get("state"), pr.get("draft"), head["sha"], base["sha"],
+                      base["ref"], identity(pr.get("user")))
+
+
+          def publish(repository, sha, state, description):
+              api(f"repos/{repository}/statuses/{sha}", payload={
+                  "state": state, "context": CONTEXT, "description": description,
+                  "target_url": f"https://github.com/{repository}/actions/runs/{os.environ['GITHUB_RUN_ID']}",
+              })
+
+
+          def check_pr(repository, number, default_branch, quota_allowed, invalidated):
+              endpoint = f"repos/{repository}/pulls/{number}"
+              pr = api(endpoint)
+              initial = snapshot(pr, repository, default_branch)
+              if pr.get("state") != "open":
+                  return
+              sha = pr["head"]["sha"]
+              if sha not in invalidated:
+                  publish(repository, sha, "pending", "Evaluating current-head review policy")
+                  invalidated.add(sha)
+              try:
+                  if pr.get("draft") is not False:
+                      print(f"PR #{number}: draft remains pending")
+                      return
+                  verdict = evaluate(repository, pr, quota_allowed)
+                  current = api(endpoint)
+                  if snapshot(current, repository, default_branch) != initial:
+                      raise RuntimeError("Pull request changed during review evaluation")
+                  fresh_verdict = evaluate(repository, current, quota_allowed)
+                  if fresh_verdict != verdict:
+                      raise RuntimeError("Review evidence changed during evaluation; rerun required")
+                  if snapshot(api(endpoint), repository, default_branch) != initial:
+                      raise RuntimeError("Pull request changed before publishing review policy")
+                  publish(repository, sha, *fresh_verdict)
+                  print(f"PR #{number}: {fresh_verdict[1]}")
+              except Exception:
+                  publish(repository, sha, "failure", "Review policy evaluation failed; rerun required")
+                  raise
+
+
+          def main():
+              repository = os.environ["GITHUB_REPOSITORY"]
+              if re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository) is None:
+                  raise RuntimeError("Invalid repository")
+              if not os.environ.get("GH_TOKEN"):
+                  raise RuntimeError("GitHub token is required")
+              with open(os.environ["GITHUB_EVENT_PATH"], encoding="utf-8") as event_file:
+                  event = json.load(event_file)
+              event_repository = event.get("repository") or {}
+              default_branch = event_repository.get("default_branch")
+              if (event_repository.get("full_name") != repository
+                      or not isinstance(default_branch, str) or not default_branch):
+                  raise RuntimeError("Event repository or default branch is invalid")
+              workflow_ref = os.environ.get("GITHUB_WORKFLOW_REF", "")
+              if (not workflow_ref.startswith(f"{repository}/.github/workflows/")
+                      or not workflow_ref.endswith(f"@refs/heads/{default_branch}")):
+                  raise RuntimeError("Review policy must execute from the trusted default branch")
+              event_name = os.environ["GITHUB_EVENT_NAME"]
+              explicit = os.environ.get("PR_NUMBER", "")
+              hints = []
+              if event_name == "workflow_dispatch":
+                  if re.fullmatch(r"[1-9][0-9]*", explicit) is None:
+                      raise RuntimeError("Manual evaluation requires an explicit PR number")
+                  numbers = [int(explicit)]
+              elif event_name == "pull_request_target":
+                  if event.get("action") not in {"opened", "synchronize", "reopened", "ready_for_review", "converted_to_draft", "edited"}:
+                      raise RuntimeError("Unsupported pull request event")
+                  pr_event = event.get("pull_request") or {}
+                  if (pr_event.get("base") or {}).get("ref") != default_branch:
+                      return
+                  numbers = [pr_event.get("number")]
+                  hints.append((pr_event.get("head") or {}).get("sha"))
+              elif event_name == "schedule":
+                  numbers = []
+              elif event_name in {"status", "workflow_run"}:
+                  if event_name == "status":
+                      if event.get("context") != "CodeRabbit" or not authentic_bot(event.get("sender")):
+                          return
+                      if not SHA.fullmatch(event.get("sha", "")):
+                          raise RuntimeError("Invalid status commit")
+                      hints.append(event["sha"])
+                  else:
+                      source = event.get("workflow_run") or {}
+                      if (event.get("action") != "completed" or source.get("event") != "pull_request_review"
+                              or source.get("name") != "Review policy events"
+                              or source.get("path") != ".github/workflows/review-policy-events.yml"):
+                          raise RuntimeError("Unrecognized review event relay")
+                      hints.append(source.get("head_sha"))
+                      hints.extend((pr.get("head") or {}).get("sha")
+                                   for pr in source.get("pull_requests", []))
+                  numbers = []
+              else:
+                  raise RuntimeError("Unsupported policy event; reviews must use the read-only relay")
+              # Authenticated event SHAs are invalidation hints only, never evidence.
+              # Invalidate before network reads that might fail and strand old success.
+              invalidated = set()
+              for hint in hints:
+                  if isinstance(hint, str) and SHA.fullmatch(hint) and hint not in invalidated:
+                      publish(repository, hint, "pending", "Rechecking review policy after an event")
+                      invalidated.add(hint)
+              metadata = api(f"repos/{repository}")
+              if (metadata.get("full_name") != repository or metadata.get("archived") is not False
+                      or metadata.get("default_branch") != default_branch):
+                  raise RuntimeError("Repository identity or default branch changed")
+              # GitHub replaces queued concurrency runs rather than preserving FIFO.
+              # Every accepted event reconciles every open PR, so a replacement run
+              # cannot strand another PR's old successful policy status.
+              prs = api(f"repos/{repository}/pulls?state=open&base={quote(default_branch, safe='')}&per_page=100", paginate=True)
+              head_numbers = {}
+              for listed_pr in prs:
+                  listed = snapshot(listed_pr, repository, default_branch)
+                  head_numbers.setdefault(listed[3], set()).add(listed[0])
+                  listed_sha = listed[3]
+                  if listed_pr.get("state") == "open" and listed_sha not in invalidated:
+                      publish(repository, listed_sha, "pending", "Rechecking all open pull requests")
+                      invalidated.add(listed_sha)
+              numbers.extend(pr.get("number") for pr in prs)
+              if any(type(number) is not int or number <= 0 for number in numbers):
+                  raise RuntimeError("Invalid pull request number")
+              quota_allowed = os.environ.get("ALLOW_CODERABBIT_RATE_LIMIT") == "true"
+              failures = 0
+              duplicates = set()
+              for shared_sha, sharing_numbers in head_numbers.items():
+                  if len(sharing_numbers) > 1:
+                      # Commit statuses are SHA-wide, but reviews belong to one PR.
+                      publish(repository, shared_sha, "failure", "Multiple open PRs share this head; use separate branches")
+                      duplicates.update(sharing_numbers)
+                      failures += 1
+              for number in sorted(set(numbers) - duplicates):
+                  try:
+                      check_pr(repository, number, default_branch, quota_allowed, invalidated)
+                  except Exception:
+                      # A broken PR must not prevent invalidating another PR's status.
+                      failures += 1
+                      print(f"PR #{number}: review policy evaluation failed")
+              if failures:
+                  raise RuntimeError(f"Review policy failed closed for {failures} pull request(s)")
+
+
+          if __name__ == "__main__":
+              main()

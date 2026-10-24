@@ -1,0 +1,17 @@
+# This unprivileged listener may execute from a PR merge ref. Its only output is
+# a workflow_run event. The privileged policy always executes on the default branch.
+name: Review policy events
+
+on:
+  pull_request_review:
+    types: [submitted, edited, dismissed]
+
+permissions: {}
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    steps:
+      - name: Signal a fresh evaluation of authoritative GitHub metadata
+        run: 'true'
