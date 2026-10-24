@@ -287,3 +287,9 @@ successful cleanup on a particular node.
 References: [Kubernetes scheduling and namespace selectors](https://kubernetes.io/docs/concepts/scheduling-eviction/assign-pod-node/#namespace-selector),
 [Kubernetes 1.31 Pod status strategy](https://github.com/kubernetes/kubernetes/blob/v1.31.4/pkg/registry/core/pod/strategy.go),
 and [Pod binding implementation](https://github.com/kubernetes/kubernetes/blob/v1.31.4/pkg/registry/core/pod/storage/storage.go).
+## Optional bounded-heavy candidate
+
+For selected sequential container tests, [bounded heavy CI v1](BOUNDED_HEAVY.md)
+keeps the 6 GiB tmpfs with a distinct 9/12 GiB memory tuple and a separately
+pinned derivative image. It requires explicit scope selection and cold-job
+memory/OOM acceptance; existing plans and global defaults are unchanged.
