@@ -1,5 +1,9 @@
 # Private ephemeral runners
 
+The canonical base toolchain and its dependency-patch verification are documented
+in [Runner image security refresh](RUNNER_IMAGE_SECURITY.md). A refreshed base
+requires full image and real-job qualification before an existing pool adopts it.
+
 The private image installs official GitHub CLI 2.103.0 at `/usr/local/bin/gh`,
 using the archive and executable hashes in `.github/gh/release.json` and the
 existing `scripts/install_release_gh.py` offline archive mode. Its build checks

@@ -33,6 +33,9 @@ class PublicRunnerImageTests(unittest.TestCase):
         self.assertEqual(lines[0], '**')
         allowed = {
             '.github/gh/release.json', 'scripts/install_release_gh.py',
+            '.github/containers/runner-containerd.json', 'scripts/install_runner_containerd.py',
+            '.github/containers/runner-npm.json', 'scripts/install_runner_npm.py',
+            'scripts/prune_runner_npm.py', 'deploy/runner-reserve/qualify-npm.cjs',
             'deploy/runner-reserve/Dockerfile',
             'deploy/runner-reserve/Dockerfile.dockerignore',
             *{'deploy/runner-reserve/' + name for name in (
