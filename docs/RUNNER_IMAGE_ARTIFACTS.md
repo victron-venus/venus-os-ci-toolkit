@@ -101,6 +101,10 @@ It still works after an OOM or low-disk failure. An ambiguous Docker response is
 not treated as absence; removal requires a final absence readback. The scanner
 receives only a read-only archive, writable cache and output directories, with
 all capabilities dropped and no Docker socket. Cleanup never uses global prune.
+The BuildKit state volume is checked absent before creation and bound to the
+owned container's `/var/lib/buildkit` mount. Its removal is independently
+verified even if Buildx leaves an inactive instance's cache behind. Volume
+removal is not forced, so another container's reference prevents deletion.
 
 ## After artifact production
 

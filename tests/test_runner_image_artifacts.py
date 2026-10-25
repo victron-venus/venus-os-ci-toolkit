@@ -142,6 +142,10 @@ class RunnerArtifactsTests(unittest.TestCase):
             for name, record in spec['files'].items():
                 self.assertEqual(oci.digest_file(build.ROOT / name), record['sha256'])
                 self.assertEqual((build.ROOT / name).stat().st_size, record['bytes'])
+                tracked = subprocess.check_output(['git', '-C', str(build.ROOT), 'ls-files', '-s', '--', name],
+                                                  text=True).splitlines()
+                self.assertEqual(len(tracked), 1)
+                self.assertEqual(tracked[0].split()[0], record['mode'])
             declared = {line[1:] for line in (build.ROOT / (spec['recipe'] + '.dockerignore')).read_text().splitlines()
                         if line.startswith('!')}
             self.assertEqual(declared, set(spec['files']) | ({manifest['sentinel']['path']} if stage == 'public' else set()))
@@ -217,6 +221,8 @@ class RunnerArtifactsTests(unittest.TestCase):
     def builder(self):
         return {'Id': 'a' * 64, 'Name': '/buildx_buildkit_test0',
                 'Config': {'Image': 'pinned', 'Env': ['RUNNER_ARTIFACT_OWNER=nonce']},
+                'Mounts': [{'Type': 'volume', 'Name': 'buildx_buildkit_test0_state',
+                            'Destination': '/var/lib/buildkit', 'RW': True}],
                 'HostConfig': {**build.LIMITS, 'RestartPolicy': {'Name': 'no'}}, 'State': {'OOMKilled': False}}
 
     def test_foreign_or_unbounded_builder_is_rejected(self):
@@ -238,7 +244,8 @@ class RunnerArtifactsTests(unittest.TestCase):
             item['State']['OOMKilled'] = oom
             results = [mock.Mock(returncode=0, stdout=json.dumps([item]).encode()), mock.Mock(),
                        mock.Mock(returncode=1, stdout=b'[]', stderr=b'Error: No such object: buildx_buildkit_test0')]
-            with mock.patch.object(build.subprocess, 'run', side_effect=results) as run:
+            with mock.patch.object(build.subprocess, 'run', side_effect=results) as run, \
+                 mock.patch.object(build, 'probe_volume', return_value=None):
                 state = build.remove_builder(sup, 'test', 'nonce', 'pinned')
             self.assertEqual(state['OOMKilled'], oom)
             sup.check.assert_not_called()
@@ -374,7 +381,7 @@ class RunnerArtifactsTests(unittest.TestCase):
         fake.run.side_effect = run
         with mock.patch.dict(os.environ, env), mock.patch.object(build, 'Supervisor', return_value=fake), \
              mock.patch.object(build, 'prepare_context'), mock.patch.object(build, 'remove_builder', return_value={'absent': True}) as cleanup:
-            with self.assertRaises(subprocess.TimeoutExpired):
+            with mock.patch.object(build, 'probe_volume', return_value=None), self.assertRaises(subprocess.TimeoutExpired):
                 build.execute('public')
         cleanup.assert_called_once()
         record = json.loads((self.root / 'runner-image-public-123-1/build-receipt.json').read_text())
@@ -382,6 +389,39 @@ class RunnerArtifactsTests(unittest.TestCase):
         self.assertTrue(record['builder_removed'])
         self.assertFalse(record['build_success'])
         self.assertEqual(record['failure_type'], 'TimeoutExpired')
+
+    def test_owned_cache_is_removed_even_after_container_is_inactive(self):
+        for item in (self.builder(), None):
+            sup = mock.Mock(env={'DOCKER_CONFIG': str(self.root / 'docker')})
+            with mock.patch.object(build, 'probe_builder', side_effect=[item, None]), \
+                 mock.patch.object(build, 'probe_volume', side_effect=[{'Name': 'state'}, None]), \
+                 mock.patch.object(build.subprocess, 'run') as run:
+                result = build.remove_builder(sup, 'test', 'nonce', 'pinned', volume_absent_before=True)
+            self.assertTrue(result['state_volume_removed'])
+            self.assertEqual(run.call_args_list[-1].args[0],
+                             ['docker', 'volume', 'rm', 'buildx_buildkit_test0_state'])
+            self.assertNotIn('--force', run.call_args_list[-1].args[0])
+        with mock.patch.object(build, 'probe_builder', return_value=None), \
+             mock.patch.object(build, 'probe_volume', return_value={'Name': 'state'}), \
+             mock.patch.object(build.subprocess, 'run') as run:
+            with self.assertRaisesRegex(ValueError, 'ownership'):
+                build.remove_builder(sup, 'test', 'nonce', 'pinned')
+        run.assert_not_called()
+
+    def test_cache_removal_unknown_outcome_or_wrong_association_is_rejected(self):
+        sup = mock.Mock(env={'DOCKER_CONFIG': str(self.root / 'docker')})
+        with mock.patch.object(build, 'probe_builder', side_effect=[self.builder(), None]), \
+             mock.patch.object(build, 'probe_volume', return_value={'Name': 'state'}), \
+             mock.patch.object(build.subprocess, 'run'):
+            with self.assertRaisesRegex(ValueError, 'volume removal not confirmed'):
+                build.remove_builder(sup, 'test', 'nonce', 'pinned')
+        bad = self.builder()
+        bad['Mounts'][0]['Name'] = 'unrelated'
+        with mock.patch.object(build, 'probe_builder', return_value=bad), \
+             mock.patch.object(build.subprocess, 'run') as run:
+            with self.assertRaisesRegex(ValueError, 'association'):
+                build.remove_builder(sup, 'test', 'nonce', 'pinned')
+        run.assert_not_called()
 
     def test_build_command_is_artifact_only_with_exact_private_index(self):
         data = build.document(build.MANIFEST)

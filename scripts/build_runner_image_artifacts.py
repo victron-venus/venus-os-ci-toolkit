@@ -239,20 +239,51 @@ def qualify_cgroup(sup, name, owner, image, observed, work, public_recipe):
             'preflight_base': bases[0], 'run_inherits_builder_limits': True}
 
 
-def remove_builder(sup, name, owner, image):
+def state_volume(name):
+    return 'buildx_buildkit_' + name + '0_state'
+
+
+def probe_volume(sup, name):
+    result = subprocess.run(['docker', 'volume', 'inspect', name], env=sup.env,
+                            capture_output=True, timeout=30)
+    missing = {('Error response from daemon: get ' + name + ': no such volume').encode(),
+               ('Error: No such volume: ' + name).encode()}
+    if result.returncode == 1 and result.stdout.strip() in {b'', b'[]'} and result.stderr.strip() in missing:
+        return None
+    require(result.returncode == 0, 'Unable to determine owned volume state')
+    items = json.loads(result.stdout)
+    require(len(items) == 1 and items[0].get('Name') == name and items[0].get('Driver') == 'local' and
+            items[0].get('Scope') == 'local' and not items[0].get('Options'), 'Unexpected state volume')
+    return items[0]
+
+
+def remove_builder(sup, name, owner, image, *, volume_absent_before=False):
     item = probe_builder(sup, name, owner, image)
+    volume = state_volume(name)
+    associated = False
     if item is not None:
+        mounts = [mount for mount in item.get('Mounts', []) if mount.get('Destination') == '/var/lib/buildkit']
+        require(len(mounts) == 1 and mounts[0].get('Type') == 'volume' and mounts[0].get('Name') == volume and
+                mounts[0].get('RW') is True, 'Owned BuildKit state volume association differs')
+        associated = True
         # Remove by immutable container ID, including an unhealthy owned instance.
         subprocess.run(['docker', 'rm', '--force', item['Id']], env=sup.env, check=True, timeout=60)
     metadata = Path(sup.env['DOCKER_CONFIG']) / 'buildx/instances' / name
     if metadata.exists():
         require(metadata.is_file() and not metadata.is_symlink(), 'Unsafe owned builder metadata')
         # This private DOCKER_CONFIG was exclusively created by this invocation.
-        # Buildx removes only that instance and its named state volume/cache.
+        # Remove only that instance's metadata. An inactive Buildx instance may
+        # retain its volume, so cache removal is independently verified below.
         require(probe_builder(sup, name, owner, image) is None, 'Builder name reappeared during cleanup')
         subprocess.run(['docker', 'buildx', 'rm', '--force', name], env=sup.env, check=True, timeout=60)
     require(probe_builder(sup, name, owner, image) is None, 'Owned builder removal not confirmed')
-    return {key: item['State'].get(key) for key in ('OOMKilled', 'ExitCode', 'Error')} if item else {'absent': True}
+    if probe_volume(sup, volume) is not None:
+        require(associated or volume_absent_before, 'State volume ownership is not established')
+        # No force: Docker refuses removal if another container references it.
+        subprocess.run(['docker', 'volume', 'rm', volume], env=sup.env, check=True, timeout=60)
+    require(probe_volume(sup, volume) is None, 'Owned state volume removal not confirmed')
+    result = {key: item['State'].get(key) for key in ('OOMKilled', 'ExitCode', 'Error')} if item else {'absent': True}
+    return {**result, 'state_volume': volume, 'state_volume_removed': True}
 
 
 def build_command(stage, data, identity, builder, context, output, layout=None, base=None):
@@ -310,6 +341,8 @@ def validate_parent(parent, identity, manifest):
             build.get('oci_verified') is True and build.get('scan_completed') is True and
             build.get('builder_removed') is True and build.get('scanner_removed') is True,
             'Public artifact is incomplete')
+    require(build.get('builder_cleanup_state', {}).get('state_volume_removed') is True,
+            'Public builder cache removal is unconfirmed')
     check_cgroup_receipt(build)
     require(document(parent / 'cgroup-verification.json') == build['cgroup_proof'], 'Parent cgroup proof differs')
     require(build.get('manifest_sha256') == oci.digest_file(MANIFEST), 'Public manifest binding differs')
@@ -350,6 +383,7 @@ def execute(stage, parent=None):
     image = data['tools']['buildkit']['image']
     owner = name
     created = False
+    volume_absent_before = False
     try:
         require(sup.run(['git', '-C', str(ROOT), 'rev-parse', 'HEAD'], capture=True) == identity['source_commit'],
                 'Checkout differs from dispatched commit')
@@ -372,6 +406,9 @@ def execute(stage, parent=None):
             (parent / 'image.oci.tar').unlink()
         config = work / 'buildkitd.toml'
         config.write_text('[worker.oci]\n  max-parallelism = 1\n')
+        require(probe_volume(sup, state_volume(name)) is None, 'Builder state volume already exists')
+        volume_absent_before = True
+        record['state_volume_absent_before_creation'] = True
         command = ['docker', 'buildx', 'create', '--name', name, '--driver', 'docker-container',
                    '--buildkitd-config', str(config), '--driver-opt', 'image=' + image,
                    '--driver-opt', 'memory=4g', '--driver-opt', 'memory-swap=4g',
@@ -408,7 +445,8 @@ def execute(stage, parent=None):
         record['archive_bytes'] = (output / 'image.oci.tar').stat().st_size
         record['archive_sha256'] = oci.digest_file(output / 'image.oci.tar')
         # Releasing only our builder's state reclaims compiled Go caches before scan.
-        record['builder_cleanup_state'] = remove_builder(sup, name, owner, image)
+        record['builder_cleanup_state'] = remove_builder(sup, name, owner, image,
+                                                        volume_absent_before=volume_absent_before)
         created = False
         record['builder_removed'] = True
         proof = oci.verify(output / 'image.oci.tar', record['archive_sha256'], record['archive_bytes'],
@@ -423,7 +461,8 @@ def execute(stage, parent=None):
     finally:
         if created:
             try:
-                record['builder_cleanup_state'] = remove_builder(sup, name, owner, image)
+                record['builder_cleanup_state'] = remove_builder(sup, name, owner, image,
+                                                                volume_absent_before=volume_absent_before)
                 record['builder_removed'] = True
             except BaseException as exc:
                 record['cleanup_failure_type'] = type(exc).__name__
@@ -514,6 +553,7 @@ def gate(directories):
         require(build.get('build_success') is True and build.get('oci_verified') is True and
                 build.get('scan_completed') is True and build.get('builder_removed') is True and
                 build.get('scanner_removed') is True and
+                build.get('builder_cleanup_state', {}).get('state_volume_removed') is True and
                 not build.get('cleanup_failure_type'), 'Incomplete artifact production')
         require(summary.get('scan_gate_passed') is True and summary.get('blocking_findings') == 0 and
                 build.get('scan_gate_passed') is True, 'Raw HIGH/CRITICAL findings require review; no automatic exclusions')
