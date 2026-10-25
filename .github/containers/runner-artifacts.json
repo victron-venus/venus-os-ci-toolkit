@@ -1,6 +1,7 @@
 {
   "schema": 1,
-  "canonical_source": "e0aff6e6ef0fc790cfe0a13e2bd69abb6dd594c6",
+  "scan_acceptance_schema": 1,
+  "canonical_source": "c4e0c08ade0596afb51186d211487ea9c6123fff",
   "platform": "linux/amd64",
   "tools": {
     "buildkit": {
@@ -34,13 +35,13 @@
           "mode": "100755"
         },
         "deploy/runner-reserve/Dockerfile": {
-          "sha256": "a53ba50d36098b97bf7389542ca36be211c571abcaec6d4c3501697d43826973",
-          "bytes": 9294,
+          "sha256": "72b59b5f4afb635852dc267151f6404f86199dd64442d4bfa59d0c29f964c266",
+          "bytes": 10887,
           "mode": "100644"
         },
         "deploy/runner-reserve/Dockerfile.dockerignore": {
-          "sha256": "970f7337677c9be142f29f834cf2f677b26ca8b67c9f4d0de281e64a7c24eed6",
-          "bytes": 1132,
+          "sha256": "f4ea9612b2a4c247a880f477bd236b469fe5c8a4609071fbe7b1986c42a636fa",
+          "bytes": 1265,
           "mode": "100644"
         },
         "deploy/runner-reserve/start-runner.sh": {
@@ -131,6 +132,21 @@
         ".github/containers/runner-go-tools/compose/inputs.json": {
           "sha256": "1a04ba1efd3031cba873f1d85924898a7da94b820dcce37be73ee601d354283f",
           "bytes": 805,
+          "mode": "100644"
+        },
+        ".github/containers/libbpf/0001-restrict-core-poisoning.patch": {
+          "sha256": "87751eaa64a8f7c410e7829da9c01ee18cb2b543f6cd19e387904b9f554b6365",
+          "bytes": 4570,
+          "mode": "100644"
+        },
+        ".github/containers/runner-libbpf.json": {
+          "sha256": "504a2a2d6d2ed407405e4e5f61abb189fdee6bcf44dec545fed6dcbb515a42d2",
+          "bytes": 2049,
+          "mode": "100644"
+        },
+        "scripts/build_runner_libbpf.py": {
+          "sha256": "03a1ec3f2a1c2243689a184eef4af6da879de77356cec5fc899dc094a8aa6f55",
+          "bytes": 13710,
           "mode": "100644"
         }
       }
