@@ -19,7 +19,7 @@ and official Ubuntu binary package hashes are in `runner-gstreamer.json`.
 The `.dsc` is hash-pinned and its archive checksums are checked; the helper does
 not claim an independent OpenPGP signature verification.
 
-The `patched-gstreamer` Docker target uses a non-root native builder. It applies
+The `patched-gstreamer` Docker target compiles as UID 10001. It applies
 the original three distro patches, then the backport with zero fuzz. It runs the
 original Meson build definition for only the 20-file `codecparsers` library,
 with two compiler jobs, distro hardening flags and no subproject downloads.
@@ -46,6 +46,16 @@ are updated. The helper re-extracts both generated packages and compares their
 complete file/link/mode inventories. Extraction does not execute maintainer
 scripts. The final image installs both together after browser apt work and
 checks every regular payload file's SHA256.
+
+Ubuntu's container package filters can omit translations during installation.
+Both the preflight unpack and final install pass the quoted, command-local
+`--path-include='/usr/share/locale/*/LC_MESSAGES/gst-plugins-bad-1.0.mo'` option.
+This retains the package's translations without changing the system filter
+configuration or including other packages' translation files. The preflight
+switches to UID 0 only after compilation and package verification, unpacks both
+packages in the same pinned Ubuntu base, and checks their complete SHA256 list.
+Final dependency/configuration checks still use `dpkg -i`; no missing payload
+is ignored. See the [dpkg path-filter semantics](https://manpages.debian.org/unstable/dpkg/dpkg.1.en.html#path-include).
 
 `/usr/local/share/victron-gstreamer/` retains source and patch notices plus
 `build-provenance.json`: source identity, builder hash, actual build dependency
@@ -89,6 +99,10 @@ It proves the component boundary and rejection of changed plugin bytes even
 when their dpkg checksum is updated. Its other mandatory image components are
 deliberately absent; that fixture is not a successful full-image qualification.
 
-The ordinary synthetic `.deb` roundtrip requires `dpkg-deb`; other tests are
+The ordinary synthetic `.deb` roundtrip requires `dpkg-deb`. A separate
+unprivileged `dpkg --root` fixture checks all 44 affected translation paths:
+the baseline filter omits them, the command-local include restores their exact
+bytes, and an unrelated translation remains excluded. It has no dependencies or
+maintainer scripts and writes only to a fresh temporary root. Other tests are
 portable. Actual C compilation, ABI equality and final browser behavior are
 confirmed only by a subsequent successful bounded image build and its receipts.

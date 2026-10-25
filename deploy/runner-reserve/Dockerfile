@@ -31,6 +31,12 @@ COPY .github/containers/runner-gstreamer.json .github/containers/runner-gstreame
 COPY .github/containers/gstreamer/0001-h265-parser-bounds.patch .github/containers/gstreamer/0001-h265-parser-bounds.patch
 USER 10001:10001
 RUN umask 022 && TARGETARCH="$TARGETARCH" python3 scripts/build_runner_gstreamer.py
+# Exercise this base's dpkg path filters before the full image build. Compilation
+# stays unprivileged; this disposable stage only unpacks and checks the payload.
+USER 0:0
+RUN dpkg --path-include='/usr/share/locale/*/LC_MESSAGES/gst-plugins-bad-1.0.mo' \
+        --unpack /opt/victron-gstreamer/libgstreamer-plugins-bad1.0-0.deb /opt/victron-gstreamer/gstreamer1.0-plugins-bad.deb \
+    && sha256sum --check /opt/victron-gstreamer/installed.sha256
 FROM --platform=$BUILDPLATFORM docker.io/library/golang@sha256:672c944cfd07599b5f1bb179869270cdc94c6254e41db4d431259693cb286b82 AS patched-go-tools
 ARG TARGETARCH
 RUN apt-get update && apt-get install -y --no-install-recommends python3 ca-certificates \
@@ -153,7 +159,8 @@ RUN dpkg -i /tmp/victron-libbpf/libbpf1.deb \
 # The plugin package's exact library dependency is updated together with the library.
 COPY --from=patched-gstreamer /opt/victron-gstreamer/libgstreamer-plugins-bad1.0-0.deb /opt/victron-gstreamer/gstreamer1.0-plugins-bad.deb /opt/victron-gstreamer/installed.sha256 /tmp/victron-gstreamer/
 COPY --from=patched-gstreamer /opt/victron-gstreamer/notices/ /usr/local/share/victron-gstreamer/
-RUN dpkg -i /tmp/victron-gstreamer/libgstreamer-plugins-bad1.0-0.deb /tmp/victron-gstreamer/gstreamer1.0-plugins-bad.deb \
+RUN dpkg --path-include='/usr/share/locale/*/LC_MESSAGES/gst-plugins-bad-1.0.mo' \
+        -i /tmp/victron-gstreamer/libgstreamer-plugins-bad1.0-0.deb /tmp/victron-gstreamer/gstreamer1.0-plugins-bad.deb \
     && test "$(dpkg-query -W -f='${Version}' libgstreamer-plugins-bad1.0-0)" = '1.24.2-1ubuntu4+victron1' \
     && test "$(dpkg-query -W -f='${Version}' gstreamer1.0-plugins-bad)" = '1.24.2-1ubuntu4+victron1' \
     && sha256sum --check /tmp/victron-gstreamer/installed.sha256 \
