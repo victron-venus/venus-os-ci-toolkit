@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "scan_acceptance_schema": 1,
-  "canonical_source": "4fcc4658de25cf2b00b782950b002ce2fb988fc3",
+  "canonical_source": "b50a36eb4b3c8a9560b6d19da6838c598aed3407",
   "platform": "linux/amd64",
   "tools": {
     "buildkit": {
@@ -150,8 +150,8 @@
           "mode": "100644"
         },
         "deploy/runner-reserve/Dockerfile": {
-          "sha256": "de56d0ec59dffbf0c76cd96e137ec103515f0d7fd56d4c46646d43d7fc4ece0e",
-          "bytes": 14758,
+          "sha256": "c3990860878d99b72536e64f8e3cbdf5ec7d552a13322f22a0dc803b3cf00a57",
+          "bytes": 15288,
           "mode": "100644"
         },
         "deploy/runner-reserve/Dockerfile.dockerignore": {
