@@ -78,6 +78,9 @@ authorize moving an existing listener.
 Resources follow the selected profile and its existing inventory storage mode;
 the plan does not accept arbitrary CPU, memory or security settings.
 
+The [full-memory CI opt-in](FULL_MEMORY_CI.md) reserves the existing 6 GiB limit
+for explicitly selected standard CI scopes; defaults remain unchanged.
+
 - Standard CI requires `ci_storage: tmpfs-2gi` and the standard resource class.
   It requests 600m CPU and 3 GiB memory, with limits of 2 CPU and 6 GiB memory.
 - Heavy CI requires `ci_resource_class: heavy` and
