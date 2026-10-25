@@ -1,0 +1,184 @@
+{
+  "schema": 1,
+  "canonical_source": "50184c41f875a8fac538ae92c65952c3af3a00cf",
+  "platform": "linux/amd64",
+  "tools": {
+    "buildkit": {
+      "version": "v0.34.1",
+      "image": "docker.io/moby/buildkit@sha256:b651bf250c2805569f1db385ad1ea8fb73737dfc851de305f274ca02690fa93f",
+      "index_sha256": "99368f3e46177c6405b9740e4461d91cee004128daeecca78d4ceac50ec1da5c"
+    },
+    "trivy": {
+      "version": "0.74.0",
+      "image": "ghcr.io/aquasecurity/trivy@sha256:ee940acbf1f58ebadb42d01434ce4609530bf1b52536afbd1eee66cd7123c5c9",
+      "index_sha256": "62b1e65e8869bc4b4c6aa4fa2b21595256c7c2f6018a9d9ad61caf87187c1969"
+    }
+  },
+  "sentinel": {
+    "path": "deploy/runner-reserve/guard-ca.crt",
+    "installed_path": "/opt/victron-ci-reserve/guard-ca.crt",
+    "text": "UNCONFIGURED SITE CA\n"
+  },
+  "contexts": {
+    "public": {
+      "recipe": "deploy/runner-reserve/Dockerfile",
+      "files": {
+        ".github/gh/release.json": {
+          "sha256": "be670a249569c4c552c6e1f4dd1c3f2c6292ba6d21bed6f4ebd83019f56f361c",
+          "bytes": 1392,
+          "mode": "100644"
+        },
+        "scripts/install_release_gh.py": {
+          "sha256": "77dc8af9fa3020d149dde8f8698c37afb0d7ea4b5c947a7cc50efee4c44464b7",
+          "bytes": 6291,
+          "mode": "100755"
+        },
+        "deploy/runner-reserve/Dockerfile": {
+          "sha256": "e7745348d4ebcbc116caa711ec459e7e2186d26ceba5959010370f15cecc4d71",
+          "bytes": 7540,
+          "mode": "100644"
+        },
+        "deploy/runner-reserve/Dockerfile.dockerignore": {
+          "sha256": "970f7337677c9be142f29f834cf2f677b26ca8b67c9f4d0de281e64a7c24eed6",
+          "bytes": 1132,
+          "mode": "100644"
+        },
+        "deploy/runner-reserve/start-runner.sh": {
+          "sha256": "4ece9478ddccab5525cd9d4c44c571b5c677c9ab01be90b162d69ae9e611e22a",
+          "bytes": 3435,
+          "mode": "100644"
+        },
+        "deploy/runner-reserve/sandbox-docker.sh": {
+          "sha256": "266ab1000e4318f7513823d4013dc102c0c92e420a573a83791b028c141845ed",
+          "bytes": 3927,
+          "mode": "100755"
+        },
+        "deploy/runner-reserve/qualify.sh": {
+          "sha256": "b04224cc6c3a602dcb0e071b78fbadcf94ba5b75d7de8f9d38f775565a4e35cd",
+          "bytes": 2093,
+          "mode": "100644"
+        },
+        ".github/containers/runner-npm.json": {
+          "sha256": "98f97dbbc8042cd70d8a4a287be3b1ac82b16ae8d3b3d93bd2a2dbeb69102182",
+          "bytes": 1419,
+          "mode": "100644"
+        },
+        "scripts/install_runner_npm.py": {
+          "sha256": "87aeb1a55af619ca5ae538de07eab03ffd7fa41349ea578a6cb45730d4c8303f",
+          "bytes": 6692,
+          "mode": "100644"
+        },
+        "scripts/prune_runner_npm.py": {
+          "sha256": "2ca99945af65790ba43e2fa5569f446e5ac887f1d89f30e9d37d22861355c26e",
+          "bytes": 2104,
+          "mode": "100644"
+        },
+        "deploy/runner-reserve/qualify-npm.cjs": {
+          "sha256": "929217995510d946dc7140bce7164008659c07b18fa642aa6585649910ca6917",
+          "bytes": 3154,
+          "mode": "100644"
+        },
+        ".github/containers/runner-go-tools.json": {
+          "sha256": "e60845dc47bc36f658b254fc8d9d19c8a5d9f4e427300ba0e807ae9947d559a7",
+          "bytes": 4018,
+          "mode": "100644"
+        },
+        "scripts/build_runner_go_tools.py": {
+          "sha256": "4bea3b98ae08fdde67f379a52c3de40b30230cc333db686a2e735c4a1aff63e2",
+          "bytes": 21522,
+          "mode": "100644"
+        },
+        ".github/containers/runner-go-tools/containerd/go.mod": {
+          "sha256": "c914e0b5f06866f41e26dcd9db3b7fe60f5dce3958245bfa55f6b17c22a8438a",
+          "bytes": 7027,
+          "mode": "100644"
+        },
+        ".github/containers/runner-go-tools/containerd/go.sum": {
+          "sha256": "53f8f1b12719ef15e15e80b1ecf17ae8b248ba588518e9577785400c5269847f",
+          "bytes": 42085,
+          "mode": "100644"
+        },
+        ".github/containers/runner-go-tools/containerd/inputs.json": {
+          "sha256": "865d98c88a07000e725513adb1590225cc3f94dd4d173a830d78baa2c1523103",
+          "bytes": 1260,
+          "mode": "100644"
+        },
+        ".github/containers/runner-go-tools/buildx/go.mod": {
+          "sha256": "4b4e493002afcf4b996a2faef612a3072a5ac554c4288e34cbd6350628d464cc",
+          "bytes": 12185,
+          "mode": "100644"
+        },
+        ".github/containers/runner-go-tools/buildx/go.sum": {
+          "sha256": "b016df41b7aa851ae4d1b52a78987ef17ab85807273ed157efa2cacf9ad5cef5",
+          "bytes": 69376,
+          "mode": "100644"
+        },
+        ".github/containers/runner-go-tools/buildx/inputs.json": {
+          "sha256": "694d9694111eece1568abd0e6694093ea3f77099bb4a81e471237da74cb1a693",
+          "bytes": 1569,
+          "mode": "100644"
+        },
+        ".github/containers/runner-go-tools/compose/go.mod": {
+          "sha256": "4fc4a43a1c6d22f08ceae0ab0cebfb35af6d4c99d1b83a79c749b088b8a7748c",
+          "bytes": 6559,
+          "mode": "100644"
+        },
+        ".github/containers/runner-go-tools/compose/go.sum": {
+          "sha256": "4fab90ed241d7edaacb92b2c500225d0ad03e2c4e46dffe81011d686d58e9f47",
+          "bytes": 32263,
+          "mode": "100644"
+        },
+        ".github/containers/runner-go-tools/compose/inputs.json": {
+          "sha256": "1a04ba1efd3031cba873f1d85924898a7da94b820dcce37be73ee601d354283f",
+          "bytes": 805,
+          "mode": "100644"
+        }
+      }
+    },
+    "private": {
+      "recipe": "deploy/arc-private/Dockerfile",
+      "files": {
+        ".github/gh/release.json": {
+          "sha256": "be670a249569c4c552c6e1f4dd1c3f2c6292ba6d21bed6f4ebd83019f56f361c",
+          "bytes": 1392,
+          "mode": "100644"
+        },
+        "scripts/install_release_gh.py": {
+          "sha256": "77dc8af9fa3020d149dde8f8698c37afb0d7ea4b5c947a7cc50efee4c44464b7",
+          "bytes": 6291,
+          "mode": "100755"
+        },
+        "deploy/arc-private/Dockerfile": {
+          "sha256": "117cdf5839906d99e9c38fcf78b7437f1404702f44398bc822fa86fe16bfdf8f",
+          "bytes": 2445,
+          "mode": "100644"
+        },
+        "deploy/arc-private/Dockerfile.dockerignore": {
+          "sha256": "e890021df9dc15efba17b149abcbbe81c2893a1675e293f2d9d418e7951e89a6",
+          "bytes": 448,
+          "mode": "100644"
+        },
+        "deploy/arc-private/sandbox-docker.sh": {
+          "sha256": "3480ec8dbbfa4b92d908fd9aea79efac5e7fe75acebc0c069cea2448b67596c4",
+          "bytes": 6690,
+          "mode": "100644"
+        },
+        "deploy/runner-reserve/start-runner.sh": {
+          "sha256": "4ece9478ddccab5525cd9d4c44c571b5c677c9ab01be90b162d69ae9e611e22a",
+          "bytes": 3435,
+          "mode": "100644"
+        },
+        "deploy/runner-reserve/sandbox-docker.sh": {
+          "sha256": "266ab1000e4318f7513823d4013dc102c0c92e420a573a83791b028c141845ed",
+          "bytes": 3927,
+          "mode": "100755"
+        },
+        "deploy/runner-reserve/qualify.sh": {
+          "sha256": "b04224cc6c3a602dcb0e071b78fbadcf94ba5b75d7de8f9d38f775565a4e35cd",
+          "bytes": 2093,
+          "mode": "100644"
+        }
+      }
+    }
+  }
+}

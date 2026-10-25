@@ -1,0 +1,77 @@
+name: Build nondeployable runner image artifacts
+
+'on':
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: runner-image-artifacts
+  cancel-in-progress: false
+
+jobs:
+  public:
+    if: ${{ github.event_name == 'workflow_dispatch' && github.event.repository.private == false && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 80
+    steps:
+      - name: Audit outbound connections
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
+      - name: Checkout dispatched source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          fetch-depth: 1
+      - name: Build and scan public base with invalid site CA
+        run: python3 scripts/build_runner_image_artifacts.py public
+      - name: Preserve complete artifact or failure evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: runner-image-public-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/runner-image-public-${{ github.run_id }}-${{ github.run_attempt }}
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+  private:
+    needs: public
+    runs-on: ubuntu-24.04
+    timeout-minutes: 80
+    steps:
+      - name: Audit outbound connections
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25 # v2.22.1
+        with:
+          egress-policy: audit
+      - name: Checkout identical dispatched source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          fetch-depth: 1
+      - name: Download exact same-run public input
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: runner-image-public-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/runner-image-public-${{ github.run_id }}-${{ github.run_attempt }}
+      - name: Build and scan private-mode image from accepted public bytes
+        env:
+          PARENT: ${{ runner.temp }}/runner-image-public-${{ github.run_id }}-${{ github.run_attempt }}
+        run: python3 scripts/build_runner_image_artifacts.py private --parent "$PARENT"
+      - name: Preserve complete artifact or failure evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: runner-image-private-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/runner-image-private-${{ github.run_id }}-${{ github.run_attempt }}
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+      - name: Require both full scans to have no HIGH or CRITICAL findings
+        env:
+          PARENT: ${{ runner.temp }}/runner-image-public-${{ github.run_id }}-${{ github.run_attempt }}
+          OUTPUT: ${{ runner.temp }}/runner-image-private-${{ github.run_id }}-${{ github.run_attempt }}
+        run: python3 scripts/build_runner_image_artifacts.py gate --parent "$PARENT" --output "$OUTPUT"
