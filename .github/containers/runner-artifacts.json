@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "scan_acceptance_schema": 1,
-  "canonical_source": "bb5f7f48618d0d76a50042b7c66130c6fd9bf6fd",
+  "canonical_source": "3478126edce40fa18a107e940c8268e5f7710048",
   "platform": "linux/amd64",
   "tools": {
     "buildkit": {
@@ -205,8 +205,8 @@
           "mode": "100644"
         },
         "deploy/runner-reserve/qualify-browsers.cjs": {
-          "sha256": "6d0d0a4aa9de85120f4ca4ef9cdd87dce5d8a7b8215777ecbfc064f27ff88fef",
-          "bytes": 2179,
+          "sha256": "1f6b25a6f199d4a610c70cdc0b355a0353c54b61b534430374207691382f40ef",
+          "bytes": 2293,
           "mode": "100644"
         }
       }
