@@ -34,6 +34,8 @@ class PublicRunnerImageTests(unittest.TestCase):
         allowed = {
             '.github/gh/release.json', 'scripts/install_release_gh.py',
             '.github/containers/runner-go-tools.json', 'scripts/build_runner_go_tools.py',
+            '.github/containers/runner-libbpf.json', 'scripts/build_runner_libbpf.py',
+            '.github/containers/libbpf/0001-restrict-core-poisoning.patch',
             *{f'.github/containers/runner-go-tools/{component}/{name}'
               for component in ('containerd', 'buildx', 'compose')
               for name in ('go.mod', 'go.sum', 'inputs.json')},

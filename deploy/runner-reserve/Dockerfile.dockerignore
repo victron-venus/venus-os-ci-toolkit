@@ -15,6 +15,9 @@
 !deploy/runner-reserve/qualify-npm.cjs
 !.github/containers/runner-go-tools.json
 !scripts/build_runner_go_tools.py
+!scripts/build_runner_libbpf.py
+!.github/containers/runner-libbpf.json
+!.github/containers/libbpf/0001-restrict-core-poisoning.patch
 !.github/containers/runner-go-tools/containerd/go.mod
 !.github/containers/runner-go-tools/containerd/go.sum
 !.github/containers/runner-go-tools/containerd/inputs.json
