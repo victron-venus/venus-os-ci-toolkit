@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "canonical_source": "503b0426f60ad0eb6795df82094c2dec26ca8c1d",
+  "canonical_source": "e0aff6e6ef0fc790cfe0a13e2bd69abb6dd594c6",
   "platform": "linux/amd64",
   "tools": {
     "buildkit": {
@@ -34,8 +34,8 @@
           "mode": "100755"
         },
         "deploy/runner-reserve/Dockerfile": {
-          "sha256": "e63351b4dd23e17df78bbcbeedf47df69db60271fcf325dcf6a74dcdb4bc8b6a",
-          "bytes": 7584,
+          "sha256": "a53ba50d36098b97bf7389542ca36be211c571abcaec6d4c3501697d43826973",
+          "bytes": 9294,
           "mode": "100644"
         },
         "deploy/runner-reserve/Dockerfile.dockerignore": {
@@ -84,8 +84,8 @@
           "mode": "100644"
         },
         "scripts/build_runner_go_tools.py": {
-          "sha256": "4bea3b98ae08fdde67f379a52c3de40b30230cc333db686a2e735c4a1aff63e2",
-          "bytes": 21522,
+          "sha256": "81fdcc3c7f05550f310f39d63bc13cba1bd0ae6bdbbd793321c258ff3af7cc62",
+          "bytes": 21696,
           "mode": "100644"
         },
         ".github/containers/runner-go-tools/containerd/go.mod": {

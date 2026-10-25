@@ -1,7 +1,18 @@
 FROM --platform=$BUILDPLATFORM docker.io/library/golang@sha256:672c944cfd07599b5f1bb179869270cdc94c6254e41db4d431259693cb286b82 AS patched-go-tools
 ARG TARGETARCH
 RUN apt-get update && apt-get install -y --no-install-recommends python3 ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --gid 10001 go-builder \
+    && useradd --uid 10001 --gid 10001 --create-home --shell /bin/sh go-builder \
+    && install -d -o 10001 -g 10001 -m 0755 \
+        /home/go-builder/go/pkg/mod /home/go-builder/.cache/go-build \
+        /opt/victron-go-tools-build /opt/victron-go-tools \
+    && chown 10001:10001 /home/go-builder/go /home/go-builder/go/pkg \
+        /home/go-builder/.cache
+ENV HOME=/home/go-builder \
+    GOPATH=/home/go-builder/go \
+    GOMODCACHE=/home/go-builder/go/pkg/mod \
+    GOCACHE=/home/go-builder/.cache/go-build
 WORKDIR /opt/victron-go-tools-inputs
 COPY scripts/build_runner_go_tools.py scripts/build_runner_go_tools.py
 COPY .github/containers/runner-go-tools.json .github/containers/runner-go-tools.json
@@ -14,9 +25,28 @@ COPY .github/containers/runner-go-tools/buildx/inputs.json .github/containers/ru
 COPY .github/containers/runner-go-tools/compose/go.mod .github/containers/runner-go-tools/compose/go.mod
 COPY .github/containers/runner-go-tools/compose/go.sum .github/containers/runner-go-tools/compose/go.sum
 COPY .github/containers/runner-go-tools/compose/inputs.json .github/containers/runner-go-tools/compose/inputs.json
-RUN python3 scripts/build_runner_go_tools.py containerd
-RUN python3 scripts/build_runner_go_tools.py buildx
-RUN python3 scripts/build_runner_go_tools.py compose
+USER 10001:10001
+# Check the actual image-stage identity and permissions before any source build.
+# Upstream root-only tests select their own skip paths; unit packages stay intact.
+RUN test "$(id -u)" = 10001 && test "$(id -u -r)" = 10001 \
+    && test "$(id -g)" = 10001 && test "$(id -g -r)" = 10001 \
+    && for path in "$HOME" "$GOPATH" "$GOMODCACHE" "$GOCACHE" \
+        /opt/victron-go-tools-build /opt/victron-go-tools; do \
+        test -d "$path" && test ! -L "$path" && test -w "$path" && test -x "$path" \
+        && test "$(stat -c '%u:%g' "$path")" = 10001:10001 || exit 1; \
+    done \
+    && test -w /tmp && test -x /tmp \
+    && find /opt/victron-go-tools-inputs -exec sh -ec '\
+        for path do \
+            test ! -L "$path" && test -r "$path" && test ! -w "$path" \
+                && test "$(stat -c "%u:%g" "$path")" = 0:0 || exit 1; \
+            if test -d "$path"; then test -x "$path"; else test -f "$path"; fi || exit 1; \
+        done' sh {} + \
+    && printf 'Go source builder uid=%s gid=%s; workspace/cache ownership and readonly inputs verified\n' \
+        "$(id -u)" "$(id -g)"
+RUN umask 022 && python3 scripts/build_runner_go_tools.py containerd
+RUN umask 022 && python3 scripts/build_runner_go_tools.py buildx
+RUN umask 022 && python3 scripts/build_runner_go_tools.py compose
 FROM docker.io/library/docker@sha256:9e79b879b177fbd72c34376a3dd3d91747da5db49e1f560f76aea59561471977 AS docker
 FROM docker.io/library/node@sha256:55fb5f5a527ea2c5c4a95f963e48ef90aa38c7b346054fdc8ee9957a2b55d205 AS node
 FROM ghcr.io/actions/actions-runner@sha256:e275409999c37162649aa050ca573f03eab2eabcb3a1e7fcc47548de6b4f9690 AS runner

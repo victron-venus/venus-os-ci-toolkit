@@ -356,6 +356,7 @@
   "tests/test_fleet.py",
   "tests/test_fuzz_preflight.py",
   "tests/test_github_http_transport.py",
+  "tests/test_go_build_preflight.py",
   "tests/test_go_tool_installation.py",
   "tests/test_install_release_gh.py",
   "tests/test_local_ci.py",

@@ -96,6 +96,53 @@ and complete final-image scans; rerun the sandbox/bootstrap and cold-job gates
 before deployment. A source pin or binary change invalidates prior applicability
 or runtime evidence.
 
+### Nonroot source-build unit stage
+
+The `patched-go-tools` stage installs packages and provisions its account and
+directories as root, then runs all three source builds—containerd, Buildx and
+Compose—as `10001:10001`, with nonzero real and effective UIDs. It does not switch
+back to root before the next `FROM`. The final runner identity remains
+`1001:1001`; this change concerns the temporary source-build stage.
+
+The builder owns its home, `/opt/victron-go-tools-build`,
+`/opt/victron-go-tools`, and the explicitly configured absolute `GOPATH`,
+`GOMODCACHE` and `GOCACHE` directories. Temporary storage remains writable.
+`/opt/victron-go-tools-inputs`, including the builder script, manifest and
+dependency locks, remains root-owned, readable and not writable by the builder.
+The Dockerfile checks the stage identity and writable paths before the source
+builds. Each builder invocation sets `umask 022` so exported binaries and notices
+remain readable, with executable permissions retained where required.
+
+Source pins, lock verification, package selection, tags, concurrency and timeouts
+remain unchanged. `go test -count=1 -v` retains individual test and skip outcomes
+and disables Go's test-result cache when the build step executes. Upstream tests
+that require root may skip under this identity.
+Skipped tests are not passing tests or coverage of privileged behavior. There
+is no fixed claim that exactly two tests skip: additional upstream tests inspect
+the UID. The existing integration exclusions remain in place; this change adds
+no test filters or blanket skip setting. Privileged integration,
+sandbox/bootstrap and cold-job acceptance remain separate gates.
+
+The host `--ci` jobs use exclusive Actions temporary directories. They verify
+source compilation and tests, but do not exercise Docker-stage ownership,
+`USER` transitions or `/opt` permissions. Qualification also requires an actual
+image build that executes all three builders under the intended identity.
+Retain UID/EUID and writable-path observations, source provenance and test
+outcomes, including upstream skip names and reasons. Cached Go results or reused
+Docker layers are not evidence of fresh test execution. Contract tests and a
+successful source job alone do not qualify an image or establish deployment.
+
+#### Troubleshooting writable paths
+
+If preparation, extraction, Go downloads, compilation or notice collection fails
+with permission errors, inspect the effective UID/GID, `HOME`,
+`go env GOPATH GOMODCACHE GOCACHE`, the temporary directory and ownership of the
+two writable `/opt` directories. Correct provisioning before `USER`; do not make
+the input manifest writable, switch the builds back to root, grant additional
+capabilities, suppress failures or filter failing tests. Preserve the failed
+build log and distinguish permission failures from timeouts or resource limits.
+An observed resource limit is not a measured memory peak.
+
 ### Exact retained runc applicability
 
 The module scanner's runc findings are retained. For the exact Linux amd64 binary

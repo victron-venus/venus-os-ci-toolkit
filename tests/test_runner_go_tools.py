@@ -299,6 +299,25 @@ class RunnerGoToolTests(unittest.TestCase):
         self.assertEqual(TOOLS.test_packages('compose', packages), ['example/pkg', 'example/integration/client'])
         self.assertEqual(TOOLS.test_packages('buildx', packages), packages)
 
+    def test_nonroot_build_keeps_packages_with_privileged_test_cases(self):
+        module = 'github.com/containerd/containerd/v2'
+        retained = [module + '/' + package for package in (
+            'internal/cri/server/podsandbox', 'pkg/sys', 'plugins/content/local', 'pkg/shim')]
+        packages = [*retained, module + '/integration/client']
+        self.assertEqual(TOOLS.test_packages('containerd', packages), retained)
+
+    def test_explicit_builder_paths_survive_environment_sanitizing(self):
+        paths = {'HOME': '/home/go-builder', 'GOPATH': '/home/go-builder/go',
+                 'GOMODCACHE': '/home/go-builder/go/pkg/mod',
+                 'GOCACHE': '/home/go-builder/.cache/go-build'}
+        with patch.dict(os.environ, paths):
+            for architecture in (None, 'amd64', 'arm64'):
+                with self.subTest(architecture=architecture):
+                    environment = TOOLS.go_environment(architecture)
+                    self.assertEqual({name: environment[name] for name in paths}, paths)
+                    self.assertEqual(environment['GOFLAGS'], '-mod=readonly')
+                    self.assertEqual(environment['GOTOOLCHAIN'], 'local')
+
     def test_public_downloads_cannot_inherit_private_module_exclusions(self):
         inherited = {name: 'untrusted.invalid' for name in
                      ('GOPRIVATE', 'GONOPROXY', 'GONOSUMDB', 'GOINSECURE',
