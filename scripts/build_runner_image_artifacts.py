@@ -364,6 +364,7 @@ def validate_parent(parent, identity, manifest):
     raw_scan = document(parent / 'scan.json', 128 * 1024**2)
     require(oci.digest_file(parent / 'scan.json') == build['scan_sha256'], 'Public scan changed')
     require(scan_summary(raw_scan, proof) == document(parent / 'scan-summary.json'), 'Public scan summary differs')
+    check_scan_receipt(parent, build, proof)
     return proof
 
 
@@ -514,6 +515,13 @@ def remove_scanner(sup, name, owner, image, record):
 
 
 def run_scan(sup, data, work, output, owner, proof, record):
+    layout = work / 'scan-layout'
+    # An OCI tar is not a Docker archive. Trivy requires an OCI directory;
+    # select the already verified executable manifest, irrespective of order.
+    sup.check(RESERVE + proof['archive_bytes'])
+    selection = oci.project_scan_input(output / 'image.oci.tar', proof, layout, sup.check)
+    save(output / 'scan-input.json', selection)
+    record['scan_input_sha256'] = oci.digest_file(output / 'scan-input.json')
     cache = work / 'scan-cache'
     cache.mkdir()
     (cache / 'tmp').mkdir()
@@ -524,11 +532,11 @@ def run_scan(sup, data, work, output, owner, proof, record):
                '--user', str(os.getuid()) + ':' + str(os.getgid()), '--cpus', '2',
                '--memory', '4g', '--memory-swap', '4g', '--pids-limit', '256', '--read-only',
                '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges:true',
-               '--mount', 'type=bind,source=' + str(output / 'image.oci.tar') + ',target=/input/image.oci.tar,readonly',
+               '--mount', 'type=bind,source=' + str(layout) + ',target=/input/image,readonly',
                '--mount', 'type=bind,source=' + str(cache) + ',target=/cache',
                '--mount', 'type=bind,source=' + str(scan_output) + ',target=/output',
                '--env', 'TMPDIR=/cache/tmp', data['tools']['trivy']['image'],
-               'image', '--input', '/input/image.oci.tar', '--cache-dir', '/cache',
+               'image', '--input', '/input/image', '--cache-dir', '/cache',
                '--scanners', 'vuln', '--pkg-types', 'os,library', '--list-all-pkgs',
                '--format', 'json', '--output', '/output/scan.json', '--timeout', '15m',
                '--parallel', '2', '--ignorefile', '/dev/null', '--exit-code', '0']
@@ -540,7 +548,10 @@ def run_scan(sup, data, work, output, owner, proof, record):
         remove_scanner(sup, name, owner, data['tools']['trivy']['image'], record)
     require(record.get('scanner_state', {}).get('ExitCode') == 0 and
             record['scanner_state'].get('Running') is False, 'Successful scanner exit was not observed')
+    oci.verify_scan_input(layout, selection, proof, sup.check)
     require(oci.digest_file(output / 'image.oci.tar') == record['archive_sha256'], 'Archive changed during scan')
+    shutil.rmtree(layout)
+    record['scan_input_removed'] = not layout.exists()
     require(not (output / 'scan.json').exists(), 'Scan output already exists')
     (scan_output / 'scan.json').rename(output / 'scan.json')
     summary = scan_summary(document(output / 'scan.json', 128 * 1024**2), proof)
@@ -550,6 +561,13 @@ def run_scan(sup, data, work, output, owner, proof, record):
     record['scan_sha256'] = oci.digest_file(output / 'scan.json')
     record['scan_completed'] = True
     record['scan_gate_passed'] = summary['scan_gate_passed']
+
+
+def check_scan_receipt(directory, build, proof):
+    require(oci.digest_file(directory / 'scan-input.json') == build.get('scan_input_sha256'),
+            'Scan input receipt changed')
+    oci.check_scan_input(document(directory / 'scan-input.json'), proof)
+    require(build.get('scan_input_removed') is True, 'Owned scan input cleanup unconfirmed')
 
 
 def gate(directories):
@@ -563,8 +581,10 @@ def gate(directories):
         require(document(directory / 'cgroup-verification.json') == build['cgroup_proof'], 'Cgroup proof differs')
         summary = document(directory / 'scan-summary.json')
         require(oci.digest_file(directory / 'scan.json') == build.get('scan_sha256'), 'Raw scan changed before gate')
-        require(scan_summary(document(directory / 'scan.json', 128 * 1024**2),
-                             document(directory / 'oci-verification.json')) == summary, 'Scan summary changed')
+        proof = document(directory / 'oci-verification.json')
+        require(scan_summary(document(directory / 'scan.json', 128 * 1024**2), proof) == summary,
+                'Scan summary changed')
+        check_scan_receipt(directory, build, proof)
         require(build.get('build_success') is True and build.get('oci_verified') is True and
                 build.get('scan_completed') is True and build.get('builder_removed') is True and
                 build.get('scanner_removed') is True and

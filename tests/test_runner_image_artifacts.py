@@ -353,6 +353,73 @@ class RunnerArtifactsTests(unittest.TestCase):
         self.assertFalse((out / 'opt').exists())
         self.assertGreater(check.call_count, 0)
 
+    def test_scan_projection_selects_exact_runtime_regardless_of_attestation_order(self):
+        for stage in ('public', 'private'):
+            for first in (False, True):
+                with self.subTest(stage=stage, attestation_first=first):
+                    path = self.root / (stage + str(first) + '.tar')
+                    sha, size = image(path, stage=stage, artifact_attestation=True, attestation_first=first)
+                    proof = oci.verify(path, sha, size, SOURCE, stage, build.SENTINEL)
+                    layout = self.root / (stage + str(first))
+                    selection = oci.project_scan_input(path, proof, layout, mock.Mock())
+                    self.assertEqual(oci.digest_file(path), sha)
+                    index = json.loads((layout / 'index.json').read_bytes())
+                    self.assertEqual(index['manifests'], [selection['runtime']])
+                    self.assertEqual(selection['runtime']['digest'], proof['platform']['manifest'])
+                    with tarfile.open(path) as archive:
+                        for name in selection['files']:
+                            if name != 'index.json':
+                                self.assertEqual((layout / name).read_bytes(), archive.extractfile(name).read())
+                    self.assertEqual(len(selection['files']), 2 + 2 + len(proof['platform']['layers']))
+                    self.assertFalse((layout / 'opt').exists())
+                    oci.verify_scan_input(layout, selection, proof, mock.Mock())
+                    with self.assertRaises(FileExistsError):
+                        oci.project_scan_input(path, proof, layout, mock.Mock())
+
+    def test_scan_projection_rejects_wrong_proof_and_changed_bytes(self):
+        proof = self.verify(artifact_attestation=True, attestation_first=True)
+        path = self.root / 'image.tar'
+        for name, change in [
+                ('root', lambda p: p.update(image_index='sha256:' + '1' * 64)),
+                ('runtime', lambda p: p['platform'].update(manifest='sha256:' + '2' * 64)),
+                ('config', lambda p: p['platform'].update(config='sha256:' + '3' * 64)),
+                ('layers', lambda p: p['platform'].update(layers=[])),
+                ('diffids', lambda p: p['platform'].update(diff_ids=[]))]:
+            wrong = copy.deepcopy(proof)
+            change(wrong)
+            with self.subTest(name=name), self.assertRaises(ValueError):
+                oci.project_scan_input(path, wrong, self.root / name, mock.Mock())
+        layout = self.root / 'correct'
+        selection = oci.project_scan_input(path, proof, layout, mock.Mock())
+        member = layout / ('blobs/sha256/' + proof['platform']['config'][7:])
+        original = member.read_bytes()
+        member.write_bytes(b'X' + original[1:])
+        with self.assertRaisesRegex(ValueError, 'bytes changed'):
+            oci.verify_scan_input(layout, selection, proof, mock.Mock())
+        member.write_bytes(original)
+        (layout / 'extra').write_text('unexpected')
+        with self.assertRaisesRegex(ValueError, 'Unexpected scan file'):
+            oci.verify_scan_input(layout, selection, proof, mock.Mock())
+        (layout / 'extra').unlink()
+        member.unlink()
+        member.symlink_to(path)
+        with self.assertRaisesRegex(ValueError, 'symlink'):
+            oci.verify_scan_input(layout, selection, proof, mock.Mock())
+
+    def test_scan_projection_detects_source_changed_during_copy(self):
+        proof = self.verify()
+        path = self.root / 'image.tar'
+        replacement = self.root / 'replacement.tar'
+        replacement.write_bytes(path.read_bytes())
+        changed = False
+        def change():
+            nonlocal changed
+            if not changed:
+                replacement.replace(path)
+                changed = True
+        with self.assertRaisesRegex(ValueError, 'Archive identity changed'):
+            oci.project_scan_input(path, proof, self.root / 'layout', change)
+
     def builder(self):
         return {'Id': 'a' * 64, 'Name': '/buildx_buildkit_test0',
                 'Config': {'Image': 'pinned', 'Env': ['RUNNER_ARTIFACT_OWNER=nonce']},
@@ -675,6 +742,45 @@ class RunnerArtifactsTests(unittest.TestCase):
             edit(bad)
             with self.assertRaises(ValueError):
                 build.scan_summary(bad, proof)
+
+    def test_scanner_uses_readonly_runtime_directory_and_preserves_full_findings(self):
+        for stage in ('public', 'private'):
+            with self.subTest(stage=stage):
+                work, output = self.root / (stage + '-work'), self.root / stage
+                work.mkdir()
+                output.mkdir()
+                path = output / 'image.oci.tar'
+                sha, size = image(path, stage=stage, artifact_attestation=True, attestation_first=True)
+                proof = oci.verify(path, sha, size, SOURCE, stage, build.SENTINEL)
+                record = {'archive_sha256': sha}
+                sup = mock.Mock()
+                def scan(command, **kwargs):
+                    self.assertEqual(command[command.index('--input') + 1], '/input/image')
+                    self.assertIn('type=bind,source=' + str(work / 'scan-layout') + ',target=/input/image,readonly', command)
+                    for flag, value in [('--cpus', '2'), ('--memory', '4g'), ('--memory-swap', '4g'),
+                                        ('--scanners', 'vuln'), ('--pkg-types', 'os,library'),
+                                        ('--ignorefile', '/dev/null'), ('--exit-code', '0')]:
+                        self.assertEqual(command[command.index(flag) + 1], value)
+                    self.assertIn('--list-all-pkgs', command)
+                    (work / 'scan-output/scan.json').write_text(json.dumps(self.report(proof)))
+                    (work / 'scan-cache/db').mkdir()
+                    (work / 'scan-cache/db/metadata.json').write_text('{"Version":2}')
+                sup.run.side_effect = scan
+                def cleanup(*args):
+                    record.update(scanner_state={'ExitCode': 0, 'Running': False}, scanner_removed=True)
+                with mock.patch.object(build, 'remove_scanner', side_effect=cleanup):
+                    build.run_scan(sup, {'tools': {'trivy': {'image': 'pinned'}}}, work, output, 'owned', proof, record)
+                self.assertTrue(record['scan_completed'])
+                self.assertFalse(record['scan_gate_passed'])
+                self.assertEqual(oci.digest_file(path), sha)
+                self.assertFalse((work / 'scan-layout').exists())
+                build.check_scan_receipt(output, record, proof)
+                altered = json.loads((output / 'scan-input.json').read_text())
+                altered['config']['digest'] = 'sha256:' + '4' * 64
+                (output / 'scan-input.json').write_text(json.dumps(altered))
+                record['scan_input_sha256'] = oci.digest_file(output / 'scan-input.json')
+                with self.assertRaisesRegex(ValueError, 'configuration or layers'):
+                    build.check_scan_receipt(output, record, proof)
 
     def test_parent_from_different_attempt_is_rejected_before_image_use(self):
         parent = self.root / 'parent'

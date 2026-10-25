@@ -39,7 +39,7 @@ The two artifact names include the exact run ID and attempt:
 - `runner-image-private-<run-id>-<attempt>`
 
 Each complete artifact contains `image.oci.tar`, `build-receipt.json`,
-`oci-verification.json`, `cgroup-verification.json`, `scan.json`,
+`oci-verification.json`, `cgroup-verification.json`, `scan-input.json`, `scan.json`,
 `scan-summary.json`, `scan-database.json`, the command log, disk observations and `cgroup-observations.jsonl`.
 Failure artifacts retain whichever evidence and partial output exists; a partial
 archive is never accepted as an image. Artifacts expire after seven days. Copy
@@ -114,13 +114,32 @@ exporter's format. Preserve the archive and failure evidence. A successful
 export alone does not establish OCI acceptance or completion of the vulnerability
 scan; do not bypass descriptor validation or disable provenance to continue.
 
+### Scanner input
+
+Trivy 0.74.0 accepts a Docker archive or an OCI directory; it does not open an
+OCI tar as a directory. The hosted scanner therefore receives a temporary OCI
+directory containing the already verified linux/amd64 runtime manifest, its
+config and every runtime layer. These blobs retain their exact original bytes.
+Its new root index selects that one manifest explicitly, so attestation order
+cannot change the image scanned. The complete original archive and provenance
+remain in the published artifact; this projection is only the scanner input.
+
+`scan-input.json` binds the original archive and index to the selected descriptors
+and every copied file's size and SHA256. All copied files and the original archive
+are checked again after the scanner exits, before accepting its output. The raw
+report must still contain both OS and language inventories and the exact config
+digest. The parent-stage and final gates recheck the input receipt. No findings
+are excluded. A scanner error preserves its command log and partial evidence,
+and cannot become a successful scan or release qualification.
+
 ## Capacity and ownership
 
 GitHub documents 14 GB of SSD for standard hosted workers; actual free space is
 measured before using it. This workflow requires 10 GiB free to start each stage,
 keeps a 2 GiB reserve on the workspace, temporary, Docker and containerd
 filesystems, and checks it during commands and after successful command exits.
-Private OCI materialization additionally reserves space for the archive size;
+Scanner input projection and private OCI materialization additionally reserve
+space for the archive size;
 its downloaded tar is removed only after complete validation and materialization.
 If a particular hosted image cannot fit, the run stops and retains evidence.
 It does not delete preinstalled SDKs, unrelated images or other jobs' caches.
@@ -145,7 +164,7 @@ the scan has a separate bounded command and container. There is no retry loop.
 Cleanup identifies the exact owned container before removing its immutable ID.
 It still works after an OOM or low-disk failure. An ambiguous Docker response is
 not treated as absence; removal requires a final absence readback. The scanner
-receives only a read-only archive, writable cache and output directories, with
+receives only a read-only runtime OCI directory, writable cache and output directories, with
 all capabilities dropped and no Docker socket. Cleanup never uses global prune.
 The BuildKit state volume is checked absent before creation and bound to the
 owned container's `/var/lib/buildkit` mount. Its removal is independently
