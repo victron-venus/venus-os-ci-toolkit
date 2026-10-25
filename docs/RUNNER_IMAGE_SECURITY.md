@@ -153,6 +153,11 @@ Relevant upstream releases are [npm 11.21.1](https://github.com/npm/cli/releases
 
 ## Build and qualification boundary
 
+The optional [hosted artifact workflow](RUNNER_IMAGE_ARTIFACTS.md) performs the
+build, OCI integrity and full-scan stages with an invalid CA sentinel. It retains
+raw evidence without publishing or deploying images; site configuration and
+runtime qualification remain separate.
+
 1. Freeze a reviewed source commit and transfer only the exact Docker build
    context allowlist. Supply the existing public guard CA separately; never
    copy its private key or rotate credentials as part of an image rebuild.
