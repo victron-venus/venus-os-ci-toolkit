@@ -91,9 +91,9 @@ class RunnerArtifactsTests(unittest.TestCase):
 
     def event(self):
         env = {'GITHUB_ACTIONS': 'true', 'RUNNER_ENVIRONMENT': 'github-hosted', 'RUNNER_OS': 'Linux',
-               'RUNNER_ARCH': 'X64', 'GITHUB_EVENT_NAME': 'workflow_dispatch', 'GITHUB_REPOSITORY': 'example/public',
+               'RUNNER_ARCH': 'X64', 'GITHUB_EVENT_NAME': 'workflow_dispatch', 'GITHUB_REPOSITORY': 'victron-venus/venus-os-ci-toolkit',
                'GITHUB_REF': 'refs/heads/main', 'GITHUB_SHA': SOURCE, 'GITHUB_RUN_ID': '123', 'GITHUB_RUN_ATTEMPT': '1'}
-        return env, {'repository': {'private': False, 'full_name': 'example/public', 'default_branch': 'main'}}
+        return env, {'repository': {'private': False, 'full_name': 'victron-venus/venus-os-ci-toolkit', 'default_branch': 'main'}}
 
     def test_only_public_manual_default_branch_native_hosted_is_allowed(self):
         env, event = self.event()
@@ -105,6 +105,10 @@ class RunnerArtifactsTests(unittest.TestCase):
                 build.validate_event({**env, key: value}, event)
         event['repository']['private'] = True
         with self.assertRaises(ValueError):
+            build.validate_event(env, event)
+        event['repository'].update(private=False, full_name='example/fork')
+        env['GITHUB_REPOSITORY'] = 'example/fork'
+        with self.assertRaisesRegex(ValueError, 'Canonical toolkit'):
             build.validate_event(env, event)
 
     def test_context_reads_committed_blobs_not_worktree_or_ignored_secrets(self):

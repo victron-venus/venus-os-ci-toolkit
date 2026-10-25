@@ -61,6 +61,7 @@ def validate_event(env, event):
     repo = event.get('repository', {})
     require(repo.get('private') is False and repo.get('full_name') == env.get('GITHUB_REPOSITORY'),
             'Public repository identity differs')
+    require('https://github.com/' + repo['full_name'] == oci.SOURCE_URL, 'Canonical toolkit repository required')
     require(repo.get('default_branch') and env.get('GITHUB_REF') == 'refs/heads/' + repo['default_branch'],
             'Default branch required')
     require(re.fullmatch(r'[0-9a-f]{40}', env.get('GITHUB_SHA', '')), 'Full source identity required')
