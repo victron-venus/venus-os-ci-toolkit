@@ -14,6 +14,23 @@ COPY .github/containers/runner-libbpf.json .github/containers/runner-libbpf.json
 COPY .github/containers/libbpf/0001-restrict-core-poisoning.patch .github/containers/libbpf/0001-restrict-core-poisoning.patch
 USER 10001:10001
 RUN umask 022 && TARGETARCH="$TARGETARCH" python3 scripts/build_runner_libbpf.py
+# Compile only the affected codecparsers library, preserving all browser plugins.
+FROM docker.io/library/ubuntu@sha256:68ee22004a9109b44973313b02ff7b1de250f1de0f5ecb628d73f579aaff33ac AS patched-gstreamer
+ARG TARGETARCH
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential dpkg-dev meson ninja-build pkg-config binutils \
+        libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
+        python3 ca-certificates curl patch xz-utils \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --gid 10001 gstreamer-builder \
+    && useradd --uid 10001 --gid 10001 --create-home --shell /bin/sh gstreamer-builder \
+    && install -d -o 10001 -g 10001 -m 0755 /opt/victron-gstreamer-build /opt/victron-gstreamer
+WORKDIR /opt/victron-gstreamer-inputs
+COPY scripts/build_runner_gstreamer.py scripts/build_runner_gstreamer.py
+COPY .github/containers/runner-gstreamer.json .github/containers/runner-gstreamer.json
+COPY .github/containers/gstreamer/0001-h265-parser-bounds.patch .github/containers/gstreamer/0001-h265-parser-bounds.patch
+USER 10001:10001
+RUN umask 022 && TARGETARCH="$TARGETARCH" python3 scripts/build_runner_gstreamer.py
 FROM --platform=$BUILDPLATFORM docker.io/library/golang@sha256:672c944cfd07599b5f1bb179869270cdc94c6254e41db4d431259693cb286b82 AS patched-go-tools
 ARG TARGETARCH
 RUN apt-get update && apt-get install -y --no-install-recommends python3 ca-certificates \
@@ -133,6 +150,14 @@ RUN dpkg -i /tmp/victron-libbpf/libbpf1.deb \
     && test "$(dpkg-query -W -f='${Version}' libbpf1)" = '1:1.3.0-2build2+victron1' \
     && sha256sum --check /tmp/victron-libbpf/installed.sha256 \
     && rm -rf /tmp/victron-libbpf
+# The plugin package's exact library dependency is updated together with the library.
+COPY --from=patched-gstreamer /opt/victron-gstreamer/libgstreamer-plugins-bad1.0-0.deb /opt/victron-gstreamer/gstreamer1.0-plugins-bad.deb /opt/victron-gstreamer/installed.sha256 /tmp/victron-gstreamer/
+COPY --from=patched-gstreamer /opt/victron-gstreamer/notices/ /usr/local/share/victron-gstreamer/
+RUN dpkg -i /tmp/victron-gstreamer/libgstreamer-plugins-bad1.0-0.deb /tmp/victron-gstreamer/gstreamer1.0-plugins-bad.deb \
+    && test "$(dpkg-query -W -f='${Version}' libgstreamer-plugins-bad1.0-0)" = '1.24.2-1ubuntu4+victron1' \
+    && test "$(dpkg-query -W -f='${Version}' gstreamer1.0-plugins-bad)" = '1.24.2-1ubuntu4+victron1' \
+    && sha256sum --check /tmp/victron-gstreamer/installed.sha256 \
+    && rm -rf /tmp/victron-gstreamer
 # Shared automation requires gh api --slurp, absent from Ubuntu's gh 2.45.
 # Verify the existing release manifest's archive, binary and version pins.
 COPY .github/gh/release.json /tmp/reserve-gh/.github/gh/release.json
