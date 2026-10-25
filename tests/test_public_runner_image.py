@@ -39,6 +39,11 @@ class PublicRunnerImageTests(unittest.TestCase):
             *{f'.github/containers/runner-go-tools/{component}/{name}'
               for component in ('containerd', 'buildx', 'compose')
               for name in ('go.mod', 'go.sum', 'inputs.json')},
+            '.github/containers/runner-browsers.json', 'scripts/install_runner_browsers.py',
+            'scripts/browser-toolchains.json', 'deploy/runner-reserve/qualify-browsers.cjs',
+            *{'.github/containers/runner-browsers/' + name for name in (
+                'google-Release', 'google-Release.gpg', 'google-key.gpg', 'google-amd64-Packages',
+                'edge-Release', 'edge-Release.gpg', 'microsoft-key.gpg', 'edge-amd64-Packages')},
             '.github/containers/runner-npm.json', 'scripts/install_runner_npm.py',
             'scripts/prune_runner_npm.py', 'deploy/runner-reserve/qualify-npm.cjs',
             'deploy/runner-reserve/Dockerfile',

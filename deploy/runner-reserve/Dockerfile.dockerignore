@@ -27,3 +27,15 @@
 !.github/containers/runner-go-tools/compose/go.mod
 !.github/containers/runner-go-tools/compose/go.sum
 !.github/containers/runner-go-tools/compose/inputs.json
+!.github/containers/runner-browsers.json
+!scripts/install_runner_browsers.py
+!scripts/browser-toolchains.json
+!.github/containers/runner-browsers/edge-Release
+!.github/containers/runner-browsers/edge-Release.gpg
+!.github/containers/runner-browsers/edge-amd64-Packages
+!.github/containers/runner-browsers/google-Release
+!.github/containers/runner-browsers/google-Release.gpg
+!.github/containers/runner-browsers/google-amd64-Packages
+!.github/containers/runner-browsers/google-key.gpg
+!.github/containers/runner-browsers/microsoft-key.gpg
+!deploy/runner-reserve/qualify-browsers.cjs

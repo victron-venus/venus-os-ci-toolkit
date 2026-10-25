@@ -1,0 +1,89 @@
+Package: google-chrome-beta
+Version: 157.0.8103.15-1
+Architecture: amd64
+Maintainer: Chrome Linux Team <chromium-dev@chromium.org>
+Installed-Size: 462273
+Pre-Depends: dpkg (>= 1.14.0)
+Depends: ca-certificates, fonts-liberation, libasound2 (>= 1.0.17), libatk-bridge2.0-0 (>= 2.5.3), libatk1.0-0 (>= 2.11.90), libatspi2.0-0 (>= 2.9.90), libc6 (>= 2.25), libcairo2 (>= 1.14.0), libcups2 (>= 1.7.0), libcurl3-gnutls | libcurl3-nss | libcurl4 | libcurl3, libdbus-1-3 (>= 1.9.14), libexpat1 (>= 2.1~beta3), libgbm1 (>= 17.1.0~rc2), libglib2.0-0 (>= 2.49.3), libgtk-3-0 (>= 3.9.10) | libgtk-4-1, libnspr4 (>= 2:4.9-2~), libnss3 (>= 2:3.35), libpango-1.0-0 (>= 1.14.0), libudev1 (>= 183), libvulkan1, libx11-6 (>= 2:1.4.99.1), libxcb1 (>= 1.9.2), libxcomposite1 (>= 1:0.4.4-1), libxdamage1 (>= 1:1.1), libxext6, libxfixes3, libxkbcommon0 (>= 0.5.0), libxrandr2, wget, xdg-utils (>= 1.0.2)
+Provides: www-browser
+Priority: optional
+Section: web
+Filename: pool/main/g/google-chrome-beta/google-chrome-beta_157.0.8103.15-1_amd64.deb
+Size: 147368340
+SHA256: b78ca10a22599e2a1024a39edd5a3235a06c26e2afad606c6c9ec123378c55cf
+SHA1: 818645a6d93e5b8eaa52d78c223254b49cd3db40
+MD5sum: 75fe4b0c688ee1d5184ec0820fc91daf
+Description: The web browser from Google
+ Google Chrome is a browser that combines a minimal design with sophisticated technology to make the web faster, safer, and easier.
+
+Package: google-chrome-canary
+Version: 158.0.8122.0-1
+Architecture: amd64
+Maintainer: Chrome Linux Team <chromium-dev@chromium.org>
+Installed-Size: 466539
+Pre-Depends: dpkg (>= 1.14.0)
+Depends: ca-certificates, fonts-liberation, libasound2 (>= 1.0.17), libatk-bridge2.0-0 (>= 2.5.3), libatk1.0-0 (>= 2.11.90), libatspi2.0-0 (>= 2.9.90), libc6 (>= 2.25), libcairo2 (>= 1.14.0), libcups2 (>= 1.7.0), libcurl3-gnutls | libcurl3-nss | libcurl4 | libcurl3, libdbus-1-3 (>= 1.9.14), libexpat1 (>= 2.1~beta3), libgbm1 (>= 17.1.0~rc2), libglib2.0-0 (>= 2.49.3), libgtk-3-0 (>= 3.9.10) | libgtk-4-1, libnspr4 (>= 2:4.9-2~), libnss3 (>= 2:3.35), libpango-1.0-0 (>= 1.14.0), libudev1 (>= 183), libvulkan1, libx11-6 (>= 2:1.4.99.1), libxcb1 (>= 1.9.2), libxcomposite1 (>= 1:0.4.4-1), libxdamage1 (>= 1:1.1), libxext6, libxfixes3, libxkbcommon0 (>= 0.5.0), libxrandr2, wget, xdg-utils (>= 1.0.2)
+Provides: www-browser
+Priority: optional
+Section: web
+Filename: pool/main/g/google-chrome-canary/google-chrome-canary_158.0.8122.0-1_amd64.deb
+Size: 150693748
+SHA256: ad3f1599a69e800756b9212925135bd8b7a13eafd565bbaeb22030aed18c390a
+SHA1: dfc1d962968b70a1723b718290038274fcb8502c
+MD5sum: e8e81d949e670eb654e9899a80644cab
+Description: The web browser from Google
+ Google Chrome is a browser that combines a minimal design with sophisticated technology to make the web faster, safer, and easier.
+
+Package: google-chrome-repo
+Version: 3
+Architecture: amd64
+Maintainer: Chrome Linux Team <chromium-dev@chromium.org>
+Standards-Version: 3.8.0
+Priority: optional
+Section: web
+Filename: pool/main/g/google-chrome-repo/google-chrome-repo_3_amd64.deb
+Size: 9512
+SHA256: 13508f6910eb82674149a318dc080c9c98b7a4ee237df5a30cb133d7ad930ab9
+SHA1: 8d712c60e55764dcc6de1610a6082ca9808d702f
+MD5sum: 249c71d9b3e278bcce20efe1025089a4
+Description: The web browser from Google (repository configuration)
+ Google Chrome is a browser that combines a minimal design with sophisticated technology to make the web faster, safer, and easier.
+ .
+ This package contains the APT repository configuration and signing key.
+
+Package: google-chrome-stable
+Version: 156.0.8078.47-1
+Architecture: amd64
+Maintainer: Chrome Linux Team <chromium-dev@chromium.org>
+Installed-Size: 455104
+Pre-Depends: dpkg (>= 1.14.0)
+Depends: ca-certificates, fonts-liberation, libasound2 (>= 1.0.17), libatk-bridge2.0-0 (>= 2.5.3), libatk1.0-0 (>= 2.11.90), libatspi2.0-0 (>= 2.9.90), libc6 (>= 2.25), libcairo2 (>= 1.14.0), libcups2 (>= 1.7.0), libcurl3-gnutls | libcurl3-nss | libcurl4 | libcurl3, libdbus-1-3 (>= 1.9.14), libexpat1 (>= 2.1~beta3), libgbm1 (>= 17.1.0~rc2), libglib2.0-0 (>= 2.49.3), libgtk-3-0 (>= 3.9.10) | libgtk-4-1, libnspr4 (>= 2:4.9-2~), libnss3 (>= 2:3.35), libpango-1.0-0 (>= 1.14.0), libudev1 (>= 183), libvulkan1, libx11-6 (>= 2:1.4.99.1), libxcb1 (>= 1.9.2), libxcomposite1 (>= 1:0.4.4-1), libxdamage1 (>= 1:1.1), libxext6, libxfixes3, libxkbcommon0 (>= 0.5.0), libxrandr2, wget, xdg-utils (>= 1.0.2)
+Provides: www-browser
+Priority: optional
+Section: web
+Filename: pool/main/g/google-chrome-stable/google-chrome-stable_156.0.8078.47-1_amd64.deb
+Size: 144849192
+SHA256: 6c92cd22e90c6e3e255d782991543fa2091db8614e8536a971a7433a5c4d7ac8
+SHA1: c085a467378aa181ef100d48ad17d361b20f7cf7
+MD5sum: c41cda457a11b99ae2398e1ea568f580
+Description: The web browser from Google
+ Google Chrome is a browser that combines a minimal design with sophisticated technology to make the web faster, safer, and easier.
+
+Package: google-chrome-unstable
+Version: 158.0.8117.2-1
+Architecture: amd64
+Maintainer: Chrome Linux Team <chromium-dev@chromium.org>
+Installed-Size: 465205
+Pre-Depends: dpkg (>= 1.14.0)
+Depends: ca-certificates, fonts-liberation, libasound2 (>= 1.0.17), libatk-bridge2.0-0 (>= 2.5.3), libatk1.0-0 (>= 2.11.90), libatspi2.0-0 (>= 2.9.90), libc6 (>= 2.25), libcairo2 (>= 1.14.0), libcups2 (>= 1.7.0), libcurl3-gnutls | libcurl3-nss | libcurl4 | libcurl3, libdbus-1-3 (>= 1.9.14), libexpat1 (>= 2.1~beta3), libgbm1 (>= 17.1.0~rc2), libglib2.0-0 (>= 2.49.3), libgtk-3-0 (>= 3.9.10) | libgtk-4-1, libnspr4 (>= 2:4.9-2~), libnss3 (>= 2:3.35), libpango-1.0-0 (>= 1.14.0), libudev1 (>= 183), libvulkan1, libx11-6 (>= 2:1.4.99.1), libxcb1 (>= 1.9.2), libxcomposite1 (>= 1:0.4.4-1), libxdamage1 (>= 1:1.1), libxext6, libxfixes3, libxkbcommon0 (>= 0.5.0), libxrandr2, wget, xdg-utils (>= 1.0.2)
+Provides: www-browser
+Priority: optional
+Section: web
+Filename: pool/main/g/google-chrome-unstable/google-chrome-unstable_158.0.8117.2-1_amd64.deb
+Size: 149873788
+SHA256: 9a311690823050876260248dd4d7edfa96361bef6c65e87b0df0539c687a3495
+SHA1: 731613f4ce8654a1d4526c179f6d9118ace3bf8e
+MD5sum: 676606b5cc1ae14f8330c4b3d6555412
+Description: The web browser from Google
+ Google Chrome is a browser that combines a minimal design with sophisticated technology to make the web faster, safer, and easier.
+

@@ -77,6 +77,7 @@ RUN apt-get update && apt-get -o Dpkg::Options::=--force-unsafe-io install -y --
     cmake \
     curl \
     git \
+    gpgv \
     iproute2 \
     iptables \
     jq \
@@ -111,6 +112,20 @@ RUN apt-get update && apt-get -o Dpkg::Options::=--force-unsafe-io install -y --
     chmod 0440 /etc/sudoers.d/runner && \
     mkdir -p /opt/hostedtoolcache && \
     chown runner:runner /opt/hostedtoolcache
+# Browser apt work must precede the final exact patched-libbpf installation.
+COPY .github/containers/runner-browsers.json /opt/victron-image-build/browsers/.github/containers/runner-browsers.json
+COPY scripts/install_runner_browsers.py /opt/victron-image-build/browsers/scripts/install_runner_browsers.py
+COPY scripts/browser-toolchains.json /opt/victron-image-build/browsers/scripts/browser-toolchains.json
+COPY .github/containers/runner-browsers/edge-Release /opt/victron-image-build/browsers/.github/containers/runner-browsers/edge-Release
+COPY .github/containers/runner-browsers/edge-Release.gpg /opt/victron-image-build/browsers/.github/containers/runner-browsers/edge-Release.gpg
+COPY .github/containers/runner-browsers/edge-amd64-Packages /opt/victron-image-build/browsers/.github/containers/runner-browsers/edge-amd64-Packages
+COPY .github/containers/runner-browsers/google-Release /opt/victron-image-build/browsers/.github/containers/runner-browsers/google-Release
+COPY .github/containers/runner-browsers/google-Release.gpg /opt/victron-image-build/browsers/.github/containers/runner-browsers/google-Release.gpg
+COPY .github/containers/runner-browsers/google-amd64-Packages /opt/victron-image-build/browsers/.github/containers/runner-browsers/google-amd64-Packages
+COPY .github/containers/runner-browsers/google-key.gpg /opt/victron-image-build/browsers/.github/containers/runner-browsers/google-key.gpg
+COPY .github/containers/runner-browsers/microsoft-key.gpg /opt/victron-image-build/browsers/.github/containers/runner-browsers/microsoft-key.gpg
+RUN python3 /opt/victron-image-build/browsers/scripts/install_runner_browsers.py \
+    && rm -rf /var/lib/apt/lists/*
 # Install the rebuilt distro package, retaining dpkg version and copyright metadata.
 COPY --from=patched-libbpf /opt/victron-libbpf/libbpf1.deb /opt/victron-libbpf/installed.sha256 /tmp/victron-libbpf/
 COPY --from=patched-libbpf /opt/victron-libbpf/notices/ /usr/local/share/victron-libbpf/
@@ -172,7 +187,10 @@ RUN python3 /tmp/prune_runner_npm.py /home/runner \
         -e 'require("node:crypto"); require("node:fs"); console.log(process.version)'
 COPY deploy/runner-reserve/start-runner.sh deploy/runner-reserve/sandbox-docker.sh \
     deploy/runner-reserve/qualify.sh deploy/runner-reserve/qualify-npm.cjs \
+    deploy/runner-reserve/qualify-browsers.cjs \
     deploy/runner-reserve/guard-ca.crt /opt/victron-ci-reserve/
+RUN python3 /opt/victron-image-build/browsers/scripts/install_runner_browsers.py --qualify \
+    && rm -rf /opt/victron-image-build/browsers
 RUN chmod 0755 /opt/victron-ci-reserve/*.sh && \
     node --version && docker --version && /home/runner/bin/Runner.Listener --version
 ENV HOME=/home/runner RUNNER_TOOL_CACHE=/opt/hostedtoolcache AGENT_TOOLSDIRECTORY=/opt/hostedtoolcache ImageOS=ubuntu24
