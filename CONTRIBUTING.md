@@ -12,9 +12,16 @@ Use Python 3.12 or later and actionlint 1.7.12. Create an isolated environment:
 ```sh
 python3 -m venv .venv
 . .venv/bin/activate
-python3 -m pip install --require-hashes --only-binary=:all: -r .github/requirements-generator.txt
+python3 -m pip install --require-hashes --only-binary=:all: \
+  -r .github/requirements-generator.txt \
+  -r tools/secret_control/requirements-github-lock.txt
 bash scripts/ci.sh
 ```
+
+Install both existing lock files, as CI does. The GitHub secret-action lock
+includes PyNaCl, which the catalog-delivery and GitHub secret tests import during
+discovery. If discovery reports `ModuleNotFoundError: No module named 'nacl'`,
+activate the test environment and rerun the installation command above.
 
 The unittest suite exercises the Python generators, vendored release engine,
 rejected authorization/provenance inputs and generated workflow contracts.
