@@ -85,6 +85,35 @@ apart from stage labels. All descriptors, compressed and uncompressed layer
 hashes, the invalid effective CA and the build-provenance subject are checked.
 This is integrity evidence, not a signed attestation or a runtime acceptance.
 
+### Attestation formats and verification failures
+
+The offline OCI reader distinguishes executable image configuration from
+attestation metadata. A runtime image must use the ordinary OCI image config
+and satisfy the runner identity, environment and layer contracts above.
+
+For attestations, the reader supports the legacy image-config form with an
+`unknown/unknown` configuration and the OCI-artifact form documented by the
+[pinned BuildKit v0.34.1](https://github.com/moby/buildkit/blob/v0.34.1/docs/attestations/attestation-storage.md).
+The latter uses `application/vnd.docker.attestation.manifest.v1+json` as its
+artifact type and `application/vnd.oci.empty.v1+json` as its config type. The
+empty config must be the two bytes `{}`, with their exact size and SHA-256;
+optional inline `data` must agree. The local config blob is still required and
+verified. The outer descriptor must use the `unknown/unknown` platform. Its
+reference annotation and the artifact's subject must point to the single
+accepted runtime manifest; the subject must match that manifest's digest, size
+and media type.
+
+An empty config is never accepted as runtime configuration. Unknown config types
+or attestation artifact types, inconsistent references, missing blobs and invalid
+inline data fail verification. Existing archive, layer, provenance and site-CA
+checks still apply to both supported attestation forms.
+
+If a run records `build_success: true` but fails before `oci_verified`, inspect
+the descriptor named by the verification error and compare it with the pinned
+exporter's format. Preserve the archive and failure evidence. A successful
+export alone does not establish OCI acceptance or completion of the vulnerability
+scan; do not bypass descriptor validation or disable provenance to continue.
+
 ## Capacity and ownership
 
 GitHub documents 14 GB of SSD for standard hosted workers; actual free space is

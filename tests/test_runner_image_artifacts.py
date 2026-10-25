@@ -31,7 +31,9 @@ def layer_bytes(entries):
 
 
 def image(path, *, stage='public', content=build.SENTINEL, extra=False,
-          provenance=True, wrong_diff=False, edit=None, additional=()):
+          provenance=True, wrong_diff=False, edit=None, additional=(),
+          artifact_attestation=False, attestation_first=False, edit_attestation=None,
+          edit_attestation_descriptor=None, edit_runtime_manifest=None, edit_blobs=None):
     blobs = {}
     def blob(value, media):
         raw = value if isinstance(value, bytes) else json.dumps(value, sort_keys=True).encode()
@@ -53,20 +55,43 @@ def image(path, *, stage='public', content=build.SENTINEL, extra=False,
     if edit:
         edit(config)
     conf = blob(config, oci.CONFIG)
-    manifest = blob({'schemaVersion': 2, 'config': conf, 'layers': layers}, oci.MANIFEST)
+    runtime_manifest = {'schemaVersion': 2, 'config': conf, 'layers': layers}
+    if edit_runtime_manifest:
+        edit_runtime_manifest(runtime_manifest, blob)
+    manifest = blob(runtime_manifest, oci.MANIFEST)
     manifest['platform'] = {'architecture': 'amd64', 'os': 'linux'}
     manifests = [manifest]
     if provenance:
         statement = blob({'_type': 'https://in-toto.io/Statement/v0.1',
             'subject': [{'name': 'image', 'digest': {'sha256': manifest['digest'][7:]}}],
             'predicateType': 'https://slsa.dev/provenance/v0.2', 'predicate': {}}, 'application/vnd.in-toto+json')
-        att = blob({'schemaVersion': 2, 'config': blob({'os': 'unknown', 'architecture': 'unknown'}, oci.CONFIG),
-                    'layers': [statement]}, oci.MANIFEST)
+        if artifact_attestation:
+            config_desc = blob(b'{}', 'application/vnd.oci.empty.v1+json')
+            config_desc['data'] = 'e30='
+            attestation = {'schemaVersion': 2, 'config': config_desc, 'layers': [statement],
+                'artifactType': 'application/vnd.docker.attestation.manifest.v1+json',
+                'subject': {key: manifest[key] for key in ('mediaType', 'digest', 'size')}}
+        else:
+            attestation = {'schemaVersion': 2,
+                'config': blob({'os': 'unknown', 'architecture': 'unknown'}, oci.CONFIG),
+                'layers': [statement]}
+        if edit_attestation:
+            edit_attestation(attestation, blob)
+        att = blob(attestation, oci.MANIFEST)
         att['annotations'] = {'vnd.docker.reference.type': 'attestation-manifest'}
+        if artifact_attestation:
+            att['platform'] = {'architecture': 'unknown', 'os': 'unknown'}
+            att['annotations']['vnd.docker.reference.digest'] = manifest['digest']
+        if edit_attestation_descriptor:
+            edit_attestation_descriptor(att)
         manifests.append(att)
+    if attestation_first:
+        manifests.reverse()
     root = blob({'schemaVersion': 2, 'manifests': manifests}, oci.INDEX)
     if extra:
         blob(b'orphan', oci.LAYER)
+    if edit_blobs:
+        edit_blobs(blobs)
     files = {'index.json': json.dumps({'schemaVersion': 2, 'manifests': [root]}).encode(),
              'oci-layout': b'{"imageLayoutVersion":"1.0.0"}',
              **{'blobs/sha256/' + k: v for k, v in blobs.items()}}
@@ -164,14 +189,120 @@ class RunnerArtifactsTests(unittest.TestCase):
         self.assertEqual(proof['sentinel_sha256'], hashlib.sha256(build.SENTINEL).hexdigest())
         self.assertEqual(len(proof['attestations']), 1)
 
+    def test_artifact_attestation_accepts_either_order_and_optional_inline_data(self):
+        for first in (False, True):
+            for inline in (False, True):
+                with self.subTest(attestation_first=first, inline=inline):
+                    proof = self.verify(artifact_attestation=True, attestation_first=first,
+                        edit_attestation=None if inline else lambda att, blob: att['config'].pop('data'))
+                    self.assertFalse(proof['deployable'])
+                    self.assertFalse(proof['site_configured'])
+                    self.assertEqual(len(proof['attestations']), 1)
+                    self.assertEqual(proof['attestations'][0]['subject'][0]['digest']['sha256'],
+                                     proof['platform']['manifest'][7:])
+
+    def test_artifact_attestation_requires_known_type_and_non_executable_platform(self):
+        manifest_changes = [
+            lambda att, blob: att.pop('artifactType'),
+            lambda att, blob: att.update(artifactType='application/example'),
+            lambda att, blob: att.update(config=blob({'os': 'unknown', 'architecture': 'unknown'}, oci.CONFIG)),
+        ]
+        for change in manifest_changes:
+            with self.subTest(change=change), self.assertRaisesRegex(ValueError, 'artifact type'):
+                self.verify(artifact_attestation=True, edit_attestation=change)
+        descriptor_changes = [
+            lambda desc: desc.pop('platform'),
+            lambda desc: desc.update(platform={'architecture': 'amd64', 'os': 'linux'}),
+            lambda desc: desc.update(platform={'architecture': 'unknown', 'os': 'linux'}),
+        ]
+        for change in descriptor_changes:
+            with self.subTest(change=change), self.assertRaisesRegex(ValueError, 'Attestation platform'):
+                self.verify(artifact_attestation=True, edit_attestation_descriptor=change)
+
+    def test_empty_attestation_config_requires_canonical_descriptor_and_local_blob(self):
+        descriptor_changes = [
+            ('size', 1, 'Invalid empty'),
+            ('size', True, 'Invalid empty'),
+            ('size', 2.0, 'Invalid empty'),
+            ('digest', 'sha256:' + 'f' * 64, 'Invalid empty'),
+            ('data', None, 'Invalid empty'),
+            ('data', 'W10=', 'Invalid empty'),
+            ('data', 'e30', 'Invalid empty'),
+            ('mediaType', 'application/example', 'artifact type'),
+            ('urls', ['https://example.invalid/config'], 'Invalid/remote descriptor'),
+        ]
+        for key, value, error in descriptor_changes:
+            with self.subTest(key=key, value=value), self.assertRaisesRegex(ValueError, error):
+                self.verify(artifact_attestation=True,
+                    edit_attestation=lambda att, blob: att['config'].update({key: value}))
+        for raw in (b'[]', b'{ }', b'{"extra": true}'):
+            with self.subTest(raw=raw), self.assertRaisesRegex(ValueError, 'Invalid empty'):
+                self.verify(artifact_attestation=True,
+                    edit_attestation=lambda att, blob: att.update(config=blob(raw, 'application/vnd.oci.empty.v1+json')))
+        empty_sha = hashlib.sha256(b'{}').hexdigest()
+        with self.assertRaisesRegex(ValueError, 'Missing/wrong-size descriptor'):
+            self.verify(artifact_attestation=True, edit_blobs=lambda blobs: blobs.pop(empty_sha))
+        with self.assertRaisesRegex(ValueError, 'Blob hash mismatch'):
+            self.verify(artifact_attestation=True, edit_blobs=lambda blobs: blobs.update({empty_sha: b'[]'}))
+
+    def test_artifact_subject_requires_local_manifest_descriptor_and_reference(self):
+        with self.assertRaisesRegex(ValueError, 'Attestation subject missing'):
+            self.verify(artifact_attestation=True, edit_attestation=lambda att, blob: att.pop('subject'))
+        subject_changes = [
+            ('mediaType', oci.INDEX, 'Unexpected descriptor type'),
+            ('digest', 'sha256:' + 'f' * 64, 'Missing/wrong-size descriptor'),
+            ('size', 1, 'Missing/wrong-size descriptor'),
+            ('urls', ['https://example.invalid/subject'], 'Invalid/remote descriptor'),
+        ]
+        for key, value, error in subject_changes:
+            with self.subTest(key=key), self.assertRaisesRegex(ValueError, error):
+                self.verify(artifact_attestation=True,
+                    edit_attestation=lambda att, blob: att['subject'].update({key: value}))
+        for reference in (None, 'sha256:' + 'f' * 64):
+            def edit_reference(desc):
+                if reference is None:
+                    desc['annotations'].pop('vnd.docker.reference.digest')
+                else:
+                    desc['annotations']['vnd.docker.reference.digest'] = reference
+            with self.subTest(reference=reference), self.assertRaisesRegex(ValueError, 'Attestation reference differs'):
+                self.verify(artifact_attestation=True, edit_attestation_descriptor=edit_reference)
+
+    def test_artifact_subject_and_matching_reference_cannot_target_another_local_manifest(self):
+        target = {}
+        def retarget(att, blob):
+            other = {**att, 'annotations': {'test-purpose': 'not-the-runtime'}}
+            att['subject'] = blob(other, oci.MANIFEST)
+            target['digest'] = att['subject']['digest']
+        def retarget_reference(desc):
+            desc['annotations']['vnd.docker.reference.digest'] = target['digest']
+        for first in (False, True):
+            with self.subTest(attestation_first=first), self.assertRaisesRegex(ValueError, 'Attestation subject differs'):
+                self.verify(artifact_attestation=True, attestation_first=first,
+                    edit_attestation=retarget, edit_attestation_descriptor=retarget_reference)
+
+    def test_runtime_rejects_empty_and_unknown_config_types(self):
+        for media in ('application/vnd.oci.empty.v1+json', 'application/example'):
+            with self.subTest(media=media), self.assertRaisesRegex(ValueError, 'Unexpected descriptor type'):
+                self.verify(edit_runtime_manifest=lambda manifest, blob: manifest.update(config=blob(b'{}', media)))
+
+    def test_attestation_layers_still_require_known_media_type_and_provenance_subject(self):
+        for artifact in (False, True):
+            with self.subTest(artifact=artifact), self.assertRaisesRegex(ValueError, 'Unexpected descriptor type'):
+                self.verify(artifact_attestation=artifact,
+                    edit_attestation=lambda att, blob: att['layers'][0].update(mediaType='application/example'))
+            with self.subTest(artifact=artifact), self.assertRaisesRegex(ValueError, 'Build provenance subject missing'):
+                self.verify(artifact_attestation=artifact,
+                    edit_attestation=lambda att, blob: att.update(layers=[]))
+
     def test_different_ca_whiteout_missing_provenance_and_bad_diff_fail(self):
         changes = [{'content': b'not our sentinel'}, {'provenance': False}, {'wrong_diff': True}, {'extra': True},
                    {'additional': [[('opt/victron-ci-reserve/.wh.guard-ca.crt', b'')]]},
                    {'additional': [[('opt/victron-ci-reserve/.wh..wh..opq', b'')]]},
                    {'additional': [[('.wh..wh..opq', b'')]]}]
-        for change in changes:
-            with self.subTest(change=change), self.assertRaises(ValueError):
-                self.verify(**change)
+        for artifact in (False, True):
+            for change in changes:
+                with self.subTest(artifact=artifact, change=change), self.assertRaises(ValueError):
+                    self.verify(artifact_attestation=artifact, **change)
 
     def test_source_root_user_and_credentials_fail(self):
         for edit in [lambda c: c['config'].update(User='0:0'),
@@ -181,18 +312,22 @@ class RunnerArtifactsTests(unittest.TestCase):
                 self.verify(edit=edit)
 
     def test_private_requires_exact_base_layers_and_configuration(self):
-        base = self.verify()
-        path = self.root / 'private.tar'
-        sha, size = image(path, stage='private', additional=[[('extra-file', b'private tooling')]])
-        proof = oci.verify(path, sha, size, SOURCE, 'private', build.SENTINEL, base)
-        self.assertEqual(proof['platform']['layers'][:1], base['platform']['layers'])
-        wrong = copy.deepcopy(base)
-        wrong['platform']['diff_ids'] = ['sha256:' + 'f' * 64]
-        with self.assertRaisesRegex(ValueError, 'public layers'):
-            oci.verify(path, sha, size, SOURCE, 'private', build.SENTINEL, wrong)
-        sha, size = image(path, stage='private', edit=lambda c: c['config']['Env'].append('NEW_POLICY=1'))
-        with self.assertRaisesRegex(ValueError, 'configuration'):
-            oci.verify(path, sha, size, SOURCE, 'private', build.SENTINEL, base)
+        for artifact in (False, True):
+            with self.subTest(artifact=artifact):
+                base = self.verify(artifact_attestation=artifact)
+                path = self.root / 'private.tar'
+                sha, size = image(path, stage='private', artifact_attestation=artifact,
+                                  additional=[[('extra-file', b'private tooling')]])
+                proof = oci.verify(path, sha, size, SOURCE, 'private', build.SENTINEL, base)
+                self.assertEqual(proof['platform']['layers'][:1], base['platform']['layers'])
+                wrong = copy.deepcopy(base)
+                wrong['platform']['diff_ids'] = ['sha256:' + 'f' * 64]
+                with self.assertRaisesRegex(ValueError, 'public layers'):
+                    oci.verify(path, sha, size, SOURCE, 'private', build.SENTINEL, wrong)
+                sha, size = image(path, stage='private', artifact_attestation=artifact,
+                                  edit=lambda c: c['config']['Env'].append('NEW_POLICY=1'))
+                with self.assertRaisesRegex(ValueError, 'configuration'):
+                    oci.verify(path, sha, size, SOURCE, 'private', build.SENTINEL, base)
 
     def test_archive_path_replacement_and_duplicate_json_fail(self):
         path = self.root / 'original.tar'

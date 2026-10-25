@@ -18,6 +18,9 @@ import tarfile
 INDEX = 'application/vnd.oci.image.index.v1+json'
 MANIFEST = 'application/vnd.oci.image.manifest.v1+json'
 CONFIG = 'application/vnd.oci.image.config.v1+json'
+EMPTY_CONFIG = 'application/vnd.oci.empty.v1+json'
+EMPTY_CONFIG_DIGEST = 'sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a'
+ATTESTATION = 'application/vnd.docker.attestation.manifest.v1+json'
 LAYER = 'application/vnd.oci.image.layer.v1.tar'
 ENTRY = ['/opt/victron-ci-reserve/start-runner.sh']
 SOURCE_URL = 'https://github.com/victron-venus/venus-os-ci-toolkit'
@@ -190,15 +193,35 @@ def verify(path, expected, size, source, stage, sentinel, base=None):
         image_index = archive.json_descriptor(root, INDEX)
         require(image_index.get('schemaVersion') == 2, 'Invalid image index')
         runtime, evidence, attestations, unpacked, ca = None, None, [], 0, None
-        seen = set()
+        seen, artifact_subjects = set(), []
+        runtime_descriptor = None
         for desc in image_index['manifests']:
             require(desc['digest'] not in seen, 'Repeated image descriptor')
             seen.add(desc['digest'])
             manifest = archive.json_descriptor(desc, MANIFEST)
             require(manifest.get('schemaVersion') == 2, 'Invalid manifest')
-            config = archive.json_descriptor(manifest['config'], CONFIG)
             if desc.get('annotations', {}).get('vnd.docker.reference.type') == 'attestation-manifest':
-                require(config.get('os') == config.get('architecture') == 'unknown', 'Attestation platform differs')
+                config_desc = manifest['config']
+                if config_desc.get('mediaType') == EMPTY_CONFIG:
+                    require(manifest.get('artifactType') == ATTESTATION, 'Unsupported attestation artifact type')
+                    require(desc.get('platform') == {'architecture': 'unknown', 'os': 'unknown'},
+                            'Attestation platform differs')
+                    require(config_desc.get('digest') == EMPTY_CONFIG_DIGEST and
+                            type(config_desc.get('size')) is int and config_desc['size'] == 2 and
+                            ('data' not in config_desc or config_desc['data'] == 'e30='),
+                            'Invalid empty attestation config')
+                    require(archive.read(archive.descriptor(config_desc, EMPTY_CONFIG)) == b'{}',
+                            'Invalid empty attestation config')
+                    subject = manifest.get('subject')
+                    require(isinstance(subject, dict), 'Attestation subject missing')
+                    archive.descriptor(subject, MANIFEST)
+                    require(desc['annotations'].get('vnd.docker.reference.digest') == subject['digest'],
+                            'Attestation reference differs')
+                    artifact_subjects.append({key: subject[key] for key in ('mediaType', 'digest', 'size')})
+                else:
+                    require('artifactType' not in manifest, 'Unsupported attestation artifact type')
+                    config = archive.json_descriptor(config_desc, CONFIG)
+                    require(config.get('os') == config.get('architecture') == 'unknown', 'Attestation platform differs')
                 for layer in manifest['layers']:
                     statement = archive.json_descriptor(layer, 'application/vnd.in-toto+json')
                     require(statement.get('_type') in {'https://in-toto.io/Statement/v0.1', 'https://in-toto.io/Statement/v1'},
@@ -208,7 +231,9 @@ def verify(path, expected, size, source, stage, sentinel, base=None):
                 continue
             require(runtime is None and desc.get('platform') == {'architecture': 'amd64', 'os': 'linux'},
                     'Expected exactly one Linux amd64 runtime')
+            config = archive.json_descriptor(manifest['config'], CONFIG)
             runtime = config_contract(config, source, stage)
+            runtime_descriptor = {key: desc[key] for key in ('mediaType', 'digest', 'size')}
             layers = manifest['layers']
             require(config['rootfs']['type'] == 'layers' and len(config['rootfs']['diff_ids']) == len(layers),
                     'Layer/rootfs mismatch')
@@ -227,6 +252,7 @@ def verify(path, expected, size, source, stage, sentinel, base=None):
             evidence = {'manifest': desc['digest'], 'config': manifest['config']['digest'],
                         'layers': layers, 'diff_ids': config['rootfs']['diff_ids'], 'runtime_config': runtime}
         require(runtime is not None and ca == sentinel, 'Unconfigured site CA sentinel is missing')
+        require(all(subject == runtime_descriptor for subject in artifact_subjects), 'Attestation subject differs')
         subjects = {subject['digest'].get('sha256') for statement in attestations
                     if statement['predicate_type'].startswith('https://slsa.dev/provenance/')
                     for subject in statement['subject']}
