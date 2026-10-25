@@ -118,7 +118,8 @@ RUN python3 /tmp/prune_runner_npm.py /home/runner \
     && /home/runner/externals/node24/bin/node \
         -e 'require("node:crypto"); require("node:fs"); console.log(process.version)'
 COPY deploy/runner-reserve/start-runner.sh deploy/runner-reserve/sandbox-docker.sh \
-    deploy/runner-reserve/qualify.sh deploy/runner-reserve/guard-ca.crt /opt/victron-ci-reserve/
+    deploy/runner-reserve/qualify.sh deploy/runner-reserve/qualify-npm.cjs \
+    deploy/runner-reserve/guard-ca.crt /opt/victron-ci-reserve/
 RUN chmod 0755 /opt/victron-ci-reserve/*.sh && \
     node --version && docker --version && /home/runner/bin/Runner.Listener --version
 ENV HOME=/home/runner RUNNER_TOOL_CACHE=/opt/hostedtoolcache AGENT_TOOLSDIRECTORY=/opt/hostedtoolcache ImageOS=ubuntu24

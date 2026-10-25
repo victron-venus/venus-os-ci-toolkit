@@ -96,6 +96,53 @@ class PublicRunnerImageTests(unittest.TestCase):
                                             capture_output=True, text=True, timeout=5, check=False)
                     self.assertEqual(result.returncode, expected, result.stderr)
 
+    def test_runtime_probe_retains_and_runs_the_reviewed_npm_fixture(self):
+        dockerfile = (RESERVE / 'Dockerfile').read_text().replace('\\\n', '')
+        runtime_copy = next(line for line in dockerfile.splitlines()
+                            if line.startswith('COPY deploy/runner-reserve/start-runner.sh'))
+        self.assertIn('deploy/runner-reserve/qualify-npm.cjs', runtime_copy)
+        self.assertIn('node /opt/victron-ci-reserve/qualify-npm.cjs',
+                      (RESERVE / 'qualify.sh').read_text())
+
+    def test_compose_uses_local_image_and_cleans_up_on_success_or_failure(self):
+        source = (RESERVE / 'qualify.sh').read_text()
+        section = source[source.index('work=$(mktemp -d)'):source.index('password=$(openssl')]
+        self.assertIn('pull_policy: never', section)
+        self.assertIn('network_mode: none', section)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            executable(root / 'docker', '#!' + sys.executable + '\n' + r'''
+import json, os, pathlib, sys
+args = sys.argv[1:]
+with open(os.environ['DOCKER_LOG'], 'a') as stream:
+    stream.write(json.dumps(args) + '\n')
+if args[0] == 'run':
+    print('nested-build-ok')
+if args[0] == 'compose':
+    assert args[:4] == ['compose', '--project-name', 'reserve-qualification', '--file']
+    config = pathlib.Path(args[4]).read_text()
+    assert 'image: reserve-smoke:local' in config
+    if args[5] == 'up':
+        assert args[6:] == ['--pull', 'never', '--no-build', '--abort-on-container-exit', '--exit-code-from', 'smoke']
+    if args[5] == os.environ['FAIL_STAGE']:
+        sys.exit(7)
+''')
+            for stage in ('none', 'config', 'up'):
+                with self.subTest(stage=stage):
+                    log = root / (stage + '.jsonl')
+                    result = subprocess.run(['bash', '-euo', 'pipefail', '-c', section],
+                        env={**os.environ, 'PATH': directory + ':' + os.environ['PATH'],
+                             'DOCKER_LOG': str(log), 'FAIL_STAGE': stage},
+                        text=True, capture_output=True, timeout=10, check=False)
+                    self.assertEqual(result.returncode, 0 if stage == 'none' else 7, result.stderr)
+                    calls = [json.loads(line) for line in log.read_text().splitlines()]
+                    compose = [call[5] for call in calls if call[0] == 'compose']
+                    self.assertEqual(compose[0], 'config')
+                    self.assertEqual(compose[-1], 'down')
+                    self.assertEqual('up' in compose, stage != 'config')
+                    work = Path(next(call[4] for call in calls if call[0] == 'compose')).parent
+                    self.assertFalse(work.exists())
+
     def test_only_manual_probe_gets_deadline_and_normal_runner_is_unchanged(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory)
