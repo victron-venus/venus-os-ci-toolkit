@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "scan_acceptance_schema": 1,
-  "canonical_source": "6f4ebfe4dcf4fcb5ba995d5f12f1dd11864afdc6",
+  "canonical_source": "bb5f7f48618d0d76a50042b7c66130c6fd9bf6fd",
   "platform": "linux/amd64",
   "tools": {
     "buildkit": {
@@ -35,13 +35,13 @@
           "mode": "100755"
         },
         "deploy/runner-reserve/Dockerfile": {
-          "sha256": "72b59b5f4afb635852dc267151f6404f86199dd64442d4bfa59d0c29f964c266",
-          "bytes": 10887,
+          "sha256": "adeecca2e3ba942c1cb60a9dc1c62ff221dbed16a884bd394965efa4f95e7d66",
+          "bytes": 12764,
           "mode": "100644"
         },
         "deploy/runner-reserve/Dockerfile.dockerignore": {
-          "sha256": "f4ea9612b2a4c247a880f477bd236b469fe5c8a4609071fbe7b1986c42a636fa",
-          "bytes": 1265,
+          "sha256": "ef4eef3ce65c91043ebe6cffaf9d6665c236efd199aa6659bec25c3b8d81a3cc",
+          "bytes": 1846,
           "mode": "100644"
         },
         "deploy/runner-reserve/start-runner.sh": {
@@ -89,6 +89,21 @@
           "bytes": 21696,
           "mode": "100644"
         },
+        "scripts/build_runner_libbpf.py": {
+          "sha256": "187c6c75c3099070c1a07a48d9355a9548c447cd7a9536fb93b76b4f6a1f2722",
+          "bytes": 14179,
+          "mode": "100644"
+        },
+        ".github/containers/runner-libbpf.json": {
+          "sha256": "504a2a2d6d2ed407405e4e5f61abb189fdee6bcf44dec545fed6dcbb515a42d2",
+          "bytes": 2049,
+          "mode": "100644"
+        },
+        ".github/containers/libbpf/0001-restrict-core-poisoning.patch": {
+          "sha256": "87751eaa64a8f7c410e7829da9c01ee18cb2b543f6cd19e387904b9f554b6365",
+          "bytes": 4570,
+          "mode": "100644"
+        },
         ".github/containers/runner-go-tools/containerd/go.mod": {
           "sha256": "c914e0b5f06866f41e26dcd9db3b7fe60f5dce3958245bfa55f6b17c22a8438a",
           "bytes": 7027,
@@ -134,19 +149,64 @@
           "bytes": 805,
           "mode": "100644"
         },
-        ".github/containers/libbpf/0001-restrict-core-poisoning.patch": {
-          "sha256": "87751eaa64a8f7c410e7829da9c01ee18cb2b543f6cd19e387904b9f554b6365",
-          "bytes": 4570,
+        ".github/containers/runner-browsers.json": {
+          "sha256": "b8aa7c5ecbf470b671a3c06144a672cfbc156c5f5c7325d563e2faae2707f64d",
+          "bytes": 7053,
           "mode": "100644"
         },
-        ".github/containers/runner-libbpf.json": {
-          "sha256": "504a2a2d6d2ed407405e4e5f61abb189fdee6bcf44dec545fed6dcbb515a42d2",
-          "bytes": 2049,
+        "scripts/install_runner_browsers.py": {
+          "sha256": "586a3f563d796be3b844da2b92596065d29ebfa7eee0718ac7dd00b68f131546",
+          "bytes": 15283,
           "mode": "100644"
         },
-        "scripts/build_runner_libbpf.py": {
-          "sha256": "187c6c75c3099070c1a07a48d9355a9548c447cd7a9536fb93b76b4f6a1f2722",
-          "bytes": 14179,
+        "scripts/browser-toolchains.json": {
+          "sha256": "1fa8cebd23f57c93aea98bf5bc6968b08520fed60a2c3dd068d5be9aa3c65f8f",
+          "bytes": 2833,
+          "mode": "100644"
+        },
+        ".github/containers/runner-browsers/edge-Release": {
+          "sha256": "a6f42b18378d5a71a98a70b72a4d43a815a8d61ae53d9339bbf5cbdc1b1c812e",
+          "bytes": 3065,
+          "mode": "100644"
+        },
+        ".github/containers/runner-browsers/edge-Release.gpg": {
+          "sha256": "5a2a171d6f3342f5375736a44d2a47104c61e7145374edefe4ba742b173fc782",
+          "bytes": 481,
+          "mode": "100644"
+        },
+        ".github/containers/runner-browsers/edge-amd64-Packages": {
+          "sha256": "25acaa440280b5871961dd2957b2dbcd45fac4a73bb7439c21fb4f417fd9c33a",
+          "bytes": 1105047,
+          "mode": "100644"
+        },
+        ".github/containers/runner-browsers/google-Release": {
+          "sha256": "4b3847ea23b1a1946401a7d8e880cf340777ed8fcb6f15cb10daabf5e492d053",
+          "bytes": 1666,
+          "mode": "100644"
+        },
+        ".github/containers/runner-browsers/google-Release.gpg": {
+          "sha256": "fead10a1139d927536dc78d8ccbe42586a54870d5e0b30425c7d271cdbb8eb96",
+          "bytes": 833,
+          "mode": "100644"
+        },
+        ".github/containers/runner-browsers/google-amd64-Packages": {
+          "sha256": "7b40775ca72d5ea41f7aab57783bcea470d18b92f3b93682c82b3a88bf8e0b0e",
+          "bytes": 6207,
+          "mode": "100644"
+        },
+        ".github/containers/runner-browsers/google-key.gpg": {
+          "sha256": "0631021cd0efb5ebe428b09b003e4dc45f9c8cd1c47befd5196906768eff96e0",
+          "bytes": 14444,
+          "mode": "100644"
+        },
+        ".github/containers/runner-browsers/microsoft-key.gpg": {
+          "sha256": "098f10efd65c0d0a856a980144b5f37c05374eaa575a208d46913fd8f7eae951",
+          "bytes": 640,
+          "mode": "100644"
+        },
+        "deploy/runner-reserve/qualify-browsers.cjs": {
+          "sha256": "6d0d0a4aa9de85120f4ca4ef9cdd87dce5d8a7b8215777ecbfc064f27ff88fef",
+          "bytes": 2179,
           "mode": "100644"
         }
       }
