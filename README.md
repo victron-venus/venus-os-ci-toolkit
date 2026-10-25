@@ -157,11 +157,9 @@ uses a universal, version-pinned, hash-verified wheel lock (including Python
 reads bootstrap requirements from the caller's checkout.
 
 Local contract tests require uv 0.13.4, also pinned in the hosted test workflow.
-
-```bash
-python3 -m pip install --require-hashes --only-binary=:all: -r .github/requirements-generator.txt
-bash scripts/ci.sh
-```
+Follow the [development and test setup](CONTRIBUTING.md#development-and-tests)
+to create an isolated environment, install both locked dependency sets and run
+`bash scripts/ci.sh`.
 
 The contract suite includes rejected missing/skipped gates, wrong source revisions, checksum changes, forged/expired evidence, release collisions and stable byte identity. Consumer release workflows run the vendored engine contract tests as a required gate.
 

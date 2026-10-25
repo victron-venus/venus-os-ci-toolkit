@@ -24,7 +24,13 @@ tests and coverage artifacts. Hosted publication requires its own evidence.
 
 ### `python-type-error/`
 
-An intentionally invalid return annotation used by `tests/test_python_typecheck.py`. The contract test executes the reusable workflow’s actual MyPy installation and check commands in a fresh virtual environment. It verifies that the invalid annotation fails, a corrected annotation passes, and `run-type-check: false` skips both installation and checking. Run it with `python -m unittest discover -s tests -p 'test_*.py' -v` after installing PyYAML. Network access is required to install MyPy into the isolated environment.
+An intentionally invalid return annotation used by `tests/test_python_typecheck.py`.
+The contract test executes the reusable workflow’s actual MyPy installation and
+check commands in a fresh virtual environment. It verifies that the invalid
+annotation fails, a corrected annotation passes, and `run-type-check: false`
+skips both installation and checking. Run the full suite using the
+[development and test setup](../../CONTRIBUTING.md#development-and-tests).
+Network access is required to install MyPy into the isolated environment.
 
 ### `go-minimal/`
 
