@@ -5,14 +5,16 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { createRequire } = require('node:module');
+const RECORD_PATH = '/usr/local/share/victron-browsers/installed.json';
 
 async function main() {
   assert.equal(process.platform, 'linux');
   assert.equal(process.arch, 'x64');
   assert.equal(process.getuid(), 1001);
   assert.equal(process.argv.length, 4);
+  assert.equal(process.argv[3], RECORD_PATH);
   const root = path.resolve(process.argv[2]);
-  const record = JSON.parse(fs.readFileSync(process.argv[3], 'utf8'));
+  const record = JSON.parse(fs.readFileSync(RECORD_PATH, 'utf8'));
   const expected = ['chrome', 'chrome-beta', 'msedge', 'msedge-beta'];
   assert.deepEqual(record.packages.map(p => p.channel).sort(), expected);
   const toolchain = createRequire(path.join(root, 'package.json'));

@@ -152,7 +152,8 @@ const source = fs.readFileSync(process.argv[1], 'utf8');
 const mode = process.argv[3];
 const opened = [], closed = [], outputs = [];
 const fakeProcess = {platform:'linux', arch:'x64', getuid:()=>1001,
-  argv:['node','probe','/toolchain','/record'], exitCode:0};
+  argv:['node','probe','/toolchain', mode === 'record-path' ? '/other-record' :
+    '/usr/local/share/victron-browsers/installed.json'], exitCode:0};
 const record = {packages:lock.packages};
 const toolchain = name => name.endsWith('package.json') ? {version:'1.64.0'} : {
   chromium:{launch:async options => {
@@ -178,7 +179,7 @@ const context = {process:fakeProcess, console:{log:x=>outputs.push(JSON.parse(x)
 console.log(JSON.stringify({opened,closed,outputs,exitCode:fakeProcess.exitCode}));})()
 .catch(e=>{console.error(e);process.exitCode=2;});
 '''
-        for mode in ('success', 'version', 'page'):
+        for mode in ('success', 'version', 'page', 'record-path'):
             with self.subTest(mode=mode):
                 result = subprocess.run(['node', '-e', harness,
                     str(ROOT / 'deploy/runner-reserve/qualify-browsers.cjs'),
@@ -191,6 +192,8 @@ console.log(JSON.stringify({opened,closed,outputs,exitCode:fakeProcess.exitCode}
                 else:
                     self.assertEqual(value['exitCode'], 1)
                     self.assertEqual(value['outputs'], [])
+                    if mode == 'record-path':
+                        self.assertEqual(value['opened'], [])
 
 
 if __name__ == '__main__':
