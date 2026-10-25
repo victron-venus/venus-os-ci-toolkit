@@ -80,6 +80,7 @@ class NucKvmPlan(NamedTuple):
     low_share_ci_scopes: tuple[str, ...] = ()
     bounded_heavy_ci_scopes: tuple[str, ...] = ()
     bounded_heavy_image: str | None = None
+    full_memory_ci_scopes: tuple[str, ...] = ()
 
 
 def load_nuc_kvm_plan(path):
@@ -96,7 +97,8 @@ def load_nuc_kvm_plan(path):
     required = {'targets', 'image', 'node_ip'}
     if (not isinstance(data, dict) or not required <= set(data)
             or set(data) - required - {'light_ci_scopes', 'low_share_ci_scopes',
-                                      'bounded_heavy_ci_scopes', 'bounded_heavy_image'}):
+                                      'bounded_heavy_ci_scopes', 'bounded_heavy_image',
+                                      'full_memory_ci_scopes'}):
         raise ValueError('NUC KVM plan requires targets, image and node_ip, with optional CI scope lists')
     if not isinstance(data['targets'], list) or not data['targets']:
         raise ValueError('NUC KVM plan requires an explicit nonempty target list')
@@ -109,6 +111,9 @@ def load_nuc_kvm_plan(path):
     low_share = data.get('low_share_ci_scopes', [])
     if not isinstance(low_share, list) or any(not isinstance(scope, str) for scope in low_share):
         raise ValueError('low_share_ci_scopes must be an explicit list of repository scopes')
+    full_memory = data.get('full_memory_ci_scopes', [])
+    if not isinstance(full_memory, list) or any(not isinstance(scope, str) for scope in full_memory):
+        raise ValueError('full_memory_ci_scopes must be an explicit list of repository scopes')
     bounded = data.get('bounded_heavy_ci_scopes', [])
     if not isinstance(bounded, list) or any(not isinstance(scope, str) for scope in bounded):
         raise ValueError('bounded_heavy_ci_scopes must be an explicit list of repository scopes')
@@ -118,7 +123,7 @@ def load_nuc_kvm_plan(path):
         raise ValueError('Bounded heavy selection must not be empty')
     return NucKvmPlan(tuple(NucKvmTarget(**target) for target in data['targets']),
                       data['image'], data['node_ip'], tuple(light), tuple(low_share),
-                      tuple(bounded), data.get('bounded_heavy_image'))
+                      tuple(bounded), data.get('bounded_heavy_image'), tuple(full_memory))
 
 
 def validate_nuc_kvm(rows, config, sandbox_runtime, node_ip):
@@ -176,6 +181,15 @@ def validate_nuc_kvm(rows, config, sandbox_runtime, node_ip):
             raise ValueError('Every bounded heavy scope must already be a selected NUC CI target')
         if set(plan.bounded_heavy_ci_scopes) & set(plan.light_ci_scopes):
             raise ValueError('Bounded heavy cannot use light concurrency')
+    if (not isinstance(plan.full_memory_ci_scopes, tuple)
+            or any(not isinstance(scope, str) or not SCOPE.fullmatch(scope)
+                   for scope in plan.full_memory_ci_scopes)
+            or len(set(plan.full_memory_ci_scopes)) != len(plan.full_memory_ci_scopes)):
+        raise ValueError('full_memory_ci_scopes requires unique typed repository scopes')
+    if any(NucKvmTarget(scope, 'ci') not in plan.targets for scope in plan.full_memory_ci_scopes):
+        raise ValueError('Every full-memory scope must already be a selected NUC CI target')
+    if set(plan.full_memory_ci_scopes) & (set(plan.light_ci_scopes) | set(plan.bounded_heavy_ci_scopes)):
+        raise ValueError('Full-memory CI requires exclusive standard CI, not light or bounded heavy')
     address = ipaddress.IPv4Address(plan.node_ip)
     if address.is_unspecified or address.is_loopback or address.is_multicast or address.is_link_local:
         raise ValueError('NUC guard requires a unicast node address')
@@ -198,6 +212,8 @@ def validate_nuc_kvm(rows, config, sandbox_runtime, node_ip):
                 raise ValueError('Light concurrency supports only standard CI with tmpfs-2gi')
             if target.scope in plan.bounded_heavy_ci_scopes and mode != ('heavy', 'tmpfs-6gi-heavy'):
                 raise ValueError('Bounded heavy requires an explicitly heavy CI inventory row')
+            if target.scope in plan.full_memory_ci_scopes and mode != ('standard', 'tmpfs-2gi'):
+                raise ValueError('Full-memory CI requires standard CI with tmpfs-2gi')
             # Low-share keeps the exclusive worker contract and changes only
             # CPU reservation; both validated storage/resource pairs retain
             # their full memory, disk and tmpfs budgets.
@@ -205,7 +221,8 @@ def validate_nuc_kvm(rows, config, sandbox_runtime, node_ip):
             raise ValueError('NUC KVM automation requires explicit tmpfs-3gi')
     return NucKvmPlan(tuple(sorted(plan.targets)), plan.image, plan.node_ip,
                       tuple(sorted(plan.light_ci_scopes)), tuple(sorted(plan.low_share_ci_scopes)),
-                      tuple(sorted(plan.bounded_heavy_ci_scopes)), plan.bounded_heavy_image)
+                      tuple(sorted(plan.bounded_heavy_ci_scopes)), plan.bounded_heavy_image,
+                      tuple(sorted(plan.full_memory_ci_scopes)))
 
 
 def name(scope, profile):
@@ -642,6 +659,8 @@ def nuc_kvm_value(value, config):
     if labels[PROFILE_LABEL] == 'ci':
         runner['resources']['requests']['cpu'] = '200m' if light else ('100m' if low_share else '600m')
         runner['resources']['limits']['cpu'] = '1' if light else '2'
+        if labels[SCOPE_LABEL] in {name(scope, 'scope') for scope in config.full_memory_ci_scopes}:
+            runner['resources']['requests']['memory'] = '6Gi'
         if labels[SCOPE_LABEL] in {name(scope, 'scope') for scope in config.bounded_heavy_ci_scopes}:
             runner['image'] = config.bounded_heavy_image
             runner['resources']['requests']['memory'] = '9Gi'
