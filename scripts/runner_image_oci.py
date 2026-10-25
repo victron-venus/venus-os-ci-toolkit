@@ -293,3 +293,122 @@ def materialize(path, proof, destination, check):
         archive.unchanged()
     finally:
         archive.close()
+
+
+def scan_index(runtime):
+    """Trivy consumes an OCI directory; select the verified runtime explicitly."""
+    return json.dumps({'schemaVersion': 2, 'mediaType': INDEX, 'manifests': [runtime]},
+                      sort_keys=True, separators=(',', ':')).encode() + b'\n'
+
+
+def check_scan_input(selection, proof):
+    require(selection.get('schema') == 1 and
+            selection.get('archive_sha256') == proof['archive_sha256'] and
+            selection.get('image_index') == proof['image_index'], 'Scan archive binding differs')
+    runtime, config = selection['runtime'], selection['config']
+    require(set(runtime) == {'mediaType', 'digest', 'size', 'platform'} and
+            runtime['mediaType'] == MANIFEST and runtime['digest'] == proof['platform']['manifest'] and
+            runtime['platform'] == {'architecture': 'amd64', 'os': 'linux'}, 'Scan runtime differs')
+    require(config['mediaType'] == CONFIG and config['digest'] == proof['platform']['config'] and
+            selection['layers'] == proof['platform']['layers'], 'Scan configuration or layers differ')
+    files = selection['files']
+    expected = {'index.json', 'oci-layout'}
+    for desc in [runtime, config, *selection['layers']]:
+        require(re.fullmatch(r'sha256:[0-9a-f]{64}', desc['digest']) and
+                type(desc['size']) is int and 0 < desc['size'] <= MAX_ARCHIVE, 'Invalid scan descriptor')
+        name = 'blobs/sha256/' + desc['digest'][7:]
+        expected.add(name)
+        require(files.get(name) == {'sha256': desc['digest'][7:], 'bytes': desc['size']},
+                'Scan blob binding differs')
+    raw = scan_index(runtime)
+    require(files.get('index.json') == {'sha256': hashlib.sha256(raw).hexdigest(), 'bytes': len(raw)} and
+            set(files) == expected, 'Scan inventory differs')
+
+
+def verify_scan_input(destination, selection, proof, check):
+    """Rehash the exact scanner directory before/after use; no image code runs."""
+    check_scan_input(selection, proof)
+    require(destination.is_dir() and not destination.is_symlink(), 'Unsafe scan directory')
+    actual = set()
+    for path in destination.rglob('*'):
+        require(not path.is_symlink(), 'Scan input contains a symlink')
+        if path.is_dir():
+            require(path.relative_to(destination).as_posix() in {'blobs', 'blobs/sha256'},
+                    'Unexpected scan directory')
+            continue
+        name = path.relative_to(destination).as_posix()
+        require(name in selection['files'], 'Unexpected scan file')
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        with os.fdopen(fd, 'rb') as stream:
+            before = os.fstat(fd)
+            require(stat.S_ISREG(before.st_mode) and before.st_size == selection['files'][name]['bytes'],
+                    'Scan file type or size differs')
+            digest = hashlib.sha256()
+            while block := stream.read(1024**2):
+                check()
+                digest.update(block)
+            require(identity(os.fstat(fd)) == identity(before) == identity(path.stat(follow_symlinks=False)) and
+                    digest.hexdigest() == selection['files'][name]['sha256'], 'Scan bytes changed')
+        actual.add(name)
+    require(actual == set(selection['files']), 'Scan files missing')
+    require(json_document((destination / 'oci-layout').read_bytes()) == {'imageLayoutVersion': '1.0.0'},
+            'Scan OCI version differs')
+    check()
+
+
+def project_scan_input(path, proof, destination, check):
+    """Copy unchanged runtime blobs from the accepted archive, omitting attestations."""
+    destination.mkdir(mode=0o700, exist_ok=False)
+    archive = Archive(path, proof['archive_sha256'], proof['archive_bytes'])
+    try:
+        outer = json_document(archive.read('index.json'))
+        require(outer.get('schemaVersion') == 2 and len(outer.get('manifests', [])) == 1,
+                'Ambiguous scan archive root')
+        root = outer['manifests'][0]
+        require(root['digest'] == proof['image_index'], 'Scan source index differs')
+        index = archive.json_descriptor(root, INDEX)
+        require(index.get('schemaVersion') == 2, 'Invalid scan source index')
+        matches = [d for d in index['manifests'] if d['digest'] == proof['platform']['manifest']]
+        require(len(matches) == 1, 'Scan runtime is missing or duplicated')
+        runtime = matches[0]
+        require(runtime.get('platform') == {'architecture': 'amd64', 'os': 'linux'} and
+                runtime.get('annotations', {}).get('vnd.docker.reference.type') != 'attestation-manifest',
+                'Scan target is not the verified runtime')
+        manifest = archive.json_descriptor(runtime, MANIFEST)
+        require(manifest.get('schemaVersion') == 2 and manifest['config']['digest'] == proof['platform']['config'] and
+                manifest['layers'] == proof['platform']['layers'], 'Scan manifest differs')
+        config = archive.json_descriptor(manifest['config'], CONFIG)
+        require(config_contract(config, proof['source_commit'], proof['stage']) == proof['platform']['runtime_config'] and
+                config['rootfs'] == {'type': 'layers', 'diff_ids': proof['platform']['diff_ids']},
+                'Scan runtime configuration differs')
+        runtime = {key: runtime[key] for key in ('mediaType', 'digest', 'size', 'platform')}
+        selection = {'schema': 1, 'archive_sha256': proof['archive_sha256'], 'image_index': proof['image_index'],
+                     'runtime': runtime, 'config': manifest['config'], 'layers': manifest['layers'], 'files': {}}
+        (destination / 'blobs/sha256').mkdir(mode=0o700, parents=True)
+        for desc in [runtime, manifest['config'], *manifest['layers']]:
+            name = archive.descriptor(desc)
+            if name in selection['files']:
+                continue
+            fd = os.open(destination / name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+            digest, count = hashlib.sha256(), 0
+            with os.fdopen(fd, 'wb') as output, archive.tar.extractfile(archive.files[name]) as source:
+                while block := source.read(1024**2):
+                    check()
+                    count += len(block)
+                    require(count <= desc['size'], 'Scan copy exceeds descriptor')
+                    output.write(block)
+                    digest.update(block)
+                output.flush()
+                os.fsync(fd)
+            require(count == desc['size'] and digest.hexdigest() == desc['digest'][7:], 'Scan copy differs')
+            selection['files'][name] = {'sha256': digest.hexdigest(), 'bytes': count}
+        for name, raw in [('index.json', scan_index(runtime)), ('oci-layout', archive.read('oci-layout'))]:
+            fd = os.open(destination / name, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+            with os.fdopen(fd, 'wb') as output:
+                output.write(raw)
+            selection['files'][name] = {'sha256': hashlib.sha256(raw).hexdigest(), 'bytes': len(raw)}
+        archive.unchanged()
+        verify_scan_input(destination, selection, proof, check)
+        return selection
+    finally:
+        archive.close()
