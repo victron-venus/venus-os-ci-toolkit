@@ -3,7 +3,8 @@
 `runner-image-artifacts.yml` builds the canonical Linux amd64 public runner and
 private-mode derivative on two sequential, disposable GitHub-hosted workers.
 It produces downloadable OCI archives and evidence, without publishing an image
-or changing runner routing. The canonical Dockerfiles are unchanged.
+or changing runner routing. The workflow builds the reviewed canonical
+Dockerfiles without rewriting them.
 
 **These artifacts cannot be deployed.** The guard CA is exactly the invalid text
 `UNCONFIGURED SITE CA` followed by a newline. The workflow has no site certificate,
@@ -67,6 +68,14 @@ a later workflow/documentation commit, but every canonical build input must
 still match the reviewed inventory. Updating a canonical input requires an
 explicit manifest update and review; a changed recipe is never accepted by
 merely changing the revision label.
+
+Changing the Go builder identity or directory provisioning changes a canonical
+build input and requires refreshed inventory hashes. Source-CI success alone
+does not qualify this change; retain an actual nonroot image-build result as
+described in the [source-build unit-stage contract](RUNNER_IMAGE_SECURITY.md#nonroot-source-build-unit-stage).
+Until that build and subsequent image, scan and runtime gates complete, the
+change remains a candidate. Publication or merge does not mean a runner has
+been redeployed.
 
 The private job downloads only this run's public artifact and verifies its
 source, run, attempt, manifest, context, complete OCI graph, scan and cleanup

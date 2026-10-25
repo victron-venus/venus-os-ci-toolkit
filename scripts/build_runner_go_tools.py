@@ -361,7 +361,10 @@ def build(name, manifest, build_root=BUILD_ROOT, output=OUTPUT):
         result = run(["go", "list", "-deps", "-test", "-json", *packages], source, capture=True)
         unit_dependencies = {p["ImportPath"] for p in json_stream(result.stdout)}
         check_retained_graph(unit_dependencies)
-    test_command = ["go", "test", "-p", "2", "-timeout", "10m", *tag_arguments, *packages]
+    # Preserve actual test/skip outcomes and do not substitute Go's result cache
+    # for a fresh execution when this build step runs.
+    test_command = ["go", "test", "-count=1", "-v", "-p", "2", "-timeout", "10m",
+                    *tag_arguments, *packages]
     require(packages, "No upstream unit packages selected")
     # Buildx's own unit-test target deliberately excludes external daemon integration.
     prior = os.environ.get("SKIP_INTEGRATION_TESTS")

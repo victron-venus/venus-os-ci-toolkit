@@ -57,6 +57,89 @@ class PublicRunnerImageTests(unittest.TestCase):
         for path in allowed - {'deploy/runner-reserve/guard-ca.crt'}:
             self.assertTrue((ROOT / path).is_file(), path)
 
+    def test_go_source_builds_keep_the_same_nonroot_stage_context(self):
+        source = (RESERVE / 'Dockerfile').read_text().replace('\\\n', ' ')
+        expected_env = {'HOME': '/home/go-builder', 'GOPATH': '/home/go-builder/go',
+                        'GOMODCACHE': '/home/go-builder/go/pkg/mod',
+                        'GOCACHE': '/home/go-builder/.cache/go-build'}
+        stage = user = workdir = None
+        environment, calls, stage_runs = {}, [], []
+        nonroot_selected = False
+        for line in source.splitlines():
+            line = line.strip()
+            if not line or line.startswith('#'):
+                continue
+            instruction, value = line.split(None, 1)
+            instruction = instruction.upper()
+            if instruction == 'FROM':
+                words = shlex.split(value)
+                stage = words[-1] if len(words) >= 3 and words[-2].upper() == 'AS' else None
+                user = workdir = None
+                environment = {}
+                nonroot_selected = False
+            elif instruction == 'USER':
+                if stage == 'patched-go-tools':
+                    if nonroot_selected:
+                        self.assertEqual(value, '10001:10001', 'The source stage cannot return to root')
+                    nonroot_selected = nonroot_selected or value == '10001:10001'
+                user = value
+            elif instruction == 'ENV' and stage == 'patched-go-tools':
+                for assignment in shlex.split(value):
+                    name, separator, setting = assignment.partition('=')
+                    self.assertTrue(separator, 'Use explicit ENV name=value bindings')
+                    environment[name] = setting
+            elif instruction == 'WORKDIR':
+                workdir = value
+            elif instruction == 'COPY' and stage == 'patched-go-tools':
+                self.assertFalse(any(word.startswith('--chown=') for word in shlex.split(value)),
+                                 'Copied source inputs must retain their default root ownership')
+            elif instruction == 'RUN':
+                if stage == 'patched-go-tools':
+                    stage_runs.append((user, dict(environment), ' '.join(value.split())))
+                if 'scripts/build_runner_go_tools.py' not in value:
+                    continue
+                self.assertEqual(stage, 'patched-go-tools')
+                self.assertEqual(user, '10001:10001')
+                self.assertEqual(workdir, '/opt/victron-go-tools-inputs')
+                self.assertEqual({name: environment.get(name) for name in expected_env}, expected_env)
+                words = shlex.split(value)
+                self.assertEqual(words[:-1], ['umask', '022', '&&', 'python3',
+                                             'scripts/build_runner_go_tools.py'])
+                calls.append(words[-1])
+        self.assertEqual(calls, ['containerd', 'buildx', 'compose'])
+        self.assertEqual(user, '1001:1001', 'The final runtime identity must not change')
+        provision = [command for identity, _, command in stage_runs
+                     if identity in (None, 'root', '0', '0:0') and 'useradd' in command]
+        self.assertEqual(len(provision), 1, 'Provision the source account as root')
+        for fragment in ('groupadd --gid 10001 go-builder',
+                         'useradd --uid 10001 --gid 10001 --create-home',
+                         'install -d -o 10001 -g 10001 -m 0755'):
+            self.assertIn(fragment, provision[0])
+        preflights = [(index, identity, bindings, command)
+                      for index, (identity, bindings, command) in enumerate(stage_runs)
+                      if command.startswith('test "$(id -u)" = 10001')]
+        self.assertEqual(len(preflights), 1, 'Keep the image-stage permission preflight')
+        index, identity, bindings, preflight = preflights[0]
+        self.assertEqual(identity, '10001:10001')
+        self.assertEqual({name: bindings.get(name) for name in expected_env}, expected_env)
+        self.assertTrue(all(index < call_index for call_index, (_, _, command) in enumerate(stage_runs)
+                            if 'scripts/build_runner_go_tools.py' in command))
+        # Check the real preflight, not merely an unrelated USER/chown string.
+        # Its execution in the image build remains a separate acceptance gate.
+        for fragment in ('test "$(id -u -r)" = 10001', 'test "$(id -g)" = 10001',
+                         'test "$(id -g -r)" = 10001',
+                         'for path in "$HOME" "$GOPATH" "$GOMODCACHE" "$GOCACHE" '
+                         '/opt/victron-go-tools-build /opt/victron-go-tools; do',
+                         'test -d "$path" && test ! -L "$path" && test -w "$path" && test -x "$path"',
+                         'test "$(stat -c \'%u:%g\' "$path")" = 10001:10001 || exit 1',
+                         'test -w /tmp && test -x /tmp',
+                         'find /opt/victron-go-tools-inputs -exec sh -ec',
+                         'test ! -L "$path" && test -r "$path" && test ! -w "$path"',
+                         'test "$(stat -c "%u:%g" "$path")" = 0:0 || exit 1',
+                         'if test -d "$path"; then test -x "$path"; else test -f "$path"; fi || exit 1'):
+            self.assertIn(fragment, preflight)
+        self.assertNotIn('|| true', preflight)
+
     def test_gh_uses_existing_manifest_and_verified_offline_installer(self):
         source = (RESERVE / 'Dockerfile').read_text()
         manifest = json.loads((ROOT / '.github/gh/release.json').read_text())
