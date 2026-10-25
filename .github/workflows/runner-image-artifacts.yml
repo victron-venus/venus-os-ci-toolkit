@@ -70,7 +70,7 @@ jobs:
           if-no-files-found: error
           retention-days: 7
           compression-level: 0
-      - name: Require both full scans to have no HIGH or CRITICAL findings
+      - name: Require both full scans and verified image applicability
         env:
           PARENT: ${{ runner.temp }}/runner-image-public-${{ github.run_id }}-${{ github.run_attempt }}
           OUTPUT: ${{ runner.temp }}/runner-image-private-${{ github.run_id }}-${{ github.run_attempt }}

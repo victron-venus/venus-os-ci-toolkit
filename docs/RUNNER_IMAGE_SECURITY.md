@@ -161,6 +161,72 @@ architecture, component or changed binary inherits it. The raw full scan remains
 part of image qualification; the JSON record contains only public source and
 binary identities, not deployment inventory.
 
+### Source-bound libbpf backport
+
+The installed Ubuntu `libbpf1` 1.3.0 library also contains code affected by
+[CVE-2026-98626](https://ubuntu.com/security/CVE-2026-98626), independently of the
+scanner's Linux-header package attribution. Header applicability cannot clear
+that installed library.
+
+The `patched-libbpf` stage rebuilds the pinned Ubuntu `1.3.0-2build2` source with
+the single [upstream relocation fix](https://github.com/torvalds/linux/commit/394ae398337c5f87e567f6cd63b937fc2b2f6ddc).
+The resulting package is `1:1.3.0-2build2+victron1`; its SONAME remains
+`libbpf.so.1` and its library filename remains `libbpf.so.1.3.0`. No upstream
+version is claimed. Builds run as UID 10001 using the distro package rules and
+two build workers. Quilt remains applied through the after-build hook, and the
+source hash is rechecked after compilation.
+
+Qualification compares the complete versioned public symbol set, ELF
+architecture/type and SONAME, then runs a small ordinary userspace BTF/API
+probe. It does not exercise privileged kernel BPF operations. The final image
+retains the original licenses and distro copyright, pinned source manifest and
+patch, `.buildinfo`, symbol evidence and build provenance under
+`/usr/local/share/victron-libbpf/`. The installed library is checked against the
+actual rebuilt package hash before temporary package files are removed.
+
+### Payload-bound scan acceptance
+
+`scan_acceptance_schema: 1` explicitly enables the new assessment contract.
+Historical manifests and failed runs retain their original meaning and are
+not accepted retroactively. The policy is immutable data inside the hash-bound
+hosted helper, with per-CVE [human-readable review](RUNNER_SCAN_APPLICABILITY.json).
+
+The scanner still reports every finding at every severity. Its raw count and
+zero-raw-findings gate remain unchanged. A separate `scan-acceptance.json`
+records each assessed occurrence, each unresolved occurrence and failed
+prerequisites. Its binding includes source commit, run/attempt, stage, original
+archive/index, runtime manifest/config, platform, scanner identity, actual
+database file hashes, raw report hash, input projection hash and effective-file
+evidence hash. Main database and metadata hashes are mandatory. Java database
+and metadata hashes must both be present or both absent; absence is accepted
+only for the explicitly reviewed non-Java target types. Native site scanning
+retains its stricter Java database requirement.
+
+For each HIGH/CRITICAL occurrence, the gate matches exact advisory ID, scanned
+package/version/PURL, target, source package, location and verified image layer.
+It also hashes all advisory fields except image/package-location fields, so new
+descriptions, references, severities, fixes or other advisory changes require
+review even when the CVE ID is unchanged. A newer database is allowed only when
+those advisory contents and all other evidence still match.
+
+The effective-files reader checks every runtime layer hash and uncompressed
+diff-ID, applies ordered whiteouts, and resolves selected final ancestors. It
+never extracts or executes image files. Selected hardlinks, symlink ancestors,
+stale dpkg metadata and mismatched package checksums fail. The exact 990 regular
+files in the reviewed `linux-libc-dev` payload match an Ubuntu-signed archive
+chain; its complete 1042-entry inventory and modes must match again in each
+image. The sanitized conntrack header is separately pinned. Kernel/module and
+perf payloads must be absent. This establishes the header package's contents,
+not the security of the host kernel.
+
+The two runc module findings additionally require the exact previously reviewed
+binary SHA256 and final file identity. The libbpf backport is an unconditional
+prerequisite, even if the raw scanner reports no libbpf finding. The gate binds
+its installed package/library, exact source and patch, `.buildinfo` package
+checksum, ABI evidence and ordinary userspace probe. It refuses the known old
+library. New or changed findings and changed effective payloads remain unresolved;
+there is no module-wide, package-wide or image-wide exception.
+
 ## npm and action runtimes
 
 Global npm remains on major 11 to retain its CLI contracts, including the array
@@ -226,5 +292,6 @@ The compiler toolchain requires `linux-libc-dev` userspace headers. Scanners may
 map source-kernel advisories to that package; those records do not establish
 that executable kernel code or the host's vulnerable kernel is in this image.
 Keep every finding, its package/file evidence and the host assessment separate.
-Any residual finding requires documented component-specific review; this change
-adds no blanket suppression or automatic exception.
+Any residual finding requires documented component-specific review. The
+versioned payload assessment above enforces only the explicit reviewed
+occurrences; it adds no blanket suppression or scanner ignore rule.

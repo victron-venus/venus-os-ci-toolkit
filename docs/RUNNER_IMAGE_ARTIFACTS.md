@@ -21,7 +21,7 @@ flowchart LR
     E --> F[Private image using exact public index]
     F --> G[OCI verification and full scan]
     G --> H[Private artifact]
-    H --> I{Both strict scan gates pass?}
+    H --> I{Both payload assessments pass?}
     I --> J[Artifact production accepted]
     J --> K[Separate site configuration and runtime qualification]
 ```
@@ -40,19 +40,27 @@ The two artifact names include the exact run ID and attempt:
 
 Each complete artifact contains `image.oci.tar`, `build-receipt.json`,
 `oci-verification.json`, `cgroup-verification.json`, `scan-input.json`, `scan.json`,
-`scan-summary.json`, `scan-database.json`, the command log, disk observations and `cgroup-observations.jsonl`.
+`scan-summary.json`, `scan-database.json`, `scan-file-evidence.json`,
+`scan-acceptance.json`, the command log, disk observations and `cgroup-observations.jsonl`.
 Failure artifacts retain whichever evidence and partial output exists; a partial
 archive is never accepted as an image. Artifacts expire after seven days. Copy
 accepted archives and their complete evidence to the approved recovery storage
 before expiry; the workflow does not perform that backup.
 
-`build_success`, `oci_verified`, `scan_completed` and `scan_gate_passed` are
+`build_success`, `oci_verified`, `scan_completed`, `scan_gate_passed` and `scan_acceptance_passed` are
 separate fields. A raw HIGH/CRITICAL finding does not erase successful build
 evidence or block production of the private-mode image. After both artifacts are
-uploaded, the final step fails if either scan contains any HIGH or CRITICAL
-finding. All severities and package records remain in the raw report. The
-workflow performs no automatic exclusions, including for the separately
-documented runc applicability analysis.
+uploaded, the final step requires both independently computed payload assessments
+to pass. All severities and package records remain in the raw report, and
+`scan_gate_passed` continues to mean zero raw HIGH/CRITICAL findings. It may be
+false while the separate assessment passes. An unknown or changed finding,
+changed effective files, or missing backport proof fails acceptance.
+
+The versioned [applicability review](RUNNER_SCAN_APPLICABILITY.json) enumerates
+each permitted advisory, its affected operation, official source references and
+required component evidence. The hashed build helper embeds the policy and
+binds that review's hash; it reads no external ignore policy. No Trivy ignore or
+severity filter is introduced. See the [security contract](RUNNER_IMAGE_SECURITY.md#payload-bound-scan-acceptance).
 
 ## Source and artifact contract
 
@@ -128,8 +136,8 @@ remain in the published artifact; this projection is only the scanner input.
 and every copied file's size and SHA256. All copied files and the original archive
 are checked again after the scanner exits, before accepting its output. The raw
 report must still contain both OS and language inventories and the exact config
-digest. The parent-stage and final gates recheck the input receipt. No findings
-are excluded. A scanner error preserves its command log and partial evidence,
+digest. The parent-stage and final gates recheck the input receipt. No raw findings
+are removed. A scanner error preserves its command log and partial evidence,
 and cannot become a successful scan or release qualification.
 
 ## Capacity and ownership
@@ -160,6 +168,13 @@ including failed samples. Limits and builder
 identity are rechecked during the canonical build. HostConfig alone is not
 accepted as enforcement proof. Each canonical build has a 45-minute deadline;
 the scan has a separate bounded command and container. There is no retry loop.
+
+Before the full public build, the same bounded builder executes the canonical
+`patched-libbpf` stage with a 15-minute limit and cache-only output. This checks
+the package build, ABI and ordinary userspace probe early. Its exact command and
+completion are recorded. The subsequent full build may reuse that stage's cache;
+this is not a claim that the package was compiled twice. An actual successful
+stage is required; source tests alone do not establish a rebuilt library.
 
 Cleanup identifies the exact owned container before removing its immutable ID.
 It still works after an OOM or low-disk failure. An ambiguous Docker response is

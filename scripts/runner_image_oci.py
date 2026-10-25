@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import gzip
 import hashlib
+import io
 import json
 import os
 from pathlib import Path, PurePosixPath
@@ -412,3 +413,232 @@ def project_scan_input(path, proof, destination, check):
         return selection
     finally:
         archive.close()
+
+
+def effective_path(value):
+    """Use one POSIX spelling for layer entries; never resolve host paths."""
+    require(isinstance(value, str) and len(value) <= 4096 and not value.startswith('/') and '\\' not in value and
+            '..' not in value.split('/'), 'Unsafe effective file path')
+    result = '/'.join(part for part in value.split('/') if part not in {'', '.'})
+    require(result, 'Empty effective file path')
+    return result
+
+
+def merge_effective_layer(previous, entries):
+    """Apply whiteouts to lower layers, then overlay this layer's entries."""
+    result = dict(previous)
+    for path in entries:
+        parent, _, name = path.rpartition('/')
+        if name == '.wh..wh..opq':
+            result = {p: r for p, r in result.items() if parent and not p.startswith(parent + '/')}
+        elif name.startswith('.wh.'):
+            target = (parent + '/' if parent else '') + name[4:]
+            require(name != '.wh.', 'Empty whiteout target')
+            result = {p: r for p, r in result.items() if p != target and not p.startswith(target + '/')}
+    # Most additions are ordinary files. Avoid scanning the complete tree for
+    # each file; only an existing ancestor can have descendants to remove.
+    ancestors = {str(parent) for path in result for parent in PurePosixPath(path).parents}
+    for path, record in entries.items():
+        if PurePosixPath(path).name.startswith('.wh.'):
+            continue
+        if record['type'] != 'directory' and path in ancestors:
+            result = {p: r for p, r in result.items() if not p.startswith(path + '/')}
+        result[path] = record
+        ancestors.update(str(parent) for parent in PurePosixPath(path).parents)
+    return result
+
+
+def effective_regular(tree, path):
+    """Selected evidence must be direct regular bytes, never a link target."""
+    require(path == effective_path(path), 'Noncanonical selected path')
+    require(path in tree and tree[path]['type'] == 'regular', 'Selected file is not regular')
+    for parent in PurePosixPath(path).parents:
+        if str(parent) != '.' and str(parent) in tree:
+            require(tree[str(parent)]['type'] == 'directory', 'Selected file has a non-directory ancestor')
+    return tree[path]
+
+
+def effective_text(tree, path):
+    record = effective_regular(tree, path)
+    require(isinstance(record.get('text'), str), 'Effective file text missing')
+    raw = record['text'].encode('utf-8')
+    require(len(raw) == record['bytes'] and hashlib.sha256(raw).hexdigest() == record['sha256'],
+            'Effective text does not match recorded file bytes')
+    return record['text']
+
+
+def package_files(effective, package, architecture, version, allowed_symlinks=None):
+    """Bind installed package metadata to its final regular files and directories.
+
+    This does not determine vulnerability applicability. In particular, an
+    installed package name or version alone is never evidence of a fixed file.
+    """
+    require(re.fullmatch(r'[a-z0-9][a-z0-9+.-]*', package) and
+            architecture in {'amd64', 'arm64'}, 'Invalid package evidence identity')
+    tree = effective['files']
+    allowed_symlinks = allowed_symlinks or {}
+    status = effective_text(tree, 'var/lib/dpkg/status')
+    stanzas = [text for text in status.split('\n\n') if text.startswith('Package: ' + package + '\n')]
+    require(len(stanzas) == 1, 'Package status missing or ambiguous')
+    fields = {}
+    for line in stanzas[0].splitlines():
+        if line.startswith((' ', '\t')):
+            continue
+        name, separator, value = line.partition(': ')
+        require(separator and name not in fields, 'Invalid or duplicate package status field')
+        fields[name] = value
+    require(fields.get('Status') == 'install ok installed' and fields.get('Version') == version and
+            fields.get('Architecture') == architecture, 'Installed package identity differs')
+    prefix = 'var/lib/dpkg/info/' + package + ':' + architecture
+    filelist = effective_regular(tree, prefix + '.list')
+    md5sums = effective_regular(tree, prefix + '.md5sums')
+    files_text = effective_text(tree, prefix + '.list')
+    sums_text = effective_text(tree, prefix + '.md5sums')
+    inventory = {}
+    for line in files_text.splitlines():
+        if line == '/.':
+            continue
+        require(line.startswith('/') and line == '/' + effective_path(line[1:]), 'Noncanonical package file path')
+        path = line[1:]
+        require(path not in inventory and path in tree, 'Duplicate or missing package file')
+        record = tree[path]
+        require(record['type'] in {'regular', 'directory'} or
+                (record['type'] == 'symlink' and allowed_symlinks.get(path) == record.get('target')),
+                'Package evidence contains an unapproved link or special file')
+        for parent in PurePosixPath(path).parents:
+            if str(parent) != '.' and str(parent) in tree:
+                require(tree[str(parent)]['type'] == 'directory', 'Package file has a non-directory ancestor')
+        inventory[path] = {k: v for k, v in record.items() if k not in {'text', 'layer'}}
+    require(inventory, 'Package file inventory is empty')
+    hashes = {}
+    for line in sums_text.splitlines():
+        parts = line.split(None, 1)
+        require(len(parts) == 2 and re.fullmatch(r'[0-9a-f]{32}', parts[0]), 'Invalid package MD5 entry')
+        digest, path = parts
+        require(path == effective_path(path) and path not in hashes and path in inventory and
+                inventory[path]['type'] == 'regular' and inventory[path].get('md5') == digest,
+                'Package file checksum differs')
+        hashes[path] = digest
+    require(set(hashes) == {path for path, record in inventory.items() if record['type'] == 'regular'},
+            'Package checksum inventory is incomplete')
+    return {'package': package, 'architecture': architecture, 'version': version,
+            'source_package': fields.get('Source'), 'status': stanzas[0],
+            'filelist_sha256': filelist['sha256'], 'md5sums_sha256': md5sums['sha256'],
+            'file_layers': sorted({tree[path]['layer'] for path in inventory}),
+            'inventory_sha256': hashlib.sha256(json.dumps(inventory, sort_keys=True,
+                separators=(',', ':')).encode()).hexdigest(), 'inventory': inventory}
+
+
+class LayerDigestReader(io.RawIOBase):
+    def __init__(self, stream, limit, check):
+        self.stream, self.limit, self.check = stream, limit, check
+        self.digest, self.count = hashlib.sha256(), 0
+
+    def readable(self):
+        return True
+
+    def read(self, amount=-1):
+        require(0 <= amount <= 1024**2, 'Unbounded layer read')
+        self.check()
+        block = self.stream.read(amount)
+        self.count += len(block)
+        require(self.count <= self.limit, 'Effective layer exceeds size bound')
+        self.digest.update(block)
+        return block
+
+
+def evidence_text(path):
+    return (path == 'var/lib/dpkg/status' or
+            path.startswith(('var/lib/dpkg/info/linux-libc-dev', 'var/lib/dpkg/info/libbpf1')) or
+            path in {'usr/local/share/victron-libbpf/build-provenance.json',
+                     'usr/local/share/victron-libbpf/source-manifest.json',
+                     'usr/local/share/victron-libbpf/package.buildinfo',
+                     'usr/local/share/victron-libbpf/dynamic-symbols.txt',
+                     'usr/local/share/victron-libbpf/debian-libbpf1.symbols'})
+
+
+def read_effective_layer(raw, descriptor, remaining, check):
+    """Hash an ordered layer in memory; retain only bounded metadata text."""
+    require(descriptor['mediaType'] in {LAYER, LAYER + '+gzip'}, 'Unsupported effective layer compression')
+    compressed = LayerDigestReader(raw, descriptor['size'], check)
+    decoded = gzip.GzipFile(fileobj=compressed) if descriptor['mediaType'].endswith('+gzip') else compressed
+    plain = LayerDigestReader(decoded, remaining, check)
+    entries, text_bytes = {}, 0
+    try:
+        with tarfile.open(fileobj=plain, mode='r|') as archive:
+            for member in archive:
+                check()
+                if member.name in {'.', './'} and member.isdir():
+                    continue
+                path = effective_path(member.name)
+                require(path not in entries and len(entries) < 300000 and
+                        not member.issparse() and 0 <= member.size <= 4 * 1024**3,
+                        'Duplicate, sparse or excessive effective layer entry')
+                record = {'type': 'other', 'bytes': member.size, 'mode': member.mode,
+                          'layer': descriptor['digest']}
+                if member.isfile():
+                    sha, md5, count, magic = hashlib.sha256(), hashlib.md5(), 0, b''
+                    text = bytearray() if evidence_text(path) else None
+                    with archive.extractfile(member) as source:
+                        while block := source.read(1024**2):
+                            check()
+                            count += len(block)
+                            sha.update(block)
+                            md5.update(block)
+                            if not magic:
+                                magic = block[:4]
+                            if text is not None:
+                                text_bytes += len(block)
+                                require(len(text) + len(block) <= 8 * 1024**2 and text_bytes <= 32 * 1024**2,
+                                        'Effective metadata text exceeds bound')
+                                text.extend(block)
+                    require(count == member.size, 'Truncated effective file')
+                    record.update(type='regular', sha256=sha.hexdigest(), md5=md5.hexdigest(), elf=magic == b'\x7fELF')
+                    if text is not None:
+                        record['text'] = text.decode('utf-8')
+                elif member.isdir():
+                    record['type'] = 'directory'
+                elif member.issym():
+                    record.update(type='symlink', target=member.linkname)
+                elif member.islnk():
+                    record.update(type='hardlink', target=effective_path(member.linkname))
+                entries[path] = record
+        while plain.read(1024**2):
+            pass
+        # Gzip may read ahead, but every compressed byte must still be bound.
+        while compressed.read(1024**2):
+            pass
+        require(compressed.count == descriptor['size'] and
+                'sha256:' + compressed.digest.hexdigest() == descriptor['digest'], 'Effective layer blob differs')
+        return entries, plain.count, 'sha256:' + plain.digest.hexdigest()
+    finally:
+        if decoded is not compressed:
+            decoded.close()
+
+
+def effective_files(destination, selection, proof, check):
+    """Read the verified scan layout once; this alone grants no scan exception."""
+    verify_scan_input(destination, selection, proof, check)
+    tree, unpacked, layers = {}, 0, []
+    require(len(selection['layers']) == len(proof['platform']['diff_ids']), 'Effective layer count differs')
+    for descriptor, expected_diff in zip(selection['layers'], proof['platform']['diff_ids'], strict=True):
+        path = destination / 'blobs/sha256' / descriptor['digest'][7:]
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        with os.fdopen(fd, 'rb') as raw:
+            before = os.fstat(fd)
+            require(stat.S_ISREG(before.st_mode) and before.st_size == descriptor['size'], 'Effective layer file differs')
+            entries, size, diff = read_effective_layer(raw, descriptor, MAX_UNPACKED - unpacked, check)
+            require(diff == expected_diff and identity(os.fstat(fd)) == identity(before) ==
+                    identity(path.stat(follow_symlinks=False)), 'Effective layer changed or diff ID differs')
+        unpacked += size
+        tree = merge_effective_layer(tree, entries)
+        require(len(tree) <= 300000, 'Effective file inventory exceeds bound')
+        require(sum(len(record.get('text', '').encode('utf-8')) for record in tree.values()) <= 64 * 1024**2,
+                'Effective metadata inventory exceeds bound')
+        layers.append({'digest': descriptor['digest'], 'diff_id': diff, 'uncompressed_bytes': size})
+    verify_scan_input(destination, selection, proof, check)
+    return {'schema': 1, 'archive_sha256': proof['archive_sha256'], 'image_index': proof['image_index'],
+            'archive_bytes': proof['archive_bytes'],
+            'source_commit': proof['source_commit'], 'manifest': proof['platform']['manifest'],
+            'config': proof['platform']['config'], 'platform': {'os': 'linux', 'architecture': 'amd64'},
+            'layers': layers, 'files': tree}

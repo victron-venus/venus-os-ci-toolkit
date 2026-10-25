@@ -189,6 +189,127 @@ class RunnerArtifactsTests(unittest.TestCase):
         self.assertEqual(proof['sentinel_sha256'], hashlib.sha256(build.SENTINEL).hexdigest())
         self.assertEqual(len(proof['attestations']), 1)
 
+    def test_effective_files_select_final_bytes_after_whiteouts(self):
+        proof = self.verify(additional=(
+            [('usr/include/original.h', b'old'), ('usr/include/remove.h', b'remove'),
+             ('var/lib/dpkg/status', b'Package: example\nVersion: 1\n')],
+            [('usr/include/.wh.original.h', b''), ('usr/include/original.h', b'new'),
+             ('usr/include/.wh.remove.h', b''), ('var/lib/dpkg/status', b'Package: example\nVersion: 2\n')]))
+        layout = self.root / 'layout'
+        selection = oci.project_scan_input(self.root / 'image.tar', proof, layout, lambda: None)
+        result = oci.effective_files(layout, selection, proof, lambda: None)
+        self.assertEqual(result['archive_sha256'], proof['archive_sha256'])
+        self.assertEqual(result['manifest'], proof['platform']['manifest'])
+        self.assertEqual(result['files']['usr/include/original.h']['sha256'], hashlib.sha256(b'new').hexdigest())
+        self.assertNotIn('usr/include/remove.h', result['files'])
+        self.assertEqual(result['files']['var/lib/dpkg/status']['text'], 'Package: example\nVersion: 2\n')
+        self.assertEqual([row['diff_id'] for row in result['layers']], proof['platform']['diff_ids'])
+
+    def test_effective_layer_opaque_whiteouts_preserve_same_layer_additions(self):
+        regular = {'type': 'regular'}
+        previous = {'a/old': regular, 'elsewhere': regular}
+        entries = {'a/new': regular, 'a/.wh..wh..opq': regular}
+        result = oci.merge_effective_layer(previous, entries)
+        self.assertEqual(set(result), {'a/new', 'elsewhere'})
+        result = oci.merge_effective_layer(previous, {'new': regular, '.wh..wh..opq': regular})
+        self.assertEqual(set(result), {'new'})
+
+    def test_effective_layer_parent_replacement_removes_stale_descendants(self):
+        previous = {'a': {'type': 'directory'}, 'a/header': {'type': 'regular'}}
+        result = oci.merge_effective_layer(previous, {'a': {'type': 'symlink', 'target': 'elsewhere'}})
+        self.assertEqual(result, {'a': {'type': 'symlink', 'target': 'elsewhere'}})
+        result = oci.merge_effective_layer(result, {'a': {'type': 'directory'}, 'a/new': {'type': 'regular'}})
+        self.assertEqual(set(result), {'a', 'a/new'})
+
+    def test_selected_effective_files_refuse_links_and_non_directory_ancestors(self):
+        regular = {'type': 'regular', 'sha256': 'a' * 64}
+        self.assertEqual(oci.effective_regular({'a/f': regular}, 'a/f'), regular)
+        for kind in ('symlink', 'hardlink', 'regular', 'other'):
+            with self.subTest(ancestor=kind), self.assertRaisesRegex(ValueError, 'ancestor'):
+                oci.effective_regular({'a': {'type': kind}, 'a/f': regular}, 'a/f')
+        for kind in ('symlink', 'hardlink', 'directory'):
+            with self.subTest(selected=kind), self.assertRaisesRegex(ValueError, 'not regular'):
+                oci.effective_regular({'a/f': {'type': kind}}, 'a/f')
+
+    def test_effective_layer_validates_blob_and_diff_id_and_bounded_reads(self):
+        plain = layer_bytes([('usr/include/a.h', b'header')])
+        for compressed in (False, True):
+            raw = gzip.compress(plain, mtime=0) if compressed else plain
+            desc = {'mediaType': oci.LAYER + ('+gzip' if compressed else ''),
+                    'size': len(raw), 'digest': 'sha256:' + hashlib.sha256(raw).hexdigest()}
+            with self.subTest(compressed=compressed):
+                records, size, diff = oci.read_effective_layer(io.BytesIO(raw), desc, len(plain), lambda: None)
+                self.assertEqual(records['usr/include/a.h']['sha256'], hashlib.sha256(b'header').hexdigest())
+                self.assertEqual((size, diff), (len(plain), 'sha256:' + hashlib.sha256(plain).hexdigest()))
+                with self.assertRaisesRegex(ValueError, 'size bound'):
+                    oci.read_effective_layer(io.BytesIO(raw), desc, len(plain) - 1, lambda: None)
+                with self.assertRaisesRegex(ValueError, 'blob differs'):
+                    oci.read_effective_layer(io.BytesIO(raw), {**desc, 'digest': 'sha256:' + '0' * 64}, len(plain), lambda: None)
+
+    def test_effective_layer_normalizes_paths_and_refuses_duplicate_members(self):
+        raw = layer_bytes([('usr//include/./a.h', b'a')])
+        desc = {'mediaType': oci.LAYER, 'size': len(raw), 'digest': 'sha256:' + hashlib.sha256(raw).hexdigest()}
+        records, _, _ = oci.read_effective_layer(io.BytesIO(raw), desc, len(raw), lambda: None)
+        self.assertEqual(set(records), {'usr/include/a.h'})
+        raw = layer_bytes([('usr/include/a.h', b'a'), ('usr//include/a.h', b'b')])
+        desc.update(size=len(raw), digest='sha256:' + hashlib.sha256(raw).hexdigest())
+        with self.assertRaisesRegex(ValueError, 'Duplicate'):
+            oci.read_effective_layer(io.BytesIO(raw), desc, len(raw), lambda: None)
+
+    def test_effective_files_reject_changed_layout_before_using_metadata(self):
+        proof = self.verify(additional=([('var/lib/dpkg/status', b'Package: example\n')],))
+        layout = self.root / 'layout'
+        selection = oci.project_scan_input(self.root / 'image.tar', proof, layout, lambda: None)
+        blob = layout / 'blobs/sha256' / selection['layers'][-1]['digest'][7:]
+        blob.write_bytes(b'changed')
+        with self.assertRaisesRegex(ValueError, 'size differs'):
+            oci.effective_files(layout, selection, proof, lambda: None)
+
+    def package_fixture(self):
+        def regular(data, text=False):
+            result = {'type': 'regular', 'bytes': len(data), 'mode': 0o644, 'layer': 'sha256:' + '1' * 64,
+                      'sha256': hashlib.sha256(data).hexdigest(), 'md5': hashlib.md5(data).hexdigest(), 'elf': False}
+            if text:
+                result['text'] = data.decode()
+            return result
+        content = b'ordinary header\n'
+        return {'files': {
+            'usr': {'type': 'directory', 'bytes': 0, 'mode': 0o755, 'layer': 'sha256:' + '1' * 64},
+            'usr/include/a.h': regular(content),
+            'var/lib/dpkg/status': regular(b'Package: headers\nStatus: install ok installed\n'
+                b'Architecture: amd64\nVersion: 1\nSource: fixture\n', True),
+            'var/lib/dpkg/info/headers:amd64.list': regular(b'/.\n/usr\n/usr/include/a.h\n', True),
+            'var/lib/dpkg/info/headers:amd64.md5sums': regular(
+                (hashlib.md5(content).hexdigest() + '  usr/include/a.h\n').encode(), True)}}
+
+    def test_package_evidence_binds_exact_installed_files(self):
+        evidence = self.package_fixture()
+        result = oci.package_files(evidence, 'headers', 'amd64', '1')
+        self.assertEqual(result['source_package'], 'fixture')
+        self.assertEqual(set(result['inventory']), {'usr', 'usr/include/a.h'})
+        moved = copy.deepcopy(evidence)
+        moved['files']['usr/include/a.h']['layer'] = 'sha256:' + '2' * 64
+        self.assertEqual(oci.package_files(moved, 'headers', 'amd64', '1')['inventory_sha256'],
+                         result['inventory_sha256'])
+        moved['files']['usr/include/a.h']['mode'] = 0o755
+        self.assertNotEqual(oci.package_files(moved, 'headers', 'amd64', '1')['inventory_sha256'],
+                            result['inventory_sha256'])
+
+    def test_package_evidence_rejects_stale_status_files_or_checksums(self):
+        edits = [
+            lambda tree: tree['var/lib/dpkg/status'].update(text='Package: headers\nStatus: install ok installed\nArchitecture: amd64\nVersion: 2\n'),
+            lambda tree: tree.pop('usr/include/a.h'),
+            lambda tree: tree['usr/include/a.h'].update(md5='0' * 32),
+            lambda tree: tree['var/lib/dpkg/info/headers:amd64.md5sums'].update(text=''),
+            lambda tree: tree['var/lib/dpkg/info/headers:amd64.list'].update(text='/usr\n/usr/include/a.h\n/usr/include/a.h\n'),
+            lambda tree: tree['usr'].update(type='symlink', target='elsewhere'),
+        ]
+        for edit in edits:
+            with self.subTest(edit=edit), self.assertRaises(ValueError):
+                evidence = self.package_fixture()
+                edit(evidence['files'])
+                oci.package_files(evidence, 'headers', 'amd64', '1')
+
     def test_artifact_attestation_accepts_either_order_and_optional_inline_data(self):
         for first in (False, True):
             for inline in (False, True):
@@ -722,6 +843,20 @@ class RunnerArtifactsTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             build.build_command('private', data, identity, 'builder', self.root, self.root / 'out')
 
+    def test_libbpf_preflight_binds_same_context_builder_and_target(self):
+        data = build.document(build.MANIFEST)
+        identity = {'source_commit': SOURCE, 'repository': 'victron-venus/venus-os-ci-toolkit'}
+        name = 'runner-artifact-public-123-1'
+        command = build.build_command('public', data, identity, name, self.root, self.root / 'out')
+        record = {'command': command, 'run_id': '123', 'run_attempt': '1', 'libbpf_preflight_completed': True,
+                  'libbpf_preflight_command': build.libbpf_preflight_command(data, name, self.root)}
+        build.check_libbpf_preflight(record, data)
+        self.assertIn('patched-libbpf', record['libbpf_preflight_command'])
+        self.assertIn('type=cacheonly', record['libbpf_preflight_command'])
+        record['libbpf_preflight_command'][-1] += '/other'
+        with self.assertRaisesRegex(ValueError, 'preflight'):
+            build.check_libbpf_preflight(record, data)
+
     def report(self, proof):
         return {'SchemaVersion': 2, 'ArtifactType': 'container_image',
                 'Metadata': {'ImageID': proof['platform']['config']}, 'Results': [
@@ -743,6 +878,247 @@ class RunnerArtifactsTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 build.scan_summary(bad, proof)
 
+    def assessment_report(self, proof):
+        report = self.report(proof)
+        report['ArtifactName'] = '/verified/input'
+        report['Metadata']['OS'] = {'Family': 'ubuntu', 'Name': '24.04'}
+        for result, kind, target, package, version, purl in [
+            (report['Results'][0], 'ubuntu', '/verified/input (ubuntu 24.04)',
+             'fixture-headers', '1.0', 'pkg:deb/ubuntu/fixture-headers@1.0'),
+            (report['Results'][1], 'gobinary', 'usr/local/bin/fixture',
+             'example.invalid/module', 'v1.0', 'pkg:golang/example.invalid/module@v1.0'),
+        ]:
+            identifier = package + '@' + version
+            result.update(Type=kind, Target=target, Packages=[{
+                'ID': identifier, 'Name': package, 'Version': version,
+                'Identifier': {'PURL': purl}}], Vulnerabilities=[{
+                    'VulnerabilityID': 'CVE-2099-12345', 'Severity': 'HIGH', 'PkgID': identifier,
+                    'Layer': {'Digest': proof['platform']['layers'][0]['digest'],
+                              'DiffID': proof['platform']['diff_ids'][0]},
+                    'PkgName': package, 'InstalledVersion': version, 'PkgIdentifier': {'PURL': purl}}])
+        return report
+
+    def test_assessment_identity_preserves_all_raw_blockers(self):
+        proof = self.verify()
+        report = self.assessment_report(proof)
+        before = copy.deepcopy(report)
+        rows = build.assessment_findings(report, proof, '/verified/input')
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(report, before)
+        self.assertEqual(build.scan_summary(report, proof)['blocking_findings'], 2)
+        self.assertFalse(build.scan_summary(report, proof)['scan_gate_passed'])
+        self.assertEqual({row['target'] for row in rows},
+                         {'/verified/input (ubuntu 24.04)', 'usr/local/bin/fixture'})
+        self.assertFalse(any('assessed_not_affected' in row for row in rows))
+
+    def test_advisory_hash_changes_for_new_details_not_image_location(self):
+        proof = self.verify()
+        report = self.assessment_report(proof)
+        before = build.assessment_findings(report, proof, '/verified/input')[0]['advisory_sha256']
+        finding = report['Results'][0]['Vulnerabilities'][0]
+        finding['Fingerprint'] = 'different image fingerprint'
+        self.assertEqual(build.assessment_findings(report, proof, '/verified/input')[0]['advisory_sha256'], before)
+        finding['Description'] = 'New affected behavior requires another applicability review.'
+        self.assertNotEqual(build.assessment_findings(report, proof, '/verified/input')[0]['advisory_sha256'], before)
+        finding['Layer']['Digest'] = 'sha256:' + '0' * 64
+        with self.assertRaisesRegex(ValueError, 'Finding layer'):
+            build.assessment_findings(report, proof, '/verified/input')
+
+    def test_assessment_requires_exact_scan_and_package_identity(self):
+        proof = self.verify()
+        report = self.assessment_report(proof)
+        edits = [lambda d: d.update(ArtifactName='/other'),
+                 lambda d: d['Results'][0].update(Target='/other (ubuntu 24.04)'),
+                 lambda d: d['Results'][0]['Vulnerabilities'][0].pop('PkgIdentifier'),
+                 lambda d: d['Results'][0]['Vulnerabilities'][0].update(InstalledVersion='2.0'),
+                 lambda d: d['Results'][0]['Packages'][0].update(Identifier={'PURL': 'pkg:other'}),
+                 lambda d: d['Results'][0]['Packages'].append(copy.deepcopy(d['Results'][0]['Packages'][0])),
+                 lambda d: d['Results'][0]['Vulnerabilities'].append(copy.deepcopy(d['Results'][0]['Vulnerabilities'][0]))]
+        for edit in edits:
+            value = copy.deepcopy(report)
+            edit(value)
+            with self.subTest(edit=edit), self.assertRaises(ValueError):
+                build.assessment_findings(value, proof, '/verified/input')
+
+    def test_assessment_retains_new_vulnerability_and_changed_version(self):
+        proof = self.verify()
+        report = self.assessment_report(proof)
+        result = report['Results'][0]
+        result['Packages'][0].update(Version='2', Release='7', ID='fixture-headers@2-7')
+        result['Vulnerabilities'][0].update(InstalledVersion='2-7', PkgID='fixture-headers@2-7',
+                                           VulnerabilityID='CVE-2099-98765')
+        rows = build.assessment_findings(report, proof, '/verified/input')
+        self.assertEqual(rows[0]['version'], '2-7')
+        self.assertEqual(rows[0]['vulnerability'], 'CVE-2099-98765')
+        self.assertEqual(len(rows), 2)
+
+    def acceptance_fixture(self):
+        """A small distinct policy exercises the full pure validator, not a bypass."""
+        proof = self.verify()
+        report = self.assessment_report(proof)
+        report['Results'][1]['Vulnerabilities'][0]['VulnerabilityID'] = 'CVE-2099-12346'
+        policy = copy.deepcopy(build.SCAN_POLICY)
+        def file(content):
+            return {'type': 'regular', 'bytes': len(content), 'mode': 420,
+                    'sha256': hashlib.sha256(content).hexdigest(), 'md5': hashlib.md5(content).hexdigest(),
+                    'elf': content.startswith(b'\x7fELF'), 'layer': proof['platform']['layers'][0]['digest']}
+        header = file(b'synthetic userspace header\n')
+        inventory = {'usr/include/fixture.h': {k: v for k, v in header.items() if k != 'layer'}}
+        policy['headers']['inventory_sha256'] = build.stable_digest(inventory)
+        policy['headers']['selected_header'] = {k: v for k, v in header.items() if k != 'layer'}
+        headers = {**policy['headers'], 'inventory': inventory, 'file_layers': [header['layer']]}
+        symbols, debian_symbols = '00000000 T fixture@@LIBBPF_1.0\n', ' fixture@LIBBPF_1.0 1.0\n'
+        spec = policy['libbpf']
+        spec['source_manifest']['abi']['debian_symbols_sha256'] = hashlib.sha256(debian_symbols.encode()).hexdigest()
+        spec['fixed_files']['debian-libbpf1.symbols'] = spec['source_manifest']['abi']['debian_symbols_sha256']
+        manifest = json.dumps(spec['source_manifest']).encode()
+        spec['source_manifest_sha256'] = hashlib.sha256(manifest).hexdigest()
+        library = file(b'\x7fELF synthetic fixed library')
+        package_inventory = {'usr/lib/x86_64-linux-gnu/libbpf.so.1.3.0':
+                             {k: v for k, v in library.items() if k != 'layer'}}
+        package = {'package': 'libbpf1', 'architecture': 'amd64',
+                   'version': spec['source_manifest']['downstream_binary_version'],
+                   'inventory': package_inventory, 'inventory_sha256': build.stable_digest(package_inventory)}
+        files = {name: {**file(b'fixture'), 'sha256': sha} for name, sha in spec['fixed_files'].items()}
+        buildinfo = ('Format: 1.0\nChecksums-Sha256:\n ' + '1' * 64 + ' 123 libbpf1_' +
+                     spec['source_manifest']['downstream_source_version'] + '_amd64.deb\n')
+        files.update({'source-manifest.json': file(manifest), 'package.buildinfo': file(buildinfo.encode()),
+                      'dynamic-symbols.txt': file(symbols.encode()),
+                      'debian-libbpf1.symbols': file(debian_symbols.encode())})
+        provenance = {'source': spec['source_manifest'], 'architecture': 'amd64', 'uid': 10001,
+                      'soname': 'libbpf.so.1', 'ordinary_userspace_smoke_passed': True,
+                      'kernel_bpf_operations': False, 'build_command': spec['build_command'],
+                      'package_fields': ['Package: libbpf1', 'Version: ' + package['version'], 'Architecture: amd64'],
+                      'package_sha256': '1' * 64, 'library_sha256': library['sha256'],
+                      'buildinfo_sha256': files['package.buildinfo']['sha256'],
+                      'symbol_proof_sha256': files['dynamic-symbols.txt']['sha256'], 'abi_symbol_count': 1,
+                      'original_source_files': {'src/relo_core.c': [spec['source_manifest']['patch']['before_sha256'], 420]}}
+        components = {'headers': headers, 'runc': {**policy['runc'], 'layer': header['layer']},
+                      'libbpf': {'package': package, 'library': library, 'files': files, 'provenance': provenance,
+                                'source_manifest': spec['source_manifest'], 'symbols': symbols, 'debian_symbols': debian_symbols}}
+        components['libbpf']['buildinfo'] = buildinfo
+        context = {'source_commit': SOURCE, 'run_id': '123', 'run_attempt': '1', 'stage': 'public',
+                   'artifact_name': report['ArtifactName'], 'raw_scan_sha256': '1' * 64, 'scan_input_sha256': '2' * 64,
+                   'scanner': {'kind': 'native', 'version': '0.74.0', 'binary_sha256': '3' * 64},
+                   'databases': {'db/trivy.db': '4' * 64, 'db/metadata.json': '5' * 64}}
+        binding = build.validate_scan_context(report, proof, context)
+        evidence = {'schema': 1, 'binding': {k: binding[k] for k in (
+            'source_commit', 'archive_sha256', 'archive_bytes', 'image_index', 'runtime_manifest', 'config_digest', 'platform')},
+            'components': components, 'errors': [], 'kernel_paths': {}, 'perf_paths': {}}
+        # Use the same report contract and exact identity matching as production.
+        report['Results'][1]['Target'] = 'usr/local/bin/runc'
+        policy['advisories'] = {}
+        for row, component, rule in zip(build.assessment_findings(report, proof, context['artifact_name']),
+                                       ('headers', 'runc'), ('headers_with_separately_repaired_libbpf', 'runc_affected_packages_not_linked')):
+            policy['identities'][component] = {k: v for k, v in row.items() if k not in {
+                'target', 'vulnerability', 'severity', 'layer', 'advisory_sha256', 'status', 'fixed_version'}}
+            policy['advisories'][row['vulnerability']] = [component, row['advisory_sha256'], rule]
+        return report, proof, evidence, context, policy
+
+    def test_acceptance_preserves_raw_counts_and_binds_full_evidence(self):
+        raw, proof, evidence, context, policy = self.acceptance_fixture()
+        before = copy.deepcopy(raw)
+        with mock.patch.object(build, 'SCAN_POLICY', policy):
+            result = build.scan_acceptance(raw, proof, evidence, context)
+        self.assertTrue(result['acceptance_passed'])
+        self.assertEqual(result['raw_blocking_findings'], 2)
+        self.assertEqual(len(result['assessed_not_affected']), 2)
+        self.assertEqual(result['binding']['raw_scan_sha256'], context['raw_scan_sha256'])
+        self.assertEqual(result['binding']['file_evidence_canonical_sha256'], build.stable_digest(evidence))
+        self.assertEqual(raw, before)
+        self.assertFalse(build.scan_summary(raw, proof)['scan_gate_passed'])
+
+    def test_new_or_changed_findings_remain_unresolved(self):
+        raw, proof, evidence, context, policy = self.acceptance_fixture()
+        for edit in [lambda d: d['Results'][0]['Vulnerabilities'][0].update(Description='New affected behavior'),
+                     lambda d: d['Results'][0]['Vulnerabilities'][0].update(VulnerabilityID='CVE-2099-98765'),
+                     lambda d: d['Results'][1].update(Target='usr/local/bin/other')]:
+            changed = copy.deepcopy(raw)
+            edit(changed)
+            with self.subTest(edit=edit), mock.patch.object(build, 'SCAN_POLICY', policy):
+                result = build.scan_acceptance(changed, proof, evidence, context)
+            self.assertFalse(result['acceptance_passed'])
+            self.assertEqual(result['unresolved_count'], 1)
+            self.assertEqual(result['raw_blocking_findings'], 2)
+
+    def test_actual_component_changes_cannot_use_a_version_only_disposition(self):
+        raw, proof, evidence, context, policy = self.acceptance_fixture()
+        edits = [lambda e: e['components']['headers']['inventory'].clear(),
+                 lambda e: e['components']['runc'].update(sha256='0' * 64),
+                 lambda e: e['perf_paths'].update({'usr/bin/perf': {}}),
+                 lambda e: e['components']['libbpf']['library'].update(sha256=policy['libbpf']['unpatched_library_sha256']),
+                 lambda e: e['components']['libbpf']['provenance'].update(ordinary_userspace_smoke_passed=False),
+                 lambda e: e['components']['libbpf']['provenance'].update(build_command=['make']),
+                 lambda e: e['components']['libbpf'].update(symbols='different ABI\n')]
+        for edit in edits:
+            changed = copy.deepcopy(evidence)
+            edit(changed)
+            with self.subTest(edit=edit), mock.patch.object(build, 'SCAN_POLICY', policy):
+                result = build.scan_acceptance(raw, proof, changed, context)
+            self.assertFalse(result['acceptance_passed'])
+
+    def test_zero_raw_findings_still_require_actual_libbpf_backport(self):
+        raw, proof, evidence, context, policy = self.acceptance_fixture()
+        for result in raw['Results']:
+            result['Vulnerabilities'] = []
+        evidence['components'].pop('libbpf')
+        with mock.patch.object(build, 'SCAN_POLICY', policy):
+            result = build.scan_acceptance(raw, proof, evidence, context)
+        self.assertEqual(result['unresolved_count'], 0)
+        self.assertEqual(result['failed_prerequisites'], ['installed_libbpf_backport_not_verified'])
+        self.assertFalse(result['acceptance_passed'])
+
+    def test_acceptance_context_rejects_mixed_image_stage_or_database_identity(self):
+        raw, proof, evidence, context, policy = self.acceptance_fixture()
+        for key, value in [('source_commit', 'b' * 40), ('stage', 'private'), ('run_attempt', 1),
+                           ('databases', {'db/trivy.db': '4' * 64}), ('raw_scan_sha256', 'not-a-hash')]:
+            with self.subTest(key=key), mock.patch.object(build, 'SCAN_POLICY', policy), self.assertRaises(ValueError):
+                build.scan_acceptance(raw, proof, evidence, {**context, key: value})
+        evidence['binding']['config_digest'] = 'sha256:' + '0' * 64
+        with self.assertRaisesRegex(ValueError, 'binding differs'):
+            build.scan_acceptance(raw, proof, evidence, context)
+
+    def test_policy_is_bound_to_public_rationales_and_backport_source(self):
+        path = build.ROOT / 'docs/RUNNER_SCAN_APPLICABILITY.json'
+        self.assertEqual(oci.digest_file(path), build.SCAN_POLICY['source_evidence']['public_rationale_document_sha256'])
+        review = json.loads(path.read_text())
+        rows = {row['id']: row for row in review['records']}
+        self.assertEqual(set(rows), set(build.SCAN_POLICY['advisories']))
+        for identifier, (_, digest, rule) in build.SCAN_POLICY['advisories'].items():
+            self.assertEqual(rows[identifier]['advisory_content_sha256'], digest)
+            self.assertEqual(rows[identifier]['rule_id'], rule)
+            self.assertTrue(rows[identifier]['rationale'])
+            self.assertTrue(rows[identifier]['source_document']['url'].startswith('https://'))
+        self.assertNotIn('/Users/', path.read_text())
+        self.assertEqual(oci.digest_file(build.ROOT / '.github/containers/runner-libbpf.json'),
+                         build.SCAN_POLICY['libbpf']['source_manifest_sha256'])
+        self.assertEqual(build.document(build.ROOT / '.github/containers/runner-libbpf.json'),
+                         build.SCAN_POLICY['libbpf']['source_manifest'])
+
+    def test_database_absence_does_not_disable_unreviewed_analyzers(self):
+        raw, proof, _, context, _ = self.acceptance_fixture()
+        raw['Results'].append({'Type': 'jar', 'Class': 'lang-pkgs', 'Packages': [{'Name': 'fixture'}]})
+        with self.assertRaisesRegex(ValueError, 'Java database absence'):
+            build.validate_scan_context(raw, proof, context)
+        context['databases'].update({'java-db/trivy-java.db': '6' * 64, 'java-db/metadata.json': '7' * 64})
+        build.validate_scan_context(raw, proof, context)
+
+    def test_database_custody_preserves_original_bytes_and_rejects_partial_java(self):
+        cache, output = self.root / 'cache', self.root / 'output'
+        (cache / 'db').mkdir(parents=True)
+        output.mkdir()
+        (cache / 'db/trivy.db').write_bytes(b'synthetic db')
+        metadata = b'{ "Version": 2 }\n'
+        (cache / 'db/metadata.json').write_bytes(metadata)
+        result = build.retain_scan_databases(cache, output, lambda: None)
+        self.assertEqual((output / 'scan-database.json').read_bytes(), metadata)
+        self.assertEqual(result['db/metadata.json'], hashlib.sha256(metadata).hexdigest())
+        (cache / 'java-db').mkdir()
+        (cache / 'java-db/trivy-java.db').write_bytes(b'synthetic java db')
+        (output / 'scan-database.json').unlink()
+        with self.assertRaises(FileNotFoundError):
+            build.retain_scan_databases(cache, output, lambda: None)
+
     def test_scanner_uses_readonly_runtime_directory_and_preserves_full_findings(self):
         for stage in ('public', 'private'):
             with self.subTest(stage=stage):
@@ -752,7 +1128,8 @@ class RunnerArtifactsTests(unittest.TestCase):
                 path = output / 'image.oci.tar'
                 sha, size = image(path, stage=stage, artifact_attestation=True, attestation_first=True)
                 proof = oci.verify(path, sha, size, SOURCE, stage, build.SENTINEL)
-                record = {'archive_sha256': sha}
+                record = {'archive_sha256': sha, 'source_commit': SOURCE,
+                          'run_id': '123', 'run_attempt': '1', 'stage': stage}
                 sup = mock.Mock()
                 def scan(command, **kwargs):
                     self.assertEqual(command[command.index('--input') + 1], '/input/image')
@@ -762,16 +1139,32 @@ class RunnerArtifactsTests(unittest.TestCase):
                                         ('--ignorefile', '/dev/null'), ('--exit-code', '0')]:
                         self.assertEqual(command[command.index(flag) + 1], value)
                     self.assertIn('--list-all-pkgs', command)
-                    (work / 'scan-output/scan.json').write_text(json.dumps(self.report(proof)))
+                    report = self.assessment_report(proof)
+                    report['ArtifactName'] = '/input/image'
+                    report['Results'][0]['Target'] = '/input/image (ubuntu 24.04)'
+                    (work / 'scan-output/scan.json').write_text(json.dumps(report))
                     (work / 'scan-cache/db').mkdir()
                     (work / 'scan-cache/db/metadata.json').write_text('{"Version":2}')
+                    (work / 'scan-cache/db/trivy.db').write_bytes(b'synthetic database')
                 sup.run.side_effect = scan
                 def cleanup(*args):
                     record.update(scanner_state={'ExitCode': 0, 'Running': False}, scanner_removed=True)
                 with mock.patch.object(build, 'remove_scanner', side_effect=cleanup):
-                    build.run_scan(sup, {'tools': {'trivy': {'image': 'pinned'}}}, work, output, 'owned', proof, record)
+                    build.run_scan(sup, build.document(build.MANIFEST), work, output, 'owned', proof, record)
                 self.assertTrue(record['scan_completed'])
                 self.assertFalse(record['scan_gate_passed'])
+                self.assertFalse(record['scan_acceptance_passed'])
+                self.assertEqual((output / 'scan-database.json').read_bytes(), b'{"Version":2}')
+                accepted = build.check_scan_acceptance(output, record, proof, build.document(build.MANIFEST))
+                self.assertEqual(accepted['unresolved_count'], 2)
+                self.assertIn('installed_libbpf_backport_not_verified', accepted['failed_prerequisites'])
+                forged = copy.deepcopy(accepted)
+                forged['acceptance_passed'] = True
+                (output / 'scan-acceptance.json').write_text(json.dumps(forged))
+                record['scan_acceptance_sha256'] = oci.digest_file(output / 'scan-acceptance.json')
+                record['scan_acceptance_passed'] = True
+                with self.assertRaisesRegex(ValueError, 'acceptance changed'):
+                    build.check_scan_acceptance(output, record, proof, build.document(build.MANIFEST))
                 self.assertEqual(oci.digest_file(path), sha)
                 self.assertFalse((work / 'scan-layout').exists())
                 build.check_scan_receipt(output, record, proof)

@@ -1,3 +1,19 @@
+# Keep the distribution ABI/package identity while backporting one upstream fix.
+FROM docker.io/library/ubuntu@sha256:68ee22004a9109b44973313b02ff7b1de250f1de0f5ecb628d73f579aaff33ac AS patched-libbpf
+ARG TARGETARCH
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential debhelper fakeroot libelf-dev zlib1g-dev pkg-config \
+        python3 ca-certificates curl patch \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --gid 10001 libbpf-builder \
+    && useradd --uid 10001 --gid 10001 --create-home --shell /bin/sh libbpf-builder \
+    && install -d -o 10001 -g 10001 -m 0755 /opt/victron-libbpf-build /opt/victron-libbpf
+WORKDIR /opt/victron-libbpf-inputs
+COPY scripts/build_runner_libbpf.py scripts/build_runner_libbpf.py
+COPY .github/containers/runner-libbpf.json .github/containers/runner-libbpf.json
+COPY .github/containers/libbpf/0001-restrict-core-poisoning.patch .github/containers/libbpf/0001-restrict-core-poisoning.patch
+USER 10001:10001
+RUN umask 022 && TARGETARCH="$TARGETARCH" python3 scripts/build_runner_libbpf.py
 FROM --platform=$BUILDPLATFORM docker.io/library/golang@sha256:672c944cfd07599b5f1bb179869270cdc94c6254e41db4d431259693cb286b82 AS patched-go-tools
 ARG TARGETARCH
 RUN apt-get update && apt-get install -y --no-install-recommends python3 ca-certificates \
@@ -95,6 +111,13 @@ RUN apt-get update && apt-get -o Dpkg::Options::=--force-unsafe-io install -y --
     chmod 0440 /etc/sudoers.d/runner && \
     mkdir -p /opt/hostedtoolcache && \
     chown runner:runner /opt/hostedtoolcache
+# Install the rebuilt distro package, retaining dpkg version and copyright metadata.
+COPY --from=patched-libbpf /opt/victron-libbpf/libbpf1.deb /opt/victron-libbpf/installed.sha256 /tmp/victron-libbpf/
+COPY --from=patched-libbpf /opt/victron-libbpf/notices/ /usr/local/share/victron-libbpf/
+RUN dpkg -i /tmp/victron-libbpf/libbpf1.deb \
+    && test "$(dpkg-query -W -f='${Version}' libbpf1)" = '1:1.3.0-2build2+victron1' \
+    && sha256sum --check /tmp/victron-libbpf/installed.sha256 \
+    && rm -rf /tmp/victron-libbpf
 # Shared automation requires gh api --slurp, absent from Ubuntu's gh 2.45.
 # Verify the existing release manifest's archive, binary and version pins.
 COPY .github/gh/release.json /tmp/reserve-gh/.github/gh/release.json
