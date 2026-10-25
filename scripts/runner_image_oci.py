@@ -14,6 +14,7 @@ import os
 from pathlib import Path, PurePosixPath
 import re
 import stat
+import struct
 import tarfile
 
 INDEX = 'application/vnd.oci.image.index.v1+json'
@@ -417,8 +418,20 @@ def project_scan_input(path, proof, destination, check):
 
 def effective_path(value):
     """Use one POSIX spelling for layer entries; never resolve host paths."""
-    require(isinstance(value, str) and len(value) <= 4096 and not value.startswith('/') and '\\' not in value and
-            '..' not in value.split('/'), 'Unsafe effective file path')
+    require(isinstance(value, str), 'Unsafe effective file path: not a string')
+    reason = None
+    if len(value) > 4096:
+        reason = 'too long'
+    elif value.startswith('/'):
+        reason = 'absolute'
+    elif '..' in value.split('/'):
+        reason = 'parent component'
+    if reason is not None:
+        # Bound and escape archive metadata before including it in a build log.
+        preview = json.dumps(value[:32], ensure_ascii=True)
+        raise ValueError(f'Unsafe effective file path ({reason}; characters={len(value)}): {preview}')
+    # Backslashes are literal POSIX filename bytes (including systemd's
+    # escaped unit names), never separators or escape sequences to decode.
     result = '/'.join(part for part in value.split('/') if part not in {'', '.'})
     require(result, 'Empty effective file path')
     return result
@@ -573,12 +586,72 @@ class LayerDigestReader(io.RawIOBase):
 
 def evidence_text(path):
     return (path == 'var/lib/dpkg/status' or
-            path.startswith(('var/lib/dpkg/info/linux-libc-dev', 'var/lib/dpkg/info/libbpf1')) or
+            path.startswith(('var/lib/dpkg/info/linux-libc-dev', 'var/lib/dpkg/info/libbpf1',
+                             'var/lib/dpkg/info/libgstreamer-plugins-bad1.0-0:',
+                             'var/lib/dpkg/info/gstreamer1.0-plugins-bad:')) or
             path in {'usr/local/share/victron-libbpf/build-provenance.json',
                      'usr/local/share/victron-libbpf/source-manifest.json',
                      'usr/local/share/victron-libbpf/package.buildinfo',
                      'usr/local/share/victron-libbpf/dynamic-symbols.txt',
-                     'usr/local/share/victron-libbpf/debian-libbpf1.symbols'})
+                     'usr/local/share/victron-libbpf/debian-libbpf1.symbols',
+                     'usr/local/share/victron-gstreamer/build-provenance.json',
+                     'usr/local/share/victron-gstreamer/source-manifest.json'})
+
+
+GSTREAMER_LIBRARY = 'usr/lib/x86_64-linux-gnu/libgstcodecparsers-1.0.so.0.2402.0'
+
+
+def selected_elf_info(data):
+    """Read bounded ELF64 metadata for the selected amd64 library, never execute it."""
+    require(64 <= len(data) <= 8 * 1024**2 and data[:7] == b'\x7fELF\x02\x01\x01',
+            'Selected library is not a bounded little-endian ELF64')
+    kind, machine, version, _, phoff, _, _, ehsize, phsize, phnum, _, _, _ = struct.unpack_from(
+        '<HHIQQQIHHHHHH', data, 16)
+    require((kind, machine, version, ehsize, phsize) == (3, 62, 1, 64, 56) and
+            1 <= phnum <= 256 and phoff >= 64 and phoff + phsize * phnum <= len(data),
+            'Selected library ELF architecture or program headers differ')
+    loads, dynamic = [], []
+    for index in range(phnum):
+        ptype, _, offset, address, _, size, memory, _ = struct.unpack_from(
+            '<IIQQQQQQ', data, phoff + phsize * index)
+        require(offset <= len(data) and size <= len(data) - offset and size <= memory,
+                'Selected ELF segment exceeds file bounds')
+        if ptype == 1:
+            loads.append((address, offset, size))
+        elif ptype == 2:
+            dynamic.append((offset, size))
+    require(len(dynamic) == 1 and 0 < dynamic[0][1] <= 64 * 1024 and dynamic[0][1] % 16 == 0,
+            'Selected ELF dynamic section differs')
+    tags, terminated = {}, False
+    start, size = dynamic[0]
+    for offset in range(start, start + size, 16):
+        tag, value = struct.unpack_from('<qQ', data, offset)
+        if tag == 0:
+            terminated = True
+            break
+        tags.setdefault(tag, []).append(value)
+    require(terminated and all(len(tags.get(tag, [])) == 1 for tag in (5, 10, 14))
+            and 0 < tags[10][0] <= 1024**2 and len(tags.get(1, [])) <= 64,
+            'Selected ELF string table or SONAME differs')
+    address, length = tags[5][0], tags[10][0]
+    locations = [offset + address - base for base, offset, size in loads
+                 if base <= address and address - base + length <= size]
+    require(len(locations) == 1, 'Selected ELF string table mapping is ambiguous')
+    strings = data[locations[0]:locations[0] + length]
+
+    def name(index):
+        require(index < len(strings), 'Selected ELF string index exceeds table')
+        end = strings.find(b'\0', index, min(len(strings), index + 513))
+        require(index < end, 'Selected ELF dependency is missing or too long')
+        value = bytes(strings[index:end]).decode('ascii')
+        require('/' not in value and all(32 < ord(char) < 127 for char in value),
+                'Selected ELF dependency is not a library basename')
+        return value
+
+    needed = [name(index) for index in tags.get(1, [])]
+    require(len(needed) == len(set(needed)), 'Duplicate selected ELF dependency')
+    return {'class': 64, 'endianness': 'little', 'type': kind, 'machine': machine,
+            'soname': name(tags[14][0]), 'needed': sorted(needed)}
 
 
 def read_effective_layer(raw, descriptor, remaining, check):
@@ -605,6 +678,7 @@ def read_effective_layer(raw, descriptor, remaining, check):
                     # the actual file bytes used for security acceptance.
                     sha, md5, count, magic = hashlib.sha256(), hashlib.md5(usedforsecurity=False), 0, b''
                     text = bytearray() if evidence_text(path) else None
+                    elf_data = bytearray() if path == GSTREAMER_LIBRARY else None
                     with archive.extractfile(member) as source:
                         while block := source.read(1024**2):
                             check()
@@ -618,10 +692,16 @@ def read_effective_layer(raw, descriptor, remaining, check):
                                 require(len(text) + len(block) <= 8 * 1024**2 and text_bytes <= 32 * 1024**2,
                                         'Effective metadata text exceeds bound')
                                 text.extend(block)
+                            if elf_data is not None:
+                                require(len(elf_data) + len(block) <= 8 * 1024**2,
+                                        'Selected ELF exceeds bound')
+                                elf_data.extend(block)
                     require(count == member.size, 'Truncated effective file')
                     record.update(type='regular', sha256=sha.hexdigest(), md5=md5.hexdigest(), elf=magic == b'\x7fELF')
                     if text is not None:
                         record['text'] = text.decode('utf-8')
+                    if elf_data is not None:
+                        record['elf_info'] = selected_elf_info(elf_data)
                 elif member.isdir():
                     record['type'] = 'directory'
                 elif member.issym():

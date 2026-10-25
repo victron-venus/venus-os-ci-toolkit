@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import struct
 import sys
 import tarfile
 import tempfile
@@ -101,6 +102,106 @@ def image(path, *, stage='public', content=build.SENTINEL, extra=False,
             item.size = len(raw)
             tar.addfile(item, io.BytesIO(raw))
     return oci.digest_file(path), path.stat().st_size
+
+
+def selected_elf_bytes():
+    """Tiny ordinary ELF metadata fixture, never an executable test program."""
+    raw = bytearray(512)
+    raw[:7] = b'\x7fELF\x02\x01\x01'
+    struct.pack_into('<HHIQQQIHHHHHH', raw, 16, 3, 62, 1, 0, 64, 0, 0, 64, 56, 2, 0, 0, 0)
+    struct.pack_into('<IIQQQQQQ', raw, 64, 1, 4, 0, 0x1000, 0, len(raw), len(raw), 8)
+    struct.pack_into('<IIQQQQQQ', raw, 120, 2, 4, 176, 0x10b0, 0, 80, 80, 8)
+    strings = b'\0libgstcodecparsers-1.0.so.0\0libc.so.6\0'
+    raw[300:300 + len(strings)] = strings
+    for index, pair in enumerate(((5, 0x1000 + 300), (10, len(strings)), (14, 1),
+                                   (1, strings.index(b'libc')), (0, 0))):
+        struct.pack_into('<qQ', raw, 176 + index * 16, *pair)
+    return bytes(raw)
+
+
+def gstreamer_component_fixture(policy, file):
+    """Distinct synthetic package baselines exercise the real pure validator."""
+    spec = policy['gstreamer']
+    source = spec['source_manifest']
+    library = file(selected_elf_bytes())
+    library['elf_info'] = oci.selected_elf_info(selected_elf_bytes())
+    relative = oci.GSTREAMER_LIBRARY
+    packages, declared, baselines = {}, {}, {}
+    for name in ('libgstreamer-plugins-bad1.0-0', 'gstreamer1.0-plugins-bad'):
+        is_library = name.startswith('lib')
+        path = relative if is_library else 'usr/lib/x86_64-linux-gnu/gstreamer-1.0/fixture.so'
+        actual = library if is_library else file(b'ordinary unchanged plugin')
+        inventory = {path: {k: v for k, v in actual.items() if k != 'layer'}}
+        installed = {path: {'type': 'file', 'mode': actual['mode'], 'bytes': actual['bytes'],
+                            'sha256': actual['sha256']}}
+        old = copy.deepcopy(installed)
+        if is_library:
+            old[path]['sha256'] = source['original_library_sha256']['amd64']
+        control = {'Package': name, 'Architecture': 'amd64', 'Version': source['downstream_version'],
+                   'Source': 'gst-plugins-bad1.0 (' + source['downstream_version'] + ')',
+                   'Maintainer': 'alvit <272257197+4alvit@users.noreply.github.com>',
+                   'Installed-Size': '1', 'Depends': 'libc6 (>= 2.38)'}
+        if not is_library:
+            control['Depends'] += ', libgstreamer-plugins-bad1.0-0 (= ' + source['downstream_version'] + ')'
+        preserved = {k: v for k, v in control.items() if k not in {'Version', 'Source', 'Maintainer', 'Installed-Size'}}
+        preserved['Depends'] = preserved['Depends'].replace(source['downstream_version'], source['version'])
+        baselines[name] = {'payload_sha256': build.stable_digest(old), 'entries': len(old),
+                           'preserved_control_sha256': build.stable_digest(preserved), 'symlinks': {}}
+        if is_library:
+            baselines[name]['original_elf_info'] = library['elf_info']
+        status = 'Status: install ok installed\n' + ''.join(k + ': ' + v + '\n' for k, v in control.items())
+        packages[name] = {'package': name, 'architecture': 'amd64', 'version': source['downstream_version'],
+                          'source_package': control['Source'], 'status': status, 'inventory': inventory,
+                          'inventory_sha256': build.stable_digest(inventory)}
+        declared[name] = {'original_payload': old, 'installed_payload': installed,
+                         'original_package_sha256': source['binaries'][name + '_' + source['version'] + '_amd64.deb']['sha256'],
+                         'package_sha256': '1' * 64, 'control': control,
+                         'changed_payload': [relative] if is_library else []}
+    spec['baselines']['amd64'] = baselines
+    provenance = {'schema': 1, 'source': source, 'architecture': 'amd64', 'uid': 10001,
+                  'builder_sha256': spec['builder_sha256'], 'build_command': spec['build_command'],
+                  'patched_parser_sha256': source['patch']['after_sha256'],
+                  'ordinary_parser_allocation_smoke_passed': True, 'library_path': relative,
+                  'soname': source['soname'], 'library_sha256': library['sha256'],
+                  'original_library_sha256': source['original_library_sha256']['amd64'], 'packages': declared}
+    manifest = json.dumps(source).encode()
+    spec['source_manifest_sha256'] = hashlib.sha256(manifest).hexdigest()
+    files = {'source-manifest.json': file(manifest), 'build-provenance.json': file(json.dumps(provenance).encode()),
+             'backport.patch': {**file(b'synthetic patch'), 'sha256': source['patch']['sha256']}}
+    return {'packages': packages, 'library': library, 'files': files,
+            'source_manifest': source, 'provenance': provenance}
+
+
+def gstreamer_image_entries(policy, *, changed_plugin=False):
+    """Real tiny package files under a distinct fixture policy, not an approved image."""
+    patch = b'synthetic patch'
+    policy['gstreamer']['source_manifest']['patch']['sha256'] = hashlib.sha256(patch).hexdigest()
+    def file(content):
+        return {'type': 'regular', 'bytes': len(content), 'mode': 420,
+                'sha256': hashlib.sha256(content).hexdigest(),
+                'md5': hashlib.md5(content, usedforsecurity=False).hexdigest(),
+                'elf': content.startswith(b'\x7fELF')}
+    component = gstreamer_component_fixture(policy, file)
+    entries = {oci.GSTREAMER_LIBRARY: selected_elf_bytes(),
+               'usr/lib/x86_64-linux-gnu/gstreamer-1.0/fixture.so':
+                   b'changed plugin' if changed_plugin else b'ordinary unchanged plugin'}
+    stanzas = []
+    for package, declared in component['provenance']['packages'].items():
+        control = declared['control']
+        stanzas.append('Package: ' + package + '\nStatus: install ok installed\n' +
+                       ''.join(k + ': ' + v + '\n' for k, v in control.items() if k != 'Package'))
+        paths = component['packages'][package]['inventory']
+        prefix = 'var/lib/dpkg/info/' + package + ':amd64'
+        entries[prefix + '.list'] = ''.join('/' + p + '\n' for p in paths).encode()
+        entries[prefix + '.md5sums'] = ''.join(
+            hashlib.md5(entries[p], usedforsecurity=False).hexdigest() + '  ' + p + '\n'
+            for p in paths).encode()
+    entries['var/lib/dpkg/status'] = '\n'.join(stanzas).encode()
+    prefix = 'usr/local/share/victron-gstreamer/'
+    entries.update({prefix + 'source-manifest.json': json.dumps(component['source_manifest']).encode(),
+                    prefix + 'build-provenance.json': json.dumps(component['provenance']).encode(),
+                    prefix + 'backport.patch': patch})
+    return list(entries.items())
 
 
 class RunnerArtifactsTests(unittest.TestCase):
@@ -285,6 +386,66 @@ class RunnerArtifactsTests(unittest.TestCase):
         desc.update(size=len(raw), digest='sha256:' + hashlib.sha256(raw).hexdigest())
         with self.assertRaisesRegex(ValueError, 'Duplicate'):
             oci.read_effective_layer(io.BytesIO(raw), desc, len(raw), lambda: None)
+
+    def test_effective_path_failure_metadata_is_bounded_and_escaped(self):
+        cases = [('/ordinary\nname', 'absolute'),
+                 ('ordinary/../name', 'parent component'), ('\u65e5' * 4097, 'too long'),
+                 ('\U0001f642' * 4097, 'too long')]
+        for value, reason in cases:
+            with self.subTest(reason=reason), self.assertRaises(ValueError) as error:
+                oci.effective_path(value)
+            message = str(error.exception)
+            self.assertIn(reason, message)
+            self.assertIn(f'characters={len(value)}', message)
+            self.assertLess(len(message), 512)
+            self.assertTrue(message.isascii())
+            self.assertNotIn('\n', message)
+            self.assertEqual(json.loads(message.split(': ', 1)[1]), value[:32])
+        with self.assertRaisesRegex(ValueError, 'not a string'):
+            oci.effective_path(None)
+
+    def test_effective_files_preserve_literal_systemd_unit_names_and_digests(self):
+        # Exact names from the failed browser layer; contents here are fixtures.
+        crypt = r'usr/lib/systemd/system/system-systemd\x2dcryptsetup.slice'
+        verity = r'usr/lib/systemd/system/system-systemd\x2dveritysetup.slice'
+        decoded = 'usr/lib/systemd/system/system-systemd-cryptsetup.slice'
+        entries = [(crypt, b'c' * 468), (verity, b'v' * 463), (decoded, b'decoded spelling'),
+                   (r'notes\..\entry.txt', b'literal backslashes'), ('notes/entry.txt', b'slash path')]
+        proof = self.verify(additional=(entries,))
+        layout = self.root / 'layout'
+        selection = oci.project_scan_input(self.root / 'image.tar', proof, layout, lambda: None)
+        result = oci.effective_files(layout, selection, proof, lambda: None)
+        for path, content in entries:
+            with self.subTest(path=path):
+                self.assertEqual(oci.effective_path(path), path)
+                record = oci.effective_regular(result['files'], path)
+                self.assertEqual(record['sha256'], hashlib.sha256(content).hexdigest())
+                self.assertEqual(record['bytes'], len(content))
+                self.assertEqual(record['layer'], selection['layers'][-1]['digest'])
+        self.assertEqual(len(result['files']), len(entries) + 1)  # includes the sentinel
+        self.assertEqual(result['archive_sha256'], proof['archive_sha256'])
+        self.assertEqual([layer['diff_id'] for layer in result['layers']], proof['platform']['diff_ids'])
+        for path in (r'/notes\entry.txt', r'notes\part/../entry.txt'):
+            with self.subTest(path=path), self.assertRaisesRegex(ValueError, 'Unsafe'):
+                oci.effective_path(path)
+
+    def test_effective_backslash_paths_have_distinct_whiteouts_and_collisions(self):
+        literal = r'notes\part/entry.txt'
+        slash = 'notes/part/entry.txt'
+        previous = {literal: {'type': 'regular'}, slash: {'type': 'regular'}}
+        result = oci.merge_effective_layer(previous, {r'notes\part/.wh.entry.txt': {'type': 'regular'}})
+        self.assertEqual(set(result), {slash})
+        # Ordinary POSIX slash/dot normalization still detects duplicates.
+        raw = layer_bytes([(literal, b'one'), (r'./notes\part//entry.txt', b'two')])
+        descriptor = {'mediaType': oci.LAYER, 'size': len(raw),
+                      'digest': 'sha256:' + hashlib.sha256(raw).hexdigest()}
+        with self.assertRaisesRegex(ValueError, 'Duplicate'):
+            oci.read_effective_layer(io.BytesIO(raw), descriptor, len(raw), lambda: None)
+        # Outer OCI member names retain their independent, stricter contract.
+        path = self.root / 'outer.tar'
+        path.write_bytes(layer_bytes([(r'notes\entry.txt', b'not an OCI member')]))
+        with self.assertRaisesRegex(ValueError, 'Noncanonical OCI path'):
+            oci.Archive(path, oci.digest_file(path), path.stat().st_size)
 
     def test_effective_files_reject_changed_layout_before_using_metadata(self):
         proof = self.verify(additional=([('var/lib/dpkg/status', b'Package: example\n')],))
@@ -621,6 +782,60 @@ class RunnerArtifactsTests(unittest.TestCase):
                 with self.subTest(capture=capture), self.assertRaisesRegex(ValueError, 'Disk reserve'):
                     sup.run(['fixture'], capture=capture)
 
+    def test_disk_log_is_throttled_without_skipping_checks_or_observed_minimum(self):
+        paths = [self.root, self.root / 'other-filesystem']
+        sup = build.Supervisor({}, paths, self.root / 'log', self.root / 'disk')
+        samples = [4 * build.GIB, 3 * build.GIB] * 1000
+        samples[999] = build.RESERVE + 1
+        with mock.patch.object(build.time, 'monotonic', return_value=10.0), \
+             mock.patch.object(build.shutil, 'disk_usage', side_effect=[mock.Mock(free=value) for value in samples]) as usage:
+            for _ in range(1000):
+                sup.check()
+        self.assertEqual(usage.call_count, 2000)
+        self.assertEqual(sup.minimum, build.RESERVE + 1)
+        self.assertEqual(len(sup.disk_log.read_text().splitlines()), 1)
+        with mock.patch.object(build.time, 'monotonic', return_value=10.1), \
+             mock.patch.object(build.shutil, 'disk_usage', return_value=mock.Mock(free=4 * build.GIB)):
+            sup.check(force_record=True)
+        records = [json.loads(line) for line in sup.disk_log.read_text().splitlines()]
+        self.assertEqual(len(records), 2)
+        self.assertEqual(records[-1]['minimum_free_bytes'], build.RESERVE + 1)
+
+    def test_disk_log_records_intervals_new_admission_and_every_threshold_failure(self):
+        sup = build.Supervisor({}, [self.root], self.root / 'log', self.root / 'disk')
+        with mock.patch.object(build.time, 'monotonic', side_effect=[0, 0.5, 1, 1.5, 2, 2.1, 2.2, 2.3]), \
+             mock.patch.object(build.shutil, 'disk_usage', return_value=mock.Mock(free=4 * build.GIB)) as usage:
+            for _ in range(5):
+                sup.check()
+            sup.check(3 * build.GIB)
+            usage.return_value = mock.Mock(free=build.RESERVE - 1)
+            for _ in range(2):
+                with self.assertRaisesRegex(ValueError, 'Disk reserve exhausted'):
+                    sup.check()
+        records = [json.loads(line) for line in sup.disk_log.read_text().splitlines()]
+        self.assertEqual(len(records), 6)
+        self.assertEqual(records[3]['required_bytes'], 3 * build.GIB)
+        self.assertTrue(all(row['free_bytes'][str(self.root)] == build.RESERVE - 1 for row in records[-2:]))
+
+    def test_command_boundaries_and_failures_force_disk_records(self):
+        for capture in (False, True):
+            for failed in (False, True):
+                with self.subTest(capture=capture, failed=failed):
+                    disk = self.root / f'disk-{capture}-{failed}'
+                    sup = build.Supervisor({}, [self.root], self.root / 'log', disk)
+                    process = mock.Mock(returncode=int(failed), poll=lambda: int(failed))
+                    error = subprocess.CalledProcessError(1, ['fixture']) if failed else None
+                    with mock.patch.object(build.time, 'monotonic', return_value=10.0), \
+                         mock.patch.object(build.shutil, 'disk_usage', return_value=mock.Mock(free=4 * build.GIB)), \
+                         mock.patch.object(build.subprocess, 'Popen', return_value=process), \
+                         mock.patch.object(build.subprocess, 'run', return_value=mock.Mock(stdout=b'complete'), side_effect=error):
+                        if failed:
+                            with self.assertRaises((ValueError, subprocess.CalledProcessError)):
+                                sup.run(['fixture'], capture=capture)
+                        else:
+                            sup.run(['fixture'], capture=capture)
+                    self.assertEqual(len(disk.read_text().splitlines()), 2)
+
     def test_scanner_unknown_absence_or_unconfirmed_removal_is_not_success(self):
         sup = mock.Mock(env={})
         absent = mock.Mock(returncode=1, stdout=b'[]', stderr=b'Error: No such object: fixture-scan')
@@ -873,19 +1088,71 @@ class RunnerArtifactsTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             build.build_command('private', data, identity, 'builder', self.root, self.root / 'out')
 
-    def test_libbpf_preflight_binds_same_context_builder_and_target(self):
+    def test_patch_preflights_bind_both_targets_to_same_context_builder(self):
         data = build.document(build.MANIFEST)
         identity = {'source_commit': SOURCE, 'repository': 'victron-venus/venus-os-ci-toolkit'}
         name = 'runner-artifact-public-123-1'
         command = build.build_command('public', data, identity, name, self.root, self.root / 'out')
-        record = {'command': command, 'run_id': '123', 'run_attempt': '1', 'libbpf_preflight_completed': True,
-                  'libbpf_preflight_command': build.libbpf_preflight_command(data, name, self.root)}
-        build.check_libbpf_preflight(record, data)
-        self.assertIn('patched-libbpf', record['libbpf_preflight_command'])
-        self.assertIn('type=cacheonly', record['libbpf_preflight_command'])
-        record['libbpf_preflight_command'][-1] += '/other'
-        with self.assertRaisesRegex(ValueError, 'preflight'):
-            build.check_libbpf_preflight(record, data)
+        record = {'command': command, 'run_id': '123', 'run_attempt': '1',
+                  'patch_preflight_budget_seconds': 900, 'patch_preflight_elapsed_seconds': 300}
+        for component in ('libbpf', 'gstreamer'):
+            record[component + '_preflight_completed'] = True
+            record[component + '_preflight_command'] = build.patch_preflight_command(data, name, self.root, component)
+            record[component + '_preflight_timeout_seconds'] = 600
+            self.assertIn('patched-' + component, record[component + '_preflight_command'])
+            self.assertIn('type=cacheonly', record[component + '_preflight_command'])
+        build.check_patch_preflights(record, data)
+        for component in ('libbpf', 'gstreamer'):
+            for field, value in [('completed', False), ('timeout_seconds', 901),
+                                 ('command', build.patch_preflight_command(data, name, self.root / 'other', component))]:
+                with self.subTest(component=component, field=field):
+                    changed = copy.deepcopy(record)
+                    changed[component + '_preflight_' + field] = value
+                    with self.assertRaisesRegex(ValueError, 'preflight'):
+                        build.check_patch_preflights(changed, data)
+        for elapsed in (True, -1, 901, float('nan'), float('inf')):
+            with self.subTest(elapsed=elapsed), self.assertRaisesRegex(ValueError, 'budget'):
+                build.check_patch_preflights({**record, 'patch_preflight_elapsed_seconds': elapsed}, data)
+        with self.assertRaisesRegex(ValueError, 'Unknown'):
+            build.patch_preflight_command(data, name, self.root, 'unreviewed')
+
+    def test_patch_preflights_share_one_deadline_and_retain_owned_builder_checks(self):
+        data = build.document(build.MANIFEST)
+        clock = [100.0]
+        sup, check = mock.Mock(), mock.Mock()
+        def run(command, *, seconds, inspect):
+            self.assertIs(inspect, check)
+            clock[0] += 200 if command[command.index('--target') + 1] == 'patched-libbpf' else 300
+        sup.run.side_effect = run
+        record = {}
+        with mock.patch.object(build.time, 'monotonic', side_effect=lambda: clock[0]):
+            build.run_patch_preflights(sup, data, 'same-builder', self.root, record, check)
+        self.assertEqual([call.kwargs['seconds'] for call in sup.run.call_args_list], [900, 700])
+        self.assertEqual([call.args[0][call.args[0].index('--target') + 1]
+                          for call in sup.run.call_args_list], ['patched-libbpf', 'patched-gstreamer'])
+        self.assertEqual(check.call_count, 2)
+        self.assertEqual(record['patch_preflight_elapsed_seconds'], 500)
+        self.assertTrue(record['libbpf_preflight_completed'])
+        self.assertTrue(record['gstreamer_preflight_completed'])
+
+    def test_patch_preflight_timeout_or_failure_never_marks_stage_complete(self):
+        data = build.document(build.MANIFEST)
+        for failure in ('first-deadline', 'second-deadline', 'second-error'):
+            with self.subTest(failure=failure):
+                clock, record = [0.0], {}
+                sup, check = mock.Mock(), mock.Mock()
+                def run(command, *, seconds, inspect):
+                    first = command[command.index('--target') + 1] == 'patched-libbpf'
+                    if not first and failure == 'second-error':
+                        raise ValueError('fixture build failure')
+                    clock[0] += 901 if failure == 'first-deadline' or not first else 100
+                sup.run.side_effect = run
+                with mock.patch.object(build.time, 'monotonic', side_effect=lambda: clock[0]), \
+                     self.assertRaises(ValueError):
+                    build.run_patch_preflights(sup, data, 'same-builder', self.root, record, check)
+                self.assertNotIn('gstreamer_preflight_completed', record)
+                self.assertIn('patch_preflight_elapsed_seconds', record)
+                self.assertEqual(sup.run.call_count, 1 if failure == 'first-deadline' else 2)
 
     def report(self, proof):
         return {'SchemaVersion': 2, 'ArtifactType': 'container_image',
@@ -1027,6 +1294,7 @@ class RunnerArtifactsTests(unittest.TestCase):
                       'libbpf': {'package': package, 'library': library, 'files': files, 'provenance': provenance,
                                 'source_manifest': spec['source_manifest'], 'symbols': symbols, 'debian_symbols': debian_symbols}}
         components['libbpf']['buildinfo'] = buildinfo
+        components['gstreamer'] = gstreamer_component_fixture(policy, file)
         context = {'source_commit': SOURCE, 'run_id': '123', 'run_attempt': '1', 'stage': 'public',
                    'artifact_name': report['ArtifactName'], 'raw_scan_sha256': '1' * 64, 'scan_input_sha256': '2' * 64,
                    'scanner': {'kind': 'native', 'version': '0.74.0', 'binary_sha256': '3' * 64},
@@ -1097,6 +1365,194 @@ class RunnerArtifactsTests(unittest.TestCase):
         self.assertEqual(result['unresolved_count'], 0)
         self.assertEqual(result['failed_prerequisites'], ['installed_libbpf_backport_not_verified'])
         self.assertFalse(result['acceptance_passed'])
+
+    def gstreamer_acceptance_fixture(self):
+        raw, proof, evidence, context, policy = self.acceptance_fixture()
+        result = raw['Results'][0]
+        version = policy['gstreamer']['source_manifest']['downstream_version']
+        for package in policy['gstreamer']['baselines']['amd64']:
+            identifier = package + '@' + version
+            purl = ('pkg:deb/ubuntu/' + package + '@' + version.replace('+', '%2B') +
+                    '?arch=amd64&distro=ubuntu-24.04')
+            result['Packages'].append({'ID': identifier, 'Name': package, 'Version': '1.24.2',
+                'Release': '1ubuntu4+victron1', 'Identifier': {'PURL': purl}, 'Arch': 'amd64',
+                'SrcName': 'gst-plugins-bad1.0', 'SrcVersion': '1.24.2', 'SrcRelease': '1ubuntu4+victron1'})
+            result['Vulnerabilities'].append({'VulnerabilityID': 'CVE-2025-3887', 'Status': 'affected',
+                'Severity': 'HIGH', 'PkgID': identifier, 'PkgName': package, 'InstalledVersion': version,
+                'PkgIdentifier': {'PURL': purl}, 'Layer': {'Digest': proof['platform']['layers'][0]['digest'],
+                                                        'DiffID': proof['platform']['diff_ids'][0]}})
+        rows = build.assessment_findings(raw, proof, context['artifact_name'])
+        hashes = {row['advisory_sha256'] for row in rows if row['vulnerability'] == 'CVE-2025-3887'}
+        self.assertEqual(len(hashes), 1)
+        policy['gstreamer']['advisory_sha256'] = hashes.pop()
+        return raw, proof, evidence, context, policy
+
+    def test_gstreamer_actual_package_reader_and_component_acceptance(self):
+        policy = copy.deepcopy(build.SCAN_POLICY)
+        path = self.root / 'gstreamer.oci.tar'
+        sha, size = image(path, additional=(gstreamer_image_entries(policy),))
+        proof = oci.verify(path, sha, size, SOURCE, 'public', build.SENTINEL)
+        layout = self.root / 'gstreamer-layout'
+        selected = oci.project_scan_input(path, proof, layout, lambda: None)
+        with mock.patch.object(build, 'SCAN_POLICY', policy):
+            actual = build.scan_file_evidence(layout, selected, proof, lambda: None)
+            result = build.assess_components(actual)
+        self.assertTrue(result['gstreamer'])
+        self.assertNotIn('gstreamer_evidence_invalid', actual['errors'])
+        self.assertEqual(actual['components']['gstreamer']['library']['elf_info'],
+                         oci.selected_elf_info(selected_elf_bytes()))
+        self.assertTrue(all(actual['components']['gstreamer']['packages'][name]['md5sums_sha256']
+                            for name in actual['components']['gstreamer']['packages']))
+        # The other required components are deliberately missing; this is not
+        # whole-image acceptance or a replacement for an actual compiled build.
+        self.assertFalse(result['libbpf'])
+        self.assertFalse(result['headers'])
+        self.assertFalse(result['runc'])
+
+    def test_gstreamer_actual_reader_rejects_changed_plugin_even_with_updated_md5(self):
+        policy = copy.deepcopy(build.SCAN_POLICY)
+        path = self.root / 'changed-gstreamer.oci.tar'
+        sha, size = image(path, additional=(gstreamer_image_entries(policy, changed_plugin=True),))
+        proof = oci.verify(path, sha, size, SOURCE, 'public', build.SENTINEL)
+        layout = self.root / 'changed-layout'
+        selected = oci.project_scan_input(path, proof, layout, lambda: None)
+        with mock.patch.object(build, 'SCAN_POLICY', policy):
+            actual = build.scan_file_evidence(layout, selected, proof, lambda: None)
+            result = build.assess_components(actual)
+        self.assertNotIn('gstreamer_evidence_invalid', actual['errors'])
+        self.assertFalse(result['gstreamer'])
+
+    def test_gstreamer_two_fixed_packages_preserve_raw_findings(self):
+        raw, proof, evidence, context, policy = self.gstreamer_acceptance_fixture()
+        before = copy.deepcopy(raw)
+        with mock.patch.object(build, 'SCAN_POLICY', policy):
+            result = build.scan_acceptance(raw, proof, evidence, context)
+        self.assertTrue(result['acceptance_passed'])
+        self.assertEqual(result['raw_blocking_findings'], 4)
+        self.assertEqual(sum(row['rule_id'] == 'installed_gstreamer_h265_backport'
+                             for row in result['assessed_not_affected']), 2)
+        self.assertEqual(raw, before)
+        self.assertFalse(build.scan_summary(raw, proof)['scan_gate_passed'])
+
+    def test_gstreamer_absence_is_required_even_with_zero_findings(self):
+        raw, proof, evidence, context, policy = self.gstreamer_acceptance_fixture()
+        for result in raw['Results']:
+            result['Vulnerabilities'] = []
+        evidence['components'].pop('gstreamer')
+        with mock.patch.object(build, 'SCAN_POLICY', policy):
+            result = build.scan_acceptance(raw, proof, evidence, context)
+        self.assertEqual(result['unresolved_count'], 0)
+        self.assertEqual(result['failed_prerequisites'], ['installed_gstreamer_backport_not_verified'])
+        self.assertFalse(result['acceptance_passed'])
+
+    def test_gstreamer_old_elf_wrong_arch_and_false_provenance_fail(self):
+        raw, proof, evidence, context, policy = self.gstreamer_acceptance_fixture()
+        edits = [lambda g: g['library'].update(sha256=policy['gstreamer']['source_manifest']['original_library_sha256']['amd64']),
+                 lambda g: g['library']['elf_info'].update(machine=183),
+                 lambda g: g['library']['elf_info'].update(soname='other.so'),
+                 lambda g: g['provenance'].update(builder_sha256='0' * 64),
+                 lambda g: g['provenance'].update(patched_parser_sha256='0' * 64),
+                 lambda g: g['provenance'].update(ordinary_parser_allocation_smoke_passed=False),
+                 lambda g: g['provenance'].update(schema=True)]
+        for edit in edits:
+            changed = copy.deepcopy(evidence)
+            edit(changed['components']['gstreamer'])
+            with self.subTest(edit=edit), mock.patch.object(build, 'SCAN_POLICY', policy):
+                result = build.scan_acceptance(raw, proof, changed, context)
+            self.assertFalse(result['acceptance_passed'])
+            self.assertEqual(result['unresolved_count'], 2)
+
+    def test_gstreamer_unrelated_payload_and_self_declared_baseline_fail(self):
+        raw, proof, evidence, context, policy = self.gstreamer_acceptance_fixture()
+        name = 'gstreamer1.0-plugins-bad'
+        for edit in ('installed', 'original', 'missing-package', 'dependency'):
+            changed = copy.deepcopy(evidence)
+            component = changed['components']['gstreamer']
+            declared = component['provenance']['packages'][name]
+            if edit == 'missing-package':
+                component['packages'].pop(name)
+            elif edit == 'dependency':
+                declared['control']['Depends'] = 'libc6 (>= 2.38)'
+            else:
+                path = next(iter(declared['original_payload']))
+                if edit == 'original':
+                    declared['original_payload'][path]['sha256'] = '0' * 64
+                else:
+                    record = component['packages'][name]
+                    record['inventory'][path]['sha256'] = '0' * 64
+                    record['inventory_sha256'] = build.stable_digest(record['inventory'])
+                    declared['installed_payload'][path]['sha256'] = '0' * 64
+            with self.subTest(edit=edit), mock.patch.object(build, 'SCAN_POLICY', policy):
+                result = build.scan_acceptance(raw, proof, changed, context)
+            self.assertFalse(result['acceptance_passed'])
+            self.assertIn('installed_gstreamer_backport_not_verified', result['failed_prerequisites'])
+
+    def test_gstreamer_unknown_advisory_or_other_package_is_not_assessed(self):
+        raw, proof, evidence, context, policy = self.gstreamer_acceptance_fixture()
+        for change in ('advisory', 'id', 'package'):
+            value = copy.deepcopy(raw)
+            finding = value['Results'][0]['Vulnerabilities'][-1]
+            if change == 'advisory':
+                finding['Description'] = 'New advisory revision'
+            elif change == 'id':
+                finding['VulnerabilityID'] = 'CVE-2099-55555'
+            else:
+                package = value['Results'][0]['Packages'][-1]
+                package.update(Name='unreviewed-package', ID='unreviewed-package@' + finding['InstalledVersion'])
+                finding.update(PkgName=package['Name'], PkgID=package['ID'])
+            with self.subTest(change=change), mock.patch.object(build, 'SCAN_POLICY', policy):
+                result = build.scan_acceptance(value, proof, evidence, context)
+            self.assertFalse(result['acceptance_passed'])
+            self.assertEqual(result['unresolved_count'], 1)
+
+    def test_selected_elf_reads_arch_soname_needed_without_execution(self):
+        result = oci.selected_elf_info(selected_elf_bytes())
+        self.assertEqual(result, {'class': 64, 'endianness': 'little', 'type': 3, 'machine': 62,
+            'soname': 'libgstcodecparsers-1.0.so.0', 'needed': ['libc.so.6']})
+
+    def test_selected_elf_rejects_truncation_arch_tables_and_string_overflow(self):
+        edits = [(18, '<H', 183), (32, '<Q', 100000), (56, '<H', 300),
+                 (176 + 8, '<Q', 0xffffffffffffffff), (176 + 16 + 8, '<Q', 0xffffffffffffffff),
+                 (176 + 32 + 8, '<Q', 5000)]
+        for offset, fmt, number in edits:
+            value = bytearray(selected_elf_bytes())
+            struct.pack_into(fmt, value, offset, number)
+            with self.subTest(offset=offset), self.assertRaises(ValueError):
+                oci.selected_elf_info(value)
+        for value in (b'', selected_elf_bytes()[:40], b'x' * 100):
+            with self.assertRaises(ValueError):
+                oci.selected_elf_info(value)
+
+    def test_selected_elf_is_bound_to_the_actual_layer_file(self):
+        data = selected_elf_bytes()
+        raw = layer_bytes([(oci.GSTREAMER_LIBRARY, data), ('usr/lib/other.so', b'ordinary file')])
+        descriptor = {'mediaType': oci.LAYER, 'digest': 'sha256:' + hashlib.sha256(raw).hexdigest(),
+                      'size': len(raw)}
+        entries, _, _ = oci.read_effective_layer(io.BytesIO(raw), descriptor, len(raw), lambda: None)
+        record = entries[oci.GSTREAMER_LIBRARY]
+        self.assertEqual(record['sha256'], hashlib.sha256(data).hexdigest())
+        self.assertEqual(record['elf_info'], oci.selected_elf_info(data))
+        self.assertNotIn('elf_info', entries['usr/lib/other.so'])
+        self.assertNotIn('text', record)
+
+    def test_gstreamer_policy_sources_and_both_arch_baselines_are_pinned(self):
+        spec = build.SCAN_POLICY['gstreamer']
+        self.assertEqual(build.document(build.ROOT / '.github/containers/runner-gstreamer.json'), spec['source_manifest'])
+        self.assertEqual(oci.digest_file(build.ROOT / '.github/containers/runner-gstreamer.json'), spec['source_manifest_sha256'])
+        self.assertEqual(oci.digest_file(build.ROOT / 'scripts/build_runner_gstreamer.py'), spec['builder_sha256'])
+        self.assertEqual(set(spec['baselines']), {'amd64', 'arm64'})
+        for baselines in spec['baselines'].values():
+            self.assertEqual(set(baselines), {'libgstreamer-plugins-bad1.0-0', 'gstreamer1.0-plugins-bad'})
+            for baseline in baselines.values():
+                self.assertRegex(baseline['payload_sha256'], r'^[a-f0-9]{64}$')
+
+    def test_gstreamer_selected_text_is_narrow(self):
+        for path in ('var/lib/dpkg/info/gstreamer1.0-plugins-bad:amd64.list',
+                     'var/lib/dpkg/info/libgstreamer-plugins-bad1.0-0:amd64.md5sums',
+                     'usr/local/share/victron-gstreamer/build-provenance.json',
+                     'usr/local/share/victron-gstreamer/source-manifest.json'):
+            self.assertTrue(oci.evidence_text(path))
+        self.assertFalse(oci.evidence_text('usr/local/share/victron-gstreamer/unrelated'))
 
     def test_kernel_file_selection_preserves_name_and_extension_boundaries(self):
         _, proof, _, _, _ = self.acceptance_fixture()

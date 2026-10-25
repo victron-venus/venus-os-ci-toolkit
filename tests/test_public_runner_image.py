@@ -36,6 +36,8 @@ class PublicRunnerImageTests(unittest.TestCase):
             '.github/containers/runner-go-tools.json', 'scripts/build_runner_go_tools.py',
             '.github/containers/runner-libbpf.json', 'scripts/build_runner_libbpf.py',
             '.github/containers/libbpf/0001-restrict-core-poisoning.patch',
+            '.github/containers/runner-gstreamer.json', 'scripts/build_runner_gstreamer.py',
+            '.github/containers/gstreamer/0001-h265-parser-bounds.patch',
             *{f'.github/containers/runner-go-tools/{component}/{name}'
               for component in ('containerd', 'buildx', 'compose')
               for name in ('go.mod', 'go.sum', 'inputs.json')},

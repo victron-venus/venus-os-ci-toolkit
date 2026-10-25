@@ -68,6 +68,124 @@ SCAN_POLICY = {'schema': 1,
           'mode': 493,
           'sha256': '6043541aca928890ab8ad0630cafd2b272c3880779d8ada1b3fe81bc22e80d20',
           'elf': True},
+ 'gstreamer': {'source_manifest': {'schema': 1,
+                     'source_package': 'gst-plugins-bad1.0',
+                     'version': '1.24.2-1ubuntu4',
+                     'downstream_version': '1.24.2-1ubuntu4+victron1',
+                     'architectures': ['amd64', 'arm64'],
+                     'source_date_epoch': 1792886400,
+                     'library': 'libgstcodecparsers-1.0.so.0.2402.0',
+                     'soname': 'libgstcodecparsers-1.0.so.0',
+                     'sources': {'gst-plugins-bad1.0_1.24.2.orig.tar.xz': {'url': 'https://archive.ubuntu.com/ubuntu/pool/universe/g/gst-plugins-bad1.0/gst-plugins-bad1.0_1.24.2.orig.tar.xz',
+                                                                           'sha256': '448e32787bc82b586c6cb2f81c9a8ef404fea4f77f25566fe06e597a3f59136b',
+                                                                           'bytes': 7046860},
+                                 'gst-plugins-bad1.0_1.24.2-1ubuntu4.debian.tar.xz': {'url': 'https://archive.ubuntu.com/ubuntu/pool/universe/g/gst-plugins-bad1.0/gst-plugins-bad1.0_1.24.2-1ubuntu4.debian.tar.xz',
+                                                                                      'sha256': '05fefdaf55bd00dfd434caa10e837a4f01fb5ff6fdd54c9c8a0ddddcec15620b',
+                                                                                      'bytes': 47348},
+                                 'gst-plugins-bad1.0_1.24.2-1ubuntu4.dsc': {'url': 'https://archive.ubuntu.com/ubuntu/pool/universe/g/gst-plugins-bad1.0/gst-plugins-bad1.0_1.24.2-1ubuntu4.dsc',
+                                                                            'sha256': '064b23e05d08dd65a8ea16e8325fe0fc21468d21e3fd0347ba5b069617034d02',
+                                                                            'bytes': 5850}},
+                     'binaries': {'libgstreamer-plugins-bad1.0-0_1.24.2-1ubuntu4_amd64.deb': {'url': 'https://archive.ubuntu.com/ubuntu/pool/universe/g/gst-plugins-bad1.0/libgstreamer-plugins-bad1.0-0_1.24.2-1ubuntu4_amd64.deb',
+                                                                                              'bytes': 797390,
+                                                                                              'sha256': '6e8da41c0cbb2070f3477cf02360c2ce2eb55e825ba09e12b4270b3254e04f45'},
+                                  'gstreamer1.0-plugins-bad_1.24.2-1ubuntu4_amd64.deb': {'url': 'https://archive.ubuntu.com/ubuntu/pool/universe/g/gst-plugins-bad1.0/gstreamer1.0-plugins-bad_1.24.2-1ubuntu4_amd64.deb',
+                                                                                         'bytes': 3081180,
+                                                                                         'sha256': '56f47c2a6b390722416c962564da6ab5fc7315dcbaa653fe4457a8db6ed34ca6'},
+                                  'libgstreamer-plugins-bad1.0-0_1.24.2-1ubuntu4_arm64.deb': {'url': 'https://ports.ubuntu.com/ubuntu-ports/pool/universe/g/gst-plugins-bad1.0/libgstreamer-plugins-bad1.0-0_1.24.2-1ubuntu4_arm64.deb',
+                                                                                              'bytes': 770868,
+                                                                                              'sha256': '917784636880a70102884e4842b4bf226feafb5b29417fdd71522dff4253c2ec'},
+                                  'gstreamer1.0-plugins-bad_1.24.2-1ubuntu4_arm64.deb': {'url': 'https://ports.ubuntu.com/ubuntu-ports/pool/universe/g/gst-plugins-bad1.0/gstreamer1.0-plugins-bad_1.24.2-1ubuntu4_arm64.deb',
+                                                                                         'bytes': 2821832,
+                                                                                         'sha256': '4948ce79d4e173ec50605188784082f2161e7fd374a584e28db38d44e8cf46ff'}},
+                     'patch': {'path': '.github/containers/gstreamer/0001-h265-parser-bounds.patch',
+                               'sha256': '7192211e1e5733acde830dda9eb8820a40eb04a17bd14e57cd7bf40e0beba651',
+                               'target': 'gst-libs/gst/codecparsers/gsth265parser.c',
+                               'before_sha256': 'd0752d902ddf36da0d1dbd7f1eef757147384174928d4de421aae421f345368f',
+                               'after_sha256': 'c95c1583d806f6438b024d329247cb16bcd276ce149dc171adf24c483899f08a',
+                               'upstream_commits': ['5463f0e09768ca90aa8c58357c1f4c645db580db',
+                                                    'bcaab3609805ea10fb3d9ac0c9d947b4c3563948'],
+                               'upstream_patch_sha256': {'5463f0e09768ca90aa8c58357c1f4c645db580db': '0067dff9de76b5e68ddb5a008f141df1a879c1ed0ea31a3738f45cc75d1b9111',
+                                                         'bcaab3609805ea10fb3d9ac0c9d947b4c3563948': 'b05c34612b45b35c0fb950832733033deb6a52356130aaeacf408ecdd665ca75'}},
+                     'advisories': ['https://gstreamer.freedesktop.org/security/sa-2025-0001.html',
+                                    'https://ubuntu.com/security/CVE-2025-3887'],
+                     'scope': 'Only codecparsers library rebuilt; original two Ubuntu package payloads '
+                              'retained except that library. Raw findings remain subject to independent '
+                              'final-image acceptance.',
+                     'original_library_sha256': {'amd64': 'f1d6e9fe6e0a648dae98ff11560bca9b1c414855ad2f212a2cc10821f264036f',
+                                                 'arm64': '841ae4d85d2e85f6269deac782f937993d64ce22abaa80e0bcbe19b1a49f2927'}},
+ 'source_manifest_sha256': '361200a0384f0bab930307ef64ebe0ebdb7980820fe0ccfef0870459aa6ec75e',
+ 'builder_sha256': '83673709321b28a55f3abfc30df7be5101f152ef351749eff34513a053e264a5',
+ 'baselines': {'amd64': {'libgstreamer-plugins-bad1.0-0': {'payload_sha256': '7be90d716bb2ce333eab7b02eca28e5d3458ab15319ff57fd1707b342adc3883',
+                                                           'entries': 65,
+                                                           'symlinks': {'usr/lib/x86_64-linux-gnu/libgstadaptivedemux-1.0.so.0': 'libgstadaptivedemux-1.0.so.0.2402.0',
+                                                                        'usr/lib/x86_64-linux-gnu/libgstanalytics-1.0.so.0': 'libgstanalytics-1.0.so.0.2402.0',
+                                                                        'usr/lib/x86_64-linux-gnu/libgstbadaudio-1.0.so.0': 'libgstbadaudio-1.0.so.0.2402.0',
+                                                                        'usr/lib/x86_64-linux-gnu/libgstcodecparsers-1.0.so.0': 'libgstcodecparsers-1.0.so.0.2402.0',
+                                                                        'usr/lib/x86_64-linux-gnu/libgstcodecs-1.0.so.0': 'libgstcodecs-1.0.so.0.2402.0',
+                                                                        'usr/lib/x86_64-linux-gnu/libgstcuda-1.0.so.0': 'libgstcuda-1.0.so.0.2402.0',
+                                                                        'usr/lib/x86_64-linux-gnu/libgstdxva-1.0.so.0': 'libgstdxva-1.0.so.0.2402.0',
+                                                                        'usr/lib/x86_64-linux-gnu/libgstinsertbin-1.0.so.0': 'libgstinsertbin-1.0.so.0.2402.0',
+                                                                        'usr/lib/x86_64-linux-gnu/libgstisoff-1.0.so.0': 'libgstisoff-1.0.so.0.2402.0',
+                                                                        'usr/lib/x86_64-linux-gnu/libgstmpegts-1.0.so.0': 'libgstmpegts-1.0.so.0.2402.0',
+                                                                        'usr/lib/x86_64-linux-gnu/libgstmse-1.0.so.0': 'libgstmse-1.0.so.0.2402.0',
+                                                                        'usr/lib/x86_64-linux-gnu/libgstplay-1.0.so.0': 'libgstplay-1.0.so.0.2402.0',
+                                                                        'usr/lib/x86_64-linux-gnu/libgstplayer-1.0.so.0': 'libgstplayer-1.0.so.0.2402.0',
+                                                                        'usr/lib/x86_64-linux-gnu/libgstsctp-1.0.so.0': 'libgstsctp-1.0.so.0.2402.0',
+                                                                        'usr/lib/x86_64-linux-gnu/libgsturidownloader-1.0.so.0': 'libgsturidownloader-1.0.so.0.2402.0',
+                                                                        'usr/lib/x86_64-linux-gnu/libgstva-1.0.so.0': 'libgstva-1.0.so.0.2402.0',
+                                                                        'usr/lib/x86_64-linux-gnu/libgstvulkan-1.0.so.0': 'libgstvulkan-1.0.so.0.2402.0',
+                                                                        'usr/lib/x86_64-linux-gnu/libgstwayland-1.0.so.0': 'libgstwayland-1.0.so.0.2402.0',
+                                                                        'usr/lib/x86_64-linux-gnu/libgstwebrtc-1.0.so.0': 'libgstwebrtc-1.0.so.0.2402.0',
+                                                                        'usr/lib/x86_64-linux-gnu/libgstwebrtcnice-1.0.so.0': 'libgstwebrtcnice-1.0.so.0.2402.0'},
+                                                           'preserved_control_sha256': '10ec7183685d9bdeeec1530080e3af46171abc7f5530658a24bbc1021e2caa95',
+                                                           'original_elf_info': {'class': 64,
+                                                                                 'endianness': 'little',
+                                                                                 'type': 3,
+                                                                                 'machine': 62,
+                                                                                 'soname': 'libgstcodecparsers-1.0.so.0',
+                                                                                 'needed': ['libc.so.6',
+                                                                                            'libglib-2.0.so.0',
+                                                                                            'libgstbase-1.0.so.0',
+                                                                                            'libgstreamer-1.0.so.0',
+                                                                                            'libm.so.6']}},
+                         'gstreamer1.0-plugins-bad': {'payload_sha256': '011385d083895deeb7e6a282573290203422f9ada685f281b4a3b386d3aeb447',
+                                                      'entries': 295,
+                                                      'symlinks': {'usr/share/doc/gstreamer1.0-plugins-bad/changelog.Debian.gz': '../libgstreamer-plugins-bad1.0-0/changelog.Debian.gz'},
+                                                      'preserved_control_sha256': '171f41ad58b6f0e78d53d44fda1841bb28d987e24081d1de1ad537673db3bba2'}},
+               'arm64': {'libgstreamer-plugins-bad1.0-0': {'payload_sha256': 'c6b099ca929a2602f08816cec653adf0953ea6a6580fee432398962c48e06bba',
+                                                           'entries': 65,
+                                                           'symlinks': {'usr/lib/aarch64-linux-gnu/libgstadaptivedemux-1.0.so.0': 'libgstadaptivedemux-1.0.so.0.2402.0',
+                                                                        'usr/lib/aarch64-linux-gnu/libgstanalytics-1.0.so.0': 'libgstanalytics-1.0.so.0.2402.0',
+                                                                        'usr/lib/aarch64-linux-gnu/libgstbadaudio-1.0.so.0': 'libgstbadaudio-1.0.so.0.2402.0',
+                                                                        'usr/lib/aarch64-linux-gnu/libgstcodecparsers-1.0.so.0': 'libgstcodecparsers-1.0.so.0.2402.0',
+                                                                        'usr/lib/aarch64-linux-gnu/libgstcodecs-1.0.so.0': 'libgstcodecs-1.0.so.0.2402.0',
+                                                                        'usr/lib/aarch64-linux-gnu/libgstcuda-1.0.so.0': 'libgstcuda-1.0.so.0.2402.0',
+                                                                        'usr/lib/aarch64-linux-gnu/libgstdxva-1.0.so.0': 'libgstdxva-1.0.so.0.2402.0',
+                                                                        'usr/lib/aarch64-linux-gnu/libgstinsertbin-1.0.so.0': 'libgstinsertbin-1.0.so.0.2402.0',
+                                                                        'usr/lib/aarch64-linux-gnu/libgstisoff-1.0.so.0': 'libgstisoff-1.0.so.0.2402.0',
+                                                                        'usr/lib/aarch64-linux-gnu/libgstmpegts-1.0.so.0': 'libgstmpegts-1.0.so.0.2402.0',
+                                                                        'usr/lib/aarch64-linux-gnu/libgstmse-1.0.so.0': 'libgstmse-1.0.so.0.2402.0',
+                                                                        'usr/lib/aarch64-linux-gnu/libgstplay-1.0.so.0': 'libgstplay-1.0.so.0.2402.0',
+                                                                        'usr/lib/aarch64-linux-gnu/libgstplayer-1.0.so.0': 'libgstplayer-1.0.so.0.2402.0',
+                                                                        'usr/lib/aarch64-linux-gnu/libgstsctp-1.0.so.0': 'libgstsctp-1.0.so.0.2402.0',
+                                                                        'usr/lib/aarch64-linux-gnu/libgsturidownloader-1.0.so.0': 'libgsturidownloader-1.0.so.0.2402.0',
+                                                                        'usr/lib/aarch64-linux-gnu/libgstva-1.0.so.0': 'libgstva-1.0.so.0.2402.0',
+                                                                        'usr/lib/aarch64-linux-gnu/libgstvulkan-1.0.so.0': 'libgstvulkan-1.0.so.0.2402.0',
+                                                                        'usr/lib/aarch64-linux-gnu/libgstwayland-1.0.so.0': 'libgstwayland-1.0.so.0.2402.0',
+                                                                        'usr/lib/aarch64-linux-gnu/libgstwebrtc-1.0.so.0': 'libgstwebrtc-1.0.so.0.2402.0',
+                                                                        'usr/lib/aarch64-linux-gnu/libgstwebrtcnice-1.0.so.0': 'libgstwebrtcnice-1.0.so.0.2402.0'},
+                                                           'preserved_control_sha256': 'd974914d6c3eef2b54d23e7c8c9f3628c753965589c5bb5628b1a7ebe2a70720'},
+                         'gstreamer1.0-plugins-bad': {'payload_sha256': '4e412ccaa2558b57798e6b3401d215eb6fffd2c1eda7654dd26c0e8313ece05a',
+                                                      'entries': 293,
+                                                      'symlinks': {'usr/share/doc/gstreamer1.0-plugins-bad/changelog.Debian.gz': '../libgstreamer-plugins-bad1.0-0/changelog.Debian.gz'},
+                                                      'preserved_control_sha256': '3c5014c8ed3516693dd5bfdda94eaca2364dea38df6a5636029bfdc4eeeb39b4'}}},
+ 'advisory': 'CVE-2025-3887',
+ 'advisory_sha256': '1900462e5beeef08968686315584b82bd8a761c85eacc52714543996a38e0fe0',
+ 'build_command': ['ninja',
+                   '-j2',
+                   '-C',
+                   '/opt/victron-gstreamer-build/build',
+                   'gst-libs/gst/codecparsers/libgstcodecparsers-1.0.so.0.2402.0']},
  'libbpf': {'source_manifest': {'schema': 1,
                                 'source_package': 'libbpf',
                                 'upstream_version': '1.3.0',
@@ -1394,44 +1512,54 @@ class Supervisor:
     def __init__(self, env, paths, log, disk_log):
         self.env, self.paths, self.log, self.disk_log = env, paths, log, disk_log
         self.minimum = None
+        self.last_disk_record = None
+        self.last_disk_floor = None
 
-    def check(self, floor=RESERVE):
+    def check(self, floor=RESERVE, *, force_record=False):
         free = {str(path): shutil.disk_usage(path).free for path in self.paths}
         minimum = min(free.values())
         self.minimum = minimum if self.minimum is None else min(self.minimum, minimum)
-        with self.disk_log.open('a') as out:
-            out.write(json.dumps({'at': now(), 'free_bytes': free, 'required_bytes': floor}) + '\n')
+        observed_at = time.monotonic()
+        # Hashing invokes this guard for every block. Only the log is sampled;
+        # every call still checks all filesystems and retains the observed minimum.
+        if (force_record or self.last_disk_record is None or observed_at - self.last_disk_record >= 1
+                or floor != self.last_disk_floor or minimum < floor):
+            with self.disk_log.open('a') as out:
+                out.write(json.dumps({'at': now(), 'free_bytes': free, 'required_bytes': floor,
+                                      'minimum_free_bytes': self.minimum}) + '\n')
+            self.last_disk_record, self.last_disk_floor = observed_at, floor
         require(minimum >= floor, 'Disk reserve exhausted')
         return minimum
 
     def run(self, command, seconds=60, capture=False, inspect=None):
-        self.check()
-        if capture:
-            result = subprocess.run(command, env=self.env, capture_output=True, timeout=seconds, check=True)
-            self.check()
-            require(len(result.stdout) <= 2 * 1024**2, 'Metadata response too large')
-            return result.stdout.decode().strip()
-        with self.log.open('ab') as output:
-            process = subprocess.Popen(command, env=self.env, stdout=output, stderr=subprocess.STDOUT,
-                                       start_new_session=True)
-            deadline = time.monotonic() + seconds
-            try:
-                while process.poll() is None:
-                    require(time.monotonic() < deadline, 'Owned command deadline exceeded')
-                    self.check()
-                    if inspect:
-                        inspect()
-                    time.sleep(5)
-                require(process.returncode == 0, 'Owned command failed: ' + str(process.returncode))
-                self.check()
-            finally:
-                if process.poll() is None:
-                    os.killpg(process.pid, signal.SIGTERM)
-                    try:
-                        process.wait(timeout=5)
-                    except subprocess.TimeoutExpired:
-                        os.killpg(process.pid, signal.SIGKILL)
-                        process.wait(timeout=5)
+        self.check(force_record=True)
+        try:
+            if capture:
+                result = subprocess.run(command, env=self.env, capture_output=True, timeout=seconds, check=True)
+                require(len(result.stdout) <= 2 * 1024**2, 'Metadata response too large')
+                return result.stdout.decode().strip()
+            with self.log.open('ab') as output:
+                process = subprocess.Popen(command, env=self.env, stdout=output, stderr=subprocess.STDOUT,
+                                           start_new_session=True)
+                deadline = time.monotonic() + seconds
+                try:
+                    while process.poll() is None:
+                        require(time.monotonic() < deadline, 'Owned command deadline exceeded')
+                        self.check()
+                        if inspect:
+                            inspect()
+                        time.sleep(5)
+                    require(process.returncode == 0, 'Owned command failed: ' + str(process.returncode))
+                finally:
+                    if process.poll() is None:
+                        os.killpg(process.pid, signal.SIGTERM)
+                        try:
+                            process.wait(timeout=5)
+                        except subprocess.TimeoutExpired:
+                            os.killpg(process.pid, signal.SIGKILL)
+                            process.wait(timeout=5)
+        finally:
+            self.check(force_record=True)
 
 
 def builder_identity(item, name, owner, image):
@@ -1575,13 +1703,37 @@ def build_command(stage, data, identity, builder, context, output, layout=None, 
     return command + [str(context)]
 
 
-def libbpf_preflight_command(data, builder, context):
+def patch_preflight_command(data, builder, context, component):
     # Same canonical stage, platform, context and bounded builder as the full
     # image. Cache-only output cannot be mistaken for a qualified final image.
+    require(component in {'libbpf', 'gstreamer'}, 'Unknown canonical patch preflight')
     return ['docker', 'buildx', 'build', '--builder', builder, '--platform', 'linux/amd64',
-            '--progress', 'plain', '--network=default', '--target', 'patched-libbpf',
+            '--progress', 'plain', '--network=default', '--target', 'patched-' + component,
             '--output', 'type=cacheonly', '--file', str(context / data['contexts']['public']['recipe']),
             str(context)]
+
+
+def run_patch_preflights(sup, data, builder, context, record, check_build):
+    started = time.monotonic()
+    deadline = started + 900
+    record['patch_preflight_budget_seconds'] = 900
+    try:
+        for component in ('libbpf', 'gstreamer'):
+            key = component + '_preflight_'
+            command = patch_preflight_command(data, builder, context, component)
+            record[key + 'command'] = command
+            record[key + 'started_at'] = now()
+            remaining = deadline - time.monotonic()
+            require(0 < remaining <= 900, 'Canonical patch preflight budget exhausted')
+            record[key + 'timeout_seconds'] = remaining
+            sup.run(command, seconds=remaining, inspect=check_build)
+            check_build()
+            require(time.monotonic() <= deadline, 'Canonical patch preflight budget exhausted')
+            record[key + 'completed'] = True
+            record[key + 'finished_at'] = now()
+            record[key + 'claim'] = 'Canonical stage succeeded; the full build may reuse this builder cache.'
+    finally:
+        record['patch_preflight_elapsed_seconds'] = time.monotonic() - started
 
 
 def scan_summary(data, proof):
@@ -1619,7 +1771,7 @@ def scan_file_evidence(layout, selection, proof, check):
     components, errors = {}, []
     def record(path):
         return {key: value for key, value in oci.effective_regular(tree, path).items() if key != 'text'}
-    for name in ('headers', 'runc', 'libbpf'):
+    for name in ('headers', 'runc', 'libbpf', 'gstreamer'):
         try:
             if name == 'headers':
                 package = oci.package_files(effective, 'linux-libc-dev', 'amd64', '6.8.0-147.147')
@@ -1627,6 +1779,17 @@ def scan_file_evidence(layout, selection, proof, check):
                 components[name] = package
             elif name == 'runc':
                 components[name] = record('usr/local/bin/runc')
+            elif name == 'gstreamer':
+                prefix = 'usr/local/share/victron-gstreamer/'
+                spec = SCAN_POLICY['gstreamer']
+                packages = {package: oci.package_files(effective, package, 'amd64',
+                    spec['source_manifest']['downstream_version'], baseline['symlinks'])
+                    for package, baseline in spec['baselines']['amd64'].items()}
+                components[name] = {'packages': packages, 'library': record(oci.GSTREAMER_LIBRARY),
+                    'files': {name: record(prefix + name) for name in
+                              ('source-manifest.json', 'backport.patch', 'build-provenance.json')},
+                    'source_manifest': oci.json_document(oci.effective_text(tree, prefix + 'source-manifest.json')),
+                    'provenance': oci.json_document(oci.effective_text(tree, prefix + 'build-provenance.json'))}
             else:
                 library = 'usr/lib/x86_64-linux-gnu/libbpf.so.1.3.0'
                 prefix = 'usr/local/share/victron-libbpf/'
@@ -1763,7 +1926,7 @@ def assess_components(file_evidence):
     """Check immutable payload evidence; a package version alone grants nothing."""
     components = file_evidence['components']
     result = {}
-    for component in ('headers', 'runc', 'libbpf'):
+    for component in ('headers', 'runc', 'libbpf', 'gstreamer'):
         try:
             item = components[component]
             if component == 'headers':
@@ -1782,6 +1945,90 @@ def assess_components(file_evidence):
             elif component == 'runc':
                 require(all(item.get(k) == v for k, v in SCAN_POLICY['runc'].items()),
                         'Actual runc binary changed')
+            elif component == 'gstreamer':
+                spec = SCAN_POLICY['gstreamer']
+                source, files, provenance = spec['source_manifest'], item['files'], item['provenance']
+                library = item['library']
+                relative = 'usr/lib/x86_64-linux-gnu/' + source['library']
+                require(item['source_manifest'] == source and provenance['source'] == source and
+                        files['source-manifest.json']['sha256'] == spec['source_manifest_sha256'] and
+                        files['backport.patch']['sha256'] == source['patch']['sha256'] and
+                        all(record['type'] == 'regular' and record['mode'] == 420 and record['elf'] is False
+                            for record in files.values()), 'GStreamer source evidence changed')
+                require(type(provenance['schema']) is int and provenance['schema'] == 1 and
+                        provenance['architecture'] == 'amd64' and
+                        provenance['uid'] == 10001 and provenance['builder_sha256'] == spec['builder_sha256'] and
+                        provenance['build_command'] == spec['build_command'] and
+                        provenance['patched_parser_sha256'] == source['patch']['after_sha256'] and
+                        provenance['ordinary_parser_allocation_smoke_passed'] is True and
+                        provenance['library_path'] == relative and provenance['soname'] == source['soname'],
+                        'GStreamer build evidence changed')
+                require(library['type'] == 'regular' and library['mode'] == 420 and library['elf'] is True and
+                        0 < library['bytes'] <= 8 * 1024**2 and
+                        library['sha256'] == provenance['library_sha256'] and
+                        library['sha256'] != source['original_library_sha256']['amd64'] and
+                        provenance['original_library_sha256'] == source['original_library_sha256']['amd64'] and
+                        library['elf_info'] == spec['baselines']['amd64']['libgstreamer-plugins-bad1.0-0']['original_elf_info'],
+                        'Actual fixed GStreamer ELF differs')
+                require(set(item['packages']) == set(provenance['packages']) == set(spec['baselines']['amd64']),
+                        'GStreamer package pair differs')
+                for package, baseline in spec['baselines']['amd64'].items():
+                    actual, declared = item['packages'][package], provenance['packages'][package]
+                    old, installed = declared['original_payload'], declared['installed_payload']
+                    require(actual['package'] == package and actual['architecture'] == 'amd64' and
+                            actual['version'] == source['downstream_version'] and
+                            actual['source_package'] in {'gst-plugins-bad1.0',
+                                'gst-plugins-bad1.0 (' + source['downstream_version'] + ')'} and
+                            stable_digest(actual['inventory']) == actual['inventory_sha256'] and
+                            stable_digest(old) == baseline['payload_sha256'] and len(old) == baseline['entries'] and
+                            declared['original_package_sha256'] == source['binaries'][
+                                package + '_' + source['version'] + '_amd64.deb']['sha256'] and
+                            re.fullmatch(r'[0-9a-f]{64}', declared['package_sha256']),
+                            'Original or installed GStreamer package identity differs')
+                    projected = {}
+                    for path, record in actual['inventory'].items():
+                        kind = record['type']
+                        require(kind in {'regular', 'directory', 'symlink'}, 'GStreamer package file type differs')
+                        value = {'type': 'file' if kind == 'regular' else kind, 'mode': record['mode']}
+                        if kind == 'regular':
+                            value.update(bytes=record['bytes'], sha256=record['sha256'])
+                        elif kind == 'symlink':
+                            value['target'] = record['target']
+                        projected[path] = value
+                    changed = [relative] if package == 'libgstreamer-plugins-bad1.0-0' else []
+                    require(projected == installed and set(old) == set(installed) and
+                            declared['changed_payload'] == changed and
+                            {path for path in old if old[path] != installed[path]} == set(changed),
+                            'Unrelated GStreamer plugin payload changed')
+                    if changed:
+                        require(installed[relative] == {'type': 'file', 'mode': 420,
+                                'bytes': library['bytes'], 'sha256': library['sha256']},
+                                'Installed GStreamer library does not match package inventory')
+                    control, status = declared['control'], {}
+                    current = None
+                    for line in actual['status'].splitlines():
+                        if line.startswith((' ', '\t')):
+                            require(current is not None, 'Invalid package status continuation')
+                            status[current] += '\n' + line
+                        else:
+                            key, separator, value = line.partition(': ')
+                            require(separator and key not in status, 'Invalid package status field')
+                            status[key], current = value, key
+                    require(status.get('Status') == 'install ok installed' and
+                            all(status.get(key) == value for key, value in control.items() if key != 'Source') and
+                            status.get('Source') == actual['source_package'] and
+                            control['Source'] == 'gst-plugins-bad1.0 (' + source['downstream_version'] + ')' and
+                            control['Maintainer'] == 'alvit <272257197+4alvit@users.noreply.github.com>',
+                            'GStreamer installed control metadata differs')
+                    preserved = {key: value for key, value in control.items()
+                                 if key not in {'Source', 'Version', 'Maintainer', 'Installed-Size'}}
+                    if package == 'gstreamer1.0-plugins-bad':
+                        dependency = 'libgstreamer-plugins-bad1.0-0 (= ' + source['downstream_version'] + ')'
+                        require(preserved['Depends'].count(dependency) == 1, 'GStreamer paired dependency differs')
+                        preserved['Depends'] = preserved['Depends'].replace(dependency,
+                            'libgstreamer-plugins-bad1.0-0 (= ' + source['version'] + ')')
+                    require(stable_digest(preserved) == baseline['preserved_control_sha256'],
+                            'Unrelated GStreamer dependencies or metadata changed')
             else:
                 spec, files, provenance = SCAN_POLICY['libbpf'], item['files'], item['provenance']
                 package, library = item['package'], item['library']
@@ -1870,15 +2117,39 @@ def scan_acceptance(data, proof, file_evidence, context):
             'Effective file evidence binding differs')
     require(isinstance(file_evidence['errors'], list) and
             set(file_evidence['errors']) <= {'headers_evidence_invalid', 'runc_evidence_invalid',
-                                           'libbpf_evidence_invalid'}, 'Unknown effective evidence error')
+                                           'libbpf_evidence_invalid', 'gstreamer_evidence_invalid'},
+            'Unknown effective evidence error')
     components = assess_components(file_evidence)
     # The scanner currently attributes this CVE to Linux headers, although a
     # separate installed library contains affected code. Require the actual
     # backport even if no scanner finding happens to mention that library.
     failed = [] if components['libbpf'] else ['installed_libbpf_backport_not_verified']
+    if not components['gstreamer']:
+        failed.append('installed_gstreamer_backport_not_verified')
     rows = assessment_findings(data, proof, context['artifact_name'])
     assessed, unresolved = [], []
     for row in rows:
+        gst = SCAN_POLICY['gstreamer']
+        if row['vulnerability'] == gst['advisory']:
+            package, version = row['package'], gst['source_manifest']['downstream_version']
+            identity = {'class': 'os-pkgs', 'type': 'ubuntu', 'version': version,
+                        'package_id': package + '@' + version, 'source_package': 'gst-plugins-bad1.0',
+                        'source_version': '1.24.2', 'source_release': '1ubuntu4+victron1',
+                        'architecture': 'amd64', 'package_path': None,
+                        'purl': 'pkg:deb/ubuntu/' + package + '@' + version.replace('+', '%2B') +
+                                '?arch=amd64&distro=ubuntu-24.04'}
+            matches = (package in gst['baselines']['amd64'] and
+                       row['target'] == context['artifact_name'] + ' (ubuntu 24.04)' and
+                       all(row[key] == value for key, value in identity.items()))
+            reason = ('finding_identity_changed' if not matches else
+                      'advisory_content_changed' if row['advisory_sha256'] != gst['advisory_sha256'] else
+                      'effective_component_changed')
+            if matches and row['advisory_sha256'] == gst['advisory_sha256'] and components['gstreamer']:
+                assessed.append({**row, 'rule_id': 'installed_gstreamer_h265_backport',
+                    'evidence_canonical_sha256': stable_digest(file_evidence['components']['gstreamer'])})
+            else:
+                unresolved.append({**row, 'reason': reason})
+            continue
         policy = SCAN_POLICY['advisories'].get(row['vulnerability'])
         reason = 'unreviewed_advisory'
         if policy:
@@ -1919,14 +2190,21 @@ def check_cgroup_receipt(build):
     cgroup.require_run_inside(proof['run_process'], proof)
 
 
-def check_libbpf_preflight(build, manifest):
+def check_patch_preflights(build, manifest):
     command = build['command']
     name = 'runner-artifact-public-' + build['run_id'] + '-' + build['run_attempt']
     require(command[command.index('--builder') + 1] == name and Path(command[-1]).is_absolute(),
             'Public build command identity differs')
-    require(build.get('libbpf_preflight_completed') is True and
-            build.get('libbpf_preflight_command') == libbpf_preflight_command(manifest, name, Path(command[-1])),
-            'Canonical libbpf preflight is incomplete')
+    elapsed = build.get('patch_preflight_elapsed_seconds')
+    require(build.get('patch_preflight_budget_seconds') == 900 and type(elapsed) in (int, float) and
+            0 <= elapsed <= 900, 'Canonical patch preflight budget differs')
+    for component in ('libbpf', 'gstreamer'):
+        key = component + '_preflight_'
+        timeout = build.get(key + 'timeout_seconds')
+        require(build.get(key + 'completed') is True and
+                build.get(key + 'command') == patch_preflight_command(manifest, name, Path(command[-1]), component)
+                and type(timeout) in (int, float) and 0 < timeout <= 900,
+                'Canonical ' + component + ' preflight is incomplete')
 
 
 def validate_parent(parent, identity, manifest):
@@ -1940,7 +2218,7 @@ def validate_parent(parent, identity, manifest):
     require(build.get('builder_cleanup_state', {}).get('state_volume_removed') is True,
             'Public builder cache removal is unconfirmed')
     check_cgroup_receipt(build)
-    check_libbpf_preflight(build, manifest)
+    check_patch_preflights(build, manifest)
     require(document(parent / 'cgroup-verification.json') == build['cgroup_proof'], 'Parent cgroup proof differs')
     require(build.get('manifest_sha256') == oci.digest_file(MANIFEST), 'Public manifest binding differs')
     require(build.get('canonical_context') == manifest['contexts']['public']['files'] and
@@ -1991,7 +2269,7 @@ def execute(stage, parent=None):
     try:
         require(sup.run(['git', '-C', str(ROOT), 'rev-parse', 'HEAD'], capture=True) == identity['source_commit'],
                 'Checkout differs from dispatched commit')
-        record['initial_free_bytes'] = sup.check(START_FREE)
+        record['initial_free_bytes'] = sup.check(START_FREE, force_record=True)
         record['docker_version'] = sup.run(['docker', '--version'], capture=True)
         record['buildx_version'] = sup.run(['docker', 'buildx', 'version'], capture=True)
         context = work / 'context'
@@ -2001,7 +2279,7 @@ def execute(stage, parent=None):
             require(parent is not None and parent.resolve().is_relative_to(temporary), 'Unexpected parent artifact directory')
             base = validate_parent(parent, identity, data)
             layout = work / 'public-layout'
-            sup.check(RESERVE + base['archive_bytes'])
+            sup.check(RESERVE + base['archive_bytes'], force_record=True)
             oci.materialize(parent / 'image.oci.tar', base, layout, sup.check)
             record['base_index'] = base['image_index']
             record['base_archive_sha256'] = base['archive_sha256']
@@ -2040,14 +2318,7 @@ def execute(stage, parent=None):
             require(current['Id'] == observed['Id'], 'Builder identity changed')
             cgroup.sample(current['State']['Pid'], record['cgroup_proof'], observe=observe_cgroup)
         if stage == 'public':
-            preflight = libbpf_preflight_command(data, name, context)
-            record['libbpf_preflight_command'] = preflight
-            record['libbpf_preflight_started_at'] = now()
-            sup.run(preflight, seconds=900, inspect=check_build)
-            check_build()
-            record['libbpf_preflight_completed'] = True
-            record['libbpf_preflight_finished_at'] = now()
-            record['libbpf_preflight_claim'] = 'Canonical stage succeeded; the full build may reuse this builder cache.'
+            run_patch_preflights(sup, data, name, context, record, check_build)
         command = build_command(stage, data, identity, name, context, output / 'image.oci.tar', layout, base)
         record['command'] = command
         sup.run(command, seconds=2700, inspect=check_build)
@@ -2165,7 +2436,7 @@ def run_scan(sup, data, work, output, owner, proof, record):
     layout = work / 'scan-layout'
     # An OCI tar is not a Docker archive. Trivy requires an OCI directory;
     # select the already verified executable manifest, irrespective of order.
-    sup.check(RESERVE + proof['archive_bytes'])
+    sup.check(RESERVE + proof['archive_bytes'], force_record=True)
     selection = oci.project_scan_input(output / 'image.oci.tar', proof, layout, sup.check)
     save(output / 'scan-input.json', selection)
     record['scan_input_sha256'] = oci.digest_file(output / 'scan-input.json')
@@ -2251,7 +2522,7 @@ def gate(directories):
     for directory, build in zip(directories, builds):
         check_cgroup_receipt(build)
         if build['stage'] == 'public':
-            check_libbpf_preflight(build, manifest)
+            check_patch_preflights(build, manifest)
         require(document(directory / 'cgroup-verification.json') == build['cgroup_proof'], 'Cgroup proof differs')
         summary = document(directory / 'scan-summary.json')
         require(oci.digest_file(directory / 'scan.json') == build.get('scan_sha256'), 'Raw scan changed before gate')

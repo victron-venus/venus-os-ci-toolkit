@@ -1,0 +1,76 @@
+{
+  "schema": 1,
+  "source_package": "gst-plugins-bad1.0",
+  "version": "1.24.2-1ubuntu4",
+  "downstream_version": "1.24.2-1ubuntu4+victron1",
+  "architectures": [
+    "amd64",
+    "arm64"
+  ],
+  "source_date_epoch": 1792886400,
+  "library": "libgstcodecparsers-1.0.so.0.2402.0",
+  "soname": "libgstcodecparsers-1.0.so.0",
+  "sources": {
+    "gst-plugins-bad1.0_1.24.2.orig.tar.xz": {
+      "url": "https://archive.ubuntu.com/ubuntu/pool/universe/g/gst-plugins-bad1.0/gst-plugins-bad1.0_1.24.2.orig.tar.xz",
+      "sha256": "448e32787bc82b586c6cb2f81c9a8ef404fea4f77f25566fe06e597a3f59136b",
+      "bytes": 7046860
+    },
+    "gst-plugins-bad1.0_1.24.2-1ubuntu4.debian.tar.xz": {
+      "url": "https://archive.ubuntu.com/ubuntu/pool/universe/g/gst-plugins-bad1.0/gst-plugins-bad1.0_1.24.2-1ubuntu4.debian.tar.xz",
+      "sha256": "05fefdaf55bd00dfd434caa10e837a4f01fb5ff6fdd54c9c8a0ddddcec15620b",
+      "bytes": 47348
+    },
+    "gst-plugins-bad1.0_1.24.2-1ubuntu4.dsc": {
+      "url": "https://archive.ubuntu.com/ubuntu/pool/universe/g/gst-plugins-bad1.0/gst-plugins-bad1.0_1.24.2-1ubuntu4.dsc",
+      "sha256": "064b23e05d08dd65a8ea16e8325fe0fc21468d21e3fd0347ba5b069617034d02",
+      "bytes": 5850
+    }
+  },
+  "binaries": {
+    "libgstreamer-plugins-bad1.0-0_1.24.2-1ubuntu4_amd64.deb": {
+      "url": "https://archive.ubuntu.com/ubuntu/pool/universe/g/gst-plugins-bad1.0/libgstreamer-plugins-bad1.0-0_1.24.2-1ubuntu4_amd64.deb",
+      "bytes": 797390,
+      "sha256": "6e8da41c0cbb2070f3477cf02360c2ce2eb55e825ba09e12b4270b3254e04f45"
+    },
+    "gstreamer1.0-plugins-bad_1.24.2-1ubuntu4_amd64.deb": {
+      "url": "https://archive.ubuntu.com/ubuntu/pool/universe/g/gst-plugins-bad1.0/gstreamer1.0-plugins-bad_1.24.2-1ubuntu4_amd64.deb",
+      "bytes": 3081180,
+      "sha256": "56f47c2a6b390722416c962564da6ab5fc7315dcbaa653fe4457a8db6ed34ca6"
+    },
+    "libgstreamer-plugins-bad1.0-0_1.24.2-1ubuntu4_arm64.deb": {
+      "url": "https://ports.ubuntu.com/ubuntu-ports/pool/universe/g/gst-plugins-bad1.0/libgstreamer-plugins-bad1.0-0_1.24.2-1ubuntu4_arm64.deb",
+      "bytes": 770868,
+      "sha256": "917784636880a70102884e4842b4bf226feafb5b29417fdd71522dff4253c2ec"
+    },
+    "gstreamer1.0-plugins-bad_1.24.2-1ubuntu4_arm64.deb": {
+      "url": "https://ports.ubuntu.com/ubuntu-ports/pool/universe/g/gst-plugins-bad1.0/gstreamer1.0-plugins-bad_1.24.2-1ubuntu4_arm64.deb",
+      "bytes": 2821832,
+      "sha256": "4948ce79d4e173ec50605188784082f2161e7fd374a584e28db38d44e8cf46ff"
+    }
+  },
+  "patch": {
+    "path": ".github/containers/gstreamer/0001-h265-parser-bounds.patch",
+    "sha256": "7192211e1e5733acde830dda9eb8820a40eb04a17bd14e57cd7bf40e0beba651",
+    "target": "gst-libs/gst/codecparsers/gsth265parser.c",
+    "before_sha256": "d0752d902ddf36da0d1dbd7f1eef757147384174928d4de421aae421f345368f",
+    "after_sha256": "c95c1583d806f6438b024d329247cb16bcd276ce149dc171adf24c483899f08a",
+    "upstream_commits": [
+      "5463f0e09768ca90aa8c58357c1f4c645db580db",
+      "bcaab3609805ea10fb3d9ac0c9d947b4c3563948"
+    ],
+    "upstream_patch_sha256": {
+      "5463f0e09768ca90aa8c58357c1f4c645db580db": "0067dff9de76b5e68ddb5a008f141df1a879c1ed0ea31a3738f45cc75d1b9111",
+      "bcaab3609805ea10fb3d9ac0c9d947b4c3563948": "b05c34612b45b35c0fb950832733033deb6a52356130aaeacf408ecdd665ca75"
+    }
+  },
+  "advisories": [
+    "https://gstreamer.freedesktop.org/security/sa-2025-0001.html",
+    "https://ubuntu.com/security/CVE-2025-3887"
+  ],
+  "scope": "Only codecparsers library rebuilt; original two Ubuntu package payloads retained except that library. Raw findings remain subject to independent final-image acceptance.",
+  "original_library_sha256": {
+    "amd64": "f1d6e9fe6e0a648dae98ff11560bca9b1c414855ad2f212a2cc10821f264036f",
+    "arm64": "841ae4d85d2e85f6269deac782f937993d64ce22abaa80e0bcbe19b1a49f2927"
+  }
+}
