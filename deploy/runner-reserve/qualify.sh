@@ -6,6 +6,7 @@ set -euo pipefail
 [[ ! -e /var/run/secrets/kubernetes.io/serviceaccount/token ]]
 node --version
 npm --version
+node /opt/victron-ci-reserve/qualify-npm.cjs
 python3 --version
 java -version
 git --version
@@ -21,7 +22,13 @@ curl --unix-socket /var/run/docker.sock --noproxy '*' --fail --silent --show-err
   'import json,sys; assert json.load(sys.stdin)["Driver"] == sys.argv[1]' \
   "${RUNNER_DOCKER_STORAGE_DRIVER:-vfs}"
 work=$(mktemp -d)
-trap 'docker rm -f reserve-postgres >/dev/null 2>&1 || true; rm -rf "$work"' EXIT
+cleanup() {
+  docker compose --project-name reserve-qualification --file "$work/compose.yaml" \
+    down --remove-orphans --timeout 5 >/dev/null 2>&1 || true
+  docker rm -f reserve-postgres >/dev/null 2>&1 || true
+  rm -rf "$work"
+}
+trap cleanup EXIT
 cat > "$work/Dockerfile" <<'DOCKERFILE'
 FROM busybox@sha256:bdf57e528e45e4433820e045b29b4597825a1c9e38353532d90a01445013f82e
 RUN printf 'nested-build-ok\n' > /proof && mkdir /opaque && touch /opaque/old /deleted
@@ -30,6 +37,18 @@ CMD ["sh", "-c", "test ! -e /deleted && test ! -e /opaque/old && test -f /opaque
 DOCKERFILE
 docker buildx build --load --tag reserve-smoke:local "$work"
 [[ "$(docker run --rm reserve-smoke:local)" == nested-build-ok ]]
+cat > "$work/compose.yaml" <<'COMPOSE'
+services:
+  smoke:
+    image: reserve-smoke:local
+    pull_policy: never
+    network_mode: none
+COMPOSE
+docker compose --project-name reserve-qualification --file "$work/compose.yaml" config --quiet
+docker compose --project-name reserve-qualification --file "$work/compose.yaml" \
+  up --pull never --no-build --abort-on-container-exit --exit-code-from smoke
+docker compose --project-name reserve-qualification --file "$work/compose.yaml" \
+  down --remove-orphans --timeout 5
 password=$(openssl rand -hex 24)
 docker run --detach --name reserve-postgres \
   --publish 127.0.0.1:55432:5432 --env POSTGRES_PASSWORD="$password" \
@@ -40,4 +59,4 @@ for attempt in {1..60}; do
   sleep 1
 done
 [[ "$(PGPASSWORD="$password" psql --host=127.0.0.1 --port=55432 --username=postgres --no-psqlrc --tuples-only --no-align --command='SELECT 1')" == 1 ]]
-printf 'PASS: sandbox, HTTPS, toolchains, nested BuildKit and PostgreSQL published port\n'
+printf 'PASS: sandbox, HTTPS, toolchains, offline npm, nested BuildKit, Compose and PostgreSQL published port\n'

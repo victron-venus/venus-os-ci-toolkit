@@ -482,8 +482,11 @@ Keep `CI_RUNNER_MODE=github` throughout preparation and manual qualification.
 
 `RUNNER_RESERVE_QUALIFICATION=1` selects the fixed manual probe after the same
 TLS admission and Docker bootstrap; it never registers a GitHub runner. It
-checks sandbox/toolchain prerequisites, public HTTPS, a nested BuildKit build
-and a published PostgreSQL service. Never set it in normal scale-set values.
+checks sandbox/toolchain prerequisites, public HTTPS, offline npm pack/install/ci,
+a nested BuildKit build, Compose config/up/down using that same local image
+without pulling another image, and a published PostgreSQL service. The npm
+fixture is retained in the image so it runs again as the unprivileged sandbox
+user. Never set the qualification flag in normal scale-set values.
 After bootstrap, only this probe has a 600-second deadline and a 15-second forced
 termination grace. The root timeout supervisor retains a process group across
 the probe's UID drop; ordinary JIT runner jobs do not get this probe deadline.
