@@ -221,6 +221,36 @@ class RunnerArtifactsTests(unittest.TestCase):
         result = oci.merge_effective_layer(result, {'a': {'type': 'directory'}, 'a/new': {'type': 'regular'}})
         self.assertEqual(set(result), {'a', 'a/new'})
 
+    def test_effective_layer_requires_directory_before_child_application(self):
+        previous = {'docs': {'type': 'symlink', 'target': 'archive'}}
+        with self.assertRaisesRegex(ValueError, 'ancestor at application'):
+            oci.merge_effective_layer(previous, {'docs/note': {'type': 'regular'},
+                                                 'docs': {'type': 'directory'}})
+        result = oci.merge_effective_layer(previous, {'docs': {'type': 'directory'},
+                                                      'docs/note': {'type': 'regular'}})
+        self.assertEqual(result['docs/note']['type'], 'regular')
+        with self.assertRaisesRegex(ValueError, 'Whiteout'):
+            oci.merge_effective_layer(previous, {'docs/.wh.note': {'type': 'regular'}})
+
+    def test_hardlink_metadata_never_grants_direct_regular_file_evidence(self):
+        original = {'manual': {'type': 'regular', 'mode': 0o644}}
+        result = oci.merge_effective_layer(original,
+            {'manual-copy': {'type': 'hardlink', 'target': 'manual', 'mode': 0o755}})
+        self.assertEqual(original['manual'], {'type': 'regular', 'mode': 0o644})
+        with self.assertRaisesRegex(ValueError, 'hardlink alias'):
+            oci.effective_regular(result, 'manual')
+        # A simple path model cannot prove inode separation after overwrite.
+        result = oci.merge_effective_layer(result, {'manual': {'type': 'regular', 'mode': 0o644}})
+        with self.assertRaisesRegex(ValueError, 'hardlink alias'):
+            oci.effective_regular(result, 'manual')
+        ordinary = oci.merge_effective_layer(result, {'unrelated': {'type': 'regular'}})
+        self.assertEqual(oci.effective_regular(ordinary, 'unrelated'), {'type': 'regular'})
+        package = self.package_fixture()
+        package['files'] = oci.merge_effective_layer(package['files'],
+            {'header-copy': {'type': 'hardlink', 'target': 'usr/include/a.h', 'mode': 0o755}})
+        with self.assertRaisesRegex(ValueError, 'hardlink alias'):
+            oci.package_files(package, 'headers', 'amd64', '1')
+
     def test_selected_effective_files_refuse_links_and_non_directory_ancestors(self):
         regular = {'type': 'regular', 'sha256': 'a' * 64}
         self.assertEqual(oci.effective_regular({'a/f': regular}, 'a/f'), regular)

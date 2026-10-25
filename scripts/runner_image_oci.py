@@ -427,8 +427,21 @@ def effective_path(value):
 def merge_effective_layer(previous, entries):
     """Apply whiteouts to lower layers, then overlay this layer's entries."""
     result = dict(previous)
+    # Hardlink headers can change metadata of a shared inode. This reader does
+    # not model those inode aliases: retain ordinary unrelated links, but never
+    # use either endpoint as direct regular-file evidence, even after overwrite.
+    ambiguous = {path for path, record in previous.items() if record.get('hardlink_ambiguous')}
+    for records in (previous, entries):
+        for path, record in records.items():
+            if record['type'] == 'hardlink':
+                ambiguous.update((path, record['target']))
     for path in entries:
         parent, _, name = path.rpartition('/')
+        if name.startswith('.wh.'):
+            for ancestor in PurePosixPath(path).parents:
+                if str(ancestor) in result:
+                    require(result[str(ancestor)]['type'] == 'directory',
+                            'Whiteout has a non-directory ancestor')
         if name == '.wh..wh..opq':
             result = {p: r for p, r in result.items() if parent and not p.startswith(parent + '/')}
         elif name.startswith('.wh.'):
@@ -441,10 +454,19 @@ def merge_effective_layer(previous, entries):
     for path, record in entries.items():
         if PurePosixPath(path).name.startswith('.wh.'):
             continue
+        # Validate at the moment of application, not only against the eventual
+        # tree: a later directory entry cannot legitimize an earlier child.
+        for candidate in (path, record['target']) if record['type'] == 'hardlink' else (path,):
+            for parent in PurePosixPath(candidate).parents:
+                if str(parent) in result:
+                    require(result[str(parent)]['type'] == 'directory',
+                            'Layer entry has a non-directory ancestor at application')
         if record['type'] != 'directory' and path in ancestors:
             result = {p: r for p, r in result.items() if not p.startswith(path + '/')}
         result[path] = record
         ancestors.update(str(parent) for parent in PurePosixPath(path).parents)
+    for path in ambiguous & result.keys():
+        result[path] = {**result[path], 'hardlink_ambiguous': True}
     return result
 
 
@@ -452,6 +474,7 @@ def effective_regular(tree, path):
     """Selected evidence must be direct regular bytes, never a link target."""
     require(path == effective_path(path), 'Noncanonical selected path')
     require(path in tree and tree[path]['type'] == 'regular', 'Selected file is not regular')
+    require(not tree[path].get('hardlink_ambiguous'), 'Selected file has an unmodelled hardlink alias')
     for parent in PurePosixPath(path).parents:
         if str(parent) != '.' and str(parent) in tree:
             require(tree[str(parent)]['type'] == 'directory', 'Selected file has a non-directory ancestor')
@@ -502,6 +525,7 @@ def package_files(effective, package, architecture, version, allowed_symlinks=No
         path = line[1:]
         require(path not in inventory and path in tree, 'Duplicate or missing package file')
         record = tree[path]
+        require(not record.get('hardlink_ambiguous'), 'Package file has an unmodelled hardlink alias')
         require(record['type'] in {'regular', 'directory'} or
                 (record['type'] == 'symlink' and allowed_symlinks.get(path) == record.get('target')),
                 'Package evidence contains an unapproved link or special file')
