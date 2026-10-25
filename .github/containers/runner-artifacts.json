@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "canonical_source": "50184c41f875a8fac538ae92c65952c3af3a00cf",
+  "canonical_source": "503b0426f60ad0eb6795df82094c2dec26ca8c1d",
   "platform": "linux/amd64",
   "tools": {
     "buildkit": {
@@ -34,8 +34,8 @@
           "mode": "100755"
         },
         "deploy/runner-reserve/Dockerfile": {
-          "sha256": "e7745348d4ebcbc116caa711ec459e7e2186d26ceba5959010370f15cecc4d71",
-          "bytes": 7540,
+          "sha256": "e63351b4dd23e17df78bbcbeedf47df69db60271fcf325dcf6a74dcdb4bc8b6a",
+          "bytes": 7584,
           "mode": "100644"
         },
         "deploy/runner-reserve/Dockerfile.dockerignore": {
@@ -54,8 +54,8 @@
           "mode": "100755"
         },
         "deploy/runner-reserve/qualify.sh": {
-          "sha256": "b04224cc6c3a602dcb0e071b78fbadcf94ba5b75d7de8f9d38f775565a4e35cd",
-          "bytes": 2093,
+          "sha256": "4785df6c37bf05249867fa5887a8c9bc4a57d1e5540169e9522c76bdd5f9e206",
+          "bytes": 2845,
           "mode": "100644"
         },
         ".github/containers/runner-npm.json": {
@@ -174,8 +174,8 @@
           "mode": "100755"
         },
         "deploy/runner-reserve/qualify.sh": {
-          "sha256": "b04224cc6c3a602dcb0e071b78fbadcf94ba5b75d7de8f9d38f775565a4e35cd",
-          "bytes": 2093,
+          "sha256": "4785df6c37bf05249867fa5887a8c9bc4a57d1e5540169e9522c76bdd5f9e206",
+          "bytes": 2845,
           "mode": "100644"
         }
       }
