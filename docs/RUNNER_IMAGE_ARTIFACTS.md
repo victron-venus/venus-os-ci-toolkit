@@ -39,7 +39,7 @@ The two artifact names include the exact run ID and attempt:
 
 Each complete artifact contains `image.oci.tar`, `build-receipt.json`,
 `oci-verification.json`, `cgroup-verification.json`, `scan.json`,
-`scan-summary.json`, `scan-database.json`, the command log and disk observations.
+`scan-summary.json`, `scan-database.json`, the command log, disk observations and `cgroup-observations.jsonl`.
 Failure artifacts retain whichever evidence and partial output exists; a partial
 archive is never accepted as an image. Artifacts expire after seven days. Copy
 accepted archives and their complete evidence to the approved recovery storage
@@ -89,9 +89,17 @@ It does not delete preinstalled SDKs, unrelated images or other jobs' caches.
 
 Each owned BuildKit container has two CPUs, 4 GiB RAM, no swap allowance beyond
 RAM, no restart policy and one parallel build vertex. The workflow verifies the
-actual cgroup v2 limits and private cgroup namespace, then performs a small
+actual cgroup v2 limits and private cgroup namespace. It correlates the stable
+host daemon PID with `/proc/1/cgroup` inside that container and requires the
+resulting root to name that exact Docker container ID. The pinned BuildKit
+[relocates its daemon into an `init` child](https://github.com/moby/buildkit/blob/v0.34.1/executor/resources/monitor.go#L236-L274);
+unlimited leaf values inherit the bounded Docker root and are retained separately.
+The workflow does not search for an arbitrary ancestor with convenient limits.
+It then performs a small
 20-second RUN using the canonical pinned Ubuntu base. A host-side observer must
-see that real RUN process inside the bounded builder cgroup. Limits and builder
+see that real RUN process inside the same bound root (it may be a sibling of
+the daemon leaf). Root and leaf observations are saved before limit validation,
+including failed samples. Limits and builder
 identity are rechecked during the canonical build. HostConfig alone is not
 accepted as enforcement proof. Each canonical build has a 45-minute deadline;
 the scan has a separate bounded command and container. There is no retry loop.

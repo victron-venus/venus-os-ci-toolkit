@@ -306,37 +306,102 @@ class RunnerArtifactsTests(unittest.TestCase):
         (path / 'cmdline').write_bytes(b'sh\0-c\0sleep 20; :\0' + (marker or '').encode() + b'\0')
         return proc
 
+    def cgroup_binding(self, relocated=True):
+        container_id = 'a' * 64
+        root = '/system.slice/docker-' + container_id + '.scope'
+        path = root + '/init' if relocated else root
+        private = '/init' if relocated else '/'
+        proc = self.cgroup_fixture(100, path)
+        parent = cgroup.process_identity(100, proc)
+        return proc, {'container_id': container_id, 'builder_process': parent,
+                      'private_process_path': private, 'owned_root': root}
+
     def test_actual_cgroup_limits_and_run_inheritance_are_required(self):
         marker = 'runner-proof-' + 'a' * 32
-        proc = self.cgroup_fixture(100, '/docker/bounded')
-        self.cgroup_fixture(101, '/docker/bounded/buildkit/child', marker)
+        proc, binding = self.cgroup_binding()
+        root = binding['owned_root']
+        self.cgroup_fixture(101, root + '/buildkit/child', marker)
         groups = self.root / 'cgroup'
-        directory = groups / 'docker/bounded'
-        directory.mkdir(parents=True)
+        directory = groups / root.lstrip('/')
+        leaf = directory / 'init'
+        leaf.mkdir(parents=True)
         (groups / 'cgroup.controllers').write_text('cpu memory')
         expected = {'cpu.max': '200000 100000', 'memory.max': str(4 * build.GIB), 'memory.swap.max': '0'}
         for key, value in expected.items():
             (directory / key).write_text(value)
-        parent, limits = cgroup.sample(100, proc=proc, cgroups=groups)
+            (leaf / key).write_text('max')
+        observations = []
+        parent, limits = cgroup.sample(100, binding, proc, groups, observations.append)
         self.assertEqual(limits, expected)
-        self.assertEqual(cgroup.run_processes(marker, parent, proc)[0]['pid'], 101)
+        self.assertEqual(observations[-1]['leaf_limits']['memory.max'], 'max')
+        self.assertEqual(observations[-1]['root_limits'], expected)
+        # RUN is a sibling of the relocated daemon, under the same owned root.
+        self.assertEqual(cgroup.run_processes(marker, binding, proc)[0]['pid'], 101)
         (proc / '101/cgroup').write_text('0::/docker/unbounded\n')
         with self.assertRaisesRegex(ValueError, 'outside'):
-            cgroup.run_processes(marker, parent, proc)
+            cgroup.run_processes(marker, binding, proc)
         for key in expected:
             (directory / key).write_text('max')
             with self.subTest(key=key), self.assertRaisesRegex(ValueError, 'limits differ'):
-                cgroup.sample(100, parent, proc, groups)
+                cgroup.sample(100, binding, proc, groups, observations.append)
+            self.assertEqual(observations[-1]['root_limits'][key], 'max')
+            self.assertNotIn('accepted', observations[-1])
             (directory / key).write_text(expected[key])
+        (directory / 'memory.swap.max').write_text(str(4 * build.GIB))
+        with self.assertRaisesRegex(ValueError, 'limits differ'):
+            cgroup.sample(100, binding, proc, groups)
+        (proc / '100/cgroup').write_text('0::/docker/changed-root\n')
+        with self.assertRaisesRegex(ValueError, 'process changed'):
+            cgroup.sample(100, binding, proc, groups)
+        (proc / '100/cgroup').write_text('0::' + parent['cgroup'] + '\n')
         (proc / '100/stat').write_text('100 (new process) ' + ' '.join(['S'] + ['0'] * 18 + ['999']))
         with self.assertRaisesRegex(ValueError, 'process changed'):
-            cgroup.sample(100, parent, proc, groups)
+            cgroup.sample(100, binding, proc, groups)
         with self.assertRaisesRegex(ValueError, 'cgroup v2'):
             cgroup.group_path('2:memory:/docker/bounded')
 
+    def test_owned_root_requires_exact_docker_identity_and_private_suffix(self):
+        container_id = 'a' * 64
+        for root in ('/docker/' + container_id, '/system.slice/docker-' + container_id + '.scope'):
+            for private in ('/', '/init', '/internal/init'):
+                with self.subTest(root=root, private=private):
+                    host = root if private == '/' else root + private
+                    self.assertEqual(cgroup.owned_root(container_id, {'cgroup': host}, private), root)
+        for host, private in (('/docker/' + 'b' * 64 + '/init', '/init'),
+                              ('/docker/' + container_id + '/init', '/other'),
+                              ('/docker/' + container_id + '/init', '/'),
+                              ('/docker/' + container_id + '/init', '/docker/' + container_id + '/init'),
+                              ('/docker/' + container_id + '/init', '/in/../init'),
+                              ('/docker/' + container_id + '/./init', '/init'),
+                              ('/', '/')):
+            with self.subTest(host=host, private=private), self.assertRaises(ValueError):
+                cgroup.owned_root(container_id, {'cgroup': host}, private)
+
+    def test_cgroup_receipt_binds_root_and_run_to_docker_identity(self):
+        _, binding = self.cgroup_binding()
+        proof = {**binding, 'cgroup_version': 2, 'namespace': 'private',
+                 'run_inherits_builder_limits': True,
+                 'effective_limits': {'cpu.max': '200000 100000', 'memory.max': str(4 * build.GIB),
+                                      'memory.swap.max': '0'},
+                 'run_process': {'pid': 101, 'starttime_ticks': '23',
+                                 'cgroup': binding['owned_root'] + '/buildkit/run'}}
+        record = {'builder_id': binding['container_id'], 'cgroup_proof': proof}
+        build.check_cgroup_receipt(record)
+        for target, key, value in (('root', 'owned_root', '/system.slice'),
+                                   ('root', 'container_id', 'b' * 64),
+                                   ('root', 'private_process_path', '/'),
+                                   ('child', 'cgroup', binding['owned_root'] + '-other/run'),
+                                   ('child', 'pid', 100)):
+            modified = copy.deepcopy(record)
+            dest = modified['cgroup_proof'] if target == 'root' else modified['cgroup_proof']['run_process']
+            dest[key] = value
+            with self.subTest(key=key, value=value), self.assertRaises(ValueError):
+                build.check_cgroup_receipt(modified)
+
     def test_cgroup_preflight_requires_a_real_marked_run(self):
-        parent = {'pid': 100, 'starttime_ticks': '12', 'cgroup': '/docker/owned'}
-        child = {'pid': 101, 'starttime_ticks': '13', 'cgroup': '/docker/owned/buildkit/run'}
+        _, binding = self.cgroup_binding()
+        parent = binding['builder_process']
+        child = {'pid': 101, 'starttime_ticks': '13', 'cgroup': binding['owned_root'] + '/buildkit/run'}
         observed = self.builder()
         observed['HostConfig']['CgroupnsMode'] = 'private'
         observed['State']['Pid'] = 100
@@ -344,25 +409,45 @@ class RunnerArtifactsTests(unittest.TestCase):
         sup = mock.Mock()
         def run(command, **kwargs):
             if command[:2] == ['docker', 'exec']:
-                return '0::/'
+                self.assertEqual(command, ['docker', 'exec', observed['Id'], 'cat', '/proc/1/cgroup'])
+                return '0::/init'
             kwargs['inspect']()
         sup.run.side_effect = run
         for matches in ([], [child]):
             work = self.root / ('missing' if not matches else 'seen')
             work.mkdir()
+            journal = []
             with mock.patch.object(build, 'inspect_builder', return_value=observed), \
+                 mock.patch.object(cgroup, 'process_identity', return_value=parent), \
                  mock.patch.object(cgroup, 'sample', return_value=(parent, {})), \
                  mock.patch.object(cgroup, 'run_processes', return_value=matches):
                 if matches:
-                    proof = build.qualify_cgroup(sup, 'test', 'nonce', 'pinned', observed, work, recipe)
+                    proof = build.qualify_cgroup(sup, 'test', 'nonce', 'pinned', observed, work, recipe, journal.append)
                     self.assertEqual(proof['run_process'], child)
+                    self.assertEqual(proof['owned_root'], binding['owned_root'])
                     self.assertTrue(proof['run_inherits_builder_limits'])
                 else:
                     with self.assertRaisesRegex(ValueError, 'not observed'):
-                        build.qualify_cgroup(sup, 'test', 'nonce', 'pinned', observed, work, recipe)
+                        build.qualify_cgroup(sup, 'test', 'nonce', 'pinned', observed, work, recipe, journal.append)
         observed['HostConfig']['CgroupnsMode'] = 'host'
         with self.assertRaisesRegex(ValueError, 'Private builder'):
-            build.qualify_cgroup(sup, 'test', 'nonce', 'pinned', observed, self.root, recipe)
+            build.qualify_cgroup(sup, 'test', 'nonce', 'pinned', observed, self.root, recipe, journal.append)
+
+    def test_namespace_correlation_rejects_process_change_and_retains_observation(self):
+        _, binding = self.cgroup_binding()
+        parent = binding['builder_process']
+        observed = self.builder()
+        observed['HostConfig']['CgroupnsMode'] = 'private'
+        observed['State']['Pid'] = 100
+        sup = mock.Mock()
+        sup.run.return_value = '0::/init'
+        journal = []
+        after = {**parent, 'starttime_ticks': '999'}
+        with mock.patch.object(cgroup, 'process_identity', side_effect=[parent, after]), \
+             self.assertRaisesRegex(ValueError, 'during namespace correlation'):
+            build.qualify_cgroup(sup, 'test', 'nonce', 'pinned', observed, self.root, '', journal.append)
+        self.assertEqual(journal, [{'kind': 'binding', 'container_id': observed['Id'],
+                                   'host_before': parent, 'host_after': after, 'private_cgroup': '0::/init'}])
 
     def test_create_timeout_retains_intent_and_still_reconciles_owned_builder(self):
         env, event = self.event()

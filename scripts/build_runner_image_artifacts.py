@@ -209,11 +209,23 @@ def inspect_builder(sup, name, owner, image):
     return item
 
 
-def qualify_cgroup(sup, name, owner, image, observed, work, public_recipe):
+def qualify_cgroup(sup, name, owner, image, observed, work, public_recipe, observe):
     require(observed['HostConfig'].get('CgroupnsMode') == 'private', 'Private builder cgroup namespace required')
-    identity, limits = cgroup.sample(observed['State']['Pid'])
-    inside = sup.run(['docker', 'exec', observed['Id'], 'cat', '/proc/self/cgroup'], capture=True)
-    require(cgroup.group_path(inside) == '/', 'Private cgroup namespace not effective')
+    pid = observed['State']['Pid']
+    identity = cgroup.process_identity(pid)
+    # PID 1 is the same process as Docker State.Pid, unlike the short-lived
+    # `docker exec cat` process. BuildKit may move the daemon into /init while
+    # both it and RUN workers still inherit the Docker-owned root's limits.
+    inside = sup.run(['docker', 'exec', observed['Id'], 'cat', '/proc/1/cgroup'], capture=True)
+    after = cgroup.process_identity(pid)
+    observe({'kind': 'binding', 'container_id': observed['Id'], 'host_before': identity,
+             'host_after': after, 'private_cgroup': inside})
+    require(after == identity, 'Builder process changed during namespace correlation')
+    private_path = cgroup.group_path(inside)
+    binding = {'container_id': observed['Id'], 'builder_process': identity,
+               'private_process_path': private_path,
+               'owned_root': cgroup.owned_root(observed['Id'], identity, private_path)}
+    _, limits = cgroup.sample(pid, binding, observe=observe)
     bases = re.findall(r'^FROM (docker.io/library/ubuntu@sha256:[0-9a-f]{64})$', public_recipe, re.M)
     require(len(bases) == 1, 'Canonical preflight Ubuntu base missing')
     context = work / 'cgroup-preflight'
@@ -227,14 +239,14 @@ def qualify_cgroup(sup, name, owner, image, observed, work, public_recipe):
     def check():
         item = inspect_builder(sup, name, owner, image)
         require(item['Id'] == observed['Id'], 'Builder identity changed')
-        cgroup.sample(item['State']['Pid'], identity)
-        for child in cgroup.run_processes(marker, identity):
+        cgroup.sample(item['State']['Pid'], binding, observe=observe)
+        for child in cgroup.run_processes(marker, binding):
             seen[(child['pid'], child['starttime_ticks'])] = child
     sup.run(['docker', 'buildx', 'build', '--builder', name, '--platform', 'linux/amd64',
              '--progress', 'plain', '--no-cache', str(context)], seconds=180, inspect=check)
     check()
     require(len(seen) == 1, 'Actual bounded RUN process was not observed')
-    return {'cgroup_version': 2, 'namespace': 'private', 'builder_process': identity,
+    return {**binding, 'cgroup_version': 2, 'namespace': 'private',
             'effective_limits': limits, 'run_process': next(iter(seen.values())),
             'preflight_base': bases[0], 'run_inherits_builder_limits': True}
 
@@ -327,10 +339,8 @@ def check_cgroup_receipt(build):
             proof.get('run_inherits_builder_limits') is True and
             proof.get('effective_limits') == {'cpu.max': '200000 100000',
                 'memory.max': str(4 * GIB), 'memory.swap.max': '0'}, 'Cgroup enforcement evidence missing')
-    parent, child = proof['builder_process'], proof['run_process']
-    require(parent['pid'] != child['pid'] and parent['cgroup'] != '/' and
-            (child['cgroup'] == parent['cgroup'] or child['cgroup'].startswith(parent['cgroup'] + '/')),
-            'RUN inheritance evidence differs')
+    require(proof['container_id'] == build['builder_id'], 'Cgroup proof Docker identity differs')
+    cgroup.require_run_inside(proof['run_process'], proof)
 
 
 def validate_parent(parent, identity, manifest):
@@ -384,6 +394,11 @@ def execute(stage, parent=None):
     owner = name
     created = False
     volume_absent_before = False
+    def observe_cgroup(observation):
+        with (output / 'cgroup-observations.jsonl').open('a') as stream:
+            stream.write(json.dumps({'at': now(), **observation}, sort_keys=True) + '\n')
+            stream.flush()
+            os.fsync(stream.fileno())
     try:
         require(sup.run(['git', '-C', str(ROOT), 'rev-parse', 'HEAD'], capture=True) == identity['source_commit'],
                 'Checkout differs from dispatched commit')
@@ -429,12 +444,12 @@ def execute(stage, parent=None):
         public_hash = hashlib.sha256(public_recipe.encode()).hexdigest()
         require(public_hash == data['contexts']['public']['files']['deploy/runner-reserve/Dockerfile']['sha256'],
                 'Preflight source differs from canonical recipe')
-        record['cgroup_proof'] = qualify_cgroup(sup, name, owner, image, observed, work, public_recipe)
+        record['cgroup_proof'] = qualify_cgroup(sup, name, owner, image, observed, work, public_recipe, observe_cgroup)
         save(output / 'cgroup-verification.json', record['cgroup_proof'])
         def check_build():
             current = inspect_builder(sup, name, owner, image)
             require(current['Id'] == observed['Id'], 'Builder identity changed')
-            cgroup.sample(current['State']['Pid'], record['cgroup_proof']['builder_process'])
+            cgroup.sample(current['State']['Pid'], record['cgroup_proof'], observe=observe_cgroup)
         command = build_command(stage, data, identity, name, context, output / 'image.oci.tar', layout, base)
         record['command'] = command
         sup.run(command, seconds=2700, inspect=check_build)
