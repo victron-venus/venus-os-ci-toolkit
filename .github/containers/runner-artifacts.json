@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "scan_acceptance_schema": 1,
-  "canonical_source": "c4e0c08ade0596afb51186d211487ea9c6123fff",
+  "canonical_source": "6f4ebfe4dcf4fcb5ba995d5f12f1dd11864afdc6",
   "platform": "linux/amd64",
   "tools": {
     "buildkit": {
@@ -145,8 +145,8 @@
           "mode": "100644"
         },
         "scripts/build_runner_libbpf.py": {
-          "sha256": "03a1ec3f2a1c2243689a184eef4af6da879de77356cec5fc899dc094a8aa6f55",
-          "bytes": 13710,
+          "sha256": "187c6c75c3099070c1a07a48d9355a9548c447cd7a9536fb93b76b4f6a1f2722",
+          "bytes": 14179,
           "mode": "100644"
         }
       }
