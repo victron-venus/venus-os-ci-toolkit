@@ -1,0 +1,4 @@
+# Signed upstream metadata must retain exact bytes on every checkout platform.
+.github/containers/runner-browsers/* -text
+# Debian Packages paragraphs intentionally include a final blank separator.
+.github/containers/runner-browsers/*-Packages whitespace=-blank-at-eof
