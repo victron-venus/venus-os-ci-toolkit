@@ -1648,7 +1648,8 @@ def scan_file_evidence(layout, selection, proof, check):
             errors.append(name + '_evidence_invalid')
     kernel_paths = {p: r for p, r in tree.items() if r['type'] != 'directory' and
         (p.startswith(('boot/', 'lib/modules/', 'usr/lib/modules/')) or
-         re.search(r'(^|/)(vmlinux|vmlinuz)([.\-]|$)|\.ko(?:\.(?:gz|xz|zst))?$', p))}
+         re.search(r'(^|/)(vmlinux|vmlinuz)([.\-]|$)', p) or
+         re.search(r'\.ko(?:\.(?:gz|xz|zst))?$', p))}
     perf_paths = {p: r for p, r in tree.items() if p.rsplit('/', 1)[-1] == 'perf'}
     return {'schema': 1, 'binding': binding, 'components': components, 'errors': errors,
             'kernel_paths': kernel_paths, 'perf_paths': perf_paths}

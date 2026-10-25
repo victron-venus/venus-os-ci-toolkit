@@ -141,6 +141,18 @@ class RunnerLibbpfTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     m.check_elf(path, arch)
 
+    def test_soname_requires_one_complete_exact_field(self):
+        line = ' 0x000000000000000e (SONAME) Library soname: [libbpf.so.1]'
+        for text in (line, 'Dynamic section:\n' + line + '\n 0x0 (NULL) 0x0\n', line + '  \t'):
+            with self.subTest(valid=text):
+                m.check_soname(text, 'libbpf.so.1')
+        for text in ('', line.replace('(SONAME)', '(NEEDED)'), line.replace('libbpf.so.1', 'libbpf.so.2'),
+                     line + '\n' + line, line.replace('(SONAME)', '(SONAME) (SONAME)'),
+                     line.replace('[', ''), line.replace(']', ''), line.replace('[', '[['),
+                     line.replace(']', ']]'), line + ' trailing', line.replace('libbpf.so.1', '')):
+            with self.subTest(invalid=text), self.assertRaises(ValueError):
+                m.check_soname(text, 'libbpf.so.1')
+
     def test_digest_streams_instead_of_loading_entire_file(self):
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / 'data'

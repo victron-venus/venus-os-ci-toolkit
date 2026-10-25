@@ -601,7 +601,9 @@ def read_effective_layer(raw, descriptor, remaining, check):
                 record = {'type': 'other', 'bytes': member.size, 'mode': member.mode,
                           'layer': descriptor['digest']}
                 if member.isfile():
-                    sha, md5, count, magic = hashlib.sha256(), hashlib.md5(), 0, b''
+                    # MD5 only matches dpkg's legacy inventory; SHA-256 binds
+                    # the actual file bytes used for security acceptance.
+                    sha, md5, count, magic = hashlib.sha256(), hashlib.md5(usedforsecurity=False), 0, b''
                     text = bytearray() if evidence_text(path) else None
                     with archive.extractfile(member) as source:
                         while block := source.read(1024**2):

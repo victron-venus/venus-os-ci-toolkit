@@ -188,6 +188,17 @@ def check_elf(path, arch):
             'Shared library ELF architecture/type changed')
 
 
+def check_soname(dynamic, expected):
+    lines = [line for line in dynamic.splitlines() if '(SONAME)' in line]
+    require(len(lines) == 1 and lines[0].count('(SONAME)') == 1,
+            'Missing or duplicate SONAME field')
+    line = lines[0]
+    _, opening, value = line.partition('(SONAME)')[2].partition('[')
+    name, closing, tail = value.partition(']')
+    require(opening and closing and line.count('[') == line.count(']') == 1
+            and name == expected and not tail.strip(), 'Malformed or changed SONAME')
+
+
 SMOKE = r'''
 #include <string.h>
 #include "libbpf.h"
@@ -244,7 +255,7 @@ def build():
     library = package / relative
     check_elf(library, arch)
     dynamic = run(['readelf', '-d', str(library)], WORK, env)
-    require(re.findall(r'\(SONAME\).*?\[(.*?)\]', dynamic) == [spec['soname']], 'SONAME changed')
+    check_soname(dynamic, spec['soname'])
     symbols = run(['nm', '-D', '--defined-only', str(library)], WORK, env)
     count = check_exports((source / 'debian/libbpf1.symbols').read_text(), symbols)
     smoke = WORK / 'smoke.c'

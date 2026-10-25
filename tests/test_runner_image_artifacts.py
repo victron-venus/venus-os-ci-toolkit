@@ -1098,6 +1098,27 @@ class RunnerArtifactsTests(unittest.TestCase):
         self.assertEqual(result['failed_prerequisites'], ['installed_libbpf_backport_not_verified'])
         self.assertFalse(result['acceptance_passed'])
 
+    def test_kernel_file_selection_preserves_name_and_extension_boundaries(self):
+        _, proof, _, _, _ = self.acceptance_fixture()
+        selected = ['boot/config', 'lib/modules/example', 'usr/lib/modules/example',
+                    'vmlinux', 'usr/share/vmlinuz-6.8', 'usr/share/vmlinux.debug',
+                    'module.ko', 'usr/share/module.ko.gz', 'module.ko.xz', 'module.ko.zst']
+        unselected = ['usr/include/linux/a.h', 'not-vmlinux', 'usr/share/vmlinuzbackup',
+                      'module.ko.txt', 'module.ko.gz.extra', 'module.kong', 'bootleg/file']
+        tree = {name: {'type': 'regular'} for name in selected + unselected}
+        tree['boot/directory'] = {'type': 'directory'}
+        with mock.patch.object(oci, 'effective_files', return_value={'files': tree}):
+            evidence = build.scan_file_evidence(None, None, proof, lambda: None)
+        self.assertEqual(set(evidence['kernel_paths']), set(selected))
+
+    def test_effective_layer_marks_dpkg_md5_as_nonsecurity(self):
+        raw = layer_bytes([('usr/share/example', b'ordinary file')])
+        descriptor = {'mediaType': oci.LAYER, 'digest': 'sha256:' + hashlib.sha256(raw).hexdigest(),
+                      'size': len(raw)}
+        with mock.patch.object(oci.hashlib, 'md5', wraps=hashlib.md5) as md5:
+            oci.read_effective_layer(io.BytesIO(raw), descriptor, len(raw), lambda: None)
+        md5.assert_called_once_with(usedforsecurity=False)
+
     def test_acceptance_context_rejects_mixed_image_stage_or_database_identity(self):
         raw, proof, evidence, context, policy = self.acceptance_fixture()
         for key, value in [('source_commit', 'b' * 40), ('stage', 'private'), ('run_attempt', 1),
