@@ -6,6 +6,7 @@ import io
 import json
 import os
 from pathlib import Path
+import stat
 import subprocess
 import struct
 import sys
@@ -268,10 +269,16 @@ class RunnerArtifactsTests(unittest.TestCase):
             for name, record in spec['files'].items():
                 self.assertEqual(oci.digest_file(build.ROOT / name), record['sha256'])
                 self.assertEqual((build.ROOT / name).stat().st_size, record['bytes'])
-                tracked = subprocess.check_output(['git', '-C', str(build.ROOT), 'ls-files', '-s', '--', name],
-                                                  text=True).splitlines()
-                self.assertEqual(len(tracked), 1)
-                self.assertEqual(tracked[0].split()[0], record['mode'])
+                if (build.ROOT / '.git').exists():
+                    tracked = subprocess.check_output(['git', '-C', str(build.ROOT), 'ls-files', '-s', '--', name],
+                                                      text=True).splitlines()
+                    self.assertEqual(len(tracked), 1)
+                    self.assertEqual(tracked[0].split()[0], record['mode'])
+                else:
+                    # Source archives have no index; their normalized modes retain executability.
+                    mode = (build.ROOT / name).lstat().st_mode
+                    self.assertTrue(stat.S_ISREG(mode), name)
+                    self.assertEqual('100755' if mode & 0o111 else '100644', record['mode'], name)
             declared = {line[1:] for line in (build.ROOT / (spec['recipe'] + '.dockerignore')).read_text().splitlines()
                         if line.startswith('!')}
             self.assertEqual(declared, set(spec['files']) | ({manifest['sentinel']['path']} if stage == 'public' else set()))
