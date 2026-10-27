@@ -1698,6 +1698,12 @@ def release_files(directory: Path, policy: dict) -> dict[str, str]:
         .read_text()
         .replace(TEST_ROOT_EXPRESSION, VENDORED_TEST_ROOT_EXPRESSION)
     )
+    if policy.get("release_notes") is not None:
+        files[".github/release-tests/test_checkout_release_notes.py"] = (
+            (ROOT / "tests/test_checkout_release_notes.py").read_text().replace(
+                "Path(__file__).resolve().parents[1]", "Path(__file__).resolve().parents[2]"
+            )
+        )
     files[".github/release-tests/test_asset_streaming.py"] = (
         ROOT / "tests/test_asset_streaming.py"
     ).read_text()
