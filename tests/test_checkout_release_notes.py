@@ -1,19 +1,17 @@
 """Exercise the publication parser against this checkout's real release notes."""
 
-# Imports follow the generated consumer's repository path setup.
-# ruff: noqa: E402
-
 import base64
 import hashlib
 import json
 import sys
 import unittest
+from importlib import import_module
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from scripts import release as client  # pylint: disable=wrong-import-position
-from scripts import release_control  # pylint: disable=wrong-import-position
+client = import_module("scripts.release")
+release_control = import_module("scripts.release_control")
 
 # No repository API is contacted: the adapter binds the current checkout bytes.
 SOURCE = "a" * 40
