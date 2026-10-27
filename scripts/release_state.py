@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Reserve immutable version plans through a repository-scoped GitHub CAS ledger.
 
-The dedicated branch is metadata only. No operation changes the default branch,
-an existing plan, a release tag, or published package bytes.
+The allocator changes only its ledger on the dedicated branch, whose initial
+tree is inherited from a source commit. Keep that branch separate from main and
+preserve it during branch cleanup. No operation changes the default branch, an
+existing plan, a release tag, or published package bytes.
 """
 
 from __future__ import annotations
