@@ -1,5 +1,5 @@
-# Complete, verified release bundle; never retarget only the frontend symlink.
-binary_name = "/opt/victron-ci-reserve/gvisor-20261012/runsc"
+# Staged modified bundle; activation requires separate runtime/workload acceptance.
+binary_name = "/opt/victron-ci-reserve/gvisor-20261012-vfs-69937822864c/runsc"
 [runsc_config]
   platform = "kvm"
   net-raw = "true"
