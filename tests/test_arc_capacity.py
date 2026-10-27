@@ -323,6 +323,21 @@ class CapacityTests(unittest.TestCase):
             with self.assertRaisesRegex(C.Unable, 'native Windows'):
                 C.load_json(path)
 
+    def test_capture_rejects_malformed_json_shapes_explicitly(self):
+        for value in (None, [], True):
+            with patch.object(C, 'bounded_get', return_value=value):
+                with self.assertRaisesRegex(C.Unable, 'response must be an object'):
+                    C.capture('test', 'worker-node', 'private-ci')
+        for field, value in [('items', None), ('items', [None]), ('metadata', None)]:
+            data = snapshot(); data['pods'][field] = value
+            responses = [data[k] for k in ('server_version', 'node', 'pods', 'quotas', 'limitranges', 'runtimeclasses')]
+            with patch.object(C, 'bounded_get', side_effect=responses):
+                with self.assertRaises(C.Unable):
+                    C.capture('test', 'worker-node', 'private-ci')
+        for field in ('spec', 'status', 'metadata'):
+            data = pod('bad'); data[field] = None
+            with self.assertRaises(C.Unable): C.project_object(data)
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -95,6 +95,7 @@ def maximum(left, right):
 def object_meta(obj, kind, namespace=None):
     require(isinstance(obj, dict) and obj.get('kind') == kind, 'Expected ' + kind)
     meta = obj.get('metadata', {})
+    require(isinstance(meta, dict), kind + ' metadata must be an object')
     require(all(isinstance(meta.get(k), str) and meta[k] for k in ('name', 'uid', 'resourceVersion')),
             kind + ' lacks persisted identity/resourceVersion')
     if namespace is not None:
@@ -106,6 +107,7 @@ def listed(snapshot, key, kind, namespace=None):
     obj = snapshot.get(key, {})
     require(isinstance(obj, dict) and obj.get('kind') in (kind + 'List', 'List'), 'Missing ' + key + ' list')
     meta = obj.get('metadata', {})
+    require(isinstance(meta, dict), key + ' list metadata must be an object')
     require(isinstance(meta.get('resourceVersion'), str) and meta['resourceVersion'], key + ' lacks list resourceVersion')
     require(not meta.get('continue') and not meta.get('remainingItemCount'), key + ' is paginated/incomplete')
     items = obj.get('items')
@@ -379,10 +381,12 @@ def bounded_get(command, deadline):
 
 def project_object(obj):
     """Persist accounting fields only; no environment, command, image, or annotations."""
+    require(isinstance(obj, dict), 'API object must be an object')
     if 'items' in obj:
         kinds = {'PodList': 'Pod', 'ResourceQuotaList': 'ResourceQuota',
                  'LimitRangeList': 'LimitRange', 'RuntimeClassList': 'RuntimeClass'}
         require(obj.get('kind') in kinds, 'Unknown typed API list')
+        require(isinstance(obj['items'], list), 'API list items must be an array')
         children = []
         for child in obj['items']:
             require(isinstance(child, dict), 'Invalid typed list item')
@@ -396,6 +400,9 @@ def project_object(obj):
         return {**{k: obj[k] for k in ('kind', 'apiVersion', 'metadata') if k in obj},
                 'items': children}
     meta = obj.get('metadata', {})
+    require(isinstance(meta, dict), 'API metadata must be an object')
+    for field in ('spec', 'status', 'overhead'):
+        require(field not in obj or isinstance(obj[field], dict), 'API ' + field + ' must be an object')
     result = {k: obj[k] for k in ('kind', 'apiVersion') if k in obj}
     result['metadata'] = {k: meta[k] for k in ('name', 'namespace', 'uid', 'resourceVersion', 'deletionTimestamp') if k in meta}
     kind = obj.get('kind')
@@ -404,10 +411,12 @@ def project_object(obj):
         result['spec'] = {k: spec[k] for k in ('nodeName', 'runtimeClassName', 'overhead', 'resources', 'resourceClaims') if k in spec}
         for group in ('containers', 'initContainers'):
             if group in spec:
+                require(isinstance(spec[group], list) and all(isinstance(c, dict) for c in spec[group]), 'Invalid API container array')
                 result['spec'][group] = [{k: c[k] for k in ('name', 'resources', 'restartPolicy', 'resizePolicy') if k in c} for c in spec[group]]
         result['status'] = {k: status[k] for k in ('phase', 'resize') if k in status}
         for group in ('containerStatuses', 'initContainerStatuses'):
             if group in status:
+                require(isinstance(status[group], list) and all(isinstance(c, dict) for c in status[group]), 'Invalid API status array')
                 result['status'][group] = [{k: c[k] for k in ('allocatedResources', 'resources') if k in c} for c in status[group]]
     elif kind == 'Node':
         result['status'] = {k: obj.get('status', {})[k] for k in ('allocatable', 'nodeInfo') if k in obj.get('status', {})}
@@ -439,6 +448,7 @@ def capture(context, node, namespace):
             data = bounded_get(command, deadline)
         except (Unable, OSError, ValueError, subprocess.TimeoutExpired) as exc:
             raise Unable('Capture ' + key + ': ' + str(exc)) from exc
+        require(isinstance(data, dict), 'Raw API response must be an object for ' + key)
         if key != 'server_version':
             require(data.get('kind') == kind and data.get('apiVersion') == version, 'Unexpected raw API response for ' + key)
         result[key] = data if key == 'server_version' else project_object(data)
