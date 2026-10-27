@@ -719,9 +719,9 @@ def quality(policy, directory=None, *, release_profile=False):
     jobs["gate"] = {
         "name": "CI gate",
         "needs": list(jobs),
-        # PR aggregates release cancelled runs; dedicated release profiles retain
-        # their existing unconditional, fail-closed validation contract.
-        "if": "${{ always() }}" if release_profile else "${{ !cancelled() }}",
+        # GitHub accepts a skipped required check. Always evaluate the results
+        # so cancellation cannot hide an unfinished or unsuccessful validator.
+        "if": "${{ always() }}",
         "runs-on": runner_labels(),
         "timeout-minutes": 5,
         "steps": [
