@@ -48,7 +48,8 @@ def validate_spec(name, spec):
             "A full upstream commit is required")
     require(spec["root"] == spec["repository"].split("/")[1] + "-" + spec["commit"],
             "Unexpected source root")
-    require(spec["downstream_version"] == spec["release_tag"] + "+victron.security.1",
+    require(re.fullmatch(re.escape(spec["release_tag"]) + r"\+victron\.security\.[1-9][0-9]*",
+                         spec["downstream_version"]),
             "Downstream builds must be identified")
 
 
@@ -243,7 +244,8 @@ def run(arguments, source, *, architecture=None, capture=False):
 
 
 def build_commands(name, spec, output):
-    version, revision = spec["downstream_version"], spec["commit"] + "+victron.security.1"
+    version = spec["downstream_version"]
+    revision = spec["commit"] + "+" + version.split("+", 1)[1]
     common = ["go", "build", "-p", "2", "-trimpath"]
     if name == "containerd":
         package = "github.com/containerd/containerd/v2"
