@@ -61,6 +61,24 @@ class RunnerGoToolTests(unittest.TestCase):
         self.assertIn('github.com/moby/go-archive v0.3.0',
                       (TOOLS.LOCKS / 'buildx/go.mod').read_text())
         self.assertNotIn('\tgithub.com/docker/docker ', (TOOLS.LOCKS / 'buildx/go.mod').read_text())
+        self.assertIn('github.com/cilium/ebpf v0.22.0',
+                      (TOOLS.LOCKS / 'containerd/go.mod').read_text())
+
+    def test_downstream_security_revision_matches_embedded_build_identity(self):
+        spec = copy.deepcopy(self.manifest['components']['containerd'])
+        for number in (1, 2, 10):
+            with self.subTest(number=number):
+                spec['downstream_version'] = spec['release_tag'] + f'+victron.security.{number}'
+                TOOLS.validate_spec('containerd', spec)
+                for command in TOOLS.build_commands('containerd', spec, Path('/out')):
+                    flags = command[command.index('-ldflags') + 1]
+                    self.assertIn(spec['downstream_version'], flags)
+                    self.assertIn(spec['commit'] + f'+victron.security.{number}', flags)
+        for suffix in ('0', '01', '-1', '1-extra', '1\n'):
+            with self.subTest(suffix=suffix):
+                spec['downstream_version'] = spec['release_tag'] + '+victron.security.' + suffix
+                with self.assertRaisesRegex(ValueError, 'Downstream builds'):
+                    TOOLS.validate_spec('containerd', spec)
 
     def runtime_fixture(self):
         path = self.root / 'pkg/shim/shim_test.go'
