@@ -12,6 +12,10 @@
 
 This source package does not deploy runner images or change consumer workflow pins. Review and adopt an immutable toolkit revision explicitly; keep native image qualification and the normal consumer CI gates.
 
+### Security
+
+Consumers must retain reviewed immutable workflow pins, least-privilege permissions and trusted runner isolation when adopting this source package. Source publication does not rotate credentials, deploy runner images or qualify a new runtime; image and consumer acceptance remain separate required checks.
+
 ## [0.1.7] - 2026-10-24
 
 ### Security
