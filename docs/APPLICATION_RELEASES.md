@@ -149,8 +149,15 @@ retained for 90 days by configuration; deleted or expired evidence requires a ne
 Normal stable operation waits for reviewer `4alvit` on the `release` environment.
 The single-maintainer policy permits self-review and restricts deployment to `main`.
 Release approval keeps its independent `can_admins_bypass=true` owner policy.
-The required CI ruleset has no bypass actors: administrators must also wait for
-a successful `CI gate`. Immutable version-tag rules likewise have no bypass actors.
+Ordinary source merges require a successful `CI gate` and the configured reviews.
+Designated organization owners or the personal repository owner may use the
+separately managed **pull-request-only emergency exception**, following the
+[Terraform owner policy](https://github.com/4alvit/terraform-github-victron/blob/main/docs/public-security.md#emergency-owner-merges).
+Record the reason, reviewed commit and available check evidence in the PR. This
+exception does not authorize direct pushes, give automation a bypass, or turn
+missing or failed checks into successful checks. Scorecard may report the
+administrator-enforcement exception; do not suppress that finding.
+Immutable version-tag rules retain no bypass actors.
 Administrative access does not add a release CLI option to skip provenance checks,
 overwrite a tag or force publication. Use the normal approval and acceptance flow.
 
