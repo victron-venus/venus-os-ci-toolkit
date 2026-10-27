@@ -1,0 +1,1498 @@
+{
+  "schema": 1,
+  "review_date": "2026-10-27",
+  "scope": "Reassess 51 exact advisory fingerprints covering 52 public-image findings; no package, binary, rule, severity filter or scanner change.",
+  "issue": "https://github.com/victron-venus/venus-os-ci-toolkit/issues/261",
+  "source_commit": "1a80e22fbc3e4d58beee3b8d97293a0f8fd07783",
+  "run_id": 40541826543,
+  "run_attempt": 1,
+  "artifact": {
+    "id": 12751603293,
+    "url": "https://github.com/victron-venus/venus-os-ci-toolkit/actions/runs/40541826543/artifacts/12751603293",
+    "name": "runner-image-public-40541826543-1",
+    "raw_scan_sha256": "b1b40b8e8f9f0bcfb675e2278280a52643aee38668eda77eb804bdacef34db90",
+    "previous_acceptance_policy_sha256": "c79cda6ca7cd4dee6b5d019526a16d027ee29f33967be7477e543e874b4cc456"
+  },
+  "scanner_and_database": {
+    "scanner": {
+      "kind": "oci-image",
+      "version": "0.74.0",
+      "image": "ghcr.io/aquasecurity/trivy@sha256:ee940acbf1f58ebadb42d01434ce4609530bf1b52536afbd1eee66cd7123c5c9"
+    },
+    "databases": {
+      "db/trivy.db": "9d08581c36e14a521489a0f659093fd0bf435151361e6b01c13d2d6ec6672047",
+      "db/metadata.json": "1869234bfaab35f6dd834033213ce06c3aa84999fc89395d50489f85639bf19a",
+      "java-db/trivy-java.db": "6dbdb88c41bf4ad906f708a7aeb44d8ffd9b76bc834f78bcefc5767cde8971b6",
+      "java-db/metadata.json": "3210ce3940da6c0ba45af9341270bc13a7935f539325241dc9ba0ad585272863"
+    }
+  },
+  "component_evidence": {
+    "headers_inventory_sha256": "ff5df311395966f35d8be4265422da233af4abcb5b89ce923f0257b300f3dbe6",
+    "runc_binary_sha256": "6043541aca928890ab8ad0630cafd2b272c3880779d8ada1b3fe81bc22e80d20",
+    "runc_source_commit": "29dd3dc2b13b4123162e5fe132504bb4b15569f1",
+    "runc_dependency_graph_sha256": "c2a8e849e525b626c0bc7d5edf720329a961c7a0e40daf2bb325ea6a55381b1d",
+    "gstreamer_source_manifest_sha256": "361200a0384f0bab930307ef64ebe0ebdb7980820fe0ccfef0870459aa6ec75e"
+  },
+  "comparison": {
+    "findings": 52,
+    "distinct_advisories": 51,
+    "all_other_advisory_fields_typed_equal": true,
+    "excluded_metadata_fields": [
+      "CVSS",
+      "LastModifiedDate",
+      "References",
+      "Title",
+      "VendorSeverity"
+    ],
+    "changed_category_counts": {
+      "References": 39,
+      "VendorSeverity": 17,
+      "LastModifiedDate": 3,
+      "CVSS": 9,
+      "Title": 1
+    },
+    "severity_changes": "CVSS vectors/scores and vendor severity are substantive metadata assessments. They are recorded explicitly below and do not replace the unchanged affected-source and exact-payload requirements.",
+    "range_limit": "No scope or version-range change was observed in the retained scan records. These records do not encode every upstream affected range; archived CNA source paths and the freshly checked Go advisory support the existing narrow applicability reasons."
+  },
+  "limitations": [
+    "The original scan acceptance remains false; this source review does not retroactively qualify that artifact.",
+    "Only selected ZIP metadata and the raw scan were range-read. The whole image and artifact digests were not independently recomputed.",
+    "Current file evidence is source-bound producer evidence. The archived source/CNA evidence was independently hash-checked.",
+    "Every future changed advisory still fails closed. Actual image, sandbox/bootstrap and cold-job qualification remain required before deployment."
+  ],
+  "records": [
+    {
+      "id": "CVE-2024-40954",
+      "component": "headers",
+      "packages": [
+        "linux-libc-dev@6.8.0-147.147"
+      ],
+      "previous_advisory_sha256": "f74bcf797cf8d07127f5a4c6dc4fafa557c4c9946ea16908f61510aad04ef4c4",
+      "current_advisory_sha256": "48ad2922396d252a5c8e855a16ec692a0bfce159ca8cc87590ef5e9758202ed4",
+      "unchanged_non_metadata_fields_sha256": "bab18f56c630187dcb1cf5a8ba1e4ce4a3e4ae4fe86bf343306ffc2505553141",
+      "rule_id": "kernel_code_absent_from_header_payload",
+      "changes": [
+        {
+          "path": "/References",
+          "before_sha256": "b37f3c9457a714650a87252fb6edb122aaffa1e6e015c344c668b00284e412d3",
+          "after_sha256": "3e9bee817c3237b1afd258db66fa874cf30cd889fe97f08d717626c08e91a415",
+          "added_count": 127,
+          "removed_count": 43,
+          "classification": "Distribution errata and advisory-reference metadata; unchanged description is compared separately."
+        }
+      ],
+      "source_documents": [
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2024/40xxx/CVE-2024-40954.json"
+      ],
+      "unchanged_applicability_basis": "The failing object is a freed kernel socket referenced during protocol creation cleanup. A userspace socket caller is a trigger, not the implementation; sk_common_release and the KASAN kernel trace support kernel-payload attribution."
+    },
+    {
+      "id": "CVE-2025-3887",
+      "component": "gstreamer",
+      "packages": [
+        "gstreamer1.0-plugins-bad@1.24.2-1ubuntu4+victron1",
+        "libgstreamer-plugins-bad1.0-0@1.24.2-1ubuntu4+victron1"
+      ],
+      "previous_advisory_sha256": "1900462e5beeef08968686315584b82bd8a761c85eacc52714543996a38e0fe0",
+      "current_advisory_sha256": "951064a860f4d9f2274785202be652efdbf01f4e034c1770dcce8b43488588dd",
+      "unchanged_non_metadata_fields_sha256": "00c96b04b0b926bb7807602187fb7466729aacc2a106ef5e75aa9bfbcd806490",
+      "rule_id": "installed_gstreamer_h265_backport",
+      "changes": [
+        {
+          "path": "/References",
+          "before_sha256": "670977f61a30efe8578d7176b0c84a9959ba5a2456d93618c2e7705846207d66",
+          "after_sha256": "b683a4f6f5b2eaed983b48c7bfefd72b4447c73df106319dda8e212e0813c004",
+          "added_count": 2,
+          "removed_count": 1,
+          "classification": "Distribution errata and advisory-reference metadata; unchanged description is compared separately."
+        }
+      ],
+      "source_documents": [
+        "https://gstreamer.freedesktop.org/security/sa-2025-0001.html",
+        "https://ubuntu.com/security/CVE-2025-3887"
+      ],
+      "unchanged_applicability_basis": "Existing exact source-bound H265 parser backport, package baselines and rebuilt-library evidence remain mandatory."
+    },
+    {
+      "id": "CVE-2025-39933",
+      "component": "headers",
+      "packages": [
+        "linux-libc-dev@6.8.0-147.147"
+      ],
+      "previous_advisory_sha256": "260559e8fd3e1f3f4b693f9586c3e2377cdad456c8e8b0fa096e85798a3b4cb3",
+      "current_advisory_sha256": "e70795ade9e28fd71490fbf05a7c1dcb71215e73af6b1e7e91f0a3c6fa991ba6",
+      "unchanged_non_metadata_fields_sha256": "c73a43fedc2d0d0c275785ce131238d16394e42358e38b2811e41e6e6f57ac60",
+      "rule_id": "kernel_code_absent_from_header_payload",
+      "changes": [
+        {
+          "path": "/References",
+          "before_sha256": "52993489e0d377d2b1edc2305a37c4084d7b0508f6ca0f460c0583b8a1179e74",
+          "after_sha256": "5c4cc0adc8a5562d7443f5f819d7a7bcd194868d66dcb724c891006610f0ad83",
+          "added_count": 6,
+          "removed_count": 5,
+          "classification": "Distribution errata and advisory-reference metadata; unchanged description is compared separately."
+        }
+      ],
+      "source_documents": [
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2025/39xxx/CVE-2025-39933.json"
+      ],
+      "unchanged_applicability_basis": "The identified receive-completion callback must validate three wire-data dimensions, and the supplied implementation path matches the kernel SMB Direct client. No exported constant, layout correction, or standalone userspace parser is described."
+    },
+    {
+      "id": "CVE-2025-40064",
+      "component": "headers",
+      "packages": [
+        "linux-libc-dev@6.8.0-147.147"
+      ],
+      "previous_advisory_sha256": "a0acaccbbcc8259f9d0b8acf268ab6a7bae15ad94e0fdfd657cc0d1b4d0324e2",
+      "current_advisory_sha256": "a548e9e6d8a140756ec4eb4910beba9cc24eed0fce62c37f1fcc6a2fe79c24d8",
+      "unchanged_non_metadata_fields_sha256": "57dbdf89434593eef0f8d8c803a7ca303928875358bcd459cbccac4a7be820fb",
+      "rule_id": "kernel_code_absent_from_header_payload",
+      "changes": [
+        {
+          "path": "/References",
+          "before_sha256": "cbd206ca5d85551cb1a696fcd4d8bb9defbe9cf8babdc0c59af83b148a69df06",
+          "after_sha256": "08e6cab7490b7e339b3f55063501e617883050317648540bb0588a398aa86001",
+          "added_count": 6,
+          "removed_count": 27,
+          "classification": "Distribution errata and advisory-reference metadata; unchanged description is compared separately."
+        }
+      ],
+      "source_documents": [
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2025/40xxx/CVE-2025-40064.json"
+      ],
+      "unchanged_applicability_basis": "The description identifies a freed net_device reached through a socket destination and RTNL/RCU synchronization. connect() exposes the kernel path but does not implement it in libc headers."
+    },
+    {
+      "id": "CVE-2025-40158",
+      "component": "headers",
+      "packages": [
+        "linux-libc-dev@6.8.0-147.147"
+      ],
+      "previous_advisory_sha256": "e675ac141b1283ddc2848fbf8a62600732985e63dae32048cb3d01f716afb440",
+      "current_advisory_sha256": "21b15f78710f38425a43aa764cb14b863994f8096a1def2dedc680b733a3f1e2",
+      "unchanged_non_metadata_fields_sha256": "0cb9bf4b878bb30584c8eabe7702a0bdf5544ec6eba8c6ee08dbfa278a3ab184",
+      "rule_id": "kernel_code_absent_from_header_payload",
+      "changes": [
+        {
+          "path": "/References",
+          "before_sha256": "750ace365ab6f47322b4c6b09e1f49ad25d1943c41a2eaad118ed2b39d25bdc0",
+          "after_sha256": "276805cf88604c1f8293aadc9be1d95540446119abe588f30c86071728b126cb",
+          "added_count": 5,
+          "removed_count": 12,
+          "classification": "Distribution errata and advisory-reference metadata; unchanged description is compared separately."
+        }
+      ],
+      "source_documents": [
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2025/40xxx/CVE-2025-40158.json"
+      ],
+      "unchanged_applicability_basis": "The described lifetime hazard is fixed by moving kernel RCU protection around the IPv6 output operation. Exported networking headers do not themselves execute this packet-transmission path."
+    },
+    {
+      "id": "CVE-2025-40168",
+      "component": "headers",
+      "packages": [
+        "linux-libc-dev@6.8.0-147.147"
+      ],
+      "previous_advisory_sha256": "f09eaf5f4b52f8fe869e174d5d7705b487e8f93b4c6c1da84a8c07753401754a",
+      "current_advisory_sha256": "05ff8d300d887e5d66421a732e59f6c6bc6b3e1c671a0745c03e02eab7afee6a",
+      "unchanged_non_metadata_fields_sha256": "96faaff8e9d768cc997975dd5c228629d1b6914c3f55f6ee74a2bf1ee010b322",
+      "rule_id": "kernel_code_absent_from_header_payload",
+      "changes": [
+        {
+          "path": "/References",
+          "before_sha256": "be7fdafd1b63e9e094b61ceebf46b43ab4048db93a72908e976334636b69248a",
+          "after_sha256": "44e539c0029d0b785742249ecdaf5ce4c8e69967f179c7c5f455308b7c18b387",
+          "added_count": 4,
+          "removed_count": 3,
+          "classification": "Distribution errata and advisory-reference metadata; unchanged description is compared separately."
+        }
+      ],
+      "source_documents": [
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2025/40xxx/CVE-2025-40168.json"
+      ],
+      "unchanged_applicability_basis": "The description identifies smc_listen_work and missing RCU/RTNL protection around a device dereference, a kernel networking lifetime issue."
+    },
+    {
+      "id": "CVE-2025-40170",
+      "component": "headers",
+      "packages": [
+        "linux-libc-dev@6.8.0-147.147"
+      ],
+      "previous_advisory_sha256": "f348c1a78ea4a4205a619fcf5c1636c391d9532e7d3f7810557034768af35dbf",
+      "current_advisory_sha256": "6762fcd2466e46cbe41f9f24bf2804383bd665e5de2e3d2db22e23d984a2afa2",
+      "unchanged_non_metadata_fields_sha256": "12819664177e3f31a6c55240af58a39be69034dc20b1697f78686f7fea5a4d6f",
+      "rule_id": "kernel_code_absent_from_header_payload",
+      "changes": [
+        {
+          "path": "/References",
+          "before_sha256": "4f852377dfaeacd2b973ef1f110eba605688deec69d73c35b679b1481c6b8dee",
+          "after_sha256": "b2bf4bbb9fcb7e334cdf666a5401cc00c2d3255b2df668f2d67cd46680748aa8",
+          "added_count": 5,
+          "removed_count": 12,
+          "classification": "Distribution errata and advisory-reference metadata; unchanged description is compared separately."
+        }
+      ],
+      "source_documents": [
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2025/40xxx/CVE-2025-40170.json"
+      ],
+      "unchanged_applicability_basis": "RCU protection of destination-device pointers and kernel routing helpers defines the affected operation. Internal inline helpers are not equivalent to exported UAPI declarations."
+    },
+    {
+      "id": "CVE-2025-68745",
+      "component": "headers",
+      "packages": [
+        "linux-libc-dev@6.8.0-147.147"
+      ],
+      "previous_advisory_sha256": "73e34a70519344f6afbba6b136a7960b587ff21c9ce15505c302c2d5a03c20ca",
+      "current_advisory_sha256": "0bea3a1c07612f85b5eaf30478112da24e481f8ed946842376426ed888f143b4",
+      "unchanged_non_metadata_fields_sha256": "3cb2bcff279c8645dbb19dda0ebb12a2b094d1fdebdef166094c861d325fbe48",
+      "rule_id": "kernel_code_absent_from_header_payload",
+      "changes": [
+        {
+          "path": "/References",
+          "before_sha256": "5180435ec9e830adf84b93373a5e07d8022b03a41deaea8f67ad066c377e9fce",
+          "after_sha256": "20a26e1b0eb795720ab5d8d729b68d7b92445c03ad16b135d9f0d96f3801feae",
+          "added_count": 6,
+          "removed_count": 32,
+          "classification": "Distribution errata and advisory-reference metadata; unchanged description is compared separately."
+        }
+      ],
+      "source_documents": [
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2025/68xxx/CVE-2025-68745.json"
+      ],
+      "unchanged_applicability_basis": "Firmware command lifetime and racing DMA unmaps require executing the storage driver and hardware reset path; the description supplies no userspace-library implementation."
+    },
+    {
+      "id": "CVE-2026-31692",
+      "component": "headers",
+      "packages": [
+        "linux-libc-dev@6.8.0-147.147"
+      ],
+      "previous_advisory_sha256": "5fe5c4a43495800c26360cb900412c789e2513c823767b18aaae8e697f818a60",
+      "current_advisory_sha256": "f986c98b5baea066384074c621f671ffe066b9a4ddebf6b1343af2c4e0e49a96",
+      "unchanged_non_metadata_fields_sha256": "4a72389ab5d22670fec9c4c7c1de8a04fad95686ac8144e291cc9e17ca64bc9f",
+      "rule_id": "kernel_code_absent_from_header_payload",
+      "changes": [
+        {
+          "path": "/References",
+          "before_sha256": "7672d95987e55d382f60777e236cf5e3bec78e11c61d3d568cc0961cc359611c",
+          "after_sha256": "2dce2518a97cf6f5e633ee5397ea0e49252d688c164e77bb0728795683316288",
+          "added_count": 6,
+          "removed_count": 42,
+          "classification": "Distribution errata and advisory-reference metadata; unchanged description is compared separately."
+        }
+      ],
+      "source_documents": [
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/31xxx/CVE-2026-31692.json"
+      ],
+      "unchanged_applicability_basis": "The missing authorization is enforced in kernel rtnl_newlink before creating devices; a userspace netlink request is an input, not the affected implementation."
+    },
+    {
+      "id": "CVE-2026-46181",
+      "component": "headers",
+      "packages": [
+        "linux-libc-dev@6.8.0-147.147"
+      ],
+      "previous_advisory_sha256": "dd2bb0fa3faea7c32e7ba73480b32fbb254004b005c2d3b7c1e99032bf520beb",
+      "current_advisory_sha256": "a1453342aa1159be7d62ff99d45077381cdca19b4db60f46672f5c2e69480e45",
+      "unchanged_non_metadata_fields_sha256": "d08c2cc32f9384232e8b0e0049131b31db52c51a45dc49de6291993acfb275d8",
+      "rule_id": "kernel_code_absent_from_header_payload",
+      "changes": [
+        {
+          "path": "/References",
+          "before_sha256": "58a168a805b4232184e7e5a9f4710b98fc3f7414c1dee8a3739ef0376e842e19",
+          "after_sha256": "1a78117ef7e1f00a8d229dbcc36f6916c8f9b8d92159cbe272ba7138a7d14ef0",
+          "added_count": 9,
+          "removed_count": 7,
+          "classification": "Distribution errata and advisory-reference metadata; unchanged description is compared separately."
+        },
+        {
+          "path": "/VendorSeverity/alma",
+          "before": 3,
+          "after": 4
+        }
+      ],
+      "source_documents": [
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/46xxx/CVE-2026-46181.json"
+      ],
+      "unchanged_applicability_basis": "The event handler uses a radix-tree queue object with incorrect RCU/refcount lifetime assumptions. Locking and initialization order are runtime driver operations."
+    },
+    {
+      "id": "CVE-2026-52991",
+      "component": "headers",
+      "packages": [
+        "linux-libc-dev@6.8.0-147.147"
+      ],
+      "previous_advisory_sha256": "e406353d6933411de699ef887e076c1d589160355ae77e15a34a4ca1704f8f12",
+      "current_advisory_sha256": "3b1233a085c2affa72ab5844c0fa3cd83c6fa38c35dbb92047e77530e8dcccfb",
+      "unchanged_non_metadata_fields_sha256": "c71c9eeee11fc6dfb575a92aa3843c5601864f8fbe83158b5fa819fc2995ae4b",
+      "rule_id": "kernel_code_absent_from_header_payload",
+      "changes": [
+        {
+          "path": "/References",
+          "before_sha256": "de9570f4925738aa93610eedf2d141f16c2b59de3fc47110daa7c98320a47b63",
+          "after_sha256": "3563c9b1c7c489c4a999ba2889b71ad184b2978281ad8648bd53968777ab8f35",
+          "added_count": 3,
+          "removed_count": 20,
+          "classification": "Distribution errata and advisory-reference metadata; unchanged description is compared separately."
+        }
+      ],
+      "source_documents": [
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/52xxx/CVE-2026-52991.json"
+      ],
+      "unchanged_applicability_basis": "The freed object is kernfs_open_file private kernel state. Writing a pressure control file is a userspace trigger; the locking, release and dereference occur inside the kernel."
+    },
+    {
+      "id": "CVE-2026-53281",
+      "component": "headers",
+      "packages": [
+        "linux-libc-dev@6.8.0-147.147"
+      ],
+      "previous_advisory_sha256": "f007890e920642dc95adaac09c340478bf1529a239a1d83f6d3870e5468b7261",
+      "current_advisory_sha256": "f4442a49039a2396c5f9b1dcc7804eab88f130bba977e2139949152308f16037",
+      "unchanged_non_metadata_fields_sha256": "7ec81a2f054dde184cb707d61bf8012bd204a264afd833fb42c470c44965e2c2",
+      "rule_id": "kernel_code_absent_from_header_payload",
+      "changes": [
+        {
+          "path": "/References",
+          "before_sha256": "65999fd393be9909e4c8ede32daead5d7d79ce4643fad58952632c18600b2ed4",
+          "after_sha256": "3cdecfafb79dabb3a11686b333ba39c9ae35beaf1e1cd545768285294061f15a",
+          "added_count": 4,
+          "removed_count": 5,
+          "classification": "Distribution errata and advisory-reference metadata; unchanged description is compared separately."
+        }
+      ],
+      "source_documents": [
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/53xxx/CVE-2026-53281.json"
+      ],
+      "unchanged_applicability_basis": "The NULL and reference-count errors occur while removing a hardware-IOMMU association. The repair exits before kernel domain teardown and does not change a userspace PASID interface definition."
+    },
+    {
+      "id": "CVE-2026-63879",
+      "component": "headers",
+      "packages": [
+        "linux-libc-dev@6.8.0-147.147"
+      ],
+      "previous_advisory_sha256": "127b1890ff8e8658573b57c5e1e6c1f3d654ec2b6331101a06a613f54c997775",
+      "current_advisory_sha256": "3315022bdded0ca654e482be2c50adc699023df98754cbea08851904aab5168c",
+      "unchanged_non_metadata_fields_sha256": "c870924089deea50cbd9985bbba97ae4b60c7242c4cf43210b4eba73e10d7ae6",
+      "rule_id": "kernel_code_absent_from_header_payload",
+      "changes": [
+        {
+          "path": "/LastModifiedDate",
+          "before": "2026-10-21T13:19:17.117Z",
+          "after": "2026-10-26T20:12:03.977Z"
+        },
+        {
+          "path": "/References",
+          "before_sha256": "bca1cd9f0c95f82012c358d223c17290fff1f367191354572df7bac3998ec4a4",
+          "after_sha256": "31fe5fd8aaceedc39d102f3f48f356043448f9fd65f8db68ff886719d3c685a6",
+          "added_count": 5,
+          "removed_count": 20,
+          "classification": "Distribution errata and advisory-reference metadata; unchanged description is compared separately."
+        }
+      ],
+      "source_documents": [
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/63xxx/CVE-2026-63879.json"
+      ],
+      "unchanged_applicability_basis": "The unsafe pages follow repeated notifier-sequence reads inside the GPU driver's page acquisition, which identifies a kernel memory-management operation."
+    },
+    {
+      "id": "CVE-2026-68245",
+      "component": "headers",
+      "packages": [
+        "linux-libc-dev@6.8.0-147.147"
+      ],
+      "previous_advisory_sha256": "dd6f03ee55fe538f79ab59992e421ecea90c39eea0c9e150fdcbebd375f389e8",
+      "current_advisory_sha256": "e8cbe6135e7b101ff1cf8f9a3e6644fe8907b43ff771201cb8b92c057a943613",
+      "unchanged_non_metadata_fields_sha256": "bb45e1b6bcf6933d24fe01d05ba0c705a95a423cb5c8431f0ddb946cc09cfa01",
+      "rule_id": "kernel_code_absent_from_header_payload",
+      "changes": [
+        {
+          "path": "/References",
+          "before_sha256": "370b937ad4abdcfb0dec711e968bfd125aafa5e479f6e0ba2d3bf755f376dc3f",
+          "after_sha256": "7bd2aaf1c7ef48978394033cd2e4f87fa31dff901173fbbf0cb24a81672f0d5d",
+          "added_count": 16,
+          "removed_count": 10,
+          "classification": "Distribution errata and advisory-reference metadata; unchanged description is compared separately."
+        }
+      ],
+      "source_documents": [
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/68xxx/CVE-2026-68245.json"
+      ],
+      "unchanged_applicability_basis": "The lifetime violation occurs after dropping the xarray lock protecting a live driver VM object. Inlining here retains a kernel lock; it is not a userspace-header export change."
+    },
+    {
+      "id": "CVE-2026-68257",
+      "component": "headers",
+      "packages": [
+        "linux-libc-dev@6.8.0-147.147"
+      ],
+      "previous_advisory_sha256": "0e88bc610553f21ae5376a8559bb00f98cb3712e857a17526f2859018d11bdaa",
+      "current_advisory_sha256": "27fb5054b9ccc64a221864f3e56dc47ffb652b60e0e0fe7227cd6e0468dbc81f",
+      "unchanged_non_metadata_fields_sha256": "efba569ef78533c670f230428de1af02a1f1f84ea23174a3529d875a17ef54cc",
+      "rule_id": "kernel_code_absent_from_header_payload",
+      "changes": [
+        {
+          "path": "/References",
+          "before_sha256": "e7465ef1995a3d48e8f6d5ae1a59515d75cd360b22f5f73ee9f1b4e741b83478",
+          "after_sha256": "4cc7014aabd6f04630815aef69d76c7c449c922bb10309403057a4a4a3f6e543",
+          "added_count": 9,
+          "removed_count": 3,
+          "classification": "Distribution errata and advisory-reference metadata; unchanged description is compared separately."
+        }
+      ],
+      "source_documents": [
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/68xxx/CVE-2026-68257.json"
+      ],
+      "unchanged_applicability_basis": "Arithmetic in the queue buffer allocator underestimates memory later written by firmware. The changed u64 and checked arithmetic are internal allocation behavior; the description does not identify a userspace ABI width correction."
+    },
+    {
+      "id": "CVE-2026-68409",
+      "component": "headers",
+      "packages": [
+        "linux-libc-dev@6.8.0-147.147"
+      ],
+      "previous_advisory_sha256": "d0e302660b80d216733c8355c5451b29bfffe475896c57239f21a795bf0aed1e",
+      "current_advisory_sha256": "992232d1fe9664ec930d922c33db676f46489a4456713f2bff3171d368926a44",
+      "unchanged_non_metadata_fields_sha256": "c34cd5f98245eca9c7def4512449e0facb78d97f2ca95f3824176db609d1e5c3",
+      "rule_id": "kernel_code_absent_from_header_payload",
+      "changes": [
+        {
+          "path": "/References",
+          "before_sha256": "80bf7242621858251646759fa7241af47e4744d52a2b800ca29cee10ec99b060",
+          "after_sha256": "901b9537b2a3644e5bd54567e6e539a75ef25011216b9694d813d46396faf7e7",
+          "added_count": 10,
+          "removed_count": 17,
+          "classification": "Distribution errata and advisory-reference metadata; unchanged description is compared separately."
+        }
+      ],
+      "source_documents": [
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/68xxx/CVE-2026-68409.json"
+      ],
+      "unchanged_applicability_basis": "An RCU reader continues using a freed per-CPU stats block; the remedy changes kernel link reclamation timing, not exported statistics definitions."
+    },
+    {
+      "id": "CVE-2026-68426",
+      "component": "headers",
+      "packages": [
+        "linux-libc-dev@6.8.0-147.147"
+      ],
+      "previous_advisory_sha256": "65cc407c9e25b13ef1814d547120d4fb31774644a674537a8f806d7dba0adb10",
+      "current_advisory_sha256": "495d3022c9faddd64e70e317a9029ee06adbd904193b69f6df757cdbb967a752",
+      "unchanged_non_metadata_fields_sha256": "d8a3c2a379d662da40f0dbfab742addcd5435cde9eba8100e4d9535bae71f8e5",
+      "rule_id": "kernel_code_absent_from_header_payload",
+      "changes": [
+        {
+          "path": "/References",
+          "before_sha256": "c33b6b5b1217568c56d83b60f2d5d0bddb246dbbed1aa198064b4afb933199c5",
+          "after_sha256": "65850f3a54b68553f42ec3d7d65fc1d8248255a1c2df5cccf4982bd60f4d33dc",
+          "added_count": 16,
+          "removed_count": 23,
+          "classification": "Distribution errata and advisory-reference metadata; unchanged description is compared separately."
+        }
+      ],
+      "source_documents": [
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/68xxx/CVE-2026-68426.json"
+      ],
+      "unchanged_applicability_basis": "The stale pointer belongs to a kernel skb list whose segment ownership moves to the crypto engine. Exported network definitions do not perform the asynchronous list manipulation."
+    },
+    {
+      "id": "CVE-2026-72383",
+      "component": "headers",
+      "packages": [
+        "linux-libc-dev@6.8.0-147.147"
+      ],
+      "previous_advisory_sha256": "8f55b4ae63f63170e1622b9509cfb04383d5b741880afa6d4adaf551eeb25098",
+      "current_advisory_sha256": "c18383cc1977e8e7fb9599b78f9829835eb5578fee2f436a93df520031b24ce7",
+      "unchanged_non_metadata_fields_sha256": "282116f413bc166be5847e3e0e1c3685f95c0bfa78b6e9464a7408f73fda471f",
+      "rule_id": "kernel_code_absent_from_header_payload",
+      "changes": [
+        {
+          "path": "/CVSS/redhat/V3Score",
+          "before": 5.5,
+          "after": 4.7
+        },
+        {
+          "path": "/CVSS/redhat/V3Vector",
+          "before": "CVSS:3.1/AV:L/AC:L/PR:L/UI:N/S:U/C:N/I:N/A:H",
+          "after": "CVSS:3.1/AV:L/AC:H/PR:L/UI:N/S:U/C:N/I:N/A:H"
+        },
+        {
+          "path": "/References",
+          "before_sha256": "a53506c04ce33e09dd8cb5f2208780152418440d6e7a21e9979047bfe8630e12",
+          "after_sha256": "67248c43d49e2dd1f5d1d0597b36a271b700267815505ed1c955814dbc2baada",
+          "added_count": 1,
+          "removed_count": 0,
+          "classification": "Distribution errata and advisory-reference metadata; unchanged description is compared separately."
+        }
+      ],
+      "source_documents": [
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/72xxx/CVE-2026-72383.json"
+      ],
+      "unchanged_applicability_basis": "A running timer can reach freed kernel address-queue state; synchronous shutdown is an internal protocol-lifetime fix."
+    },
+    {
+      "id": "CVE-2026-74470",
+      "component": "headers",
+      "packages": [
+        "linux-libc-dev@6.8.0-147.147"
+      ],
+      "previous_advisory_sha256": "7842b32b207c1ec129c448b18f7bec6fa9c01a1f846099a1a8ce16c64f056633",
+      "current_advisory_sha256": "cfab9819851dcefb5736aa1cc381f5a140735fc87ffb57fab6fa6e2ae1c02456",
+      "unchanged_non_metadata_fields_sha256": "8877f40a5c0b684e3118c43fd463ae3b771efc946dc3aa5758c82791d14dc22e",
+      "rule_id": "kernel_code_absent_from_header_payload",
+      "changes": [
+        {
+          "path": "/References",
+          "before_sha256": "e8e5aae7734222538f23b46c90a0ad568dcc51377b53ea4d04142da6cd6521e7",
+          "after_sha256": "9100d0748468084565aa8553a66d7d2912224a50e1878b128bf735b890a3d242",
+          "added_count": 1,
+          "removed_count": 0,
+          "classification": "Distribution errata and advisory-reference metadata; unchanged description is compared separately."
+        }
+      ],
+      "source_documents": [
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/74xxx/CVE-2026-74470.json"
+      ],
+      "unchanged_applicability_basis": "The report response is allocated with kzalloc by the in-kernel virtual SCSI driver. A command descriptor controls the size, but the integer truncation and write are kernel-side."
+    },
+    {
+      "id": "CVE-2026-74533",
+      "component": "headers",
+      "packages": [
+        "linux-libc-dev@6.8.0-147.147"
+      ],
+      "previous_advisory_sha256": "0695506d0bdf4a795d95cdba43ed92f22df72a2f966717704027f8ae2b7313a7",
+      "current_advisory_sha256": "4445eaa12eba74773ddd5d07afa26a71297d865b61ee58bea73788df7e1ebccd",
+      "unchanged_non_metadata_fields_sha256": "6292787841d10e66f86a3dbfd15868e8e6b8244ffe4af1bc64416bf391fd1cd8",
+      "rule_id": "kernel_code_absent_from_header_payload",
+      "changes": [
+        {
+          "path": "/CVSS/redhat/V3Score",
+          "before": 7,
+          "after": 5.3
+        },
+        {
+          "path": "/CVSS/redhat/V3Vector",
+          "before": "CVSS:3.1/AV:L/AC:H/PR:L/UI:N/S:U/C:H/I:H/A:H",
+          "after": "CVSS:3.1/AV:A/AC:H/PR:N/UI:N/S:U/C:N/I:N/A:H"
+        },
+        {
+          "path": "/References",
+          "before_sha256": "50e44465215c216b9a5e41da8fed9830f926ddf9f610141ac55a4309dff6812d",
+          "after_sha256": "ec199f8b81757d94e5e30ff75edb1e907fdef2cfdb8cca3a53758fbad686184d",
+          "added_count": 1,
+          "removed_count": 0,
+          "classification": "Distribution errata and advisory-reference metadata; unchanged description is compared separately."
+        }
+      ],
+      "source_documents": [
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/74xxx/CVE-2026-74533.json"
+      ],
+      "unchanged_applicability_basis": "The race involves kernel HCI connection data accessed without locking or RCU; the internal hci_core header carries the new protecting lock."
+    },
+    {
+      "id": "CVE-2026-74535",
+      "component": "headers",
+      "packages": [
+        "linux-libc-dev@6.8.0-147.147"
+      ],
+      "previous_advisory_sha256": "db3222ac0053619dd7eb478c423525c9a6ad2041b8a47f2dfa7f9041f0b14ee1",
+      "current_advisory_sha256": "ff234d92a9be90af85cbe89d56c0036d053d83b9af9d3644f3ac8eea02201e58",
+      "unchanged_non_metadata_fields_sha256": "f6028e6b710b68c63c330a4e8561c97942488fb06964d4ddfb905b4c0709544d",
+      "rule_id": "kernel_code_absent_from_header_payload",
+      "changes": [
+        {
+          "path": "/CVSS/redhat/V3Score",
+          "before": 7,
+          "after": 4.8
+        },
+        {
+          "path": "/CVSS/redhat/V3Vector",
+          "before": "CVSS:3.1/AV:L/AC:H/PR:L/UI:N/S:U/C:H/I:H/A:H",
+          "after": "CVSS:3.1/AV:A/AC:H/PR:L/UI:N/S:U/C:N/I:N/A:H"
+        },
+        {
+          "path": "/References",
+          "before_sha256": "a39c06a08c2c8d2d1c5f19351159b442c166ce22486f4f02392676005dc31a32",
+          "after_sha256": "02720695736600298221a51af0faa57ca389a710565cf1348c92099591e08f61",
+          "added_count": 1,
+          "removed_count": 0,
+          "classification": "Distribution errata and advisory-reference metadata; unchanged description is compared separately."
+        }
+      ],
+      "source_documents": [
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/74xxx/CVE-2026-74535.json"
+      ],
+      "unchanged_applicability_basis": "The bug combines lock_sock deadlock and a freed HCI connection referenced from timeout cleanup. Moving timer ownership and changing its disabling are kernel socket-lifecycle operations, not userspace ISO code."
+    },
+    {
+      "id": "CVE-2026-74537",
+      "component": "headers",
+      "packages": [
+        "linux-libc-dev@6.8.0-147.147"
+      ],
+      "previous_advisory_sha256": "7dea4bcaf762f17c57d5f87da817b928fbc7920609b14d0f55ec9db455611474",
+      "current_advisory_sha256": "b8af186b5c627feb3f5c6c91d62cf0a34c03f73dacbeae07fe0f10309d0dad80",
+      "unchanged_non_metadata_fields_sha256": "d56830d6e808ba90170dae893ed14dceb8c039247a7d3fcbfb7d3d8fde8ef741",
+      "rule_id": "kernel_code_absent_from_header_payload",
+      "changes": [
+        {
+          "path": "/CVSS/redhat/V3Score",
+          "before": 7,
+          "after": 4.8
+        },
+        {
+          "path": "/CVSS/redhat/V3Vector",
+          "before": "CVSS:3.1/AV:L/AC:H/PR:L/UI:N/S:U/C:H/I:H/A:H",
+          "after": "CVSS:3.1/AV:A/AC:H/PR:L/UI:N/S:U/C:N/I:N/A:H"
+        },
+        {
+          "path": "/References",
+          "before_sha256": "043d3551d5b9eae14c3215657c3c4b4e5db4ccf8cd8259d9ef01f5b4a756732b",
+          "after_sha256": "7fb279e052c43d3d4dd546bacd1b86fe1a5b10e3b08c4adde2bd5504f295ea64",
+          "added_count": 1,
+          "removed_count": 0,
+          "classification": "Distribution errata and advisory-reference metadata; unchanged description is compared separately."
+        }
+      ],
+      "source_documents": [
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/74xxx/CVE-2026-74537.json"
+      ],
+      "unchanged_applicability_basis": "Kernel readiness handling dereferences conn->sk during concurrent socket closure; locking and reference ownership implement the fix."
+    },
+    {
+      "id": "CVE-2026-74565",
+      "component": "headers",
+      "packages": [
+        "linux-libc-dev@6.8.0-147.147"
+      ],
+      "previous_advisory_sha256": "8d85ea5d34a414b2b8bf8a50b0a8c5640a284667ccd7735f01df586d6a5fed64",
+      "current_advisory_sha256": "df40316580b337399a2fca7e01a9e8449e14e897b0882a5424b5a28e845da324",
+      "unchanged_non_metadata_fields_sha256": "6cf3e52476b01d7a44f203309b4697d0e8c4f7044a53dd49b08ea02c59707ac3",
+      "rule_id": "kernel_code_absent_from_header_payload",
+      "changes": [
+        {
+          "path": "/References",
+          "before_sha256": "89dbc639eb96e7a7e922bc50b0fd5c5ab7dcf2abb62f5d11e0f5955bb58ce114",
+          "after_sha256": "4406387ce94f5f23d975b680c606a8983ebaf163ddcb2edf6b5f6d5077741b98",
+          "added_count": 1,
+          "removed_count": 0,
+          "classification": "Distribution errata and advisory-reference metadata; unchanged description is compared separately."
+        }
+      ],
+      "source_documents": [
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/74xxx/CVE-2026-74565.json"
+      ],
+      "unchanged_applicability_basis": "The released objects live in runtime nftables tables and network namespaces. The noted compiler constness adjustment supports that internal lookup change, without evidence of build/export behavior affecting userspace headers."
+    },
+    {
+      "id": "CVE-2026-74677",
+      "component": "headers",
+      "packages": [
+        "linux-libc-dev@6.8.0-147.147"
+      ],
+      "previous_advisory_sha256": "0281b0ddaa9437fd4369ca20e102d945a901b031eab678b901bff2001b1082f1",
+      "current_advisory_sha256": "7dd57fbeedb62968bbedd0b1e9763eaf29a8f01e80c253e9fc269103fc78ee6f",
+      "unchanged_non_metadata_fields_sha256": "accf3b82473e2e4a6d5763513277edc710cee1157f4d2fcbfb3cf7ab2005d235",
+      "rule_id": "kernel_code_absent_from_header_payload",
+      "changes": [
+        {
+          "path": "/CVSS/redhat/V3Score",
+          "before": 7,
+          "after": 4.7
+        },
+        {
+          "path": "/CVSS/redhat/V3Vector",
+          "before": "CVSS:3.1/AV:L/AC:H/PR:L/UI:N/S:U/C:H/I:H/A:H",
+          "after": "CVSS:3.1/AV:L/AC:H/PR:L/UI:N/S:U/C:N/I:N/A:H"
+        },
+        {
+          "path": "/References",
+          "before_sha256": "8e0df146baa83f8758783f7ead829416e1c2b72ae32366d78a5e231cbbb3533d",
+          "after_sha256": "721e2abc474200fdfacb17926ddac995256016e267683f9c76c4ffee9a969391",
+          "added_count": 1,
+          "removed_count": 0,
+          "classification": "Distribution errata and advisory-reference metadata; unchanged description is compared separately."
+        }
+      ],
+      "source_documents": [
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/74xxx/CVE-2026-74677.json"
+      ],
+      "unchanged_applicability_basis": "A USB completion can enqueue work after the driver drained it and before netdev freeing; this is a kernel work/object lifetime issue."
+    },
+    {
+      "id": "CVE-2026-74700",
+      "component": "headers",
+      "packages": [
+        "linux-libc-dev@6.8.0-147.147"
+      ],
+      "previous_advisory_sha256": "74a2623b7e1c0decf4d8f16d7954c8602ab90b7d267b171b1c38ec64969234d9",
+      "current_advisory_sha256": "ea9c91e8fa1f3d6ddafe30c472894bd30520d77fb2f0c24844c56216b329ea7f",
+      "unchanged_non_metadata_fields_sha256": "22bcdc179cbc8f7a3d05ca1a1bc4ca8a9132ca195da2936595f4f336079ad042",
+      "rule_id": "kernel_code_absent_from_header_payload",
+      "changes": [
+        {
+          "path": "/CVSS/redhat/V3Score",
+          "before": 7,
+          "after": 4.7
+        },
+        {
+          "path": "/CVSS/redhat/V3Vector",
+          "before": "CVSS:3.1/AV:L/AC:H/PR:L/UI:N/S:U/C:H/I:H/A:H",
+          "after": "CVSS:3.1/AV:L/AC:H/PR:L/UI:N/S:U/C:N/I:N/A:H"
+        },
+        {
+          "path": "/References",
+          "before_sha256": "c58ada3d71bc3107a23cc1888cc208210cdac9ef8ae9062cefbd4263e95d237b",
+          "after_sha256": "c4fef73bb18ecbe24cb725074abfd05734bae5470f895f6dcf7c0e31b5edda7f",
+          "added_count": 1,
+          "removed_count": 0,
+          "classification": "Distribution errata and advisory-reference metadata; unchanged description is compared separately."
+        }
+      ],
+      "source_documents": [
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/74xxx/CVE-2026-74700.json"
+      ],
+      "unchanged_applicability_basis": "Kernel classifier references can outlive a racing creation path and reach destruction without rtnl_lock. Concurrent userspace requests trigger this, but the repair is lock acquisition around the kernel destroy callback."
+    },
+    {
+      "id": "CVE-2026-74714",
+      "component": "headers",
+      "packages": [
+        "linux-libc-dev@6.8.0-147.147"
+      ],
+      "previous_advisory_sha256": "cfc97aab8996e80d08c86d1742f53da57215efb8a6d22a3c87c30020020b0c82",
+      "current_advisory_sha256": "91a5d85c3c4c1f3a52b70c946af6121ee80cf8f563d67166303ffeb29dd4c651",
+      "unchanged_non_metadata_fields_sha256": "5f5fe8b4fb775bf9554929d1fe1d856e37965e3dcb90ea8c4bdb98faa96a3ed6",
+      "rule_id": "kernel_code_absent_from_header_payload",
+      "changes": [
+        {
+          "path": "/CVSS/redhat/V3Score",
+          "before": 7,
+          "after": 4.7
+        },
+        {
+          "path": "/CVSS/redhat/V3Vector",
+          "before": "CVSS:3.1/AV:L/AC:H/PR:L/UI:N/S:U/C:H/I:H/A:H",
+          "after": "CVSS:3.1/AV:L/AC:H/PR:L/UI:N/S:U/C:N/I:N/A:H"
+        },
+        {
+          "path": "/References",
+          "before_sha256": "4da10255e333cc111ad311e2315193d2699cbe90b8324d56671d346a043cadd6",
+          "after_sha256": "54c39dfe027a37b5cd96c9689706c800d67bf6caec651f0362a7282f59387b9a",
+          "added_count": 1,
+          "removed_count": 0,
+          "classification": "Distribution errata and advisory-reference metadata; unchanged description is compared separately."
+        }
+      ],
+      "source_documents": [
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/74xxx/CVE-2026-74714.json"
+      ],
+      "unchanged_applicability_basis": "The iterator acquires a kernel socket reference before publication finishes initializing its refcount; user connections and iterator reads are triggers only."
+    },
+    {
+      "id": "CVE-2026-74715",
+      "component": "headers",
+      "packages": [
+        "linux-libc-dev@6.8.0-147.147"
+      ],
+      "previous_advisory_sha256": "4c6d42584a49c3e0cdd3c86acf2b044dcb0c84d203b3bcf061471915cfa40c4e",
+      "current_advisory_sha256": "8a2210019788ad683ae5bdc2dc7aa98e4fa7e662379b5e6883c40f852c08934c",
+      "unchanged_non_metadata_fields_sha256": "83f28e3267f9873c981898ceb37649ecd08737c4e92cc4826f12562eee162504",
+      "rule_id": "kernel_code_absent_from_header_payload",
+      "changes": [
+        {
+          "path": "/CVSS/redhat/V3Score",
+          "before": 7,
+          "after": 4.7
+        },
+        {
+          "path": "/CVSS/redhat/V3Vector",
+          "before": "CVSS:3.1/AV:L/AC:H/PR:L/UI:N/S:U/C:H/I:H/A:H",
+          "after": "CVSS:3.1/AV:L/AC:H/PR:L/UI:N/S:U/C:N/I:N/A:H"
+        },
+        {
+          "path": "/References",
+          "before_sha256": "65cccebc048c18fd842ecadbf35136761b8b0a942a97d37967f69e379fcd481d",
+          "after_sha256": "41ef06823c26647a1531f158cc6910968bbadf4610701878fc252403cb8a3d51",
+          "added_count": 1,
+          "removed_count": 0,
+          "classification": "Distribution errata and advisory-reference metadata; unchanged description is compared separately."
+        }
+      ],
+      "source_documents": [
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/74xxx/CVE-2026-74715.json"
+      ],
+      "unchanged_applicability_basis": "A shared BPF map value can change, but the imbalance is in kernel get/put operations on a live network namespace. Shared input storage does not establish userspace implementation."
+    },
+    {
+      "id": "CVE-2026-74744",
+      "component": "headers",
+      "packages": [
+        "linux-libc-dev@6.8.0-147.147"
+      ],
+      "previous_advisory_sha256": "257c8b16a259024cbcea2c952cfb36dea436e728561273e7a72dc3ba31049d54",
+      "current_advisory_sha256": "82a1749e5cc020a5487791aae06929691d6f3674bdb0fce7075e599bfa5c2b0d",
+      "unchanged_non_metadata_fields_sha256": "2505e782b449f06aba56d9fca1ae9b39aa64c8517bf4ee75b65d7d7ea1e615fd",
+      "rule_id": "kernel_code_absent_from_header_payload",
+      "changes": [
+        {
+          "path": "/References",
+          "before_sha256": "e5e2c3a42de29530870d7da406f89cbf5d6f3c849f55c527cb3466e5e231ee64",
+          "after_sha256": "2bd2d1781944b0997655f87017c3b6b0c8ada8f459b8614055a1b3e4ecb76522",
+          "added_count": 30,
+          "removed_count": 14,
+          "classification": "Distribution errata and advisory-reference metadata; unchanged description is compared separately."
+        }
+      ],
+      "source_documents": [
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/74xxx/CVE-2026-74744.json"
+      ],
+      "unchanged_applicability_basis": "The fault is in kernel net-device property propagation and later skb header manipulation. Lower protocol stacks may require extra space, but no exported header computation is described."
+    },
+    {
+      "id": "CVE-2026-78669",
+      "component": "runc",
+      "packages": [
+        "golang.org/x/net@v0.55.0"
+      ],
+      "previous_advisory_sha256": "3859e5e01b6ef2bc1713e94a149179feb6e62ebbb1b1b873e239641688a31fff",
+      "current_advisory_sha256": "8ebaefd769b07d2a56c5cda340596b07d21480da44ad2926b8eef3de2a4c251f",
+      "unchanged_non_metadata_fields_sha256": "0bee1da048883c553148c5e8b5c599c53f2b72e3212cfb48046e461819b3e71e",
+      "rule_id": "runc_affected_packages_not_linked",
+      "changes": [
+        {
+          "path": "/References",
+          "before_sha256": "3213db9631168fd60635f2451d4a6fcdbc3afbdea23db0c83850bf72c2364d01",
+          "after_sha256": "0036f42744a52437aeb6384d1464845b2e4c1cd774aa196bd211bb8fc11b6581",
+          "added_count": 4,
+          "removed_count": 6,
+          "classification": "Distribution errata and advisory-reference metadata; unchanged description is compared separately."
+        },
+        {
+          "path": "/VendorSeverity/alma",
+          "before": 4,
+          "after": 3
+        },
+        {
+          "path": "/VendorSeverity/amazon",
+          "before_exists": false,
+          "after_exists": true,
+          "before": null,
+          "after": 3
+        },
+        {
+          "path": "/VendorSeverity/rocky",
+          "before": 3,
+          "after": 4
+        }
+      ],
+      "source_documents": [
+        "https://pkg.go.dev/vuln/GO-2026-6611"
+      ],
+      "unchanged_applicability_basis": "The exact retained runc binary and matching release-source dependency graph import x/net/bpf, not the affected package. This assessment does not apply to another binary, architecture, build configuration or advisory."
+    },
+    {
+      "id": "CVE-2026-80714",
+      "component": "headers",
+      "packages": [
+        "linux-libc-dev@6.8.0-147.147"
+      ],
+      "previous_advisory_sha256": "30c9b835ff4aa37e72566eaa31046b5acfa7a7843590d53f7b7890ae537ddafd",
+      "current_advisory_sha256": "fa6755fbff35189dcdcf41b5603f93e0cd8cfc15f763341b942370474e6df7b8",
+      "unchanged_non_metadata_fields_sha256": "2f49e46fcca8a04930f31fb28d338f44e1db971a33cda78c97ebbbb043f9de8e",
+      "rule_id": "kernel_code_absent_from_header_payload",
+      "changes": [
+        {
+          "path": "/References",
+          "before_sha256": "41adc3765425a92c7d655ef3d04b7a34fcc246b5b310953ea24066ae094b4b50",
+          "after_sha256": "96588f6448d539baf36de4b7ab4eca165d008563767970def3377352cca2654a",
+          "added_count": 4,
+          "removed_count": 15,
+          "classification": "Distribution errata and advisory-reference metadata; unchanged description is compared separately."
+        }
+      ],
+      "source_documents": [
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/80xxx/CVE-2026-80714.json"
+      ],
+      "unchanged_applicability_basis": "A one-packet flag changes kernel expiry behavior so a hash node survives after its connection is freed. The defect is flag propagation into a live connection object, not the numeric flag definition in an interface header."
+    },
+    {
+      "id": "CVE-2026-80905",
+      "component": "headers",
+      "packages": [
+        "linux-libc-dev@6.8.0-147.147"
+      ],
+      "previous_advisory_sha256": "0873ce13adf3386c2e553337185125f7909f3ebae6af5237bba70e52203f23cb",
+      "current_advisory_sha256": "a5a93c44a0a222408c5b9eff8d6c3730a9ae215c1b4a8a77a171bc4a37bd1b47",
+      "unchanged_non_metadata_fields_sha256": "ab456ba4620cd340ff143b27c46cc4fb70cde87d8f1b68f9814d61ce13d58f25",
+      "rule_id": "kernel_code_absent_from_header_payload",
+      "changes": [
+        {
+          "path": "/CVSS",
+          "before_exists": false,
+          "after_exists": true,
+          "before": null,
+          "after": {
+            "redhat": {
+              "V3Vector": "CVSS:3.1/AV:L/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H",
+              "V3Score": 6.2
+            }
+          }
+        },
+        {
+          "path": "/References",
+          "before_sha256": "b0c2deb81e92c29943258973339daf38b9bfd7d5ff0cb2bef0bd3096b9065202",
+          "after_sha256": "2991bc1e3d2801a0716246110e80565f4ffac5667152f55d6fd9fd143332fc1b",
+          "added_count": 4,
+          "removed_count": 0,
+          "classification": "Distribution errata and advisory-reference metadata; unchanged description is compared separately."
+        },
+        {
+          "path": "/Title",
+          "before": "In the Linux kernel, the following vulnerability has been resolved:  n ...",
+          "after": "kernel: net: tap: fix wrong transport_header when sending VLAN-tagged frame"
+        },
+        {
+          "path": "/VendorSeverity/redhat",
+          "before_exists": false,
+          "after_exists": true,
+          "before": null,
+          "after": 2
+        }
+      ],
+      "source_documents": [
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/80xxx/CVE-2026-80905.json"
+      ],
+      "unchanged_applicability_basis": "The ordering bug is in kernel skb preparation and flow dissection after receiving userspace frame data; exported VLAN definitions do not perform this operation."
+    },
+    {
+      "id": "CVE-2026-89526",
+      "component": "headers",
+      "packages": [
+        "linux-libc-dev@6.8.0-147.147"
+      ],
+      "previous_advisory_sha256": "70dc182953bc9e7f17207be41032e622d8e5109a19a7a3d49a261903a64353b5",
+      "current_advisory_sha256": "9f2a28f2effc78f6dbceeb8477b27e818bc551281fe26b339aa9ea3a06380747",
+      "unchanged_non_metadata_fields_sha256": "8bb4893cccc41c2f85c89a767ac519b2cc45900cfc434164d2c7b669ab08cf19",
+      "rule_id": "kernel_code_absent_from_header_payload",
+      "changes": [
+        {
+          "path": "/References",
+          "before_sha256": "81e7c8327d842b3ace7e86d02d9c40203f4ce75ef322f4083e916c08b2ffd1f2",
+          "after_sha256": "186877b3fe40825500e4df61eb99ff1019c5a391f0c3df1b5a2f63bb5cc7aa31",
+          "added_count": 4,
+          "removed_count": 11,
+          "classification": "Distribution errata and advisory-reference metadata; unchanged description is compared separately."
+        }
+      ],
+      "source_documents": [
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/89xxx/CVE-2026-89526.json"
+      ],
+      "unchanged_applicability_basis": "The bounds error is in kernel RPC reconstruction and copying from receive buffers; remote protocol fields are inputs to that implementation."
+    },
+    {
+      "id": "CVE-2026-89530",
+      "component": "headers",
+      "packages": [
+        "linux-libc-dev@6.8.0-147.147"
+      ],
+      "previous_advisory_sha256": "6a45626fbd7b80cb61fb55ca53d544d38427d6a676d06df52d06af33692ded43",
+      "current_advisory_sha256": "d93bd72fe8ef5c39100840d57e24b260684e1732e8e175ddd6737f4e7339ca21",
+      "unchanged_non_metadata_fields_sha256": "180a74ac316b85659af614be9b517dab491edbfb1f0e360b1aea2546ab69a442",
+      "rule_id": "kernel_code_absent_from_header_payload",
+      "changes": [
+        {
+          "path": "/References",
+          "before_sha256": "c1afe7b6f1a98e56eb4b223990b1f7b79ce19092c1cf3e1a4b14fefe730f1bf5",
+          "after_sha256": "961333d7137c60598d5f5e3414364061fa97eeefaf60e98342b8049df70e1984",
+          "added_count": 4,
+          "removed_count": 13,
+          "classification": "Distribution errata and advisory-reference metadata; unchanged description is compared separately."
+        }
+      ],
+      "source_documents": [
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/89xxx/CVE-2026-89530.json"
+      ],
+      "unchanged_applicability_basis": "The reply overflows a kernel slab buffer before a device send. Client requests supply length pressure, but the faulty scatter/gather fallback and buffer allocation belong to the kernel RPC/RDMA server."
+    },
+    {
+      "id": "CVE-2026-89633",
+      "component": "headers",
+      "packages": [
+        "linux-libc-dev@6.8.0-147.147"
+      ],
+      "previous_advisory_sha256": "037cbecf123b5cac6046b328e20bcbcbe78bc59e203fc1402ec1bc6fc3c1cdd4",
+      "current_advisory_sha256": "864ad584661f85e9da55e44ca7aa5842d5460a5ffbaef1a2d24ca2b5d3a129e1",
+      "unchanged_non_metadata_fields_sha256": "a2af3b3e97375a2c38bc2ae2332c52219d8f0058bd57992617700f1837e0c547",
+      "rule_id": "kernel_code_absent_from_header_payload",
+      "changes": [
+        {
+          "path": "/References",
+          "before_sha256": "b1e771215a5c17a833863cdd4ecbb4566d5a84a9b9c868044c67068c33b69fa2",
+          "after_sha256": "722de739c501c3b1db7ad1969392d0dcaf6472708e90d4143cfcca71f2df07cb",
+          "added_count": 13,
+          "removed_count": 10,
+          "classification": "Distribution errata and advisory-reference metadata; unchanged description is compared separately."
+        }
+      ],
+      "source_documents": [
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/89xxx/CVE-2026-89633.json"
+      ],
+      "unchanged_applicability_basis": "Server-supplied offsets steer copies within kernel SMB response buffers; the affected client here is the filesystem implementation, not a userspace SMB library."
+    },
+    {
+      "id": "CVE-2026-89638",
+      "component": "headers",
+      "packages": [
+        "linux-libc-dev@6.8.0-147.147"
+      ],
+      "previous_advisory_sha256": "71853425a7123f54fcd23f268a42e9d6068c3b4e6955bc1399ecfa434d2f83e4",
+      "current_advisory_sha256": "5a4712b49858407b86e8cac343502f5789fc7fbbb6b1d5c4636f663d27fe775b",
+      "unchanged_non_metadata_fields_sha256": "964bfc0c8c4c27f61cd962cec3e6a1aed6f15d575f244b717284c22e24aa0b1d",
+      "rule_id": "kernel_code_absent_from_header_payload",
+      "changes": [
+        {
+          "path": "/References",
+          "before_sha256": "a63c7f00695044c23c33927e593b9f5966b4cc9fd6adf8cffb0da697d7020f76",
+          "after_sha256": "be4d44f294a6767b95ed194dc8f72fbc3006a87b2addfcf0127aa79f20b5193b",
+          "added_count": 42,
+          "removed_count": 0,
+          "classification": "Distribution errata and advisory-reference metadata; unchanged description is compared separately."
+        },
+        {
+          "path": "/VendorSeverity/alma",
+          "before_exists": false,
+          "after_exists": true,
+          "before": null,
+          "after": 3
+        },
+        {
+          "path": "/VendorSeverity/rocky",
+          "before_exists": false,
+          "after_exists": true,
+          "before": null,
+          "after": 3
+        }
+      ],
+      "source_documents": [
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/89xxx/CVE-2026-89638.json"
+      ],
+      "unchanged_applicability_basis": "The VFS strips permission bits but CIFS setattr drops the mode update before sending it to the server. The affected behavior is the cifs.ko filesystem implementation, not a userspace ACL tool or header definition."
+    },
+    {
+      "id": "CVE-2026-93817",
+      "component": "headers",
+      "packages": [
+        "linux-libc-dev@6.8.0-147.147"
+      ],
+      "previous_advisory_sha256": "4f7f3f8063722d473fcbb1e857963bdc4b42d28fabf9ed8464bd3de78e67979c",
+      "current_advisory_sha256": "6c77610ccebafb0d07eb4cc50907e4bb14b0cef9f7ba9ce89e8c1fc9c517f06e",
+      "unchanged_non_metadata_fields_sha256": "12d107ac4594b88edfd39cbf3daac772af77d2ba05ac6f0e992c2bd8c2973c24",
+      "rule_id": "kernel_code_absent_from_header_payload",
+      "changes": [
+        {
+          "path": "/References",
+          "before_sha256": "e6bfbdbf2dee0cc2fb99923c101941e8b9e74010fa2c2edf1296943066f282eb",
+          "after_sha256": "6f7aef8f41833af0a61cab9187b6b6cff1fa34eee73d24fd81469179067c58da",
+          "added_count": 11,
+          "removed_count": 13,
+          "classification": "Distribution errata and advisory-reference metadata; unchanged description is compared separately."
+        },
+        {
+          "path": "/VendorSeverity/oracle-oval",
+          "before_exists": false,
+          "after_exists": true,
+          "before": null,
+          "after": 3
+        }
+      ],
+      "source_documents": [
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/93xxx/CVE-2026-93817.json"
+      ],
+      "unchanged_applicability_basis": "The identified range object is consumed under kernel RCU and must be reclaimed accordingly; even the short description specifies the lifetime mechanism."
+    },
+    {
+      "id": "CVE-2026-97493",
+      "component": "headers",
+      "packages": [
+        "linux-libc-dev@6.8.0-147.147"
+      ],
+      "previous_advisory_sha256": "ac61354124e039bc14340aa541ea429f03a206bb1e413d826cc59db18fc40856",
+      "current_advisory_sha256": "747cc3d019df9c12a6f58caf29490048bbc2c9d3082d975495f4f5c2016fddb2",
+      "unchanged_non_metadata_fields_sha256": "d5562600f745020199abc0012cabb3fe694147394f47448e827a28a148e77eef",
+      "rule_id": "kernel_code_absent_from_header_payload",
+      "changes": [
+        {
+          "path": "/References",
+          "before_sha256": "0dc4fefadc2158a8cc3f6f993edbe8bc95d094567e8dbdbbbae432ddd3ebffb2",
+          "after_sha256": "d0111675908060ba3dfe4d8a25f813747b2e695c3647bb70f997f719c9013c4e",
+          "added_count": 40,
+          "removed_count": 0,
+          "classification": "Distribution errata and advisory-reference metadata; unchanged description is compared separately."
+        },
+        {
+          "path": "/VendorSeverity/oracle-oval",
+          "before_exists": false,
+          "after_exists": true,
+          "before": null,
+          "after": 3
+        },
+        {
+          "path": "/VendorSeverity/rocky",
+          "before_exists": false,
+          "after_exists": true,
+          "before": null,
+          "after": 3
+        }
+      ],
+      "source_documents": [
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/97xxx/CVE-2026-97493.json"
+      ],
+      "unchanged_applicability_basis": "Corrupt firmware size fields drive a kernel driver's bus-array writes; the validation belongs to driver execution."
+    },
+    {
+      "id": "CVE-2026-98034",
+      "component": "headers",
+      "packages": [
+        "linux-libc-dev@6.8.0-147.147"
+      ],
+      "previous_advisory_sha256": "0dab6b9e0b12d8235f5ebb47a799ceeb1f9d7528d0f64e67130b5074800a680c",
+      "current_advisory_sha256": "637c3dbe39a9593f0d011ba627268da6fe76d0b06b68b7ea41b136f942102952",
+      "unchanged_non_metadata_fields_sha256": "1714c6b226e14de1d9493c8024aa51a742629d99d9ad2457080aa95296012aa4",
+      "rule_id": "kernel_code_absent_from_header_payload",
+      "changes": [
+        {
+          "path": "/VendorSeverity/amazon",
+          "before_exists": false,
+          "after_exists": true,
+          "before": null,
+          "after": 3
+        }
+      ],
+      "source_documents": [
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98034.json"
+      ],
+      "unchanged_applicability_basis": "An imprecise scalar permits verifier state pruning to skip a nonzero store path. mark_chain_precision repairs kernel validation of submitted programs; no exported-header or user compiler change is described."
+    },
+    {
+      "id": "CVE-2026-98084",
+      "component": "headers",
+      "packages": [
+        "linux-libc-dev@6.8.0-147.147"
+      ],
+      "previous_advisory_sha256": "25207bf2456c80e0d81f038a1fbbcc32f3daec1d9b1a308accc8681bb9be3f01",
+      "current_advisory_sha256": "8e712d82981f15071b23404ebece0f0509e1f76e2332fdd0db084a580e464c14",
+      "unchanged_non_metadata_fields_sha256": "a44b8441beafd3379047d36ce1f3d364458c0b1d25d74554daf7e0f2edfb7203",
+      "rule_id": "kernel_code_absent_from_header_payload",
+      "changes": [
+        {
+          "path": "/VendorSeverity/amazon",
+          "before_exists": false,
+          "after_exists": true,
+          "before": null,
+          "after": 3
+        }
+      ],
+      "source_documents": [
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98084.json"
+      ],
+      "unchanged_applicability_basis": "The description explains a kernel verifier checkpoint that loses outer-frame precision and can accept unsafe programs. The callback program is input; precision backtracking is the vulnerable kernel implementation."
+    },
+    {
+      "id": "CVE-2026-98260",
+      "component": "headers",
+      "packages": [
+        "linux-libc-dev@6.8.0-147.147"
+      ],
+      "previous_advisory_sha256": "da41219080c7c717d61d97df73392c3f2454e6732e4d757ecce13fda58b3b41d",
+      "current_advisory_sha256": "e30c48447aa0a036446ff93a281a053c5fc9bda3641c9b80d89024b79f0c6aba",
+      "unchanged_non_metadata_fields_sha256": "641b7535d20fd7d89dbcb665d77179ba3a99c803801d959d64809a9e9497e1e1",
+      "rule_id": "kernel_code_absent_from_header_payload",
+      "changes": [
+        {
+          "path": "/References",
+          "before_sha256": "4980b21410b0363b27a524ebd3d1944c7ae64ee72ffb9af471b3e8c2fc40fae8",
+          "after_sha256": "d6306a6f80ab2b70674d9a2355d4a027f8922f1ea8a86a3db3602dac11f4392f",
+          "added_count": 13,
+          "removed_count": 10,
+          "classification": "Distribution errata and advisory-reference metadata; unchanged description is compared separately."
+        }
+      ],
+      "source_documents": [
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98260.json"
+      ],
+      "unchanged_applicability_basis": "The stale node spans kernel task/PID reassignment and timer teardown during exec failure. execve and timer calls are entry points; the queue and task ownership are kernel runtime state."
+    },
+    {
+      "id": "CVE-2026-98283",
+      "component": "headers",
+      "packages": [
+        "linux-libc-dev@6.8.0-147.147"
+      ],
+      "previous_advisory_sha256": "72424038e042ff43bf2d2a94f697b5ac768ac5c788ca08d8753585d4a6158cb8",
+      "current_advisory_sha256": "0f879efd9a595c1b1c3abc008a4d65be3f79a8c081f3dceb60e6fd048838591e",
+      "unchanged_non_metadata_fields_sha256": "b08defca22bf4b23df4eb6947bfff3f633d30c9b0a855261116e4365a5e306db",
+      "rule_id": "kernel_code_absent_from_header_payload",
+      "changes": [
+        {
+          "path": "/VendorSeverity/photon",
+          "before": 2,
+          "after": 3
+        }
+      ],
+      "source_documents": [
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98283.json"
+      ],
+      "unchanged_applicability_basis": "A nested-guest object loses its final reference while another vCPU uses it outside the lock. Pinning that kernel object around per-guest work fixes the hypervisor lifetime race; guest actions are triggers only."
+    },
+    {
+      "id": "CVE-2026-98359",
+      "component": "headers",
+      "packages": [
+        "linux-libc-dev@6.8.0-147.147"
+      ],
+      "previous_advisory_sha256": "aeece115a1c8bb422c102ed61a46ebddf2b682a428a7a35cb7ddbab42a425b2d",
+      "current_advisory_sha256": "6e5fd8be030fcfeacf171ca0c0ae4e99dc539cb10748273c973bd6fcff6cd5ee",
+      "unchanged_non_metadata_fields_sha256": "66bced7b0d002a8e292405925d08a6dbcb0e8d8262eb8f130ab1b534a51e3c73",
+      "rule_id": "kernel_code_absent_from_header_payload",
+      "changes": [
+        {
+          "path": "/VendorSeverity/photon",
+          "before": 2,
+          "after": 3
+        }
+      ],
+      "source_documents": [
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98359.json"
+      ],
+      "unchanged_applicability_basis": "A reference keeps the kernel object allocated but not operational; the fix synchronizes registration-state checks with the callback."
+    },
+    {
+      "id": "CVE-2026-98364",
+      "component": "headers",
+      "packages": [
+        "linux-libc-dev@6.8.0-147.147"
+      ],
+      "previous_advisory_sha256": "1b5855782287218ba0c9a6c2ddd0e375c23de5a323f48c7a35128a9f72cb81c0",
+      "current_advisory_sha256": "8aa47af4556021412e6b14896b8b201eabfc1b2da9d159e8fb9aa96eb3f3ee1d",
+      "unchanged_non_metadata_fields_sha256": "71fd7e07585b6149c3bcb9986283467c3070c6a5e7c03aa2c8408071ac11f06f",
+      "rule_id": "kernel_code_absent_from_header_payload",
+      "changes": [
+        {
+          "path": "/VendorSeverity/amazon",
+          "before_exists": false,
+          "after_exists": true,
+          "before": null,
+          "after": 3
+        }
+      ],
+      "source_documents": [
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98364.json"
+      ],
+      "unchanged_applicability_basis": "Concurrent link deletion frees a net_device used by kernel route construction. Netlink deletion or packet sending are external triggers, not a userspace implementation of that reference acquisition."
+    },
+    {
+      "id": "CVE-2026-98432",
+      "component": "headers",
+      "packages": [
+        "linux-libc-dev@6.8.0-147.147"
+      ],
+      "previous_advisory_sha256": "de0163c444914be1fa450f7d138866c2e42415cbd329b4acf6576ac11468d20e",
+      "current_advisory_sha256": "728fdc7d94322b482e0617758408efedbe23b895854155fd42fdf2c25167e10a",
+      "unchanged_non_metadata_fields_sha256": "99828947ea91544df4dddb143998d86bbfee3ec71e2eaf21e9a2ba28a02a0836",
+      "rule_id": "kernel_code_absent_from_header_payload",
+      "changes": [
+        {
+          "path": "/VendorSeverity/amazon",
+          "before_exists": false,
+          "after_exists": true,
+          "before": null,
+          "after": 3
+        },
+        {
+          "path": "/VendorSeverity/photon",
+          "before": 3,
+          "after": 4
+        }
+      ],
+      "source_documents": [
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98432.json"
+      ],
+      "unchanged_applicability_basis": "The primary fix concerns kernel socket option ownership, but the description also names an IPv6 migration defect to be fixed separately while declared paths are IPv4-only. Clarify that cross-family CVE scope before reducing the record to its listed payload paths.",
+      "supplemental_review": {
+        "reason": "The description covers IPv4 option lifetimes and separately identifies an IPv6 migration issue awaiting its own fix. Both described operations are kernel socket implementations, not exported header operations. No assertion that the cited IPv4 patch fixes IPv6 is made.",
+        "scope": "linux-libc-dev exact authenticated exported payload only"
+      }
+    },
+    {
+      "id": "CVE-2026-98439",
+      "component": "headers",
+      "packages": [
+        "linux-libc-dev@6.8.0-147.147"
+      ],
+      "previous_advisory_sha256": "f8c2c6e0506baddad85ab74ed879dd3e679b3eaa08a415dafafef5b001c9f081",
+      "current_advisory_sha256": "f636f1376dbff235998c1ff48aad86f37ba0b9035b0f229f3d79ad51dbcde2b7",
+      "unchanged_non_metadata_fields_sha256": "108fc90e91e7d6ba8e05d337acd894edf23d0382997db44b5ae3e4e0c838a522",
+      "rule_id": "kernel_code_absent_from_header_payload",
+      "changes": [
+        {
+          "path": "/LastModifiedDate",
+          "before": "2026-10-19T10:18:52.057Z",
+          "after": "2026-10-26T07:17:10.973Z"
+        }
+      ],
+      "source_documents": [
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98439.json"
+      ],
+      "unchanged_applicability_basis": "The description identifies server request waits that prevent closure and requires cancellation first. This is connection/request lifecycle behavior in the kernel SMB server; it does not describe a header or shared-library change."
+    },
+    {
+      "id": "CVE-2026-98442",
+      "component": "headers",
+      "packages": [
+        "linux-libc-dev@6.8.0-147.147"
+      ],
+      "previous_advisory_sha256": "8132d17d7afcec0cbe989b732eec954afcdd98fc05c9b69705ce2f1cdf5b3963",
+      "current_advisory_sha256": "bf47c15663a0927fb194fbe0e87f828c76e1706f7186508fc9475505141798ed",
+      "unchanged_non_metadata_fields_sha256": "478cae16d225ab21bb8eedfbb3533d7faf685000e540698d67fc4d2a1f8ed65f",
+      "rule_id": "kernel_code_absent_from_header_payload",
+      "changes": [
+        {
+          "path": "/VendorSeverity/photon",
+          "before": 2,
+          "after": 3
+        }
+      ],
+      "source_documents": [
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98442.json"
+      ],
+      "unchanged_applicability_basis": "Expectation lists retain pointers into kernel connection extensions that can later move. The API atomicity discussion concerns kernel conntrack mutation, not exported-header or userspace implementation."
+    },
+    {
+      "id": "CVE-2026-98454",
+      "component": "headers",
+      "packages": [
+        "linux-libc-dev@6.8.0-147.147"
+      ],
+      "previous_advisory_sha256": "a34ea4949bfeb90e884bc3cbe7fb80a501895a4a051ed17b600c26b2a5e4e1e2",
+      "current_advisory_sha256": "60a7dafa1872e78ff268ef3224af3bba4df0bbdb4f33bc9311f7ee045dcf5f62",
+      "unchanged_non_metadata_fields_sha256": "4ba4213a34d88c40520c922fa070f0b525491ef95d374edc7b6bcee8e6da82b1",
+      "rule_id": "kernel_code_absent_from_header_payload",
+      "changes": [
+        {
+          "path": "/VendorSeverity/photon",
+          "before": 2,
+          "after": 3
+        }
+      ],
+      "source_documents": [
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98454.json"
+      ],
+      "unchanged_applicability_basis": "The parser incorrectly treats the complete response range and canonical layouts as each record's bounds. Fixes constrain kernel client parsing and preserve open behavior; references to context headers mean wire records, not exported C headers."
+    },
+    {
+      "id": "CVE-2026-98464",
+      "component": "headers",
+      "packages": [
+        "linux-libc-dev@6.8.0-147.147"
+      ],
+      "previous_advisory_sha256": "ea88a7926737fb353a2ffc79e54aa876edbf123aae7f1cc9c409e567d978bbf0",
+      "current_advisory_sha256": "5ca9b44f0d11dae0906ae3bd4013672ed38a69b1788abcd14b1ce7a0250f2576",
+      "unchanged_non_metadata_fields_sha256": "27beda3a70a49d5300eca7e5caaf6cb5797e83668ad0f5febbb414fc8955662f",
+      "rule_id": "kernel_code_absent_from_header_payload",
+      "changes": [
+        {
+          "path": "/VendorSeverity/photon",
+          "before": 2,
+          "after": 4
+        }
+      ],
+      "source_documents": [
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98464.json"
+      ],
+      "unchanged_applicability_basis": "The VMM can trigger VM destruction, but the freed object and timer callback are kernel KVM state. The userspace VMM supplies the lifecycle event rather than the faulty implementation."
+    },
+    {
+      "id": "CVE-2026-98490",
+      "component": "headers",
+      "packages": [
+        "linux-libc-dev@6.8.0-147.147"
+      ],
+      "previous_advisory_sha256": "a079b51f02ceef13c66165c75b4eb7a8f566d0f7e28cacb7b4eeaedd13814061",
+      "current_advisory_sha256": "7a0d53bf9911a0c0f0800d6352921c042dcea2d5dcef2ee00897c2ed8a69da17",
+      "unchanged_non_metadata_fields_sha256": "ff2c359d00f15f05b15a5f717283f96d4a69d770417d3f54f60404a44e6832f0",
+      "rule_id": "kernel_code_absent_from_header_payload",
+      "changes": [
+        {
+          "path": "/VendorSeverity/photon",
+          "before": 3,
+          "after": 4
+        }
+      ],
+      "source_documents": [
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98490.json"
+      ],
+      "unchanged_applicability_basis": "Open vSwitch has userspace components, but this description identifies kernel conntrack expectation pointers invalidated by extension reallocation. It supplies no evidence that the userspace datapath shares this faulty implementation."
+    },
+    {
+      "id": "CVE-2026-98548",
+      "component": "headers",
+      "packages": [
+        "linux-libc-dev@6.8.0-147.147"
+      ],
+      "previous_advisory_sha256": "d58e12d1ba2d9d47584fb59de65387c6cad38eff87b89bf570e182af16950a84",
+      "current_advisory_sha256": "2965f32a2c90645ef5ff87cb5648820b4e7ff9eedf6d82618305f7ae88ea6ab5",
+      "unchanged_non_metadata_fields_sha256": "a30681c2c1cb17ac4e11c3a02479e47c6905750e1c9055e2945a668449783d4a",
+      "rule_id": "kernel_code_absent_from_header_payload",
+      "changes": [
+        {
+          "path": "/VendorSeverity/photon",
+          "before": 3,
+          "after": 4
+        }
+      ],
+      "source_documents": [
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98548.json"
+      ],
+      "unchanged_applicability_basis": "Later chunks reuse a transport removed earlier in kernel packet processing, leaving association state with a dangling pointer. Discarding the remainder repairs protocol-object lifetime; no userspace parser or header implementation is identified."
+    },
+    {
+      "id": "CVE-2026-98754",
+      "component": "headers",
+      "packages": [
+        "linux-libc-dev@6.8.0-147.147"
+      ],
+      "previous_advisory_sha256": "d60daa9fa276231b8b1a1e01d8d74720d20ff0bc3f9871a9208f113adaefcc13",
+      "current_advisory_sha256": "f2bb1d49bd6f06ba432a8043e1bdc3116a9d1a0d6eccca487c8f2bf25e6cc638",
+      "unchanged_non_metadata_fields_sha256": "2cbcd8df139ec2a14a437bb3d03b623f7bf7195339e81ce2d3eac237ec419fc9",
+      "rule_id": "kernel_code_absent_from_header_payload",
+      "changes": [
+        {
+          "path": "/LastModifiedDate",
+          "before": "2026-10-21T13:21:43.693Z",
+          "after": "2026-10-26T07:17:11.167Z"
+        }
+      ],
+      "source_documents": [
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98754.json"
+      ],
+      "unchanged_applicability_basis": "The kernel callback can dereference a freed tty port because cleanup skips the same lock. The described synchronization is driver-internal, not a userspace terminal interface change."
+    }
+  ],
+  "private_artifact_corroboration": {
+    "artifact_id": 12753815788,
+    "url": "https://github.com/victron-venus/venus-os-ci-toolkit/actions/runs/40541826543/artifacts/12753815788",
+    "name": "runner-image-private-40541826543-1",
+    "raw_scan_sha256_reported": "7b36c1f27395fde3e3adf4bf73bb6398242c5d6b016e060c0fb1cb69a1f41e32",
+    "acceptance_sha256": "bd63b54aac7f4d8017b8f123d94b1ae1ec46a590f78c18aade90eaad23803ad9",
+    "unresolved_finding_identity_and_advisory_hashes_equal_public": true,
+    "unresolved_count": 52,
+    "failed_prerequisites": [],
+    "acceptance_passed": false,
+    "review_scope": "Selected hash-bound metadata only. The private raw scan and image were not independently read or replayed."
+  }
+}

@@ -182,6 +182,7 @@
   "docs/RELEASE_TLS_PROFILE.md",
   "docs/REVIEW_POLICY.md",
   "docs/RUNNERS.md",
+  "docs/RUNNER_ADVISORY_REVIEW_2026_10_27.json",
   "docs/RUNNER_BROWSERS.md",
   "docs/RUNNER_GSTREAMER_BACKPORT.md",
   "docs/RUNNER_IMAGE_ARTIFACTS.md",
