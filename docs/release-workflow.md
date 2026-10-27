@@ -10,6 +10,16 @@ documentation skips. Missing, failed or unexpectedly skipped workflows fail the
 gate. Unknown files, incomplete history, code, workflows and lockfile changes run
 full validation.
 
+The required ordinary **CI gate** uses `always()` so its existing result checks
+still run after cancellation. [GitHub accepts skipped required checks](https://docs.github.com/en/pull-requests/how-tos/merge-and-close-pull-requests/troubleshooting-required-status-checks#handling-skipped-but-required-checks),
+so using `!cancelled()` on this aggregate could allow an unfinished validator to
+be hidden behind a skipped gate. Failed, cancelled, missing or unauthorized
+skipped dependencies must produce a failing aggregate. A cancelled run whose
+validators already all succeeded retains that valid result. Superseded runs can
+therefore retain a short queued aggregate; do not trade this protection for
+faster queue cleanup. Keep the separate release publication and signing guards
+unchanged: cancellation must still stop those operations.
+
 The optional `change_scope` policy provides exact `documentation_paths`, exact
 `required_paths` for documentation used as a build input, and
 `always_validate_workflows` for independently required checks. Documentation paths
