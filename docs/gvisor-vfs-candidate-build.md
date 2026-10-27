@@ -23,6 +23,50 @@ identity/date, and tags it `vfs-candidate-20261012-97e0de464f06`. This tag exist
 only inside the disposable build checkout; nothing is pushed to any repository.
 The candidate is not labelled as an unchanged upstream release.
 
+## Staged NUC runtime proposal
+
+The NUC host templates now propose the retained candidate below, in the new
+directory `/opt/victron-ci-reserve/gvisor-20261012-vfs-69937822864c`.
+This is **source preparation only**: no deployment, runtime/CRI acceptance or
+consumer-workload acceptance is established by these template paths. The
+runtime owner must separately decide whether to adopt this shared default
+after the required startup, CRI and scoped workload checks. Keep previously
+installed bundles and all activation holds until then.
+
+- Build: [39175208884](https://github.com/victron-venus/venus-os-ci-toolkit/actions/runs/39175208884),
+  completed successfully on 2026-10-18; workflow source
+  `8e18864f5bc7616b2c7cc4b26c19e97a8ca9ee36`.
+- Retained archive: `gvisor-candidate.tar.bz2`, SHA256
+  `69937822864cad3a2f71aecfcaee713e5e6f0396836f8b19151c852743b39cb5`.
+  Do not substitute a newer build, a same-named archive or the official release
+  archive. If the retained bytes or provenance cannot be verified, stop.
+- Upstream source and applied patch are the frozen inputs above: upstream
+  `60faa657ca99f3398e04c8dbc580a848df20f2f2`, patch SHA256
+  `97e0de464f0675e1820f81798d614aeb297f8ea88d3289ac6349120813a8ac75`.
+- Generated candidate commit: `5e1c821fa1e81ce64f2e4601dc1838debe440c02`;
+  tree: `d5884249020613173716aeee8ab026888fb3408a`;
+  marker: `vfs-candidate-20261012-97e0de464f06`.
+
+The complete archive member set and SHA256 digests are:
+
+```text
+464ca45c15c4fae86dfc0bcd9786f7f2a07aa9f1004e6847dcded637fc3a032d  containerd-shim-runsc-v1
+24e31f34140d7f85e2abb2eabf5d3a6e64813f490b8fda0fef76c544a6bf83a0  runsc
+767255ef8533edcc73ebc350e1e0b4b75d6c3e31428fc6f112f55a76f8ec65da  gvisor-bin/checkpointgofer
+46d5c028723ac5fbe40b863f95100f15a00d2aa0cd39c69d892500a988c930bd  gvisor-bin/gvisor-sentry-prewarmer
+00e402bf43801747fa09683737a16306b19e5fe5482d5db95585dc9ae0ca7754  gvisor-bin/gvisor_sentry
+03af90d07ea466c10ecc3e3ba839b2a59540959dd3286aea3886917cba850c11  gvisor-bin/runsc-fd-parking
+76c08069cf28ad612b8d9e72fb16d18d7c2e40d6c67aeafd8562e9d6628b14d4  gvisor-bin/runsc-metric-server
+```
+
+Install the seven regular executable files as one root-owned immutable bundle,
+preserving relative paths. Never replace only the frontend. The existing
+`victron-private-nuc-kvm` handler, KVM selection, network/guest-sudo flags and
+guards remain unchanged; the two host pointers must select the same bundle.
+The old bundle remains the rollback target. An ordinary startup result would
+establish only that limited lifecycle result, not qualification of the shared
+runtime, every sidecar, every CI repository or automation/release profiles.
+
 ## Run and interpretation
 
 After code review and an explicit execution decision, open Actions, select

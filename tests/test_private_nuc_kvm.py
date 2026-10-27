@@ -445,7 +445,7 @@ class NucKvmTests(unittest.TestCase):
         directory = ROOT / 'deploy/arc-private'
         config = tomllib.loads((directory / 'runsc-nuc-kvm.toml').read_text())
         old = tomllib.loads((ROOT / 'deploy/runner-reserve/runsc.toml').read_text())
-        self.assertEqual(config['binary_name'], '/opt/victron-ci-reserve/gvisor-20261012/runsc')
+        self.assertEqual(config['binary_name'], '/opt/victron-ci-reserve/gvisor-20261012-vfs-69937822864c/runsc')
         old['runsc_config']['platform'] = 'kvm'
         self.assertEqual(config['runsc_config'], old['runsc_config'])
         fragment = tomllib.loads((directory / 'containerd-nuc-kvm.toml.fragment').read_text())
@@ -454,7 +454,7 @@ class NucKvmTests(unittest.TestCase):
         runtime = runtimes[arc.NUC_RUNTIME]
         self.assertEqual(runtime['runtime_type'], 'io.containerd.runsc.v1')
         self.assertEqual(runtime['runtime_path'],
-                         '/opt/victron-ci-reserve/gvisor-20261012/containerd-shim-runsc-v1')
+                         '/opt/victron-ci-reserve/gvisor-20261012-vfs-69937822864c/containerd-shim-runsc-v1')
         self.assertEqual(runtime['options'], {'TypeUrl': 'io.containerd.runsc.v1.options',
                                              'ConfigPath': '/etc/victron-ci-reserve/runsc-nuc-kvm.toml'})
         source = (ROOT / 'deploy/runner-reserve/node-guard.service').read_text()

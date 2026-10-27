@@ -1,5 +1,11 @@
 # Opt-in private NUC KVM candidate
 
+The two host templates currently stage a **modified gVisor bundle proposal**.
+Their paths are not approval to replace a running shared runtime. Runtime,
+CRI and consumer-workload acceptance remain pending; keep existing deployment
+and pool holds until the runtime owner records a scoped adoption decision.
+See [the exact candidate provenance](../../docs/gvisor-vfs-candidate-build.md#staged-nuc-runtime-proposal).
+
 For an explicit set of standard CI, heavy CI and automation profiles, see
 [Multiple private profiles on one NUC](NUC_KVM_PROFILES.md). That interface uses
 one complete target plan and requires scheduler-enforced serialization across
@@ -68,12 +74,18 @@ shortcut. Keep snapshots and an exact rollback for each staged change.
   and host guard. Do not change neighbours' requests or assume historical fit.
 - Verify actual KVM access on the host. The runtime uses KVM; the job gets no
   host `/dev/kvm`, host socket, host namespace or privileged native container.
-- Install the complete official `release-20261012.0` amd64 bundle into a new
-  immutable directory, preserving existing bundles. The archive at
-  [the pinned release](https://github.com/google/gvisor/releases/tag/release-20261012.0)
-  is `gvisor-x86_64.tar.bz2`, SHA256
-  `180dd277f657c1478f09490e8a9a595f7378257510b43d1d3694a769aef9ed02`.
-  Verify the actual shim, frontend and adjacent Sentry, not a frontend path alone.
+- Only after separate adoption, install the complete modified amd64 bundle
+  from [build 39175208884](https://github.com/victron-venus/venus-os-ci-toolkit/actions/runs/39175208884)
+  into the new immutable directory
+  `/opt/victron-ci-reserve/gvisor-20261012-vfs-69937822864c`.
+  The retained `gvisor-candidate.tar.bz2` has SHA256
+  `69937822864cad3a2f71aecfcaee713e5e6f0396836f8b19151c852743b39cb5`.
+  This is not the official upstream release archive. Require the complete
+  provenance and seven member digests documented above; a successful build or
+  ordinary startup smoke alone does not qualify CRI or application behavior.
+  Preserve the previously installed `/opt/victron-ci-reserve/gvisor-20261012`
+  bundle unchanged for rollback. Verify the actual shim, frontend and adjacent
+  Sentry, not a frontend path alone.
 - [runsc-nuc-kvm.toml](runsc-nuc-kvm.toml) selects KVM while retaining the existing
   networking and guest sudo flags. It enables no arbitrary annotation override
   or exclusive bind access. The existing shared mp handler/config is unchanged.
@@ -86,6 +98,16 @@ shortcut. Keep snapshots and an exact rollback for each staged change.
   require the separately approved NUC-agent maintenance window and rollback;
   this renderer performs neither. See [K3s containerd configuration](https://docs.k3s.io/advanced#configuring-containerd)
   and [gVisor platforms](https://gvisor.dev/docs/architecture_guide/platforms/).
+- Updating an existing handler affects every private pool selecting it, not
+  only the workload motivating the change. Record all current users, pending
+  workers and owned holds; naturally finish and clean up workers before changing
+  both runtime pointers together. Preserve every runtime flag, guard and other
+  handler. Use only a normal, coordinated `k3s-agent` restart, with a five-minute
+  Node/CRI and production-health recovery deadline. Keep holds and restore both
+  recorded pointers on failure; allow one normal rollback restart with the same
+  deadline, then escalate rather than looping restarts. Acceptance must bind
+  the exact bundle to each admitted workload/profile. Success in one consumer
+  does not reopen or qualify other profiles automatically.
 - Reuse unchanged `../runner-reserve/node_guard.py`, `network-policy.json` and
   the verified `crictl` at their canonical host paths. Install
   [nuc-node-guard.service](nuc-node-guard.service) as
