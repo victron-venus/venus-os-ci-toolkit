@@ -104,9 +104,22 @@ It generates disposable keys locally and never needs a repository secret.
 To migrate another repository:
 
 1. Add its full name to `renovate-repositories.json`.
-2. Run `python3 scripts/migrate_ci_updates.py /path/to/repository`.
-3. Add verified version/branch comments to bare SHA references. A bare SHA has
-   no version selector and Renovate otherwise skips it.
+2. Run `python3 scripts/migrate_ci_updates.py /path/to/repository`. The helper
+   adds version comments to bare SHA-pinned workflow references: `# main` for
+   Toolkit workflows and the exact declared release ref from `action-pins.json`
+   for other actions. These comments are required for Renovate to discover
+   digest updates; the SHA and executable YAML values do not change.
+   An existing prose-only comment is preserved after the verified version ref;
+   it is not treated as evidence that an action can already be updated.
+   If a legacy third-party SHA is unknown, migration stops before writing any
+   files. Verify the matching tag (dereferencing annotated tags) against the
+   action's GitHub repository, then pass `--action-versions verified-refs.json`.
+   The JSON format is `{"owner/action": {"40-character-commit-sha": "v1.2.3"}}`.
+   A branch ref is appropriate only when the pin's upstream branch identity was
+   verified (for example, its exact current SHA or the upstream commit metadata).
+   Never infer a release version from a neighboring action or guess `main`.
+3. Review the generated comments against the verified metadata and rerun the
+   helper to confirm there are no further changes.
 4. Ship the current `scripts/workflow_contracts.py` through the required CI gate.
 5. Validate the config with the pinned Renovate config validator, run workflow
    contracts and actionlint, then merge the migration through the normal gate.
