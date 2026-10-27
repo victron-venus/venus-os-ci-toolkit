@@ -448,7 +448,8 @@ jobs:
           const fallback = entries.filter(({fields}) => fields[0] === 'https://archive.ubuntu.com/ubuntu/');
           if (azure.length !== 1 || azure[0].fields.length !== 2 || azure[0].fields[1] !== 'priority:1' ||
               fallback.length !== 1 || fallback[0].fields.length !== 2 || fallback[0].fields[1] !== 'priority:2') {
-            throw new Error('Unrecognized Ubuntu mirror configuration; refusing to rewrite it');
+            console.log('::warning::Unrecognized Ubuntu mirror configuration; leaving APT unchanged');
+            process.exit(0);
           }
           const updated = lines.filter((_, index) => index !== azure[0].index).join('');
           if (!fs.readFileSync(mirrorFile).equals(original)) throw new Error('Ubuntu mirror list changed during preparation');

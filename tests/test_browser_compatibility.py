@@ -909,7 +909,7 @@ class HostedUbuntuMirrorTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(self.mirrors.read_bytes(), original.encode())
 
-    def test_unrecognized_source_shapes_fail_without_any_write(self):
+    def test_unrecognized_source_shapes_warn_without_any_write(self):
         for original in (
             self.AZURE, self.AZURE + self.FALLBACK.replace("https:", "http:"),
             self.AZURE + self.FALLBACK.replace("priority:2", "priority:1"),
@@ -917,12 +917,15 @@ class HostedUbuntuMirrorTests(unittest.TestCase):
             self.AZURE + self.FALLBACK.replace("priority:2", "priority:2 arch:amd64"),
             self.AZURE.replace("priority:1", "priority:1 arch:amd64") + self.FALLBACK,
             self.AZURE * 2 + self.FALLBACK, self.AZURE + self.FALLBACK * 2,
+            self.AZURE.replace("priority:1", "priority:2") + self.FALLBACK.replace("priority:2", "priority:1"),
+            self.AZURE + self.FALLBACK.rstrip("\n") + " # official fallback\n",
         ):
             with self.subTest(original=original):
                 self.mirrors.write_bytes(original.encode())
                 result = self.execute()
-                self.assertNotEqual(result.returncode, 0)
-                self.assertIn("Unrecognized Ubuntu mirror configuration", result.stderr)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn("::warning::Unrecognized Ubuntu mirror configuration; leaving APT unchanged",
+                              result.stdout)
                 self.assertEqual(self.mirrors.read_bytes(), original.encode())
 
     def test_invalid_encoding_and_non_regular_files_fail_unchanged(self):
