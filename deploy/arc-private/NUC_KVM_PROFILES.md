@@ -165,6 +165,12 @@ affected namespace, including quota `spec.hard`, `status.hard`, `status.used`,
 and any scopes. The admission evaluator uses `status.hard`; wait for it to
 converge to the reviewed `spec.hard` before computing admission headroom,
 especially after a quota update.
+Use the [read-only resource headroom preflight](CAPACITY_PREFLIGHT.md) before
+enabling a selected pool. It accounts for admitted Pending reservations and
+RuntimeClass overhead, reports every supported quota independently, and refuses
+to qualify stale or unsupported snapshots. A passing resource calculation does
+not establish scheduler, runtime or application acceptance and does not enable
+the pool.
 Overlapping quotas all apply; adding another quota does not lift a smaller
 existing budget. The rendered sandbox quota is named
 `reserve-budget`; verify the actual target name from a fresh live snapshot.
