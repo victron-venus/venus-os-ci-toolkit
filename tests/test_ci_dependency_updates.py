@@ -15,7 +15,9 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def load(name):
-    spec = importlib.util.spec_from_file_location("scripts." + name, ROOT / "scripts" / f"{name}.py")
+    spec = importlib.util.spec_from_file_location(
+        "scripts." + name, ROOT / "scripts" / f"{name}.py"
+    )
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -139,6 +141,89 @@ class DependencyMigrationTests(unittest.TestCase):
         self.assertFalse((self.root / "renovate.json").exists())
 
 
+class ActionMetadataMigrationTests(unittest.TestCase):
+    setUp = DependencyMigrationTests.setUp
+
+    def workflow(self, body):
+        root = self.root / ".github/workflows"
+        root.mkdir(exist_ok=True)
+        path = root / "ci.yml"
+        path.write_text(body)
+        return path
+
+    def test_actual_job_and_quoted_step_refs_get_metadata_and_are_idempotent(self):
+        digest = "a" * 40
+        toolkit = "victron-venus/venus-os-ci-toolkit/.github/workflows/ci.yml"
+        original = (
+            f"jobs:\n  shared:\n    uses: {toolkit}@{digest}\n"
+            "  local:\n    runs-on: ubuntu-latest\n    steps:\n"
+            f"      - uses: 'example/action@{digest}'\n"
+            "      - run: |\n"
+            f"          uses: unknown/action@{digest}\n"
+            f"        env:\n          uses: unknown/env@{digest}\n"
+        )
+        path = self.workflow(original)
+        versions = {"example/action": {digest: "v1.2.3"}}
+        migration.migrate(self.root, versions)
+        result = path.read_text()
+        self.assertEqual(yaml.safe_load(result), yaml.safe_load(original))
+        self.assertIn(f"uses: {toolkit}@{digest} # main", result)
+        self.assertIn(f"uses: 'example/action@{digest}' # v1.2.3", result)
+        self.assertIn(f"uses: unknown/action@{digest}\n", result)
+        migration.migrate(self.root, versions)
+        self.assertEqual(path.read_text(), result)
+
+    def test_unknown_ref_fails_before_writing_any_migration_file(self):
+        digest = "b" * 40
+        original = (
+            f"jobs:\n  build:\n    steps:\n      - uses: unknown/action@{digest}\n"
+        )
+        path = self.workflow(original)
+        with self.assertRaisesRegex(
+            ValueError, "Missing verified action-version metadata"
+        ):
+            migration.migrate(self.root)
+        self.assertEqual(path.read_text(), original)
+        self.assertFalse(self.dependabot.exists())
+        self.assertFalse((self.root / "renovate.json").exists())
+
+    def test_manifest_and_verified_branch_ref_are_used_without_changing_digest(self):
+        digest = "c" * 40
+        (self.root / ".github/action-pins.json").write_text(
+            json.dumps(
+                [
+                    {
+                        "packageName": "example/first",
+                        "digest": digest,
+                        "version": "v2.0.1",
+                    }
+                ]
+            )
+        )
+        path = self.workflow(
+            f"jobs:\n  build:\n    steps:\n      - uses: example/first@{digest}\n"
+            f"      - uses: example/second@{digest}\n"
+            f"      - uses: example/third@{digest} # v3.0.1; keep reason\n"
+        )
+        migration.migrate(self.root, {"example/second": {digest: "master"}})
+        self.assertIn(f"example/first@{digest} # v2.0.1", path.read_text())
+        self.assertIn(f"example/second@{digest} # master", path.read_text())
+        self.assertIn(f"example/third@{digest} # v3.0.1; keep reason", path.read_text())
+
+    def test_flow_style_requires_manual_review_without_partial_write(self):
+        original = "jobs: {build: {steps: [{uses: example/action@" + "a" * 40 + "}]}}\n"
+        path = self.workflow(original)
+        with self.assertRaisesRegex(ValueError, "Ambiguous action reference"):
+            migration.migrate(self.root)
+        self.assertEqual(path.read_text(), original)
+        self.assertFalse(self.dependabot.exists())
+
+    def test_untrusted_mapping_cannot_insert_workflow_lines(self):
+        with self.assertRaisesRegex(ValueError, "verified SHA-to-release-ref"):
+            migration.migrate(self.root, {"example/action": {"a" * 40: "v1\nfoo: bar"}})
+        self.assertFalse(self.dependabot.exists())
+
+
 class CoupledWorkflowTests(unittest.TestCase):
     def test_repository_allowlist_keeps_shared_custom_managers_enabled(self):
         preset = json.loads((ROOT / "renovate-ci.json").read_text())
@@ -162,30 +247,43 @@ class CoupledWorkflowTests(unittest.TestCase):
             with self.subTest(quote=quote):
                 contracts.validate_codeql_update_metadata(sources)
                 for filename in sources:
-                    with self.subTest(filename=filename), self.assertRaisesRegex(
-                        ValueError, "inline full release comment"
+                    with (
+                        self.subTest(filename=filename),
+                        self.assertRaisesRegex(
+                            ValueError, "inline full release comment"
+                        ),
                     ):
-                        contracts.validate_codeql_update_metadata({
-                            **sources, filename: sources[filename].replace(" # v4.38.3", "")
-                        })
+                        contracts.validate_codeql_update_metadata(
+                            {
+                                **sources,
+                                filename: sources[filename].replace(" # v4.38.3", ""),
+                            }
+                        )
 
     def test_codeql_partial_and_disagreeing_version_comments_are_rejected(self):
         for comment in (" # v4", " # maintained manually", "\n      # v4.38.3"):
-            with self.subTest(comment=comment), self.assertRaisesRegex(
-                ValueError, "inline full release comment"
+            with (
+                self.subTest(comment=comment),
+                self.assertRaisesRegex(ValueError, "inline full release comment"),
             ):
-                contracts.validate_codeql_update_metadata({
-                    "upload.yml": self.codeql_source("upload-sarif", comment)
-                })
+                contracts.validate_codeql_update_metadata(
+                    {"upload.yml": self.codeql_source("upload-sarif", comment)}
+                )
         with self.assertRaisesRegex(ValueError, "same release"):
-            contracts.validate_codeql_update_metadata({
-                "ci.yml": self.codeql_source("init", " # v4.38.3"),
-                "upload.yml": self.codeql_source("upload-sarif", " # v4.38.2"),
-            })
+            contracts.validate_codeql_update_metadata(
+                {
+                    "ci.yml": self.codeql_source("init", " # v4.38.3"),
+                    "upload.yml": self.codeql_source("upload-sarif", " # v4.38.2"),
+                }
+            )
 
     def test_codeql_metadata_check_ignores_shell_literals_and_accepts_notes(self):
         source = self.codeql_source("init", " # v4.38.3 keep upstream release")
-        source += "      - run: |\n          echo 'uses: github/codeql-action/init@" + "b" * 40 + "'\n"
+        source += (
+            "      - run: |\n          echo 'uses: github/codeql-action/init@"
+            + "b" * 40
+            + "'\n"
+        )
         contracts.validate_codeql_update_metadata({"ci.yml": source})
 
     def test_upload_and_init_in_different_workflows_cannot_diverge(self):
