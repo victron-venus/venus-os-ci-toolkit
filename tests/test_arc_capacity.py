@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 import importlib.util
 import json
 import io
+import os
 from pathlib import Path
 import sys
 import tempfile
@@ -253,6 +254,35 @@ class CapacityTests(unittest.TestCase):
                 self.assertEqual(path.stat().st_mode & 0o777, 0o600)
                 self.assertEqual(C.main(), 2)
                 self.assertEqual(path.read_bytes(), original)
+
+    def test_file_read_itself_is_bounded_without_relying_on_stat_size(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'growing.json'
+            path.write_bytes(b' ' * 33)
+            with patch.object(C, 'MAX_BYTES', 32):
+                with self.assertRaisesRegex(C.Unable, 'exceeds'):
+                    C.load_json(path)
+            with patch.object(Path, 'read_bytes', side_effect=AssertionError('Unbounded read forbidden')):
+                path.write_text('{}')
+                self.assertEqual(C.load_json(path), {})
+
+    @unittest.skipUnless(hasattr(os, 'mkfifo'), 'POSIX FIFO check')
+    def test_fifo_is_rejected_without_waiting_for_a_writer(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'fifo'
+            os.mkfifo(path)
+            with self.assertRaisesRegex(C.Unable, 'regular file'):
+                C.load_json(path)
+
+    def test_deep_json_returns_unable_without_traceback(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'deep.json'
+            path.write_text('[' * 2000 + '0' + ']' * 2000)
+            argv = ['capacity_preflight.py', 'check', '--snapshot', str(path), '--candidate', str(path)]
+            output = io.StringIO()
+            with patch.object(sys, 'argv', argv), contextlib.redirect_stdout(output):
+                self.assertEqual(C.main(), 2)
+            self.assertEqual(json.loads(output.getvalue())['verdict'], 'unable_to_qualify')
 
     def test_capture_uses_only_get_and_one_shared_deadline(self):
         responses = snapshot()

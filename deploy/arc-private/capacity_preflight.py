@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import re
 import selectors
+import stat
 import subprocess
 import sys
 import time
@@ -328,6 +329,15 @@ def parse_json(raw):
     return json.loads(raw, object_pairs_hook=unique, parse_constant=invalid_constant)
 
 
+def load_json(path):
+    # O_NONBLOCK prevents opening a FIFO from hanging before fstat can reject it.
+    # Bound the actual read, not only a racy pre-open size observation.
+    descriptor = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
+    with os.fdopen(descriptor, 'rb') as stream:
+        require(stat.S_ISREG(os.fstat(stream.fileno()).st_mode), 'Input must be a regular file')
+        return parse_json(stream.read(MAX_BYTES + 1))
+
+
 def bounded_get(command, deadline):
     """Bound both pipes and wall time, including a shared capture deadline."""
     require(time.monotonic() < deadline, 'Capture deadline exceeded')
@@ -435,9 +445,8 @@ def main():
                 stream.write(raw)
             print(json.dumps({'snapshot_written': True, 'mode': '0600', 'cluster_mutations': False}))
             return 0
-        require(args.snapshot.stat().st_size <= MAX_BYTES and args.candidate.stat().st_size <= MAX_BYTES, 'JSON exceeds 32 MiB')
-        result = analyze(parse_json(args.snapshot.read_bytes()), parse_json(args.candidate.read_bytes()))
-    except (Unable, OSError, ValueError, subprocess.TimeoutExpired) as exc:
+        result = analyze(load_json(args.snapshot), load_json(args.candidate))
+    except (Unable, OSError, ValueError, RecursionError, subprocess.TimeoutExpired) as exc:
         result = {'verdict': 'unable_to_qualify', 'unknowns': [str(exc)], 'boundaries': BOUNDARIES}
     print(json.dumps(result, indent=2))
     return {'resource_headroom_passes': 0, 'blocked': 1, 'unable_to_qualify': 2}[result['verdict']]
