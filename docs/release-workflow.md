@@ -125,6 +125,15 @@ publishes only after the exact Release gate reports completed success. Failed,
 skipped, duplicate or mismatched gates stop immediately; validating a previously
 completed release never uses this propagation wait.
 
+For a targeted consumer backport, record the reviewed toolkit commit and the
+resulting client/test file hashes in the change review. Preserve that consumer's
+signing requirements, asset restrictions and import adaptations. A partial
+backport does not update every vendored module, so it must not claim a new
+whole-toolkit revision. The installer reads files from its own checkout; a later
+full regeneration from an older checkout can overwrite the backport. Regenerate
+from a reviewed checkout containing these fixes, inspect the complete diff and
+update the general revision only as part of that full migration.
+
 GitHub releases do not deploy production. Existing push/tag/CI deployment hooks
 must be migrated or disabled before enabling automatic prereleases. Container
 and PyPI publication use verified stable assets as a separate explicit operation.
