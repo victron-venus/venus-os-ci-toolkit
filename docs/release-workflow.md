@@ -118,6 +118,13 @@ incomplete response or upload conflict stops publication without retrying or
 overwriting the asset. Preserve the draft and its evidence for inspection;
 do not reset the version allocation ledger to reuse the failed build number.
 
+During publication, the current Actions run and its prerequisite gate can take
+time to appear consistently in the API. The publisher shares one five-minute
+wait across both updates and rechecks execution identity on every read. It
+publishes only after the exact Release gate reports completed success. Failed,
+skipped, duplicate or mismatched gates stop immediately; validating a previously
+completed release never uses this propagation wait.
+
 GitHub releases do not deploy production. Existing push/tag/CI deployment hooks
 must be migrated or disabled before enabling automatic prereleases. Container
 and PyPI publication use verified stable assets as a separate explicit operation.

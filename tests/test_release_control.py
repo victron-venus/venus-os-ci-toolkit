@@ -2068,11 +2068,169 @@ class ExecutingRunStatusTests(unittest.TestCase):
         """Move a fake monotonic clock without real sleeps."""
         self.now += seconds
 
-    def wait(self):
+    def wait(self, gate=False):
         """Use the exact current run binding with an independently tested gate."""
         return rc.wait_for_executing_run(
-            self.gh, 99, "stable", self.gh.info, SHA, 1, gate=False
+            self.gh, 99, "stable", self.gh.info, SHA, 1, gate=gate
         )
+
+    def test_gate_metadata_must_catch_up_after_the_run_becomes_active(self):
+        """A running publisher can precede its prerequisite's jobs API update."""
+        ready = self.gh.jobs[0]
+        snapshots = (
+            [[]]
+            + [
+                [{**ready, "status": status, "conclusion": None}]
+                for status in (
+                    "queued",
+                    "requested",
+                    "pending",
+                    "waiting",
+                    "in_progress",
+                )
+            ]
+            + [[ready]]
+        )
+        with (
+            patch.object(self.gh, "api", return_value=run(99, False)) as api,
+            patch.object(self.gh, "pages", side_effect=snapshots) as pages,
+        ):
+            result = self.wait(gate=True)
+        self.assertEqual(result["status"], "in_progress")
+        self.assertEqual(api.call_count, len(snapshots))
+        self.assertEqual(self.checkout.call_count, len(snapshots))
+        self.assertEqual(self.now, 2 * (len(snapshots) - 1))
+        for call in pages.call_args_list:
+            self.assertEqual(call.args, ("actions/runs/99/attempts/1/jobs", "jobs"))
+        self.assertEqual(self.gh.writes, [])
+
+    def test_run_and_gate_propagation_share_one_deadline(self):
+        """Becoming active must not restart the five-minute publication wait."""
+
+        def delayed_run(_path):
+            return {
+                **run(99, False),
+                "status": "queued" if self.now < 80 else "in_progress",
+            }
+
+        with (
+            patch.object(self.gh, "api", side_effect=delayed_run),
+            patch.object(self.gh, "pages", return_value=[]),
+            patch.object(rc.sys, "stderr", new_callable=io.StringIO),
+            self.assertRaisesRegex(rc.ReleaseError, "Release gate.*within 300 seconds"),
+        ):
+            self.wait(gate=True)
+        self.assertEqual(self.now, 300)
+        self.assertEqual(self.sleep.call_count, 150)
+        self.assertEqual(self.gh.writes, [])
+
+    def test_slow_successful_read_cannot_exceed_the_shared_deadline(self):
+        """A final API call completing late must not silently extend the budget."""
+        for delayed_read in ("run", "gate"):
+            self.now = 0
+
+            def read_run(_path):
+                if delayed_read == "run":
+                    self.now = rc.EXECUTING_RUN_WAIT_SECONDS + 1
+                return run(99, False)
+
+            def read_gate(_path, _field):
+                if delayed_read == "gate":
+                    self.now = rc.EXECUTING_RUN_WAIT_SECONDS + 1
+                return self.gh.jobs
+
+            with (
+                self.subTest(delayed_read=delayed_read),
+                patch.object(self.gh, "api", side_effect=read_run),
+                patch.object(self.gh, "pages", side_effect=read_gate),
+                self.assertRaisesRegex(rc.ReleaseError, "within 300 seconds"),
+            ):
+                self.wait(gate=True)
+        self.sleep.assert_not_called()
+        self.assertEqual(self.gh.writes, [])
+
+    def test_invalid_or_unsuccessful_gate_is_never_polled_into_success(self):
+        """Only absent or consistent nonterminal metadata may be retried."""
+        ready = self.gh.jobs[0]
+        snapshots = [
+            [{**ready, "conclusion": conclusion}]
+            for conclusion in (
+                "failure",
+                "skipped",
+                "cancelled",
+                "timed_out",
+                "action_required",
+                "neutral",
+                None,
+            )
+        ] + [
+            [ready, ready],
+            [{**ready, "head_sha": "b" * 40}],
+            [{**ready, "status": "queued", "head_sha": "b" * 40, "conclusion": None}],
+            [{**ready, "status": "unknown", "conclusion": None}],
+            [{**ready, "status": "queued", "conclusion": "failure"}],
+            [{**ready, "status": None, "conclusion": None}],
+        ]
+        for snapshot in snapshots:
+            with (
+                self.subTest(snapshot=snapshot),
+                patch.object(self.gh, "api", return_value=run(99, False)),
+                patch.object(self.gh, "pages", return_value=snapshot) as pages,
+                self.assertRaises(rc.ReleaseError),
+            ):
+                self.wait(gate=True)
+            pages.assert_called_once()
+        self.sleep.assert_not_called()
+        self.assertEqual(self.gh.writes, [])
+
+    def test_gate_wait_rechecks_execution_identity_before_each_snapshot(self):
+        """An old pending gate cannot authorize a rerun or a different source."""
+        for change in ({"run_attempt": 2}, {"head_sha": "b" * 40}, {"id": 100}):
+            with (
+                self.subTest(change=change),
+                patch.object(
+                    self.gh,
+                    "api",
+                    side_effect=[run(99, False), {**run(99, False), **change}],
+                ) as api,
+                patch.object(self.gh, "pages", return_value=[]) as pages,
+                self.assertRaises(rc.ReleaseError),
+            ):
+                self.wait(gate=True)
+            self.assertEqual(api.call_count, 2)
+            pages.assert_called_once()
+        self.assertEqual(self.sleep.call_count, 3)
+        self.assertEqual(self.gh.writes, [])
+
+    def test_completed_run_never_waits_for_missing_or_pending_gate(self):
+        """The propagation exception belongs only to the executing publisher."""
+        for snapshot in (
+            [],
+            [{**self.gh.jobs[0], "status": "queued", "conclusion": None}],
+        ):
+            with (
+                self.subTest(snapshot=snapshot),
+                patch.object(self.gh, "pages", return_value=snapshot),
+                self.assertRaises(rc.ReleaseError),
+            ):
+                rc.validate_run(self.gh, run(), self.gh.info, SHA, 1, completed=True)
+        self.sleep.assert_not_called()
+
+    def test_duplicate_gate_on_later_page_is_not_a_propagation_delay(self):
+        """Every page participates in the uniqueness check."""
+        client = rc.GitHub(REPO)
+        with (
+            patch.object(
+                client,
+                "request",
+                return_value=json.dumps(
+                    [{"jobs": self.gh.jobs}, {"jobs": self.gh.jobs}]
+                ).encode(),
+            ),
+            self.assertRaisesRegex(rc.ReleaseError, "Exactly one"),
+        ):
+            rc.release_gate_ready(client, 99, SHA, 1, allow_pending=True)
+        self.sleep.assert_not_called()
 
     def test_transitional_states_require_a_fresh_in_progress_response(self):
         """Neither queued nor waiting itself grants permission to publish."""

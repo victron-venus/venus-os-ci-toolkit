@@ -1098,6 +1098,34 @@ def validate_run_provenance(
     )
 
 
+def release_gate_ready(
+    gh: GitHub, run_id: int, sha: str, attempt: int, *, allow_pending: bool = False
+) -> bool:
+    """Require exact gate success; optionally report unfinished API metadata."""
+    jobs = gh.pages(f"actions/runs/{run_id}/attempts/{attempt}/jobs", "jobs")
+    gates = [job for job in jobs if job.get("name") == "Release gate"]
+    failure = "Exactly one successful, completed Release gate is required; skipped is not a pass"
+    if not gates and allow_pending:
+        return False
+    require(len(gates) == 1, failure)
+    gate = gates[0]
+    require(gate.get("head_sha") == sha, "Release gate SHA mismatch")
+    if allow_pending and gate.get("status") in {
+        "queued",
+        "requested",
+        "pending",
+        "waiting",
+        "in_progress",
+    }:
+        require(gate.get("conclusion") is None, failure)
+        return False
+    require(
+        gate.get("status") == "completed" and gate.get("conclusion") == "success",
+        failure,
+    )
+    return True
+
+
 # Keep the independently verified provenance fields explicit at each call site.
 # pylint: disable-next=too-many-arguments
 def validate_run(
@@ -1121,18 +1149,7 @@ def validate_run(
             run.get("status") == "in_progress", "Publication run is not in progress"
         )
     if gate:
-        jobs = gh.pages(
-            f"actions/runs/{positive(run.get('id'), 'run ID')}/attempts/{attempt}/jobs",
-            "jobs",
-        )
-        gates = [job for job in jobs if job.get("name") == "Release gate"]
-        require(
-            len(gates) == 1
-            and gates[0].get("status") == "completed"
-            and gates[0].get("conclusion") == "success",
-            "Exactly one successful, completed Release gate is required; skipped is not a pass",
-        )
-        require(gates[0].get("head_sha") == sha, "Release gate SHA mismatch")
+        release_gate_ready(gh, positive(run.get("id"), "run ID"), sha, attempt)
 
 
 # Execution identity is deliberately checked again on every fresh response.
@@ -1146,11 +1163,14 @@ def wait_for_executing_run(
     attempt: int,
     gate: bool = True,
 ) -> JSONObject:
-    """Allow five minutes for Actions' aggregate status to catch up.
+    """Allow five shared minutes for Actions' run and gate metadata to catch up.
 
     A running job may still be reported as queued or waiting after environment
     approval. Those states never authorize publication: only a fresh, fully
-    bound in_progress run can pass. Completed RC validation does not wait.
+    bound in_progress run and successful prerequisite gate can pass. Missing or
+    unfinished gate metadata shares the same deadline; terminal non-success,
+    conflicting identity and duplicate gates fail immediately. Completed RC
+    validation does not wait.
     """
     deadline = time.monotonic() + EXECUTING_RUN_WAIT_SECONDS
     reported_status = None
@@ -1163,26 +1183,42 @@ def wait_for_executing_run(
         require(
             run.get("conclusion") is None, "Publication run already has a conclusion"
         )
-        if status == "in_progress":
-            validate_run(gh, run, info, sha, attempt, completed=False, gate=gate)
+        if status == "in_progress" and (
+            not gate or release_gate_ready(gh, run_id, sha, attempt, allow_pending=True)
+        ):
+            require(
+                time.monotonic() < deadline,
+                f"Publication metadata was not ready within {EXECUTING_RUN_WAIT_SECONDS} seconds; "
+                f"run: {run_id}, attempt: {attempt}",
+            )
             return run
         require(
-            status in {"queued", "requested", "pending", "waiting"},
+            status in {"queued", "requested", "pending", "waiting", "in_progress"},
             f"Publication run is not active: {status!r}",
+        )
+        waiting_for = (
+            "Release gate metadata"
+            if status == "in_progress"
+            else f"aggregate status {status!r}"
+        )
+        timeout_target = (
+            "Release gate did not become successful"
+            if status == "in_progress"
+            else "Publication run did not become in_progress"
         )
         remaining = deadline - time.monotonic()
         require(
             remaining > 0,
-            f"Publication run did not become in_progress within {EXECUTING_RUN_WAIT_SECONDS} seconds; "
+            f"{timeout_target} within {EXECUTING_RUN_WAIT_SECONDS} seconds; "
             f"last status: {status!r}, run: {run_id}, attempt: {attempt}",
         )
-        if status != reported_status:
+        if waiting_for != reported_status:
             print(
                 f"Waiting for Actions run {run_id}, attempt {attempt}: "
-                f"aggregate status {status!r}; at most {remaining:.0f}s remaining",
+                f"{waiting_for}; at most {remaining:.0f}s remaining",
                 file=sys.stderr,
             )
-            reported_status = status
+            reported_status = waiting_for
         time.sleep(min(2, remaining))
 
 
