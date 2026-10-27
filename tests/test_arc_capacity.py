@@ -21,12 +21,13 @@ NOW = datetime(2026, 1, 1, tzinfo=timezone.utc)
 
 
 def obj(kind, name, **kwargs):
-    return {'kind': kind, 'apiVersion': 'v1',
+    return {'kind': kind, 'apiVersion': 'node.k8s.io/v1' if kind == 'RuntimeClass' else 'v1',
             'metadata': {'name': name, 'namespace': 'private-ci', 'uid': name, 'resourceVersion': '17'}, **kwargs}
 
 
 def listing(kind, items=None):
-    return {'kind': kind + 'List', 'metadata': {'resourceVersion': '42'}, 'items': items or []}
+    return {'kind': kind + 'List', 'apiVersion': 'node.k8s.io/v1' if kind == 'RuntimeClass' else 'v1',
+            'metadata': {'resourceVersion': '42'}, 'items': items or []}
 
 
 def container(name='runner', cpu='100m'):
@@ -289,14 +290,38 @@ class CapacityTests(unittest.TestCase):
         calls = []
         def fake(command, deadline):
             calls.append((command, deadline))
-            key = {'/version': 'server_version', 'node': 'node', 'pods': 'pods',
-                   'resourcequotas': 'quotas', 'limitranges': 'limitranges', 'runtimeclasses': 'runtimeclasses'}
-            return responses[key[command[6] if command[5] == '--raw' else command[5]]]
+            key = {'/version': 'server_version', '/api/v1/nodes/worker-node': 'node', '/api/v1/pods': 'pods',
+                   '/api/v1/namespaces/private-ci/resourcequotas': 'quotas',
+                   '/api/v1/namespaces/private-ci/limitranges': 'limitranges',
+                   '/apis/node.k8s.io/v1/runtimeclasses': 'runtimeclasses'}
+            self.assertEqual(command[5], '--raw')
+            return responses[key[command[6]]]
         with patch.object(C, 'bounded_get', side_effect=fake):
             C.capture('explicit-context', 'worker-node', 'private-ci')
         self.assertEqual(len(calls), 6)
         self.assertEqual(len({deadline for _, deadline in calls}), 1)
         self.assertTrue(all(command[4] == 'get' for command, _ in calls))
+
+    def test_raw_typed_items_inherit_type_but_generic_lists_cannot(self):
+        raw = listing('Pod', [pod('one')])
+        del raw['items'][0]['kind']; del raw['items'][0]['apiVersion']
+        result = C.project_object(raw)
+        self.assertEqual(result['metadata']['resourceVersion'], '42')
+        self.assertEqual(result['items'][0]['kind'], 'Pod')
+        self.assertEqual(result['items'][0]['apiVersion'], 'v1')
+        raw['kind'] = 'List'
+        with self.assertRaises(C.Unable): C.project_object(raw)
+
+    def test_route_components_cannot_inject_an_api_path(self):
+        with patch.object(C, 'bounded_get', side_effect=AssertionError('No request expected')):
+            for node, ns in [('nuc/../pods', 'private-ci'), ('nuc', '../secrets')]:
+                with self.assertRaises(C.Unable): C.capture('test', node, ns)
+
+    def test_native_windows_is_explicitly_unsupported(self):
+        path = Path('unused')
+        with patch.object(C.os, 'name', 'nt'):
+            with self.assertRaisesRegex(C.Unable, 'native Windows'):
+                C.load_json(path)
 
 
 if __name__ == '__main__':

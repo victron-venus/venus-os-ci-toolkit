@@ -4,6 +4,8 @@
 and namespace quota usage** fit a recent snapshot. It performs no Kubernetes
 writes, scaling, job cancellation, automatic request reduction, or release.
 It does not replace the release-image `scripts/runner_preflight.py`.
+Run it on Linux, macOS, or WSL. Its bounded descriptor and pipe handling uses
+POSIX APIs; native Windows returns `unable_to_qualify` before those operations.
 
 A worker requesting 600m CPU with 100m RuntimeClass overhead needs 700m of
 unallocated requests. It cannot schedule when only 240m remains. Two admitted,
@@ -41,7 +43,7 @@ python3 deploy/arc-private/capacity_preflight.py check \
   --snapshot "$NEW_PRIVATE_SNAPSHOT" --candidate "$PRIVATE_CANDIDATE"
 ```
 
-Capture uses explicit-context `kubectl get` calls: the server version, selected
+Capture uses explicit-context, fixed-path `kubectl get --raw` calls: the server version, selected
 Node, **all** namespaces' Pods, selected namespace's ResourceQuotas and
 LimitRanges, and all RuntimeClasses. An authorization error, partial list,
 missing resource version, oversized response or deadline failure prevents a
@@ -116,7 +118,7 @@ The implementation was checked against official documentation for
 [container resources](https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/),
 [Pod overhead](https://kubernetes.io/docs/concepts/scheduling-eviction/pod-overhead/),
 and [ResourceQuota](https://kubernetes.io/docs/concepts/policy/resource-quotas/).
-The deployed 1.31 baseline's exact behavior is also described by upstream
+The reference 1.31 accounting behavior is also described by upstream
 [`PodRequests` and `PodLimits`](https://github.com/kubernetes/kubernetes/blob/v1.31.4/pkg/api/v1/resource/helpers.go),
 the [Pod quota evaluator](https://github.com/kubernetes/kubernetes/blob/v1.31.4/pkg/quota/v1/evaluator/core/pods.go),
 and [LimitRanger](https://github.com/kubernetes/kubernetes/blob/v1.31.4/plugin/pkg/admission/limitranger/admission.go).

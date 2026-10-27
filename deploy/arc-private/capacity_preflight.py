@@ -14,6 +14,7 @@ import stat
 import subprocess
 import sys
 import time
+from urllib.parse import quote
 
 RESOURCES = ('cpu', 'memory', 'ephemeral-storage')
 MAX_BYTES = 32 * 1024 * 1024
@@ -39,6 +40,11 @@ class Unable(ValueError):
 def require(condition, message):
     if not condition:
         raise Unable(message)
+
+
+def require_posix():
+    require(os.name == 'posix' and hasattr(os, 'O_NONBLOCK'),
+            'Supported on Linux, macOS and WSL; native Windows is unsupported')
 
 
 def quantity(value):
@@ -332,6 +338,7 @@ def parse_json(raw):
 def load_json(path):
     # O_NONBLOCK prevents opening a FIFO from hanging before fstat can reject it.
     # Bound the actual read, not only a racy pre-open size observation.
+    require_posix()
     descriptor = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
     with os.fdopen(descriptor, 'rb') as stream:
         require(stat.S_ISREG(os.fstat(stream.fileno()).st_mode), 'Input must be a regular file')
@@ -340,6 +347,7 @@ def load_json(path):
 
 def bounded_get(command, deadline):
     """Bound both pipes and wall time, including a shared capture deadline."""
+    require_posix()
     require(time.monotonic() < deadline, 'Capture deadline exceeded')
     proc = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     buffers = {'out': bytearray(), 'err': bytearray()}
@@ -372,8 +380,21 @@ def bounded_get(command, deadline):
 def project_object(obj):
     """Persist accounting fields only; no environment, command, image, or annotations."""
     if 'items' in obj:
+        kinds = {'PodList': 'Pod', 'ResourceQuotaList': 'ResourceQuota',
+                 'LimitRangeList': 'LimitRange', 'RuntimeClassList': 'RuntimeClass'}
+        require(obj.get('kind') in kinds, 'Unknown typed API list')
+        children = []
+        for child in obj['items']:
+            require(isinstance(child, dict), 'Invalid typed list item')
+            require(child.get('kind', kinds[obj['kind']]) == kinds[obj['kind']]
+                    and child.get('apiVersion', obj.get('apiVersion')) == obj.get('apiVersion'),
+                    'Typed list item identity mismatch')
+            # Raw Kubernetes lists omit item TypeMeta; inherit only from this
+            # exact typed parent, already checked against a fixed capture route.
+            children.append(project_object({'kind': kinds[obj['kind']],
+                            'apiVersion': obj['apiVersion'], **child}))
         return {**{k: obj[k] for k in ('kind', 'apiVersion', 'metadata') if k in obj},
-                'items': [project_object(x) for x in obj['items']]}
+                'items': children}
     meta = obj.get('metadata', {})
     result = {k: obj[k] for k in ('kind', 'apiVersion') if k in obj}
     result['metadata'] = {k: meta[k] for k in ('name', 'namespace', 'uid', 'resourceVersion', 'deletionTimestamp') if k in meta}
@@ -396,22 +417,30 @@ def project_object(obj):
 
 
 def capture(context, node, namespace):
+    require_posix()
     for value in (context, node, namespace):
         require(isinstance(value, str) and value and not value.startswith('-'), 'Invalid capture target')
-    queries = {'server_version': ['--raw', '/version'], 'node': ['node', node],
-               'pods': ['pods', '--all-namespaces'], 'quotas': ['resourcequotas', '--namespace', namespace],
-               'limitranges': ['limitranges', '--namespace', namespace], 'runtimeclasses': ['runtimeclasses']}
+    label = r'[a-z0-9](?:[-a-z0-9]*[a-z0-9])?'
+    require(len(namespace) <= 63 and re.fullmatch(label, namespace), 'Invalid namespace route component')
+    require(len(node) <= 253 and re.fullmatch(label + r'(?:\.' + label + r')*', node), 'Invalid node route component')
+    prefix = '/api/v1/namespaces/' + quote(namespace, safe='')
+    queries = {'server_version': ('/version', None, None),
+               'node': ('/api/v1/nodes/' + quote(node, safe=''), 'Node', 'v1'),
+               'pods': ('/api/v1/pods', 'PodList', 'v1'),
+               'quotas': (prefix + '/resourcequotas', 'ResourceQuotaList', 'v1'),
+               'limitranges': (prefix + '/limitranges', 'LimitRangeList', 'v1'),
+               'runtimeclasses': ('/apis/node.k8s.io/v1/runtimeclasses', 'RuntimeClassList', 'node.k8s.io/v1')}
     result = {'schema': 1, 'coverage': COVERAGE, 'namespace': namespace,
               'started_at': datetime.now(timezone.utc).isoformat()}
     deadline = time.monotonic() + 30
-    for key, args in queries.items():
-        command = ['kubectl', '--context', context, '--request-timeout=15s', 'get', *args]
-        if key != 'server_version':
-            command += ['--chunk-size=0', '--output=json']
+    for key, (route, kind, version) in queries.items():
+        command = ['kubectl', '--context', context, '--request-timeout=10s', 'get', '--raw', route]
         try:
             data = bounded_get(command, deadline)
         except (Unable, OSError, ValueError, subprocess.TimeoutExpired) as exc:
             raise Unable('Capture ' + key + ': ' + str(exc)) from exc
+        if key != 'server_version':
+            require(data.get('kind') == kind and data.get('apiVersion') == version, 'Unexpected raw API response for ' + key)
         result[key] = data if key == 'server_version' else project_object(data)
     result['finished_at'] = datetime.now(timezone.utc).isoformat()
     require(time.monotonic() < deadline, 'Capture deadline exceeded')
@@ -436,6 +465,7 @@ def main():
     check.add_argument('--candidate', type=Path, required=True)
     args = parser.parse_args()
     try:
+        require_posix()
         if args.command == 'capture':
             result = capture(args.context, args.node, args.namespace)
             raw = (json.dumps(result, indent=2) + '\n').encode()
