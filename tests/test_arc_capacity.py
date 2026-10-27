@@ -152,23 +152,29 @@ class CapacityTests(unittest.TestCase):
         for item in [quota(spec='x', scopes=['BestEffort']), quota(scopeSelector={'matchExpressions': []}),
                      quota(hard={'requests.storage': '1Gi'}), quota(hard={'requests.example.com/gpu': '1'})]:
             with self.subTest(item=item):
-                data = snapshot(); data['quotas']['items'] = [item]
+                data = snapshot()
+                data['quotas']['items'] = [item]
                 self.assertEqual(self.check(data)['verdict'], 'unable_to_qualify')
 
     def test_quota_used_convergence_and_observed_pod_lower_bound(self):
         for mode in ('hard', 'missing-used', 'undercount'):
             with self.subTest(mode=mode):
-                data = snapshot(); q = quota(hard={'pods': '2'})
+                data = snapshot()
+                q = quota(hard={'pods': '2'})
                 data['quotas']['items'] = [q]
-                if mode == 'hard': q['status']['hard']['pods'] = '3'
-                elif mode == 'missing-used': q['status']['used'] = {}
-                else: data['pods']['items'].append(pod('pending'))
+                if mode == 'hard':
+                    q['status']['hard']['pods'] = '3'
+                elif mode == 'missing-used':
+                    q['status']['used'] = {}
+                else:
+                    data['pods']['items'].append(pod('pending'))
                 self.assertEqual(self.check(data)['verdict'], 'unable_to_qualify')
 
     def test_invalid_quantities_fail_closed(self):
         for value in ('banana', '-1', 'NaN', '1e9999', '0.5m', '0.10000000000000000000000000000001', None, True):
             with self.subTest(value=value):
-                data = snapshot(); data['quotas']['items'] = [quota(hard={'requests.cpu': value})]
+                data = snapshot()
+                data['quotas']['items'] = [quota(hard={'requests.cpu': value})]
                 self.assertEqual(self.check(data)['verdict'], 'unable_to_qualify')
 
     def test_stale_incomplete_or_future_snapshots(self):
@@ -178,19 +184,26 @@ class CapacityTests(unittest.TestCase):
                      lambda d: d.update(finished_at=(NOW + timedelta(seconds=1)).isoformat()),
                      lambda d: d.update(started_at=(NOW - timedelta(seconds=31)).isoformat())]
         for mutate in mutations:
-            data = snapshot(); mutate(data)
+            data = snapshot()
+            mutate(data)
             self.assertEqual(self.check(data)['verdict'], 'unable_to_qualify')
 
     def test_pod_level_resize_claims_and_unknown_dimensions_fail_closed(self):
         for mode in ('pod-level', 'resize', 'allocated', 'claims', 'gpu'):
             incoming = candidate()
-            if mode == 'pod-level': incoming['spec']['resources'] = {'requests': {'cpu': '1'}}
-            elif mode == 'resize': incoming['spec']['containers'][0]['resizePolicy'] = [{'resourceName': 'cpu'}]
+            if mode == 'pod-level':
+                incoming['spec']['resources'] = {'requests': {'cpu': '1'}}
+            elif mode == 'resize':
+                incoming['spec']['containers'][0]['resizePolicy'] = [{'resourceName': 'cpu'}]
             elif mode == 'allocated':
-                data = snapshot(); data['pods']['items'][0]['status']['containerStatuses'] = [{'allocatedResources': {'cpu': '1'}}]
-                self.assertEqual(self.check(data)['verdict'], 'unable_to_qualify'); continue
-            elif mode == 'claims': incoming['spec']['resourceClaims'] = [{'name': 'claim'}]
-            else: incoming['spec']['containers'][0]['resources']['requests']['example.com/gpu'] = '1'
+                data = snapshot()
+                data['pods']['items'][0]['status']['containerStatuses'] = [{'allocatedResources': {'cpu': '1'}}]
+                self.assertEqual(self.check(data)['verdict'], 'unable_to_qualify')
+                continue
+            elif mode == 'claims':
+                incoming['spec']['resourceClaims'] = [{'name': 'claim'}]
+            else:
+                incoming['spec']['containers'][0]['resources']['requests']['example.com/gpu'] = '1'
             self.assertEqual(self.check(incoming=incoming)['verdict'], 'unable_to_qualify')
 
     def test_limit_range_constraints_and_defaulting(self):
@@ -202,7 +215,8 @@ class CapacityTests(unittest.TestCase):
             data = snapshot()
             data['limitranges']['items'] = [obj('LimitRange', 'range', spec={'limits': [{'type': 'Container', **rule}]})]
             self.assertEqual(self.check(data)['verdict'], verdict)
-        data = snapshot(); incoming = candidate()
+        data = snapshot()
+        incoming = candidate()
         del incoming['spec']['containers'][0]['resources']['limits']['ephemeral-storage']
         data['limitranges']['items'] = [obj('LimitRange', 'range', spec={'limits': [{'type': 'Container', 'default': {'ephemeral-storage': '1Gi'}}]})]
         self.assertEqual(self.check(data, incoming)['verdict'], 'unable_to_qualify')
@@ -216,8 +230,10 @@ class CapacityTests(unittest.TestCase):
         self.assertEqual(C.pod_resources(source, {}), C.pod_resources(projected, {}))
 
     def test_duplicate_json_keys_rejected(self):
-        with self.assertRaises(C.Unable): C.parse_json(b'{"a": 1, "a": 2}')
-        with self.assertRaises(C.Unable): C.parse_json(b'{"a": NaN}')
+        with self.assertRaises(C.Unable):
+            C.parse_json(b'{"a": 1, "a": 2}')
+        with self.assertRaises(C.Unable):
+            C.parse_json(b'{"a": NaN}')
 
     def test_valid_quantity_forms_are_exact(self):
         self.assertEqual(C.amount('cpu', '0.1'), 100)
@@ -304,18 +320,21 @@ class CapacityTests(unittest.TestCase):
 
     def test_raw_typed_items_inherit_type_but_generic_lists_cannot(self):
         raw = listing('Pod', [pod('one')])
-        del raw['items'][0]['kind']; del raw['items'][0]['apiVersion']
+        del raw['items'][0]['kind']
+        del raw['items'][0]['apiVersion']
         result = C.project_object(raw)
         self.assertEqual(result['metadata']['resourceVersion'], '42')
         self.assertEqual(result['items'][0]['kind'], 'Pod')
         self.assertEqual(result['items'][0]['apiVersion'], 'v1')
         raw['kind'] = 'List'
-        with self.assertRaises(C.Unable): C.project_object(raw)
+        with self.assertRaises(C.Unable):
+            C.project_object(raw)
 
     def test_route_components_cannot_inject_an_api_path(self):
         with patch.object(C, 'bounded_get', side_effect=AssertionError('No request expected')):
             for node, ns in [('nuc/../pods', 'private-ci'), ('nuc', '../secrets')]:
-                with self.assertRaises(C.Unable): C.capture('test', node, ns)
+                with self.assertRaises(C.Unable):
+                    C.capture('test', node, ns)
 
     def test_native_windows_is_explicitly_unsupported(self):
         path = Path('unused')
@@ -329,14 +348,17 @@ class CapacityTests(unittest.TestCase):
                 with self.assertRaisesRegex(C.Unable, 'response must be an object'):
                     C.capture('test', 'worker-node', 'private-ci')
         for field, value in [('items', None), ('items', [None]), ('metadata', None)]:
-            data = snapshot(); data['pods'][field] = value
+            data = snapshot()
+            data['pods'][field] = value
             responses = [data[k] for k in ('server_version', 'node', 'pods', 'quotas', 'limitranges', 'runtimeclasses')]
             with patch.object(C, 'bounded_get', side_effect=responses):
                 with self.assertRaises(C.Unable):
                     C.capture('test', 'worker-node', 'private-ci')
         for field in ('spec', 'status', 'metadata'):
-            data = pod('bad'); data[field] = None
-            with self.assertRaises(C.Unable): C.project_object(data)
+            data = pod('bad')
+            data[field] = None
+            with self.assertRaises(C.Unable):
+                C.project_object(data)
 
 
 if __name__ == '__main__':
