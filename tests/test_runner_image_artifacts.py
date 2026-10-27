@@ -1336,6 +1336,11 @@ class RunnerArtifactsTests(unittest.TestCase):
     def test_new_or_changed_findings_remain_unresolved(self):
         raw, proof, evidence, context, policy = self.acceptance_fixture()
         for edit in [lambda d: d['Results'][0]['Vulnerabilities'][0].update(Description='New affected behavior'),
+                     lambda d: d['Results'][0]['Vulnerabilities'][0].update(References=['https://example.org/new-advisory']),
+                     lambda d: d['Results'][0]['Vulnerabilities'][0].update(VendorSeverity={'ubuntu': 4}),
+                     lambda d: d['Results'][0]['Vulnerabilities'][0].update(CVSS={'vendor': {'V3Score': 9.8}}),
+                     lambda d: d['Results'][0]['Vulnerabilities'][0].update(LastModifiedDate='2099-01-01T00:00:00Z'),
+                     lambda d: d['Results'][0]['Vulnerabilities'][0].update(Title='Updated advisory title'),
                      lambda d: d['Results'][0]['Vulnerabilities'][0].update(VulnerabilityID='CVE-2099-98765'),
                      lambda d: d['Results'][1].update(Target='usr/local/bin/other')]:
             changed = copy.deepcopy(raw)
@@ -1608,6 +1613,31 @@ class RunnerArtifactsTests(unittest.TestCase):
                          build.SCAN_POLICY['libbpf']['source_manifest_sha256'])
         self.assertEqual(build.document(build.ROOT / '.github/containers/runner-libbpf.json'),
                          build.SCAN_POLICY['libbpf']['source_manifest'])
+
+    def test_advisory_reassessment_manifest_preserves_component_and_rule_binding(self):
+        path = build.ROOT / 'docs/RUNNER_ADVISORY_REVIEW_2026_10_27.json'
+        review = build.document(path)
+        self.assertEqual(review['schema'], 1)
+        records = review['records']
+        self.assertEqual(len(records), 51)
+        self.assertEqual(len({record['id'] for record in records}), len(records))
+        self.assertEqual(sum(len(record['packages']) for record in records), 52)
+        for record in records:
+            with self.subTest(advisory=record['id']):
+                self.assertNotEqual(record['previous_advisory_sha256'], record['current_advisory_sha256'])
+                self.assertTrue(record['changes'])
+                self.assertTrue(record['unchanged_applicability_basis'])
+                if record['component'] == 'gstreamer':
+                    self.assertEqual(record['id'], build.SCAN_POLICY['gstreamer']['advisory'])
+                    self.assertEqual(record['current_advisory_sha256'],
+                                     build.SCAN_POLICY['gstreamer']['advisory_sha256'])
+                    self.assertEqual(record['rule_id'], 'installed_gstreamer_h265_backport')
+                else:
+                    self.assertEqual([record['component'], record['current_advisory_sha256'], record['rule_id']],
+                                     build.SCAN_POLICY['advisories'][record['id']])
+                    self.assertEqual(record['packages'],
+                                     [build.SCAN_POLICY['identities'][record['component']]['package_id']])
+        self.assertNotIn('/Users/', path.read_text())
 
     def test_database_absence_does_not_disable_unreviewed_analyzers(self):
         raw, proof, _, context, _ = self.acceptance_fixture()

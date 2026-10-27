@@ -86,7 +86,7 @@
       },
       "ubuntu_url": "https://ubuntu.com/security/CVE-2024-40954",
       "rule_id": "kernel_code_absent_from_header_payload",
-      "advisory_content_sha256": "f74bcf797cf8d07127f5a4c6dc4fafa557c4c9946ea16908f61510aad04ef4c4",
+      "advisory_content_sha256": "48ad2922396d252a5c8e855a16ec692a0bfce159ca8cc87590ef5e9758202ed4",
       "component": "Kernel socket core",
       "affected_operation": "Releasing a partially created socket while a BPF helper reads its cookie",
       "rationale": "The failing object is a freed kernel socket referenced during protocol creation cleanup. A userspace socket caller is a trigger, not the implementation; sk_common_release and the KASAN kernel trace support kernel-payload attribution."
@@ -368,7 +368,7 @@
       },
       "ubuntu_url": "https://ubuntu.com/security/CVE-2025-39933",
       "rule_id": "kernel_code_absent_from_header_payload",
-      "advisory_content_sha256": "260559e8fd3e1f3f4b693f9586c3e2377cdad456c8e8b0fa096e85798a3b4cb3",
+      "advisory_content_sha256": "e70795ade9e28fd71490fbf05a7c1dcb71215e73af6b1e7e91f0a3c6fa991ba6",
       "component": "Kernel SMB Direct client",
       "affected_operation": "Validating received data offsets and lengths in recv_done",
       "rationale": "The identified receive-completion callback must validate three wire-data dimensions, and the supplied implementation path matches the kernel SMB Direct client. No exported constant, layout correction, or standalone userspace parser is described."
@@ -408,7 +408,7 @@
       },
       "ubuntu_url": "https://ubuntu.com/security/CVE-2025-40064",
       "rule_id": "kernel_code_absent_from_header_payload",
-      "advisory_content_sha256": "a0acaccbbcc8259f9d0b8acf268ab6a7bae15ad94e0fdfd657cc0d1b4d0324e2",
+      "advisory_content_sha256": "a548e9e6d8a140756ec4eb4910beba9cc24eed0fce62c37f1fcc6a2fe79c24d8",
       "component": "SMC network-device selection",
       "affected_operation": "Retaining network-device lifetime while selecting connection resources",
       "rationale": "The description identifies a freed net_device reached through a socket destination and RTNL/RCU synchronization. connect() exposes the kernel path but does not implement it in libc headers."
@@ -492,7 +492,7 @@
       },
       "ubuntu_url": "https://ubuntu.com/security/CVE-2025-40158",
       "rule_id": "kernel_code_absent_from_header_payload",
-      "advisory_content_sha256": "e675ac141b1283ddc2848fbf8a62600732985e63dae32048cb3d01f716afb440",
+      "advisory_content_sha256": "21b15f78710f38425a43aa764cb14b863994f8096a1def2dedc680b733a3f1e2",
       "component": "IPv6 output path",
       "affected_operation": "Protecting destination-device access in ip6_output with RCU",
       "rationale": "The described lifetime hazard is fixed by moving kernel RCU protection around the IPv6 output operation. Exported networking headers do not themselves execute this packet-transmission path."
@@ -510,7 +510,7 @@
       },
       "ubuntu_url": "https://ubuntu.com/security/CVE-2025-40168",
       "rule_id": "kernel_code_absent_from_header_payload",
-      "advisory_content_sha256": "f09eaf5f4b52f8fe869e174d5d7705b487e8f93b4c6c1da84a8c07753401754a",
+      "advisory_content_sha256": "05ff8d300d887e5d66421a732e59f6c6bc6b3e1c671a0745c03e02eab7afee6a",
       "component": "SMC connection-listening path",
       "affected_operation": "Accessing a socket destination device during prefix matching",
       "rationale": "The description identifies smc_listen_work and missing RCU/RTNL protection around a device dereference, a kernel networking lifetime issue."
@@ -531,7 +531,7 @@
       },
       "ubuntu_url": "https://ubuntu.com/security/CVE-2025-40170",
       "rule_id": "kernel_code_absent_from_header_payload",
-      "advisory_content_sha256": "f348c1a78ea4a4205a619fcf5c1636c391d9532e7d3f7810557034768af35dbf",
+      "advisory_content_sha256": "6762fcd2466e46cbe41f9f24bf2804383bd665e5de2e3d2db22e23d984a2afa2",
       "component": "Kernel IP routing and socket capabilities",
       "affected_operation": "Protecting route-device reads when deriving socket and MTU capabilities",
       "rationale": "RCU protection of destination-device pointers and kernel routing helpers defines the affected operation. Internal inline helpers are not equivalent to exported UAPI declarations."
@@ -703,7 +703,7 @@
       },
       "ubuntu_url": "https://ubuntu.com/security/CVE-2025-68745",
       "rule_id": "kernel_code_absent_from_header_payload",
-      "advisory_content_sha256": "73e34a70519344f6afbba6b136a7960b587ff21c9ce15505c302c2d5a03c20ca",
+      "advisory_content_sha256": "0bea3a1c07612f85b5eaf30478112da24e481f8ed946842376426ed888f143b4",
       "component": "QLogic qla2xxx SCSI target driver",
       "affected_operation": "Clearing firmware commands and DMA mappings after adapter reset",
       "rationale": "Firmware command lifetime and racing DMA unmaps require executing the storage driver and hardware reset path; the description supplies no userspace-library implementation."
@@ -996,7 +996,7 @@
       },
       "ubuntu_url": "https://ubuntu.com/security/CVE-2026-31692",
       "rule_id": "kernel_code_absent_from_header_payload",
-      "advisory_content_sha256": "5fe5c4a43495800c26360cb900412c789e2513c823767b18aaae8e697f818a60",
+      "advisory_content_sha256": "f986c98b5baea066384074c621f671ffe066b9a4ddebf6b1343af2c4e0e49a96",
       "component": "rtnetlink paired-device creation",
       "affected_operation": "Checking capability in the peer network namespace",
       "rationale": "The missing authorization is enforced in kernel rtnl_newlink before creating devices; a userspace netlink request is an input, not the affected implementation."
@@ -1182,7 +1182,7 @@
       },
       "ubuntu_url": "https://ubuntu.com/security/CVE-2026-46181",
       "rule_id": "kernel_code_absent_from_header_payload",
-      "advisory_content_sha256": "dd2bb0fa3faea7c32e7ba73480b32fbb254004b005c2d3b7c1e99032bf520beb",
+      "advisory_content_sha256": "a1453342aa1159be7d62ff99d45077381cdca19b4db60f46672f5c2e69480e45",
       "component": "Mellanox mlx4 RDMA shared receive queues",
       "affected_operation": "Protecting queue-event lookup and partially initialized objects",
       "rationale": "The event handler uses a radix-tree queue object with incorrect RCU/refcount lifetime assumptions. Locking and initialization order are runtime driver operations."
@@ -1253,7 +1253,7 @@
       },
       "ubuntu_url": "https://ubuntu.com/security/CVE-2026-52991",
       "rule_id": "kernel_code_absent_from_header_payload",
-      "advisory_content_sha256": "e406353d6933411de699ef887e076c1d589160355ae77e15a34a4ca1704f8f12",
+      "advisory_content_sha256": "3b1233a085c2affa72ab5844c0fa3cd83c6fa38c35dbb92047e77530e8dcccfb",
       "component": "Cgroup pressure-stall file operations",
       "affected_operation": "Synchronizing pressure writes with cgroup-file release",
       "rationale": "The freed object is kernfs_open_file private kernel state. Writing a pressure control file is a userspace trigger; the locking, release and dereference occur inside the kernel."
@@ -1325,7 +1325,7 @@
       },
       "ubuntu_url": "https://ubuntu.com/security/CVE-2026-53281",
       "rule_id": "kernel_code_absent_from_header_payload",
-      "advisory_content_sha256": "f007890e920642dc95adaac09c340478bf1529a239a1d83f6d3870e5468b7261",
+      "advisory_content_sha256": "f4442a49039a2396c5f9b1dcc7804eab88f130bba977e2139949152308f16037",
       "component": "Intel VT-d IOMMU driver",
       "affected_operation": "Tearing down a missing device PASID or unattached domain",
       "rationale": "The NULL and reference-count errors occur while removing a hardware-IOMMU association. The repair exits before kernel domain teardown and does not change a userspace PASID interface definition."
@@ -1422,7 +1422,7 @@
       },
       "ubuntu_url": "https://ubuntu.com/security/CVE-2026-63879",
       "rule_id": "kernel_code_absent_from_header_payload",
-      "advisory_content_sha256": "127b1890ff8e8658573b57c5e1e6c1f3d654ec2b6331101a06a613f54c997775",
+      "advisory_content_sha256": "3315022bdded0ca654e482be2c50adc699023df98754cbea08851904aab5168c",
       "component": "AMDGPU heterogeneous-memory management",
       "affected_operation": "Reading the notifier sequence while obtaining a page range",
       "rationale": "The unsafe pages follow repeated notifier-sequence reads inside the GPU driver's page acquisition, which identifies a kernel memory-management operation."
@@ -1616,7 +1616,7 @@
       },
       "ubuntu_url": "https://ubuntu.com/security/CVE-2026-68245",
       "rule_id": "kernel_code_absent_from_header_payload",
-      "advisory_content_sha256": "dd6f03ee55fe538f79ab59992e421ecea90c39eea0c9e150fdcbebd375f389e8",
+      "advisory_content_sha256": "e8cbe6135e7b101ff1cf8f9a3e6644fe8907b43ff771201cb8b92c057a943613",
       "component": "AMDGPU virtual-memory task lookup",
       "affected_operation": "Holding the lookup lock while reading VM task information",
       "rationale": "The lifetime violation occurs after dropping the xarray lock protecting a live driver VM object. Inlining here retains a kernel lock; it is not a userspace-header export change."
@@ -1634,7 +1634,7 @@
       },
       "ubuntu_url": "https://ubuntu.com/security/CVE-2026-68257",
       "rule_id": "kernel_code_absent_from_header_payload",
-      "advisory_content_sha256": "0e88bc610553f21ae5376a8559bb00f98cb3712e857a17526f2859018d11bdaa",
+      "advisory_content_sha256": "27fb5054b9ccc64a221864f3e56dc47ffb652b60e0e0fe7227cd6e0468dbc81f",
       "component": "AMD KFD GPU queue allocation",
       "affected_operation": "Calculating CWSR save-area allocation size",
       "rationale": "Arithmetic in the queue buffer allocator underestimates memory later written by firmware. The changed u64 and checked arithmetic are internal allocation behavior; the description does not identify a userspace ABI width correction."
@@ -1710,7 +1710,7 @@
       },
       "ubuntu_url": "https://ubuntu.com/security/CVE-2026-68409",
       "rule_id": "kernel_code_absent_from_header_payload",
-      "advisory_content_sha256": "d0e302660b80d216733c8355c5451b29bfffe475896c57239f21a795bf0aed1e",
+      "advisory_content_sha256": "992232d1fe9664ec930d922c33db676f46489a4456713f2bff3171d368926a44",
       "component": "mac80211 MLO link statistics",
       "affected_operation": "Freeing per-CPU receive statistics on link removal",
       "rationale": "An RCU reader continues using a freed per-CPU stats block; the remedy changes kernel link reclamation timing, not exported statistics definitions."
@@ -1728,7 +1728,7 @@
       },
       "ubuntu_url": "https://ubuntu.com/security/CVE-2026-68426",
       "rule_id": "kernel_code_absent_from_header_payload",
-      "advisory_content_sha256": "65cc407c9e25b13ef1814d547120d4fb31774644a674537a8f806d7dba0adb10",
+      "advisory_content_sha256": "495d3022c9faddd64e70e317a9029ee06adbd904193b69f6df757cdbb967a752",
       "component": "XFRM asynchronous transmit segmentation",
       "affected_operation": "Repairing the retained packet-list tail after asynchronous crypto takes segments",
       "rationale": "The stale pointer belongs to a kernel skb list whose segment ownership moves to the crypto engine. Exported network definitions do not perform the asynchronous list manipulation."
@@ -1938,7 +1938,7 @@
       },
       "ubuntu_url": "https://ubuntu.com/security/CVE-2026-72383",
       "rule_id": "kernel_code_absent_from_header_payload",
-      "advisory_content_sha256": "8f55b4ae63f63170e1622b9509cfb04383d5b741880afa6d4adaf551eeb25098",
+      "advisory_content_sha256": "c18383cc1977e8e7fb9599b78f9829835eb5578fee2f436a93df520031b24ce7",
       "component": "SCTP address work queue",
       "affected_operation": "Shutting down the address timer before queue teardown",
       "rationale": "A running timer can reach freed kernel address-queue state; synchronous shutdown is an internal protocol-lifetime fix."
@@ -2331,7 +2331,7 @@
       },
       "ubuntu_url": "https://ubuntu.com/security/CVE-2026-74470",
       "rule_id": "kernel_code_absent_from_header_payload",
-      "advisory_content_sha256": "7842b32b207c1ec129c448b18f7bec6fa9c01a1f846099a1a8ce16c64f056633",
+      "advisory_content_sha256": "cfab9819851dcefb5736aa1cc381f5a140735fc87ffb57fab6fa6e2ae1c02456",
       "component": "SCSI debug virtual-device reporting",
       "affected_operation": "Bounding zone-report allocation by the device zone count",
       "rationale": "The report response is allocated with kzalloc by the in-kernel virtual SCSI driver. A command descriptor controls the size, but the integer truncation and write are kernel-side."
@@ -2423,7 +2423,7 @@
       },
       "ubuntu_url": "https://ubuntu.com/security/CVE-2026-74533",
       "rule_id": "kernel_code_absent_from_header_payload",
-      "advisory_content_sha256": "0695506d0bdf4a795d95cdba43ed92f22df72a2f966717704027f8ae2b7313a7",
+      "advisory_content_sha256": "4445eaa12eba74773ddd5d07afa26a71297d865b61ee58bea73788df7e1ebccd",
       "component": "Bluetooth ISO connection lifetime",
       "affected_operation": "Acquiring a connection reference while another path frees iso_data",
       "rationale": "The race involves kernel HCI connection data accessed without locking or RCU; the internal hci_core header carries the new protecting lock."
@@ -2459,7 +2459,7 @@
       },
       "ubuntu_url": "https://ubuntu.com/security/CVE-2026-74535",
       "rule_id": "kernel_code_absent_from_header_payload",
-      "advisory_content_sha256": "db3222ac0053619dd7eb478c423525c9a6ad2041b8a47f2dfa7f9041f0b14ee1",
+      "advisory_content_sha256": "ff234d92a9be90af85cbe89d56c0036d053d83b9af9d3644f3ac8eea02201e58",
       "component": "Bluetooth ISO socket timeout handling",
       "affected_operation": "Disabling a socket timer while connection teardown races its callback",
       "rationale": "The bug combines lock_sock deadlock and a freed HCI connection referenced from timeout cleanup. Moving timer ownership and changing its disabling are kernel socket-lifecycle operations, not userspace ISO code."
@@ -2477,7 +2477,7 @@
       },
       "ubuntu_url": "https://ubuntu.com/security/CVE-2026-74537",
       "rule_id": "kernel_code_absent_from_header_payload",
-      "advisory_content_sha256": "7dea4bcaf762f17c57d5f87da817b928fbc7920609b14d0f55ec9db455611474",
+      "advisory_content_sha256": "b8af186b5c627feb3f5c6c91d62cf0a34c03f73dacbeae07fe0f10309d0dad80",
       "component": "Bluetooth ISO socket readiness",
       "affected_operation": "Holding the socket while announcing ISO connection readiness",
       "rationale": "Kernel readiness handling dereferences conn->sk during concurrent socket closure; locking and reference ownership implement the fix."
@@ -2496,7 +2496,7 @@
       },
       "ubuntu_url": "https://ubuntu.com/security/CVE-2026-74565",
       "rule_id": "kernel_code_absent_from_header_payload",
-      "advisory_content_sha256": "8d85ea5d34a414b2b8bf8a50b0a8c5640a284667ccd7735f01df586d6a5fed64",
+      "advisory_content_sha256": "df40316580b337399a2fca7e01a9e8449e14e897b0882a5424b5a28e845da324",
       "component": "Netfilter nftables object lookup",
       "affected_operation": "Scoping object hash tables to avoid cross-namespace teardown lookups",
       "rationale": "The released objects live in runtime nftables tables and network namespaces. The noted compiler constness adjustment supports that internal lookup change, without evidence of build/export behavior affecting userspace headers."
@@ -2532,7 +2532,7 @@
       },
       "ubuntu_url": "https://ubuntu.com/security/CVE-2026-74677",
       "rule_id": "kernel_code_absent_from_header_payload",
-      "advisory_content_sha256": "0281b0ddaa9437fd4369ca20e102d945a901b031eab678b901bff2001b1082f1",
+      "advisory_content_sha256": "7dd57fbeedb62968bbedd0b1e9763eaf29a8f01e80c253e9fc269103fc78ee6f",
       "component": "ipheth USB Ethernet driver",
       "affected_operation": "Rearming carrier-check work during close and disconnect",
       "rationale": "A USB completion can enqueue work after the driver drained it and before netdev freeing; this is a kernel work/object lifetime issue."
@@ -2568,7 +2568,7 @@
       },
       "ubuntu_url": "https://ubuntu.com/security/CVE-2026-74700",
       "rule_id": "kernel_code_absent_from_header_payload",
-      "advisory_content_sha256": "74a2623b7e1c0decf4d8f16d7954c8602ab90b7d267b171b1c38ec64969234d9",
+      "advisory_content_sha256": "ea9c91e8fa1f3d6ddafe30c472894bd30520d77fb2f0c24844c56216b329ea7f",
       "component": "Traffic-control classifier core",
       "affected_operation": "Destroying a locked classifier from an unlocked request's error path",
       "rationale": "Kernel classifier references can outlive a racing creation path and reach destruction without rtnl_lock. Concurrent userspace requests trigger this, but the repair is lock acquisition around the kernel destroy callback."
@@ -2586,7 +2586,7 @@
       },
       "ubuntu_url": "https://ubuntu.com/security/CVE-2026-74714",
       "rule_id": "kernel_code_absent_from_header_payload",
-      "advisory_content_sha256": "cfc97aab8996e80d08c86d1742f53da57215efb8a6d22a3c87c30020020b0c82",
+      "advisory_content_sha256": "91a5d85c3c4c1f3a52b70c946af6121ee80cf8f563d67166303ffeb29dd4c651",
       "component": "TCP BPF socket iterator",
       "affected_operation": "Taking references to newly published request sockets",
       "rationale": "The iterator acquires a kernel socket reference before publication finishes initializing its refcount; user connections and iterator reads are triggers only."
@@ -2604,7 +2604,7 @@
       },
       "ubuntu_url": "https://ubuntu.com/security/CVE-2026-74715",
       "rule_id": "kernel_code_absent_from_header_payload",
-      "advisory_content_sha256": "4c6d42584a49c3e0cdd3c86acf2b044dcb0c84d203b3bcf061471915cfa40c4e",
+      "advisory_content_sha256": "8a2210019788ad683ae5bdc2dc7aa98e4fa7e662379b5e6883c40f852c08934c",
       "component": "BPF conntrack network-namespace references",
       "affected_operation": "Snapshotting lookup options before namespace acquire and release",
       "rationale": "A shared BPF map value can change, but the imbalance is in kernel get/put operations on a live network namespace. Shared input storage does not establish userspace implementation."
@@ -2660,7 +2660,7 @@
       },
       "ubuntu_url": "https://ubuntu.com/security/CVE-2026-74744",
       "rule_id": "kernel_code_absent_from_header_payload",
-      "advisory_content_sha256": "257c8b16a259024cbcea2c952cfb36dea436e728561273e7a72dc3ba31049d54",
+      "advisory_content_sha256": "82a1749e5cc020a5487791aae06929691d6f3674bdb0fce7075e599bfa5c2b0d",
       "component": "IPVLAN packet buffer sizing",
       "affected_operation": "Propagating lower-device headroom and tailroom requirements",
       "rationale": "The fault is in kernel net-device property propagation and later skb header manipulation. Lower protocol stacks may require extra space, but no exported header computation is described."
@@ -2691,7 +2691,7 @@
       "version": "v0.55.0",
       "target": "usr/local/bin/runc",
       "rule_id": "runc_affected_packages_not_linked",
-      "advisory_content_sha256": "3859e5e01b6ef2bc1713e94a149179feb6e62ebbb1b1b873e239641688a31fff",
+      "advisory_content_sha256": "8ebaefd769b07d2a56c5cda340596b07d21480da44ad2926b8eef3de2a4c251f",
       "source_document": {
         "url": "https://pkg.go.dev/vuln/GO-2026-6611"
       },
@@ -2976,7 +2976,7 @@
       },
       "ubuntu_url": "https://ubuntu.com/security/CVE-2026-80714",
       "rule_id": "kernel_code_absent_from_header_payload",
-      "advisory_content_sha256": "30c9b835ff4aa37e72566eaa31046b5acfa7a7843590d53f7b7890ae537ddafd",
+      "advisory_content_sha256": "fa6755fbff35189dcdcf41b5603f93e0cd8cfc15f763341b942370474e6df7b8",
       "component": "IPVS connection synchronization",
       "affected_operation": "Binding a destination to an already hashed synchronized connection",
       "rationale": "A one-packet flag changes kernel expiry behavior so a hash node survives after its connection is freed. The defect is flag propagation into a live connection object, not the numeric flag definition in an interface header."
@@ -3156,7 +3156,7 @@
       },
       "ubuntu_url": "https://ubuntu.com/security/CVE-2026-80905",
       "rule_id": "kernel_code_absent_from_header_payload",
-      "advisory_content_sha256": "0873ce13adf3386c2e553337185125f7909f3ebae6af5237bba70e52203f23cb",
+      "advisory_content_sha256": "a5a93c44a0a222408c5b9eff8d6c3730a9ae215c1b4a8a77a171bc4a37bd1b47",
       "component": "TAP XDP transmit processing",
       "affected_operation": "Setting network and transport offsets for VLAN-tagged frames",
       "rationale": "The ordering bug is in kernel skb preparation and flow dissection after receiving userspace frame data; exported VLAN definitions do not perform this operation."
@@ -3323,7 +3323,7 @@
       },
       "ubuntu_url": "https://ubuntu.com/security/CVE-2026-89526",
       "rule_id": "kernel_code_absent_from_header_payload",
-      "advisory_content_sha256": "70dc182953bc9e7f17207be41032e622d8e5109a19a7a3d49a261903a64353b5",
+      "advisory_content_sha256": "9f2a28f2effc78f6dbceeb8477b27e818bc551281fe26b339aa9ea3a06380747",
       "component": "Server RPC/RDMA reconstruction",
       "affected_operation": "Checking read-chunk positions and overlap against the inline body",
       "rationale": "The bounds error is in kernel RPC reconstruction and copying from receive buffers; remote protocol fields are inputs to that implementation."
@@ -3359,7 +3359,7 @@
       },
       "ubuntu_url": "https://ubuntu.com/security/CVE-2026-89530",
       "rule_id": "kernel_code_absent_from_header_payload",
-      "advisory_content_sha256": "6a45626fbd7b80cb61fb55ca53d544d38427d6a676d06df52d06af33692ded43",
+      "advisory_content_sha256": "d93bd72fe8ef5c39100840d57e24b260684e1732e8e175ddd6737f4e7339ca21",
       "component": "SUNRPC RDMA server reply construction",
       "affected_operation": "Linearizing an oversized reply into the pull-up buffer",
       "rationale": "The reply overflows a kernel slab buffer before a device send. Client requests supply length pressure, but the faulty scatter/gather fallback and buffer allocation belong to the kernel RPC/RDMA server."
@@ -3541,7 +3541,7 @@
       },
       "ubuntu_url": "https://ubuntu.com/security/CVE-2026-89633",
       "rule_id": "kernel_code_absent_from_header_payload",
-      "advisory_content_sha256": "037cbecf123b5cac6046b328e20bcbcbe78bc59e203fc1402ec1bc6fc3c1cdd4",
+      "advisory_content_sha256": "864ad584661f85e9da55e44ca7aa5842d5460a5ffbaef1a2d24ca2b5d3a129e1",
       "component": "Kernel SMB1 client transaction reassembly",
       "affected_operation": "Validating source and target offsets before coalescing responses",
       "rationale": "Server-supplied offsets steer copies within kernel SMB response buffers; the affected client here is the filesystem implementation, not a userspace SMB library."
@@ -3577,7 +3577,7 @@
       },
       "ubuntu_url": "https://ubuntu.com/security/CVE-2026-89638",
       "rule_id": "kernel_code_absent_from_header_payload",
-      "advisory_content_sha256": "71853425a7123f54fcd23f268a42e9d6068c3b4e6955bc1399ecfa434d2f83e4",
+      "advisory_content_sha256": "5a4712b49858407b86e8cac343502f5789fc7fbbb6b1d5c4636f663d27fe775b",
       "component": "Kernel CIFS inode attribute updates",
       "affected_operation": "Propagating cleared setuid/setgid mode bits after a file write",
       "rationale": "The VFS strips permission bits but CIFS setattr drops the mode update before sending it to the server. The affected behavior is the cifs.ko filesystem implementation, not a userspace ACL tool or header definition."
@@ -4975,7 +4975,7 @@
       },
       "ubuntu_url": "https://ubuntu.com/security/CVE-2026-93817",
       "rule_id": "kernel_code_absent_from_header_payload",
-      "advisory_content_sha256": "4f7f3f8063722d473fcbb1e857963bdc4b42d28fabf9ed8464bd3de78e67979c",
+      "advisory_content_sha256": "6c77610ccebafb0d07eb4cc50907e4bb14b0cef9f7ba9ce89e8c1fc9c517f06e",
       "component": "Perf event address filters",
       "affected_operation": "Freeing address-filter ranges used by RCU readers",
       "rationale": "The identified range object is consumed under kernel RCU and must be reclaimed accordingly; even the short description specifies the lifetime mechanism."
@@ -5084,7 +5084,7 @@
       },
       "ubuntu_url": "https://ubuntu.com/security/CVE-2026-97493",
       "rule_id": "kernel_code_absent_from_header_payload",
-      "advisory_content_sha256": "ac61354124e039bc14340aa541ea429f03a206bb1e413d826cc59db18fc40856",
+      "advisory_content_sha256": "747cc3d019df9c12a6f58caf29490048bbc2c9d3082d975495f4f5c2016fddb2",
       "component": "AMDGPU VBIOS GPIO I2C parsing",
       "affected_operation": "Bounding the entry count derived from a firmware table",
       "rationale": "Corrupt firmware size fields drive a kernel driver's bus-array writes; the validation belongs to driver execution."
@@ -5435,7 +5435,7 @@
       },
       "ubuntu_url": "https://ubuntu.com/security/CVE-2026-98034",
       "rule_id": "kernel_code_absent_from_header_payload",
-      "advisory_content_sha256": "0dab6b9e0b12d8235f5ebb47a799ceeb1f9d7528d0f64e67130b5074800a680c",
+      "advisory_content_sha256": "637c3dbe39a9593f0d011ba627268da6fe76d0b06b68b7ea41b136f942102952",
       "component": "BPF verifier scalar precision tracking",
       "affected_operation": "Approving zero stores to kernel-pointer fields across state checkpoints",
       "rationale": "An imprecise scalar permits verifier state pruning to skip a nonzero store path. mark_chain_precision repairs kernel validation of submitted programs; no exported-header or user compiler change is described."
@@ -5489,7 +5489,7 @@
       },
       "ubuntu_url": "https://ubuntu.com/security/CVE-2026-98084",
       "rule_id": "kernel_code_absent_from_header_payload",
-      "advisory_content_sha256": "25207bf2456c80e0d81f038a1fbbcc32f3daec1d9b1a308accc8681bb9be3f01",
+      "advisory_content_sha256": "8e712d82981f15071b23404ebece0f0509e1f76e2332fdd0db084a580e464c14",
       "component": "BPF verifier backtracking",
       "affected_operation": "Propagating register precision across loop-callback returns",
       "rationale": "The description explains a kernel verifier checkpoint that loses outer-frame precision and can accept unsafe programs. The callback program is input; precision backtracking is the vulnerable kernel implementation."
@@ -5692,7 +5692,7 @@
       },
       "ubuntu_url": "https://ubuntu.com/security/CVE-2026-98260",
       "rule_id": "kernel_code_absent_from_header_payload",
-      "advisory_content_sha256": "da41219080c7c717d61d97df73392c3f2454e6732e4d757ecce13fda58b3b41d",
+      "advisory_content_sha256": "e30c48447aa0a036446ff93a281a053c5fc9bda3641c9b80d89024b79f0c6aba",
       "component": "Kernel exec and POSIX CPU timers",
       "affected_operation": "Removing timer queue nodes immediately after thread identity changes",
       "rationale": "The stale node spans kernel task/PID reassignment and timer teardown during exec failure. execve and timer calls are entry points; the queue and task ownership are kernel runtime state."
@@ -5710,7 +5710,7 @@
       },
       "ubuntu_url": "https://ubuntu.com/security/CVE-2026-98283",
       "rule_id": "kernel_code_absent_from_header_payload",
-      "advisory_content_sha256": "72424038e042ff43bf2d2a94f697b5ac768ac5c788ca08d8753585d4a6158cb8",
+      "advisory_content_sha256": "0f879efd9a595c1b1c3abc008a4d65be3f79a8c081f3dceb60e6fd048838591e",
       "component": "PowerPC KVM nested-guest TLB invalidation",
       "affected_operation": "Iterating nested guests after dropping the MMU lock",
       "rationale": "A nested-guest object loses its final reference while another vCPU uses it outside the lock. Pinning that kernel object around per-guest work fixes the hypervisor lifetime race; guest actions are triggers only."
@@ -5785,7 +5785,7 @@
       },
       "ubuntu_url": "https://ubuntu.com/security/CVE-2026-98359",
       "rule_id": "kernel_code_absent_from_header_payload",
-      "advisory_content_sha256": "aeece115a1c8bb422c102ed61a46ebddf2b682a428a7a35cb7ddbab42a425b2d",
+      "advisory_content_sha256": "6e5fd8be030fcfeacf171ca0c0ae4e99dc539cb10748273c973bd6fcff6cd5ee",
       "component": "RDMA Ethernet-speed query",
       "affected_operation": "Rejecting a netdev that is unregistering before invoking ethtool",
       "rationale": "A reference keeps the kernel object allocated but not operational; the fix synchronizes registration-state checks with the callback."
@@ -5803,7 +5803,7 @@
       },
       "ubuntu_url": "https://ubuntu.com/security/CVE-2026-98364",
       "rule_id": "kernel_code_absent_from_header_payload",
-      "advisory_content_sha256": "1b5855782287218ba0c9a6c2ddd0e375c23de5a323f48c7a35128a9f72cb81c0",
+      "advisory_content_sha256": "8aa47af4556021412e6b14896b8b201eabfc1b2da9d159e8fb9aa96eb3f3ee1d",
       "component": "XFRM route-bundle device references",
       "affected_operation": "Retaining the route device under RCU while creating a bundle",
       "rationale": "Concurrent link deletion frees a net_device used by kernel route construction. Netlink deletion or packet sending are external triggers, not a userspace implementation of that reference acquisition."
@@ -5866,7 +5866,7 @@
       },
       "ubuntu_url": "https://ubuntu.com/security/CVE-2026-98432",
       "rule_id": "kernel_code_absent_from_header_payload",
-      "advisory_content_sha256": "de0163c444914be1fa450f7d138866c2e42415cbd329b4acf6576ac11468d20e",
+      "advisory_content_sha256": "728fdc7d94322b482e0617758408efedbe23b895854155fd42fdf2c25167e10a",
       "component": "TCP IPv4 option lifetime with a noted IPv6 analogue",
       "affected_operation": "Deferring shared connection-option freeing until RCU readers finish",
       "rationale": "The primary fix concerns kernel socket option ownership, but the description also names an IPv6 migration defect to be fixed separately while declared paths are IPv4-only. Clarify that cross-family CVE scope before reducing the record to its listed payload paths.",
@@ -5888,7 +5888,7 @@
       },
       "ubuntu_url": "https://ubuntu.com/security/CVE-2026-98439",
       "rule_id": "kernel_code_absent_from_header_payload",
-      "advisory_content_sha256": "f8c2c6e0506baddad85ab74ed879dd3e679b3eaa08a415dafafef5b001c9f081",
+      "advisory_content_sha256": "f636f1376dbff235998c1ff48aad86f37ba0b9035b0f229f3d79ad51dbcde2b7",
       "component": "Kernel SMB server connection shutdown",
       "affected_operation": "Closing a connection with pending asynchronous requests",
       "rationale": "The description identifies server request waits that prevent closure and requires cancellation first. This is connection/request lifecycle behavior in the kernel SMB server; it does not describe a header or shared-library change."
@@ -5924,7 +5924,7 @@
       },
       "ubuntu_url": "https://ubuntu.com/security/CVE-2026-98442",
       "rule_id": "kernel_code_absent_from_header_payload",
-      "advisory_content_sha256": "8132d17d7afcec0cbe989b732eec954afcdd98fc05c9b69705ce2f1cdf5b3963",
+      "advisory_content_sha256": "bf47c15663a0927fb194fbe0e87f828c76e1706f7186508fc9475505141798ed",
       "component": "Traffic-control conntrack helper ordering",
       "affected_operation": "Invoking helpers only after connection extension allocation finishes",
       "rationale": "Expectation lists retain pointers into kernel connection extensions that can later move. The API atomicity discussion concerns kernel conntrack mutation, not exported-header or userspace implementation."
@@ -5943,7 +5943,7 @@
       },
       "ubuntu_url": "https://ubuntu.com/security/CVE-2026-98454",
       "rule_id": "kernel_code_absent_from_header_payload",
-      "advisory_content_sha256": "a34ea4949bfeb90e884bc3cbe7fb80a501895a4a051ed17b600c26b2a5e4e1e2",
+      "advisory_content_sha256": "60a7dafa1872e78ff268ef3224af3bba4df0bbdb4f33bc9311f7ee045dcf5f62",
       "component": "Kernel SMB create-context and lease parsing",
       "affected_operation": "Bounding individual contexts and reading their data at declared offsets",
       "rationale": "The parser incorrectly treats the complete response range and canonical layouts as each record's bounds. Fixes constrain kernel client parsing and preserve open behavior; references to context headers mean wire records, not exported C headers."
@@ -6033,7 +6033,7 @@
       },
       "ubuntu_url": "https://ubuntu.com/security/CVE-2026-98464",
       "rule_id": "kernel_code_absent_from_header_payload",
-      "advisory_content_sha256": "ea88a7926737fb353a2ffc79e54aa876edbf123aae7f1cc9c409e567d978bbf0",
+      "advisory_content_sha256": "5ca9b44f0d11dae0906ae3bd4013672ed38a69b1788abcd14b1ce7a0250f2576",
       "component": "RISC-V KVM virtual CPU timers",
       "affected_operation": "Waiting for a running high-resolution timer callback before vCPU teardown",
       "rationale": "The VMM can trigger VM destruction, but the freed object and timer callback are kernel KVM state. The userspace VMM supplies the lifecycle event rather than the faulty implementation."
@@ -6087,7 +6087,7 @@
       },
       "ubuntu_url": "https://ubuntu.com/security/CVE-2026-98490",
       "rule_id": "kernel_code_absent_from_header_payload",
-      "advisory_content_sha256": "a079b51f02ceef13c66165c75b4eb7a8f566d0f7e28cacb7b4eeaedd13814061",
+      "advisory_content_sha256": "7a0d53bf9911a0c0f0800d6352921c042dcea2d5dcef2ee00897c2ed8a69da17",
       "component": "Open vSwitch kernel conntrack integration",
       "affected_operation": "Delaying helper calls until all connection extensions are allocated",
       "rationale": "Open vSwitch has userspace components, but this description identifies kernel conntrack expectation pointers invalidated by extension reallocation. It supplies no evidence that the userspace datapath shares this faulty implementation."
@@ -6216,7 +6216,7 @@
       },
       "ubuntu_url": "https://ubuntu.com/security/CVE-2026-98548",
       "rule_id": "kernel_code_absent_from_header_payload",
-      "advisory_content_sha256": "d58e12d1ba2d9d47584fb59de65387c6cad38eff87b89bf570e182af16950a84",
+      "advisory_content_sha256": "2965f32a2c90645ef5ff87cb5648820b4e7ff9eedf6d82618305f7ae88ea6ab5",
       "component": "SCTP packet state-machine processing",
       "affected_operation": "Continuing a packet after stale-cookie handling removes its arrival transport",
       "rationale": "Later chunks reuse a transport removed earlier in kernel packet processing, leaving association state with a dangling pointer. Discarding the remainder repairs protocol-object lifetime; no userspace parser or header implementation is identified."
@@ -6959,7 +6959,7 @@
       },
       "ubuntu_url": "https://ubuntu.com/security/CVE-2026-98754",
       "rule_id": "kernel_code_absent_from_header_payload",
-      "advisory_content_sha256": "d60daa9fa276231b8b1a1e01d8d74720d20ff0bc3f9871a9208f113adaefcc13",
+      "advisory_content_sha256": "f2bb1d49bd6f06ba432a8043e1bdc3116a9d1a0d6eccca487c8f2bf25e6cc638",
       "component": "Virtual console concentrator TTY driver",
       "affected_operation": "Clearing the TTY pointer during cleanup while an LDC callback reads it",
       "rationale": "The kernel callback can dereference a freed tty port because cleanup skips the same lock. The described synchronization is driver-internal, not a userspace terminal interface change."

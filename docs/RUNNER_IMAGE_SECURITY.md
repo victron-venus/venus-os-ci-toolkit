@@ -153,6 +153,20 @@ An observed resource limit is not a measured memory peak.
 
 ### Exact retained runc applicability
 
+The [2026-10-27 advisory review](RUNNER_ADVISORY_REVIEW_2026_10_27.json)
+records 51 updated advisory fingerprints covering 52 findings. The changes are
+references, vendor severity, CVSS, modification dates and one expanded title.
+The retained descriptions, package/version status and source-applicability
+reasons are unchanged. CVSS and vendor severity changes are recorded as
+substantive assessments, not dismissed as harmless formatting. The manifest
+binds each old/new fingerprint, changed fields, source documents and the scanned
+source/database identity. The existing exact package, binary and prerequisite
+checks remain mandatory; a subsequent metadata change still fails closed.
+
+This review does not rewrite or accept the original failed scan. Updated source
+and passing unit tests do not qualify an image, a host kernel or deployment.
+Complete image and runtime qualification remain separate requirements.
+
 The module scanner's runc findings are retained. For the exact Linux amd64 binary
 in `runner-runc-applicability.json`, the upstream release source and its matching
 CGO/build-tag dependency graph import only `golang.org/x/net/bpf`. Neither the
