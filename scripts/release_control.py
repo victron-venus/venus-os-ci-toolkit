@@ -102,6 +102,7 @@ NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+-]{0,199}\Z")
 REPO_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9][A-Za-z0-9_.-]*\Z")
 ASSET_CHUNK_SIZE = 1024 * 1024
 ASSET_DOWNLOAD_TIMEOUT = 900
+ASSET_UPLOAD_TIMEOUT = 900
 API_READ_TIMEOUT = 30
 API_READ_ATTEMPTS = 3
 EXECUTING_RUN_WAIT_SECONDS = 300
@@ -542,9 +543,10 @@ class GitHub:
             ) from error
         self.response(result, f"GET {endpoint}")
 
-    def upload(self, tag: str, path: Path) -> None:
-        """Upload a canonical tag's staged regular file, with no overwrite option."""
+    def upload(self, tag: str, path: Path, *, release_id: int) -> None:
+        """Upload once to the transaction's known draft, without tag lookup."""
         require(TAG_RE.fullmatch(tag), "Unsupported release upload tag")
+        release_id = positive(release_id, "release ID")
         require(
             path.is_absolute() and NAME_RE.fullmatch(path.name), "Unsafe upload path"
         )
@@ -560,23 +562,60 @@ class GitHub:
             and "#" not in str(path),
             "Upload must come from the private release staging directory",
         )
-        self.response(
+        # A draft is not returned by the published-release-by-tag endpoint.
+        # Reusing its creation ID avoids a separate GraphQL draft lookup for
+        # every file. Never accept an arbitrary upload host from response data.
+        endpoint = (
+            f"https://uploads.github.com/{self.base}/releases/{release_id}/assets"
+            f"?name={quote(path.name, safe='')}"
+        )
+        context = f"upload {tag} {path.name}"
+        try:
             # Developer/CI toolchain selected by the invoking operator via PATH.
-            subprocess.run(  # nosec B603, B607
+            result = subprocess.run(  # nosec B603, B607
                 [
                     "gh",
-                    "release",
-                    "upload",
-                    "--repo",
-                    f"github.com/{self.repo}",
-                    "--",
-                    tag,
+                    "api",
+                    "--hostname",
+                    GITHUB_HOSTNAME,
+                    "--include",
+                    "--method",
+                    "POST",
+                    "-H",
+                    "Content-Type: application/octet-stream",
+                    "--input",
                     str(parent / path.name),
+                    "--",
+                    endpoint,
                 ],
                 capture_output=True,
                 check=False,
-            ),
-            f"upload {tag} {path.name}",
+                timeout=ASSET_UPLOAD_TIMEOUT,
+            )
+        except subprocess.TimeoutExpired as error:
+            # The server may have received the bytes. Leave the draft intact;
+            # replaying this write could replace or duplicate an existing asset.
+            raise GitHubError(
+                f"{context}: asset upload exceeded {ASSET_UPLOAD_TIMEOUT} seconds"
+            ) from error
+        try:
+            http = github_http_response(result.stdout or b"")
+        except GitHubError as error:
+            # A transport/CLI failure may precede any HTTP response. Preserve
+            # its error context, but never retry a possibly committed write.
+            self.response(result, context)
+            raise GitHubError(f"{context}: {error}") from error
+        response = self.response(result, context, http)
+        require(http[0] == 201, f"{context}: upload was not confirmed as created")
+        asset = parse_json(response, context)
+        require(isinstance(asset, dict), f"{context}: invalid asset response")
+        positive(asset.get("id"), "uploaded asset ID")
+        require(
+            asset.get("name") == path.name
+            and asset.get("state") == "uploaded"
+            and type(asset.get("size")) is int
+            and asset.get("size") == path.stat().st_size,
+            f"{context}: upload response did not confirm the staged asset",
         )
 
 
@@ -1598,7 +1637,7 @@ def _publish_prepared(
     )
     release_id = positive(release.get("id"), "release ID")
     for path in sorted(directory.iterdir()):
-        gh.upload(tag, path)
+        gh.upload(tag, path, release_id=release_id)
     uploaded = gh.pages(f"releases/{release_id}/assets")
     expected = {path.name: path for path in directory.iterdir()}
     require(

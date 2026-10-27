@@ -660,12 +660,10 @@ class FakeGitHub:
         """Write the stored bytes through the release client's streaming contract."""
         output.write(self.binary(path))
 
-    def upload(self, tag, path):
+    def upload(self, tag, path, *, release_id):
         """Model asset upload and optionally corrupt its server-side bytes."""
         self.writes.append(("upload", tag, path.name))
-        release_id = next(
-            key for key, value in self.releases.items() if value["tag_name"] == tag
-        )
+        assert self.releases[release_id]["tag_name"] == tag
         asset_id = max(self.files) + 1
         data = path.read_bytes()
         self.files[asset_id] = b"x" * len(data) if self.corrupt_upload else data
@@ -1568,11 +1566,11 @@ class TransportTests(unittest.TestCase):
                     patch.object(rc.subprocess, "run") as command,
                     self.assertRaises(rc.ReleaseError),
                 ):
-                    gh.upload(tag, path)
+                    gh.upload(tag, path, release_id=10)
                 command.assert_not_called()
 
     def test_upload_never_overwrites_or_retries_an_existing_asset(self):
-        """Keep the gh no-clobber default even when GitHub rejects an existing asset."""
+        """A conflicting asset cannot cause a second POST or an overwrite."""
         gh = rc.GitHub(REPO)
         with tempfile.TemporaryDirectory(prefix="release-promote-") as temp:
             asset = Path(temp) / "package.tar.gz"
@@ -1587,21 +1585,118 @@ class TransportTests(unittest.TestCase):
                 ) as command,
                 self.assertRaises(rc.GitHubError),
             ):
-                gh.upload("v1.2.3", asset)
+                gh.upload("v1.2.3", asset, release_id=10)
             command.assert_called_once_with(
                 [
                     "gh",
-                    "release",
-                    "upload",
-                    "--repo",
-                    f"github.com/{REPO}",
-                    "--",
-                    "v1.2.3",
+                    "api",
+                    "--hostname",
+                    "github.com",
+                    "--include",
+                    "--method",
+                    "POST",
+                    "-H",
+                    "Content-Type: application/octet-stream",
+                    "--input",
                     str(asset.resolve()),
+                    "--",
+                    f"https://uploads.github.com/repos/{REPO}/releases/10/assets?name=package.tar.gz",
                 ],
                 capture_output=True,
                 check=False,
+                timeout=rc.ASSET_UPLOAD_TIMEOUT,
             )
+
+    def test_upload_uses_known_id_and_encodes_asset_name_without_tag_lookup(self):
+        gh = rc.GitHub(REPO)
+        with tempfile.TemporaryDirectory(prefix="release-versioned-") as temp:
+            asset = Path(temp) / "package+arm64.tar.gz"
+            asset.write_bytes(b"package")
+            response = subprocess.CompletedProcess(
+                [],
+                0,
+                b"HTTP/2.0 201 Created\r\n\r\n"
+                + json.dumps(
+                    {
+                        "id": 91,
+                        "name": asset.name,
+                        "state": "uploaded",
+                        "size": 7,
+                    }
+                ).encode(),
+                b"",
+            )
+            with patch.object(rc.subprocess, "run", return_value=response) as command:
+                gh.upload(RC_TAG, asset, release_id=42)
+            command.assert_called_once()
+            args = command.call_args.args[0]
+            self.assertEqual(
+                args[-1],
+                f"https://uploads.github.com/repos/{REPO}/releases/42/assets?name=package%2Barm64.tar.gz",
+            )
+            self.assertNotIn(RC_TAG, args)
+            self.assertEqual(
+                Path(args[args.index("--input") + 1]).read_bytes(), b"package"
+            )
+
+    def test_upload_rejects_invalid_id_before_any_request(self):
+        with tempfile.TemporaryDirectory(prefix="release-versioned-") as temp:
+            asset = Path(temp) / "package.tar.gz"
+            asset.write_bytes(b"package")
+            for release_id in (0, -1, True, "01", "42/assets?other=1", None):
+                with (
+                    self.subTest(release_id=release_id),
+                    patch.object(rc.subprocess, "run") as command,
+                ):
+                    with self.assertRaises(rc.ReleaseError):
+                        rc.GitHub(REPO).upload(RC_TAG, asset, release_id=release_id)
+                    command.assert_not_called()
+
+    def test_upload_timeout_is_not_retried_and_does_not_expose_output(self):
+        with tempfile.TemporaryDirectory(prefix="release-versioned-") as temp:
+            asset = Path(temp) / "package.tar.gz"
+            asset.write_bytes(b"package")
+            timeout = subprocess.TimeoutExpired(
+                ["private-path"], 900, output=b"private-body"
+            )
+            with patch.object(rc.subprocess, "run", side_effect=timeout) as command:
+                with self.assertRaises(rc.GitHubError) as caught:
+                    rc.GitHub(REPO).upload(RC_TAG, asset, release_id=42)
+                command.assert_called_once()
+            self.assertNotIn("private", str(caught.exception))
+            self.assertNotIn(temp, str(caught.exception))
+
+    def test_upload_requires_created_matching_complete_asset(self):
+        with tempfile.TemporaryDirectory(prefix="release-versioned-") as temp:
+            asset = Path(temp) / "package.tar.gz"
+            asset.write_bytes(b"package")
+            expected = {"id": 91, "name": asset.name, "state": "uploaded", "size": 7}
+            variants = [
+                (200, expected),
+                (201, []),
+                (201, {**expected, "id": 0}),
+                (201, {**expected, "name": "wrong.tar.gz"}),
+                (201, {**expected, "state": "starter"}),
+                (201, {**expected, "size": 6}),
+                (201, {**expected, "size": True}),
+            ]
+            for status, body in variants:
+                response = subprocess.CompletedProcess(
+                    [],
+                    0,
+                    f"HTTP/2.0 {status} Response\r\n\r\n".encode()
+                    + json.dumps(body).encode(),
+                    b"",
+                )
+                with (
+                    self.subTest(status=status, body=body),
+                    patch.object(
+                        rc.subprocess, "run", return_value=response
+                    ) as command,
+                ):
+                    with self.assertRaises(rc.ReleaseError):
+                        rc.GitHub(REPO).upload(RC_TAG, asset, release_id=42)
+                    command.assert_called_once()
 
     def test_upload_parse_failure_keeps_draft_and_reports_safe_asset_context(self):
         """A committed upload with a broken response must not be retried or published."""
@@ -1609,9 +1704,9 @@ class TransportTests(unittest.TestCase):
         client = rc.GitHub(REPO)
         tag = "v1.2.3-beta.7"
 
-        def accepted_upload_then_failed_response(upload_tag, path):
-            FakeGitHub.upload(gh, upload_tag, path)
-            client.upload(upload_tag, path)
+        def accepted_upload_then_failed_response(upload_tag, path, *, release_id):
+            FakeGitHub.upload(gh, upload_tag, path, release_id=release_id)
+            client.upload(upload_tag, path, release_id=release_id)
 
         with tempfile.TemporaryDirectory(prefix="release-versioned-") as temp:
             asset = Path(temp) / rc.MANIFEST
@@ -1641,7 +1736,7 @@ class TransportTests(unittest.TestCase):
             self.assertEqual(len(gh.assets[release_id]), 1)
             self.assertEqual(sum(write[0] == "upload" for write in gh.writes), 1)
             self.assertFalse(any(write[1] == "PATCH" for write in gh.writes))
-            upload.assert_called_once_with(tag, asset)
+            upload.assert_called_once_with(tag, asset, release_id=release_id)
             command.assert_called_once()
             self.assertNotIn("--clobber", command.call_args.args[0])
             self.assertNotIn(temp, str(error.exception))
@@ -1650,6 +1745,26 @@ class TransportTests(unittest.TestCase):
                 str(error.exception),
                 f"upload {tag} {asset.name}: unexpected end of JSON input",
             )
+
+    def test_upload_unconfirmed_http_response_is_never_retried(self):
+        """A successful CLI exit alone cannot confirm the committed asset."""
+        with tempfile.TemporaryDirectory(prefix="release-versioned-") as temp:
+            asset = Path(temp) / "package.tar.gz"
+            asset.write_bytes(b"package")
+            for stdout in (None, b"private response body", b"HTTP/2.0 201 Created\r\n"):
+                response = subprocess.CompletedProcess([], 0, stdout, b"")
+                with (
+                    self.subTest(stdout=stdout),
+                    patch.object(
+                        rc.subprocess, "run", return_value=response
+                    ) as command,
+                ):
+                    with self.assertRaises(rc.GitHubError) as error:
+                        rc.GitHub(REPO).upload(RC_TAG, asset, release_id=42)
+                    command.assert_called_once()
+                    self.assertIn(f"upload {RC_TAG} {asset.name}", str(error.exception))
+                    self.assertNotIn("private response body", str(error.exception))
+                    self.assertNotIn(temp, str(error.exception))
 
     def test_canonical_numeric_fields_remain_ascii(self):
         """Reject Unicode digits after adopting concise regexes with ASCII flags."""
