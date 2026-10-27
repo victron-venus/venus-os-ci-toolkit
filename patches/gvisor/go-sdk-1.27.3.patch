@@ -1,0 +1,24 @@
+diff --git a/MODULE.bazel b/MODULE.bazel
+--- a/MODULE.bazel
++++ b/MODULE.bazel
+@@ -203,6 +203,9 @@
+ ### Go
+ go_sdk = use_extension("@io_bazel_rules_go//go:extensions.bzl", "go_sdk")
+ go_sdk.from_file(
++    sdks = {
++        "linux_amd64": ["go1.27.3.linux-amd64.tar.gz", "65efbc80fdc1fa2cd2631cad5b481777a68e8725f34e89f50fc6ac714e379b40"],
++    },
+     go_mod = "//:go.mod",
+     patch_strip = 1,
+     patches = ["//tools:go_types_memoize.patch"],
+diff --git a/go.mod b/go.mod
+--- a/go.mod
++++ b/go.mod
+@@ -1,6 +1,6 @@
+ module gvisor.dev/gvisor
+ 
+-go 1.27.2
++go 1.27.3
+ 
+ require (
+ 	cloud.google.com/go/auth v0.20.0

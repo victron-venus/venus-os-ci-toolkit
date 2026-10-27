@@ -176,7 +176,8 @@ class CandidateValidationTests(unittest.TestCase):
         public = SCRIPT.parent.parent
         shutil.copyfile(public / "patches/gvisor/LICENSE", source / "LICENSE")
         paths = {"/workspace": source, "/build": build,
-                 "/control/vfs-final-symlink.patch": public / "patches/gvisor/vfs-final-symlink.patch"}
+                 "/control/vfs-final-symlink.patch": public / "patches/gvisor/vfs-final-symlink.patch",
+                 "/control/go-sdk-1.27.3.patch": public / "patches/gvisor/go-sdk-1.27.3.patch"}
         answers = iter(["f" * 40, candidate.VERSION, "bazel 8.8.1", None])
         seen = []
 
@@ -241,7 +242,7 @@ class CandidateValidationTests(unittest.TestCase):
 
     def test_fixed_container_restrictions(self):
         args = candidate.container_args("owned", "nonce", "/owned/source", "/owned/build",
-                                        "/owned/script", "/owned/patch", 1001, 1001)
+                                        "/owned/script", "/owned/patch", "/owned/sdk-patch", 1001, 1001)
         for forbidden in ("--privileged", "--cap-add", "--pid", "--device", "seccomp=unconfined"):
             self.assertNotIn(forbidden, args)
         self.assertNotIn("docker.sock", " ".join(args))
@@ -257,8 +258,10 @@ class CandidateValidationTests(unittest.TestCase):
         self.assertEqual(args[args.index("--cap-drop") + 1], "ALL")
         self.assertIn(candidate.IMAGE, args)
         self.assertIn("type=bind,source=/owned/patch,target=/control/vfs-final-symlink.patch,readonly", args)
+        self.assertIn("type=bind,source=/owned/sdk-patch,target=/control/go-sdk-1.27.3.patch,readonly", args)
         with self.assertRaises(candidate.BuildError):
-            candidate.container_args("owned", "nonce", "/source", "/build", "/script", "/patch", 0, 0)
+            candidate.container_args("owned", "nonce", "/source", "/build", "/script", "/patch",
+                                     "/sdk-patch", 0, 0)
 
     def test_cleanup_rejects_foreign_container_before_removal(self):
         info = [{"Id": "a" * 64, "Name": "/owned",
@@ -351,7 +354,7 @@ class CandidateValidationTests(unittest.TestCase):
 
     def provenance(self):
         public = SCRIPT.parent.parent
-        for filename in ("LICENSE", "vfs-final-symlink.patch"):
+        for filename in ("LICENSE", "vfs-final-symlink.patch", "go-sdk-1.27.3.patch"):
             shutil.copyfile(public / "patches/gvisor" / filename, self.path / filename)
         (self.path / "MODIFICATIONS.txt").write_text(candidate.MODIFICATION_NOTICE)
 
@@ -363,10 +366,13 @@ class CandidateValidationTests(unittest.TestCase):
         notice = (self.path / "MODIFICATIONS.txt").read_text()
         self.assertIn(candidate.BASE, notice)
         self.assertIn(candidate.PATCH_SHA, notice)
+        self.assertEqual(result["go-sdk-1.27.3.patch"], candidate.SDK_PATCH_SHA)
+        self.assertIn(candidate.SDK_PATCH_SHA, notice)
+        self.assertIn(candidate.SDK_ARCHIVE_SHA, notice)
         self.assertIn("not an upstream NOTICE file", notice)
 
     def test_provenance_rejects_missing_changed_or_symlinked_files(self):
-        for name in ("LICENSE", "vfs-final-symlink.patch", "MODIFICATIONS.txt"):
+        for name in ("LICENSE", "vfs-final-symlink.patch", "go-sdk-1.27.3.patch", "MODIFICATIONS.txt"):
             for mode in ("missing", "changed", "symlink"):
                 with self.subTest(name=name, mode=mode):
                     self.provenance()

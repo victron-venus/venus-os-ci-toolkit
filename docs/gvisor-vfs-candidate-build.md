@@ -291,3 +291,27 @@ patch files, and verify owned-process termination when the deadline expires.
 
 Changing an input pin, target, runner contract or resource limit requires another
 review. This workflow has no automatic promotion or consumer deployment path.
+
+## Go 1.27.3 SDK repair (issue 300)
+
+The current manual builder applies a separate `go-sdk-1.27.3.patch` to the same
+upstream source before constructing the candidate commit. It changes the actual
+`go.mod` SDK selection and pins the official Linux/amd64 SDK filename and SHA256
+in `MODULE.bazel`; the original VFS patch and upstream Go memoize patch remain
+unchanged. The resulting candidate marker ends in `-go1.27.3`, and both patches
+and their digests are included in the artifact provenance.
+
+[GO-2026-6809](https://pkg.go.dev/vuln/GO-2026-6809) affects the old Go 1.27.2
+compiler's standard library. The selected replacement is Go 1.27.3, whose
+[official download metadata](https://go.dev/dl/?mode=json) gives
+`go1.27.3.linux-amd64.tar.gz` SHA256
+`65efbc80fdc1fa2cd2631cad5b481777a68e8725f34e89f50fc6ac714e379b40`.
+The upstream Go memoize patch applies to the Go 1.27.3 source. This is not a claim
+that every dependency in the pinned gVisor revision is free of advisories.
+
+The successful artifact and runtime evidence above belong to the previous
+candidate and remain historical. The new candidate still requires a separate
+manual hosted build with the existing memory, CPU, disk and deadline admission
+gates, the complete selected build/unit-test targets, resolved SDK identity and
+artifact verification. No new candidate build, deployment or runtime acceptance
+is established by the source repair alone.
