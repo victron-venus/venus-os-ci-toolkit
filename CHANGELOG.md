@@ -4,17 +4,29 @@
 
 ### Changed
 
-- Prepare GitHub-hosted Ubuntu browser workers with their provisioned fallback package mirror. The existing planning/browser job budgets and required compatibility checks are preserved.
 - Separate standalone fuzz candidate evidence from release evidence that requires a frozen publication plan.
-- Ship the maintained runner-image build and qualification helpers with bounded artifact preparation and explicit architecture checks.
+- Add opt-in historical Firefox qualification, quota-aware review scheduling and bounded runner resource profiles. Default runner selection and required application checks remain explicit consumer choices.
+- Ship native runner-image build, dependency and browser preparation helpers with artifact provenance, architecture checks and source-archive validation.
+- Add a read-only capacity preflight that accounts for assigned requests, init containers, runtime overhead and namespace quotas. Unsupported or incomplete resource evidence cannot produce a passing result; available resources do not establish scheduling or runtime acceptance.
+
+### Fixed
+
+- Use the provisioned Ubuntu fallback package mirror for hosted browser workers while preserving the existing planning/browser budgets and required compatibility checks.
+- Preserve usable version metadata when migrating immutable workflow references to the canonical atomic Renovate updater, including coupled fuzz workflow and runtime pins.
+- Upload release assets through the existing draft release ID, with one bounded write and complete byte readback. Wait within one fixed deadline for current-run gate metadata without accepting skipped, failed or mismatched checks.
+- Validate source-bound Upgrade and Security guidance before reserving release versions. Preserve existing immutable version reservations and publication checks.
+- Retain required aggregate checks after workflow cancellation so incomplete dependencies reach their failure assertions.
+- Correct runner-image evidence, pinned browser prerequisites and VFS runtime source bindings; deployment still requires separate qualification.
 
 ### Upgrade
 
-This source package does not deploy runner images or change consumer workflow pins. Review and adopt an immutable toolkit revision explicitly; keep native image qualification and the normal consumer CI gates.
+This source package does not deploy runner images or update consumer workflow pins. Adopt a reviewed immutable toolkit revision explicitly. Existing vendored publisher clients require the corresponding reviewed file update, and native image changes require artifact and workload qualification before activation. Keep the persistent release-version ledger and the previous qualified runtime for rollback.
 
 ### Security
 
-Consumers must retain reviewed immutable workflow pins, least-privilege permissions and trusted runner isolation when adopting this source package. Source publication does not rotate credentials, deploy runner images or qualify a new runtime; image and consumer acceptance remain separate required checks.
+Update the containerd build overlay to cilium/ebpf 0.22.0 with matching dependency and source hashes. Runner tooling builds use an unprivileged account and bind acceptance to the actual image payload. The separately tracked legacy Docker Distribution dependency remains outside this fix; source publication is not a claim that every runner dependency finding is resolved.
+
+Consumers must retain least-privilege permissions, reviewed immutable workflow pins and trusted runner isolation. Publishing this source package does not rotate credentials or authorize changes to running services.
 
 ## [0.1.7] - 2026-10-24
 
