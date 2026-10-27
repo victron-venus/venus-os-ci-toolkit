@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.1.8] - 2026-10-27
+
+### Changed
+
+- Prepare GitHub-hosted Ubuntu browser workers with their provisioned fallback package mirror. The shared workflow also provides explicit planning and browser job budgets while preserving required compatibility checks.
+- Separate standalone fuzz candidate evidence from release evidence that requires a frozen publication plan.
+- Ship the maintained runner-image build and qualification helpers with bounded artifact preparation and explicit architecture checks.
+
+### Upgrade
+
+This source package does not deploy runner images or change consumer workflow pins. Review and adopt an immutable toolkit revision explicitly; keep native image qualification and the normal consumer CI gates.
+
 ## [0.1.7] - 2026-10-24
 
 ### Security
