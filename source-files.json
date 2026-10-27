@@ -248,6 +248,7 @@
   "fuzz/fuzz_oci_metadata.py",
   "fuzz/fuzz_version_policy.py",
   "patches/gvisor/LICENSE",
+  "patches/gvisor/go-sdk-1.27.3.patch",
   "patches/gvisor/vfs-final-symlink.patch",
   "pytest.ini",
   "renovate-ci.json",

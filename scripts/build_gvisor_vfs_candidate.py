@@ -20,10 +20,14 @@ import xml.etree.ElementTree as ET
 
 BASE = "60faa657ca99f3398e04c8dbc580a848df20f2f2"
 PATCH_SHA = "97e0de464f0675e1820f81798d614aeb297f8ea88d3289ac6349120813a8ac75"
+GO_VERSION = "1.27.3"
+SDK_PATCH_SHA = "0975c04cb16c206ba99296fb7ae9d7edc0a11944195ae967cf972015bf874aff"
+SDK_ARCHIVE = "go1.27.3.linux-amd64.tar.gz"
+SDK_ARCHIVE_SHA = "65efbc80fdc1fa2cd2631cad5b481777a68e8725f34e89f50fc6ac714e379b40"
 LICENSE_SHA = "0fbab5c58efbdf6d31e8085214f2dd821659c03d73cff3ed2b08e98826ea1cd9"
 IMAGE = ("us-central1-docker.pkg.dev/gvisor-presubmit/gvisor-presubmit-images/"
          "default_x86_64@sha256:667ce7798657a8fd80d737119b478977dc60708e140b41768099784f6d58f945")
-VERSION = "vfs-candidate-20261012-97e0de464f06"
+VERSION = "vfs-candidate-20261012-97e0de464f06-go1.27.3"
 MODIFICATION_NOTICE = (
     "Modification notice for the gVisor VFS candidate\n"
     "This file is added for this candidate; it is not an upstream NOTICE file.\n\n"
@@ -36,12 +40,18 @@ MODIFICATION_NOTICE = (
     "Changed files: pkg/sentry/vfs/resolving_path.go, runsc/boot/vfs.go,\n"
     "test/syscalls/linux/open.cc. See the included patch for exact changes.\n"
     "Public upstream review: https://github.com/google/gvisor/pull/14789\n"
+    f"SDK patch: go-sdk-1.27.3.patch, SHA256 {SDK_PATCH_SHA}\n"
+    "SDK changes: go.mod selects Go 1.27.3; MODULE.bazel pins the official\n"
+    "linux/amd64 SDK archive while retaining the upstream Go memoize patch.\n"
+    f"Official SDK archive: {SDK_ARCHIVE}, SHA256 {SDK_ARCHIVE_SHA}\n"
+    "Security reference: https://pkg.go.dev/vuln/GO-2026-6809\n"
     "The original Apache-2.0 LICENSE is included unchanged. No root NOTICE\n"
     "file exists in the pinned upstream source. This artifact is a modified\n"
     "candidate, not an official upstream release or runtime qualification.\n"
 )
 PATCH_FILES = {"pkg/sentry/vfs/resolving_path.go", "runsc/boot/vfs.go",
                "test/syscalls/linux/open.cc"}
+SDK_PATCH_FILES = {"go.mod", "MODULE.bazel"}
 MEMBERS = {"runsc", "containerd-shim-runsc-v1", "gvisor-bin/gvisor_sentry",
            "gvisor-bin/checkpointgofer", "gvisor-bin/gvisor-sentry-prewarmer",
            "gvisor-bin/runsc-fd-parking", "gvisor-bin/runsc-metric-server"}
@@ -148,7 +158,7 @@ class Supervisor:
                     proc.wait(timeout=5)
 
 
-def container_args(name, owner, source, build, script, patch, uid, gid):
+def container_args(name, owner, source, build, script, patch, sdk_patch, uid, gid):
     require(uid > 0 and gid > 0, "Nonroot identity required")
     return ["docker", "create", "--name", name, "--label", LABEL + "=" + owner,
             "--hostname", "gvisor-builder", "--user", f"{uid}:{gid}",
@@ -160,6 +170,7 @@ def container_args(name, owner, source, build, script, patch, uid, gid):
             "--mount", f"type=bind,source={build},target=/build",
             "--mount", f"type=bind,source={script},target=/control/build.py,readonly",
             "--mount", f"type=bind,source={patch},target=/control/vfs-final-symlink.patch,readonly",
+            "--mount", f"type=bind,source={sdk_patch},target=/control/go-sdk-1.27.3.patch,readonly",
             "--workdir", "/workspace", "--network", "bridge",
             "--env", "HOME=/build/home", "--env", "LANG=C.UTF-8",
             "--env", "LC_ALL=C.UTF-8", "--env", "GOMAXPROCS=2",
@@ -231,6 +242,7 @@ def validate_stamp(path, expected_version):
 
 def validate_provenance_files(directory):
     expected = {"LICENSE": LICENSE_SHA, "vfs-final-symlink.patch": PATCH_SHA,
+                "go-sdk-1.27.3.patch": SDK_PATCH_SHA,
                 "MODIFICATIONS.txt": hashlib.sha256(MODIFICATION_NOTICE.encode()).hexdigest()}
     for name, wanted in expected.items():
         path = directory / name
@@ -322,6 +334,8 @@ def inside():
     require(digest(source / "LICENSE") == LICENSE_SHA, "Upstream license digest mismatch")
     patch = Path("/control/vfs-final-symlink.patch")
     require(digest(patch) == PATCH_SHA, "Mounted patch digest mismatch")
+    sdk_patch = Path("/control/go-sdk-1.27.3.patch")
+    require(digest(sdk_patch) == SDK_PATCH_SHA, "Mounted SDK patch digest mismatch")
     bazel_version = sup.run(bazel("version", "--gnu_format"), cwd=source, capture=True)
     require("bazel 8.8.1" in bazel_version, "Unexpected Bazel version")
     flags = build_flags()
@@ -364,6 +378,7 @@ def inside():
     shutil.copyfile(stamp, output / "stable-status.txt")
     shutil.copyfile(source / "LICENSE", output / "LICENSE")
     shutil.copyfile(patch, output / "vfs-final-symlink.patch")
+    shutil.copyfile(sdk_patch, output / "go-sdk-1.27.3.patch")
     (output / "MODIFICATIONS.txt").write_text(MODIFICATION_NOTICE)
     provenance_files = validate_provenance_files(output)
     sdk_records = []
@@ -372,7 +387,7 @@ def inside():
         require(resolved_go.is_relative_to(build), "Go SDK is outside the owned build tree")
         version = sup.run([str(resolved_go), "version"], capture=True,
                           extra_env={"GOTOOLCHAIN": "local"})
-        require(version == "go version go1.27.2 linux/amd64", "Unexpected Go SDK version")
+        require(version == f"go version go{GO_VERSION} linux/amd64", "Unexpected Go SDK version")
         sdk_records.append({"repository": sdk_go.parent.parent.name, "version": version,
                             "go_executable_sha256": digest(resolved_go)})
     require(sdk_records, "Resolved Go SDK identity not found")
@@ -384,6 +399,8 @@ def inside():
     write_json(output / "build-receipt.json", {
         "status": "artifact-and-allowed-unit-tests-passed-not-runtime-qualified",
         "source_base": BASE, "patch_sha256": PATCH_SHA, "candidate_version": VERSION,
+        "sdk_patch_sha256": SDK_PATCH_SHA,
+        "sdk_download_constraint": {"filename": SDK_ARCHIVE, "sha256": SDK_ARCHIVE_SHA},
         "candidate_commit": sup.run(["git", "rev-parse", "HEAD"], cwd=source, capture=True),
         "candidate_tree": before, "builder": IMAGE, "bazel_version": bazel_version,
         "available_tools_not_claimed_all_used": tools, "build_targets": BUILD_TARGETS,
@@ -398,7 +415,8 @@ def inside():
 def stage_artifacts(directory, destination):
     allowed = {"gvisor-candidate.tar.bz2", "open_test", "build-receipt.json",
                "MODULE.bazel.lock", "vfs_test.xml", "prewarmer_single_page_test.xml",
-               "LICENSE", "MODIFICATIONS.txt", "vfs-final-symlink.patch", "stable-status.txt"}
+               "LICENSE", "MODIFICATIONS.txt", "vfs-final-symlink.patch", "stable-status.txt",
+               "go-sdk-1.27.3.patch"}
     require(directory.is_dir() and not directory.is_symlink(), "Invalid artifact directory")
     require({p.name for p in directory.iterdir()} == allowed, "Unexpected artifact file set")
     total, sums = 0, {}
@@ -444,6 +462,7 @@ def host_build():
     create_attempted, failure = False, None
     receipt = {"status": "failed", "workflow_sha": os.environ["GITHUB_SHA"],
                "source_base": BASE, "patch_sha256": PATCH_SHA, "builder": IMAGE,
+               "sdk_patch_sha256": SDK_PATCH_SHA, "sdk_version": GO_VERSION,
                "candidate_runtime_executed": False, "cleanup": "not-needed"}
     def interrupted(signum, _frame):
         raise BuildError("Build interrupted by signal " + str(signum))
@@ -458,6 +477,8 @@ def host_build():
                 os.environ["GITHUB_SHA"], "Workflow checkout does not match event SHA")
         patch = repo / "patches/gvisor/vfs-final-symlink.patch"
         require(digest(patch) == PATCH_SHA, "Patch digest mismatch")
+        sdk_patch = repo / "patches/gvisor/go-sdk-1.27.3.patch"
+        require(digest(sdk_patch) == SDK_PATCH_SHA, "SDK patch digest mismatch")
         info = json.loads(sup.run(["docker", "info", "--format", "{{json .}}"], capture=True))
         docker_root = Path(info["DockerRootDir"]).resolve(strict=True)
         sup.paths.append(docker_root)
@@ -483,18 +504,22 @@ def host_build():
         require(sup.run([*git, "rev-parse", "HEAD"], cwd=source, capture=True) == BASE, "Base mismatch")
         sup.run([*git, "apply", "--check", str(patch)], cwd=source)
         sup.run([*git, "apply", str(patch)], cwd=source)
+        sup.run([*git, "apply", "--check", str(sdk_patch)], cwd=source)
+        sup.run([*git, "apply", str(sdk_patch)], cwd=source)
         changed = set(sup.run([*git, "diff", "--name-only"], cwd=source, capture=True).splitlines())
-        require(changed == PATCH_FILES, "Unexpected patched paths")
-        sup.run([*git, "add", "--", *sorted(PATCH_FILES)], cwd=source)
+        require(changed == PATCH_FILES | SDK_PATCH_FILES, "Unexpected patched paths")
+        sup.run([*git, "add", "--", *sorted(PATCH_FILES | SDK_PATCH_FILES)], cwd=source)
         identity = {"GIT_AUTHOR_NAME": "gVisor candidate builder", "GIT_COMMITTER_NAME": "gVisor candidate builder",
                     "GIT_AUTHOR_EMAIL": "candidate@example.invalid", "GIT_COMMITTER_EMAIL": "candidate@example.invalid",
-                    "GIT_AUTHOR_DATE": "2026-10-18T00:00:00Z", "GIT_COMMITTER_DATE": "2026-10-18T00:00:00Z"}
-        sup.run([*git, "commit", "-m", "Apply public VFS candidate " + PATCH_SHA], cwd=source, extra_env=identity)
+                    "GIT_AUTHOR_DATE": "2026-10-27T00:00:00Z", "GIT_COMMITTER_DATE": "2026-10-27T00:00:00Z"}
+        message = "Apply public VFS candidate " + PATCH_SHA + " and SDK patch " + SDK_PATCH_SHA
+        sup.run([*git, "commit", "-m", message], cwd=source, extra_env=identity)
         sup.run([*git, "-c", "tag.gpgSign=false", "tag", VERSION], cwd=source)
         receipt["candidate_commit"] = sup.run([*git, "rev-parse", "HEAD"], cwd=source, capture=True)
         receipt["candidate_tree"] = sup.run([*git, "rev-parse", "HEAD^{tree}"], cwd=source, capture=True)
         receipt["free_before_bazel_bytes"] = sup.check(8_000_000_000)
-        args = container_args(container_name, token, source, build, script, patch, os.getuid(), os.getgid())
+        args = container_args(container_name, token, source, build, script, patch, sdk_patch,
+                              os.getuid(), os.getgid())
         create_attempted = True
         cid = sup.run(args, capture=True)
         require(re.fullmatch(r"[0-9a-f]{64}", cid), "Unexpected create output")
