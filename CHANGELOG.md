@@ -4,7 +4,7 @@
 
 ### Changed
 
-- Prepare GitHub-hosted Ubuntu browser workers with their provisioned fallback package mirror. The shared workflow also provides explicit planning and browser job budgets while preserving required compatibility checks.
+- Prepare GitHub-hosted Ubuntu browser workers with their provisioned fallback package mirror. The existing planning/browser job budgets and required compatibility checks are preserved.
 - Separate standalone fuzz candidate evidence from release evidence that requires a frozen publication plan.
 - Ship the maintained runner-image build and qualification helpers with bounded artifact preparation and explicit architecture checks.
 
