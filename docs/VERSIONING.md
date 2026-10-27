@@ -95,6 +95,19 @@ from `main`, rebase it, or delete it after a release. The release workflow reads
 and writes the ledger on this exact branch; copying its file into `main` does
 not replace that state. Exclude it from stale-branch deletion automation.
 
+When `release_notes` selects `CHANGELOG.md`, preparation validates the exact
+source commit's base-version section before reserving a plan or starting builds.
+The section must include substantive `### Upgrade` and `### Security` guidance.
+The publisher repeats the same content and Git-identity checks before mutation.
+Generated consumer CI also validates the current checkout through the real parser:
+`python3 -m unittest discover -s .github/release-tests -p test_checkout_release_notes.py`.
+That checkout-only test explicitly skips policies without a committed `version`
+or `version_file`: manual input and tag-derived versions are validated by
+preparation after the actual base is selected, without relying on review-checkout tags.
+Fix rejected notes in a new commit; do not reset prior reservations. Closed push
+cycles still return `version-required`, and byte promotion still validates the
+accepted RC rather than allocating a new build from the current checkout.
+
 A reservation is keyed by Actions run ID and bound to the source, policy, channel,
 base, and accepted RC when applicable. Rerunning that run reuses the plan; a new
 run consumes a new number. Failed runs may leave gaps. Preserve the state branch
