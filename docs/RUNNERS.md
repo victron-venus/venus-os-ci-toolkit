@@ -97,6 +97,15 @@ the Python adapter requires its existing apt/sudo and DBus build dependencies.
 An offline or missing pool will leave jobs queued. Keep GitHub mode until this
 admission is complete; do not change group visibility as an automatic fallback.
 
+For GitHub-hosted Linux, the Python and browser workflows prepare the
+image-provisioned Ubuntu mirror list before installing system packages. When
+the list contains the recognized Azure primary and HTTPS Ubuntu fallback,
+they remove only the Azure entry and retain the existing fallback. A missing
+or unfamiliar list is left unchanged with a diagnostic; self-hosted runners
+are not modified. Package requirements, signature verification, test commands
+and job timeouts remain unchanged. Consumers pinned to an older workflow SHA
+must explicitly adopt a commit containing this preparation step.
+
 Self-hosted runners still depend on GitHub Actions orchestration, authentication,
 checkout and artifact services. They cover hosted compute outages, not a complete
 GitHub outage. No automatic failover is enabled.

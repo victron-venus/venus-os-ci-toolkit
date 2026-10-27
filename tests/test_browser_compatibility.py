@@ -979,6 +979,20 @@ class HostedUbuntuMirrorTests(unittest.TestCase):
                          'node "$CI_PLAYWRIGHT_MODULE/cli.js" install --with-deps '
                          '"${CI_BROWSER_CHANNEL:-$CI_BROWSER_ENGINE}"')
 
+    def test_python_ci_reuses_guard_before_system_package_installation(self):
+        workflow = yaml.load(
+            (ROOT / ".github/workflows/python-ci.yml").read_text(),
+            Loader=yaml.BaseLoader,
+        )
+        steps = workflow["jobs"]["ci"]["steps"]
+        matches = [step for step in steps if step.get("name") == self.STEP_NAME]
+        self.assertEqual(matches, [self.step])
+        install = next(step for step in steps
+                       if step.get("name") == "Install system dependencies")
+        self.assertLess(steps.index(matches[0]), steps.index(install))
+        self.assertEqual(install["if"], "runner.os == 'Linux'")
+        self.assertNotIn("continue-on-error", install)
+
 
 if __name__ == "__main__":
     unittest.main()
