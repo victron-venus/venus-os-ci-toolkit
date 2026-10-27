@@ -1,10 +1,11 @@
 # Opt-in private NUC KVM candidate
 
-The two host templates currently stage a **modified gVisor bundle proposal**.
-Their paths are not approval to replace a running shared runtime. Runtime,
-CRI and consumer-workload acceptance remain pending; keep existing deployment
-and pool holds until the runtime owner records a scoped adoption decision.
-See [the exact candidate provenance](../../docs/gvisor-vfs-candidate-build.md#staged-nuc-runtime-proposal).
+The two host templates stage a **modified gVisor bundle proposal**. The recorded
+Home Assistant pilot passed its scoped CRI and workload checks; see the
+[candidate provenance and pilot evidence](../../docs/gvisor-vfs-candidate-build.md#staged-nuc-runtime-proposal).
+That result does not approve the shared runtime for every consumer. Each
+additional consumer/profile requires its own acceptance and owner release;
+preserve its deployment and pool holds until that decision is recorded.
 
 For an explicit set of standard CI, heavy CI and automation profiles, see
 [Multiple private profiles on one NUC](NUC_KVM_PROFILES.md). That interface uses
@@ -13,8 +14,8 @@ namespaces. It does not qualify or activate additional workloads automatically.
 
 This renderer option prepares one repository's standard CI pool. It does not
 install a runtime, start a runner, change GitHub routing, qualify an image, or
-declare earlier failed capabilities supported. Keep the candidate unqualified
-until the actual node, image, network and unchanged application jobs pass review.
+declare earlier failed capabilities supported. Qualify each selected workload
+against its actual node, image, network and unchanged application jobs.
 
 The fixed worker contract is `nuc`/`amd64`, RuntimeClass and handler
 `victron-private-nuc-kvm`, CPU request `600m` / limit `2`, memory request `3Gi` /

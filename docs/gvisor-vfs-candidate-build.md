@@ -27,11 +27,11 @@ The candidate is not labelled as an unchanged upstream release.
 
 The NUC host templates now propose the retained candidate below, in the new
 directory `/opt/victron-ci-reserve/gvisor-20261012-vfs-69937822864c`.
-This is **source preparation only**: no deployment, runtime/CRI acceptance or
-consumer-workload acceptance is established by these template paths. The
-runtime owner must separately decide whether to adopt this shared default
-after the required startup, CRI and scoped workload checks. Keep previously
-installed bundles and all activation holds until then.
+Template adoption remains staged. The Home Assistant pilot recorded below
+establishes scoped CRI and workload evidence; the paths themselves do not
+authorize activation. Each additional consumer/profile needs its own acceptance
+and owner release. Keep previously installed bundles and preserve every
+consumer's activation hold until its owner records that decision.
 
 - Build: [39175208884](https://github.com/victron-venus/venus-os-ci-toolkit/actions/runs/39175208884),
   completed successfully on 2026-10-18; workflow source
@@ -63,9 +63,31 @@ Install the seven regular executable files as one root-owned immutable bundle,
 preserving relative paths. Never replace only the frontend. The existing
 `victron-private-nuc-kvm` handler, KVM selection, network/guest-sudo flags and
 guards remain unchanged; the two host pointers must select the same bundle.
-The old bundle remains the rollback target. An ordinary startup result would
-establish only that limited lifecycle result, not qualification of the shared
-runtime, every sidecar, every CI repository or automation/release profiles.
+The old bundle remains the rollback target. Ordinary startup establishes only
+that limited lifecycle result, not qualification of every sidecar or workload.
+
+### Scoped Home Assistant pilot, 2026-10-27
+
+The operator recorded a successful pilot against the exact reviewed Home
+Assistant source revision, with runtime identities checked against this
+candidate's hashes for both CI workers. Results were 141 repository tests,
+nine builder tests, 52 maintenance tests, validation of 207 YAML files, and a
+clean secret scan. The application source and tests were not weakened to obtain
+this result.
+
+CRI readiness recovered after one normal `k3s-agent` restart, which returned in
+4.357 seconds. All 84 existing task IDs and process IDs were preserved. The 40
+active Pods on the runtime node retained their identities and recovered health
+within 39.1 seconds. Home Assistant itself was not restarted. These are observed
+pilot results, not a general downtime guarantee.
+
+This record claims acceptance only for that Home Assistant pilot. It does not
+establish results for other consumers, including Harness, or automatically
+release CI, automation or release profiles. Each owner must attach independent
+evidence for its exact source, image, profile and runtime bundle before releasing
+its hold. Later independent acceptance records do not enlarge this pilot's
+scope. Operational identities and private logs remain outside this public
+provenance document.
 
 ## Run and interpretation
 
