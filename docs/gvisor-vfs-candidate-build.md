@@ -82,6 +82,8 @@ runtime_tag=gvisor-vfs-candidate-20261012-97e0de464f06
 test "$(gh release view "$runtime_tag" --repo "$runtime_repo" \
   --json isDraft,isPrerelease,targetCommitish --jq \
   '.isDraft == false and .isPrerelease == true and .targetCommitish == "8e18864f5bc7616b2c7cc4b26c19e97a8ca9ee36"')" = true
+test "$(gh api "repos/$runtime_repo/commits/$runtime_tag" --jq .sha)" \
+  = 8e18864f5bc7616b2c7cc4b26c19e97a8ca9ee36
 runtime_dir="$(mktemp -d "${TMPDIR:-/tmp}/gvisor-vfs.XXXXXX")"
 gh release download "$runtime_tag" --repo "$runtime_repo" --dir "$runtime_dir" \
   --pattern gvisor-candidate.tar.bz2 --pattern LICENSE \
