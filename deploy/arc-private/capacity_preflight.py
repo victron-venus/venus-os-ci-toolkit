@@ -236,6 +236,22 @@ def timestamp(value):
     return parsed
 
 
+def server_version(value):
+    """Bound untrusted API metadata before parsing ASCII Kubernetes versions."""
+    require(isinstance(value, str) and len(value) <= 128, 'Missing/unsupported server version')
+    core_and_pre, has_build, build = value.partition('+')
+    core, has_pre, pre = core_and_pre.partition('-')
+    components = core.split('.')
+    require(len(components) == 3 and components[0] == 'v1'
+            and all(re.fullmatch(r'[0-9]+', part) for part in components[1:]),
+            'Missing/unsupported server version')
+    for present, suffix in ((has_pre, pre), (has_build, build)):
+        if present:
+            require(all(re.fullmatch(r'[0-9A-Za-z-]+', part) for part in suffix.split('.')),
+                    'Missing/unsupported server version')
+    return value
+
+
 def analyze(snapshot, candidate, *, now=None):
     now = now or datetime.now(timezone.utc)
     report = {'schema': 1, 'verdict': 'unable_to_qualify', 'blockers': [], 'unknowns': [],
@@ -246,9 +262,7 @@ def analyze(snapshot, candidate, *, now=None):
         start, end = timestamp(snapshot.get('started_at')), timestamp(snapshot.get('finished_at'))
         require(0 <= (end - start).total_seconds() <= 30, 'Capture duration exceeds 30 seconds')
         require(0 <= (now - end).total_seconds() <= 60, 'Snapshot stale or from the future')
-        version = snapshot.get('server_version', {}).get('gitVersion')
-        require(isinstance(version, str) and re.fullmatch(r'v1\.\d+\.\d+[-+\w.]*', version), 'Missing/unsupported server version')
-        report['server_version'] = version
+        report['server_version'] = server_version(snapshot.get('server_version', {}).get('gitVersion'))
         namespace, node = snapshot.get('namespace'), snapshot.get('node')
         require(isinstance(namespace, str) and namespace, 'Missing namespace')
         node_meta = object_meta(node, 'Node')

@@ -85,6 +85,31 @@ class CapacityTests(unittest.TestCase):
         self.assertEqual(result['candidate_requests']['cpu'], 200)
         self.assertIn('not scheduler', result['boundaries'][0])
 
+    def test_supported_server_version_grammar(self):
+        versions = ['v1.31.4', 'v1.31.4+k3s1', 'v1.32.0-alpha.1',
+                    'v1.32.0-rc.1+build.5', 'v1.31.4+' + 'a' * 120]
+        for version in versions:
+            with self.subTest(version=version):
+                data = snapshot()
+                data['server_version']['gitVersion'] = version
+                self.assertEqual(self.check(data)['verdict'], 'resource_headroom_passes')
+
+    def test_unknown_non_ascii_or_excessive_server_versions_fail_closed(self):
+        versions = [None, 1, '', 'v2.31.4', 'v1.31.4suffix', 'v1.31.4+',
+                    'v1.31.4-', 'v1.31.4+a..b', 'v1.31.4+a+b',
+                    'v1.٣١.4', 'v1.31.4+é', 'v1.31.4+' + 'a' * 121]
+        for version in versions:
+            with self.subTest(version=version):
+                data = snapshot()
+                data['server_version']['gitVersion'] = version
+                self.assertEqual(self.check(data)['verdict'], 'unable_to_qualify')
+
+    def test_server_version_bound_precedes_identifier_matching(self):
+        data = snapshot()
+        data['server_version']['gitVersion'] = 'v1.31.4+' + 'a' * 121
+        with patch.object(C.re, 'fullmatch', side_effect=AssertionError('Must reject length first')):
+            self.assertEqual(self.check(data)['verdict'], 'unable_to_qualify')
+
     def test_pending_pods_starve_quota_without_consuming_node_requests(self):
         data = snapshot()
         data['pods']['items'] += [pod('pending-a', '600m'), pod('pending-b', '600m')]

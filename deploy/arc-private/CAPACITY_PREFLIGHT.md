@@ -100,7 +100,9 @@ reviewed profile change; this tool never applies a replacement.
 - Pod-level resources, dynamic resource claims, in-place resize policies or
   allocated/actual resize resource fields are unsupported and cannot pass.
   Container requests alone may not describe those newer accounting features.
-  The snapshot records the Kubernetes server version.
+  The snapshot records the Kubernetes server version. API version metadata is limited
+  to 128 characters and parsed as an ASCII `v1.MINOR.PATCH` with optional
+  dot-separated prerelease and build identifiers before resource accounting.
 
 If quota blocks admission while node requests fit, inspect the named Pending
 reservations and coordinate their owners. Do not cancel jobs or delete Pods
