@@ -223,6 +223,28 @@ class ActionMetadataMigrationTests(unittest.TestCase):
             migration.migrate(self.root, {"example/action": {"a" * 40: "v1\nfoo: bar"}})
         self.assertFalse(self.dependabot.exists())
 
+    def test_prose_comment_gets_verified_ref_without_losing_the_note(self):
+        digest = "a" * 40
+        original = f"jobs:\n  ci:\n    steps:\n      - uses: example/action@{digest} # kept for compatibility\n"
+        path = self.workflow(original)
+        versions = {"example/action": {digest: "v1.2.3"}}
+        migration.migrate(self.root, versions)
+        self.assertIn("# v1.2.3; kept for compatibility", path.read_text())
+        self.assertEqual(yaml.safe_load(original), yaml.safe_load(path.read_text()))
+        self.assertFalse(migration.annotated_workflows(self.root, versions))
+
+    def test_prose_comment_without_verified_ref_does_not_disable_dependabot(self):
+        original = (
+            "jobs:\n  ci:\n    steps:\n      - uses: example/action@"
+            + "a" * 40
+            + " # kept for compatibility\n"
+        )
+        path = self.workflow(original)
+        with self.assertRaisesRegex(ValueError, "Missing verified action-version"):
+            migration.migrate(self.root)
+        self.assertEqual(path.read_text(), original)
+        self.assertFalse(self.dependabot.exists())
+
 
 class CoupledWorkflowTests(unittest.TestCase):
     def test_repository_allowlist_keeps_shared_custom_managers_enabled(self):

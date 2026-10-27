@@ -88,20 +88,30 @@ def annotated_workflows(directory: Path, extra: dict | None) -> dict[Path, str]:
             if node.start_mark.line != index:
                 raise ValueError(f"Multiline action reference requires review: {path}")
             suffix = lines[index][node.end_mark.column :].strip()
-            if suffix.startswith("#"):
-                continue
-            if suffix:
+            if suffix and not suffix.startswith("#"):
                 raise ValueError(f"Ambiguous action reference requires review: {path}")
             version = (
                 "main"
                 if action.startswith("victron-venus/venus-os-ci-toolkit/")
                 else versions.get((action, digest))
             )
+            # A prose note is not an update selector. Preserve it after the ref.
+            recognized = r"(?:v?\d+(?:\.\d+){0,2}(?:[-+][A-Za-z0-9.-]+)?|main|master|stable|beta|nightly)"
+            if re.match(r"#\s*" + recognized + r"(?:\s|[;,]|$)", suffix) or (
+                version
+                and re.match(r"#\s*" + re.escape(version) + r"(?:\s|[;,]|$)", suffix)
+            ):
+                continue
             if version is None:
                 unknown.add(f"{action}@{digest}")
                 continue
             ending = "\n" if lines[index].endswith("\n") else ""
-            lines[index] = lines[index].rstrip("\r\n \t") + f" # {version}" + ending
+            note = "; " + suffix.removeprefix("#").strip() if suffix else ""
+            lines[index] = (
+                lines[index][: node.end_mark.column].rstrip()
+                + f" # {version}{note}"
+                + ending
+            )
         result = "".join(lines)
         if result != original:
             if yaml.safe_load(result) != yaml.safe_load(original):

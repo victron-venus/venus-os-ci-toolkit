@@ -109,6 +109,8 @@ To migrate another repository:
    Toolkit workflows and the exact declared release ref from `action-pins.json`
    for other actions. These comments are required for Renovate to discover
    digest updates; the SHA and executable YAML values do not change.
+   An existing prose-only comment is preserved after the verified version ref;
+   it is not treated as evidence that an action can already be updated.
    If a legacy third-party SHA is unknown, migration stops before writing any
    files. Verify the matching tag (dereferencing annotated tags) against the
    action's GitHub repository, then pass `--action-versions verified-refs.json`.
