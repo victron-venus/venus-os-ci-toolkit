@@ -1622,6 +1622,8 @@ class RunnerArtifactsTests(unittest.TestCase):
         self.assertEqual(len(records), 51)
         self.assertEqual(len({record['id'] for record in records}), len(records))
         self.assertEqual(sum(len(record['packages']) for record in records), 52)
+        applicability = {row['id']: row for row in
+                         build.document(build.ROOT / 'docs/RUNNER_SCAN_APPLICABILITY.json')['records']}
         for record in records:
             with self.subTest(advisory=record['id']):
                 self.assertNotEqual(record['previous_advisory_sha256'], record['current_advisory_sha256'])
@@ -1637,6 +1639,10 @@ class RunnerArtifactsTests(unittest.TestCase):
                                      build.SCAN_POLICY['advisories'][record['id']])
                     self.assertEqual(record['packages'],
                                      [build.SCAN_POLICY['identities'][record['component']]['package_id']])
+                    rationale = applicability[record['id']]
+                    self.assertEqual(record['unchanged_applicability_basis'], rationale['rationale'])
+                    self.assertIn(rationale['source_document']['url'], record['source_documents'])
+                    self.assertEqual(record.get('supplemental_review'), rationale.get('supplemental_review'))
         self.assertNotIn('/Users/', path.read_text())
 
     def test_database_absence_does_not_disable_unreviewed_analyzers(self):

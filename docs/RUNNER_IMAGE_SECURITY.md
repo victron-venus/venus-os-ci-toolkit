@@ -151,7 +151,7 @@ capabilities, suppress failures or filter failing tests. Preserve the failed
 build log and distinguish permission failures from timeouts or resource limits.
 An observed resource limit is not a measured memory peak.
 
-### Exact retained runc applicability
+### Advisory metadata reassessment (2026-10-27)
 
 The [2026-10-27 advisory review](RUNNER_ADVISORY_REVIEW_2026_10_27.json)
 records 51 updated advisory fingerprints covering 52 findings. The changes are
@@ -166,6 +166,8 @@ checks remain mandatory; a subsequent metadata change still fails closed.
 This review does not rewrite or accept the original failed scan. Updated source
 and passing unit tests do not qualify an image, a host kernel or deployment.
 Complete image and runtime qualification remain separate requirements.
+
+### Exact retained runc applicability
 
 The module scanner's runc findings are retained. For the exact Linux amd64 binary
 in `runner-runc-applicability.json`, the upstream release source and its matching

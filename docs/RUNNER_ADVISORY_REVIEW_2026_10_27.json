@@ -1322,7 +1322,11 @@
       "source_documents": [
         "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98432.json"
       ],
-      "unchanged_applicability_basis": "The primary fix concerns kernel socket option ownership, but the description also names an IPv6 migration defect to be fixed separately while declared paths are IPv4-only. Clarify that cross-family CVE scope before reducing the record to its listed payload paths."
+      "unchanged_applicability_basis": "The primary fix concerns kernel socket option ownership, but the description also names an IPv6 migration defect to be fixed separately while declared paths are IPv4-only. Clarify that cross-family CVE scope before reducing the record to its listed payload paths.",
+      "supplemental_review": {
+        "reason": "The description covers IPv4 option lifetimes and separately identifies an IPv6 migration issue awaiting its own fix. Both described operations are kernel socket implementations, not exported header operations. No assertion that the cited IPv4 patch fixes IPv6 is made.",
+        "scope": "linux-libc-dev exact authenticated exported payload only"
+      }
     },
     {
       "id": "CVE-2026-98439",
