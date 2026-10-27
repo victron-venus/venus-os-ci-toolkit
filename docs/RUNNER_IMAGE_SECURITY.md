@@ -69,7 +69,7 @@ are bound to the source manifest and rechecked after compilation.
 Buildx uses its upstream unit-test setting
 `SKIP_INTEGRATION_TESTS=1`; Compose excludes its daemon-dependent e2e tree. The
 build preserves the respective production build tags and version flags. Each
-result is explicitly versioned `+victron.security.1`, not presented as an unmodified
+result carries an explicit `+victron.security.N` revision, not presented as an unmodified
 official binary. The image retains upstream and compiled-dependency license and
 notice files, exact package inventory and binary hashes under
 `/usr/local/share/licenses/victron-go-tools/`.
@@ -78,6 +78,14 @@ Docker's dind image omits the standalone `containerd` executable used by the
 runner bootstrap. This source build supplies that daemon together with the
 matching `ctr` and `containerd-shim-runc-v2`; it does not mix standalone and
 shim versions. Native image/bootstrap qualification remains necessary.
+
+The containerd security revision 2 lock also updates `github.com/cilium/ebpf`
+from 0.17.3 to 0.22.0, the first fixed release for
+[GHSA-xhgw-qwwf-pg32](https://github.com/advisories/GHSA-xhgw-qwwf-pg32).
+Its upstream source revision is unchanged. The revised binary version and build
+revision identify this dependency change separately from security revision 1.
+Lock preparation and cross-compilation alone do not qualify a runner image;
+the normal upstream unit tests, image scans and runtime acceptance remain required.
 
 The existing contract-tests adapter tests and compiles all three components in
 separate, sequential Linux jobs when their inputs change, using the same builder
