@@ -253,18 +253,27 @@ class GeneratedGateExecution(unittest.TestCase):
                     values[name]["result"] = conclusion
                     self.assert_rejected(values)
 
-    def test_aggregate_runs_for_unsuccessful_jobs_but_releases_cancelled_runs(self):
-        """A cancelled old run must not keep its aggregate queued ahead of new CI."""
-        for conclusion in ("success", "failure", "cancelled", "skipped"):
-            with self.subTest(conclusion=conclusion):
-                values = self.results(full=True)
-                values["check-0"]["result"] = conclusion
-                self.assertTrue(job_runs(self.jobs["gate"], values))
-                self.assertEqual(self.run_gate(values).returncode == 0, conclusion == "success")
-                self.assertFalse(job_runs(self.jobs["gate"], values, workflow_cancelled=True))
+    def test_required_aggregate_evaluates_every_dependency_after_cancellation(self):
+        """A skipped required check must not replace rejection of unfinished CI."""
+        for workflow_cancelled in (False, True):
+            values = self.results(full=True)
+            self.assertTrue(job_runs(
+                self.jobs["gate"], values, workflow_cancelled=workflow_cancelled
+            ))
+            self.assertEqual(self.run_gate(values).returncode, 0)
+            for name in values:
+                for conclusion in ("failure", "cancelled", "skipped"):
+                    with self.subTest(cancelled=workflow_cancelled, job=name, result=conclusion):
+                        incomplete = self.results(full=True)
+                        incomplete[name]["result"] = conclusion
+                        self.assertTrue(job_runs(
+                            self.jobs["gate"], incomplete,
+                            workflow_cancelled=workflow_cancelled,
+                        ))
+                        self.assert_rejected(incomplete)
 
-    def test_private_aggregate_preserves_nightly_opt_in_and_cancellation(self):
-        """The cancellation guard composes with private scheduled-run opt-in."""
+    def test_private_required_aggregate_preserves_nightly_opt_in(self):
+        """Cancellation still reaches the gate without enabling private schedules."""
         jobs = rendered(installer.quality(policy(visibility="private")))["jobs"]
         values = self.results(full=True)
         values["check-0"]["result"] = "failure"
@@ -275,7 +284,10 @@ class GeneratedGateExecution(unittest.TestCase):
                 context = {"github": {"event_name": event},
                            "vars": {"NIGHTLY_CHECKS_ENABLED": opted_in}}
                 self.assertEqual(job_runs(jobs["gate"], values, **context), expected)
-                self.assertFalse(job_runs(jobs["gate"], values, workflow_cancelled=True, **context))
+                self.assertEqual(
+                    job_runs(jobs["gate"], values, workflow_cancelled=True, **context),
+                    expected,
+                )
 
     def test_missing_or_extra_job_cannot_turn_into_a_green_gate(self):
         """Reject an incomplete or unexpected validation job inventory."""

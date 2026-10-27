@@ -1,5 +1,12 @@
 # Opt-in private NUC KVM candidate
 
+The two host templates stage a **modified gVisor bundle proposal**. The recorded
+Home Assistant pilot passed its scoped CRI and workload checks; see the
+[candidate provenance and pilot evidence](../../docs/gvisor-vfs-candidate-build.md#staged-nuc-runtime-proposal).
+That result does not approve the shared runtime for every consumer. Each
+additional consumer/profile requires its own acceptance and owner release;
+preserve its deployment and pool holds until that decision is recorded.
+
 For an explicit set of standard CI, heavy CI and automation profiles, see
 [Multiple private profiles on one NUC](NUC_KVM_PROFILES.md). That interface uses
 one complete target plan and requires scheduler-enforced serialization across
@@ -7,8 +14,8 @@ namespaces. It does not qualify or activate additional workloads automatically.
 
 This renderer option prepares one repository's standard CI pool. It does not
 install a runtime, start a runner, change GitHub routing, qualify an image, or
-declare earlier failed capabilities supported. Keep the candidate unqualified
-until the actual node, image, network and unchanged application jobs pass review.
+declare earlier failed capabilities supported. Qualify each selected workload
+against its actual node, image, network and unchanged application jobs.
 
 The fixed worker contract is `nuc`/`amd64`, RuntimeClass and handler
 `victron-private-nuc-kvm`, CPU request `600m` / limit `2`, memory request `3Gi` /
@@ -68,12 +75,18 @@ shortcut. Keep snapshots and an exact rollback for each staged change.
   and host guard. Do not change neighbours' requests or assume historical fit.
 - Verify actual KVM access on the host. The runtime uses KVM; the job gets no
   host `/dev/kvm`, host socket, host namespace or privileged native container.
-- Install the complete official `release-20261012.0` amd64 bundle into a new
-  immutable directory, preserving existing bundles. The archive at
-  [the pinned release](https://github.com/google/gvisor/releases/tag/release-20261012.0)
-  is `gvisor-x86_64.tar.bz2`, SHA256
-  `180dd277f657c1478f09490e8a9a595f7378257510b43d1d3694a769aef9ed02`.
-  Verify the actual shim, frontend and adjacent Sentry, not a frontend path alone.
+- Only after separate adoption, install the complete modified amd64 bundle
+  from [build 39175208884](https://github.com/victron-venus/venus-os-ci-toolkit/actions/runs/39175208884)
+  into the new immutable directory
+  `/opt/victron-ci-reserve/gvisor-20261012-vfs-69937822864c`.
+  The retained `gvisor-candidate.tar.bz2` has SHA256
+  `69937822864cad3a2f71aecfcaee713e5e6f0396836f8b19151c852743b39cb5`.
+  This is not the official upstream release archive. Require the complete
+  provenance and seven member digests documented above; a successful build or
+  ordinary startup smoke alone does not qualify CRI or application behavior.
+  Preserve the previously installed `/opt/victron-ci-reserve/gvisor-20261012`
+  bundle unchanged for rollback. Verify the actual shim, frontend and adjacent
+  Sentry, not a frontend path alone.
 - [runsc-nuc-kvm.toml](runsc-nuc-kvm.toml) selects KVM while retaining the existing
   networking and guest sudo flags. It enables no arbitrary annotation override
   or exclusive bind access. The existing shared mp handler/config is unchanged.
@@ -86,6 +99,19 @@ shortcut. Keep snapshots and an exact rollback for each staged change.
   require the separately approved NUC-agent maintenance window and rollback;
   this renderer performs neither. See [K3s containerd configuration](https://docs.k3s.io/advanced#configuring-containerd)
   and [gVisor platforms](https://gvisor.dev/docs/architecture_guide/platforms/).
+- Updating an existing handler affects every private pool selecting it, not
+  only the workload motivating the change. Before draining workers, record all
+  current users and place holds on every affected pool. Resolve already-pending
+  assignments, then let running workers finish naturally and verify their
+  cleanup before changing both runtime pointers together. Keep these holds
+  effective through draining, pointer cutover, restart and recovery; preserve
+  any independent owner holds. Preserve every runtime flag, guard and other
+  handler. Use only a normal, coordinated `k3s-agent` restart, with a five-minute
+  Node/CRI and production-health recovery deadline. Keep holds and restore both
+  recorded pointers on failure; allow one normal rollback restart with the same
+  deadline, then escalate rather than looping restarts. Acceptance must bind
+  the exact bundle to each admitted workload/profile. Success in one consumer
+  does not reopen or qualify other profiles automatically.
 - Reuse unchanged `../runner-reserve/node_guard.py`, `network-policy.json` and
   the verified `crictl` at their canonical host paths. Install
   [nuc-node-guard.service](nuc-node-guard.service) as

@@ -104,7 +104,7 @@ class ChannelValidationTests(unittest.TestCase):
         workflows = self.workflows()
         self.assertEqual(
             workflows["quality-gate.yml"]["jobs"]["gate"]["if"],
-            "${{ !cancelled() }}",
+            "${{ always() }}",
         )
         self.assertEqual(
             workflows["release-quality-gate.yml"]["jobs"]["gate"]["if"],
