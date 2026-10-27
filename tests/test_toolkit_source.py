@@ -25,6 +25,8 @@ class ToolkitReleaseNotesTests(unittest.TestCase):
         }
         required.update({
             ".github/requirements-generator.txt",
+            "deploy/arc-private/CAPACITY_PREFLIGHT.md",
+            "deploy/arc-private/capacity_preflight.py",
             "tools/secret_control/requirements-github-lock.txt",
         })
         self.assertFalse(required - declared, f"Unshipped Python source: {sorted(required - declared)}")
