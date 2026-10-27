@@ -100,9 +100,12 @@ shortcut. Keep snapshots and an exact rollback for each staged change.
   this renderer performs neither. See [K3s containerd configuration](https://docs.k3s.io/advanced#configuring-containerd)
   and [gVisor platforms](https://gvisor.dev/docs/architecture_guide/platforms/).
 - Updating an existing handler affects every private pool selecting it, not
-  only the workload motivating the change. Record all current users, pending
-  workers and owned holds; naturally finish and clean up workers before changing
-  both runtime pointers together. Preserve every runtime flag, guard and other
+  only the workload motivating the change. Before draining workers, record all
+  current users and place holds on every affected pool. Resolve already-pending
+  assignments, then let running workers finish naturally and verify their
+  cleanup before changing both runtime pointers together. Keep these holds
+  effective through draining, pointer cutover, restart and recovery; preserve
+  any independent owner holds. Preserve every runtime flag, guard and other
   handler. Use only a normal, coordinated `k3s-agent` restart, with a five-minute
   Node/CRI and production-health recovery deadline. Keep holds and restore both
   recorded pointers on failure; allow one normal rollback restart with the same

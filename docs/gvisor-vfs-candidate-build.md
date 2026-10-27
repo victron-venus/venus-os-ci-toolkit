@@ -47,6 +47,64 @@ consumer's activation hold until its owner records that decision.
   tree: `d5884249020613173716aeee8ab026888fb3408a`;
   marker: `vfs-candidate-20261012-97e0de464f06`.
 
+### Retained runtime archive
+
+The separate [experimental runtime archive](https://github.com/victron-venus/venus-os-ci-toolkit/releases/tag/gvisor-vfs-candidate-20261012-97e0de464f06)
+uses tag `gvisor-vfs-candidate-20261012-97e0de464f06` at the original builder
+commit `8e18864f5bc7616b2c7cc4b26c19e97a8ca9ee36`. Require a published
+prerelease; drafts are unavailable to ordinary readers. Publication requires
+consumer acceptance and a full readback of all release assets. Stop if it is
+a draft, or if any expected asset or checksum is unavailable; do not substitute
+an expired Actions download, another build, or an official upstream archive.
+
+This is an auxiliary runtime-artifact prerelease, outside the Toolkit source
+package version ledger and its normal gated `vX` release pipeline. It is never
+marked as the latest release. Publishing the archive neither promotes the
+Toolkit source nor deploys a runtime, qualifies another workload, or releases
+an owner's activation hold.
+
+The five retained assets are `gvisor-candidate.tar.bz2`, `LICENSE`,
+`MODIFICATIONS.txt`, `provenance.json`, and `SHA256SUMS`. The archive contains
+only the seven runtime files listed below. The companion files preserve the
+full upstream license, identify the modification through an immutable public
+patch link, and record the original source/build inputs. Compiled test binaries,
+test reports, raw logs and private operational evidence are not release assets.
+
+After the release is published, use a fresh directory and verify the pinned
+checksum file before trusting its four asset checksums. This example requires
+GitHub CLI and GNU `sha256sum`; it downloads and checks files without executing
+or installing any runtime binary:
+
+```sh
+set -eu
+runtime_repo=victron-venus/venus-os-ci-toolkit
+runtime_tag=gvisor-vfs-candidate-20261012-97e0de464f06
+test "$(gh release view "$runtime_tag" --repo "$runtime_repo" \
+  --json isDraft,isPrerelease,targetCommitish --jq \
+  '.isDraft == false and .isPrerelease == true and .targetCommitish == "8e18864f5bc7616b2c7cc4b26c19e97a8ca9ee36"')" = true
+runtime_dir="$(mktemp -d "${TMPDIR:-/tmp}/gvisor-vfs.XXXXXX")"
+gh release download "$runtime_tag" --repo "$runtime_repo" --dir "$runtime_dir" \
+  --pattern gvisor-candidate.tar.bz2 --pattern LICENSE \
+  --pattern MODIFICATIONS.txt --pattern provenance.json --pattern SHA256SUMS
+(
+  cd "$runtime_dir"
+  printf '%s  SHA256SUMS\n' \
+    873a2500d97c10147568bc705177592ae543f1cf7822a8057e918cbaa048656b \
+    | sha256sum --check --strict -
+  sha256sum --check --strict SHA256SUMS
+)
+```
+
+Require `OK` for the checksum file and all four listed assets, including archive
+SHA256 `69937822864cad3a2f71aecfcaee713e5e6f0396836f8b19151c852743b39cb5`.
+Check the verified `provenance.json` against the frozen upstream commit, patch
+digest and immutable patch URL, builder image digest, original workflow commit
+and run `39175208884`, generated candidate commit/tree and version marker above.
+Before installation, also verify that the archive has exactly the seven regular
+0755 files and member hashes below. Retain the license, modification notice and
+provenance with the bundle. The provenance is operator-curated, not a signed
+attestation; checksums establish byte identity, not runtime acceptance.
+
 The complete archive member set and SHA256 digests are:
 
 ```text
