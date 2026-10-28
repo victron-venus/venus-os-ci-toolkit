@@ -26,8 +26,8 @@
   },
   {
     "packageName": "step-security/harden-runner",
-    "version": "v2.22.2",
-    "digest": "dc2769abcc0fcfbadfc1df54081c1608579ef6b2"
+    "version": "v2.22.3",
+    "digest": "46b06cea07f9e64621fdf066ba77ac6915163d43"
   },
   {
     "packageName": "sigstore/cosign-installer",
@@ -36,8 +36,8 @@
   },
   {
     "packageName": "astral-sh/setup-uv",
-    "version": "v10.3.2",
-    "digest": "07a047e608db84b3d8c06cd9a7c7dcc9c355c18e"
+    "version": "v10.3.3",
+    "digest": "68559e99cc807c1eb7e9238fd43a15bba460eec2"
   },
   {
     "packageName": "actions/setup-go",
