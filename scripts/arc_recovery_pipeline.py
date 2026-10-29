@@ -14,6 +14,7 @@ import selectors
 import signal
 import stat
 import subprocess
+import sys
 import time
 
 BLOCK = 64 * 1024
@@ -27,6 +28,72 @@ def require(condition, message):
 
 def positive(value):
     return type(value) is int and value > 0
+
+
+def child_status(process):
+    """Observe, but do not reap, the leader that reserves our process-group ID."""
+    require(process.returncode is None, "pipeline child ownership lost")
+    try:
+        status = os.waitid(os.P_PID, process.pid,
+                           os.WEXITED | os.WNOHANG | os.WNOWAIT)
+    except ChildProcessError as error:
+        raise ValueError("pipeline child ownership lost") from error
+    if status is None:
+        return None
+    require(status.si_pid == process.pid, "pipeline child identity")
+    if status.si_code == os.CLD_EXITED:
+        return status.si_status
+    require(status.si_code in (os.CLD_KILLED, os.CLD_DUMPED), "pipeline child status")
+    return -status.si_status
+
+
+def terminated_group_only(process, deadline):
+    """Darwin can return EPERM for a group containing only zombies."""
+    require(child_status(process) is not None, "pipeline group leader still running")
+    inspection_deadline = deadline - .1  # Reserve time to reap the inspector itself.
+    require(time.monotonic() < inspection_deadline, "pipeline group inspection deadline")
+    command = ["/bin/ps", "-g", str(process.pid), "-o", "pid=,pgid=,stat="]
+    inspector = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                 env={"PATH": "/usr/bin:/bin", "LC_ALL": "C",
+                                      "COMMAND_MODE": "unix2003"})
+    output = [bytearray(), bytearray()]
+    try:
+        with selectors.DefaultSelector() as selector:
+            for index, stream in enumerate((inspector.stdout, inspector.stderr)):
+                os.set_blocking(stream.fileno(), False)
+                selector.register(stream, selectors.EVENT_READ, index)
+            while selector.get_map() or inspector.poll() is None:
+                require(time.monotonic() < inspection_deadline, "pipeline group inspection deadline")
+                for key, _ in selector.select(min(.05, max(0, inspection_deadline - time.monotonic()))):
+                    try:
+                        chunk = os.read(key.fd, 4096)
+                    except BlockingIOError:
+                        continue
+                    if not chunk:
+                        selector.unregister(key.fileobj)
+                    else:
+                        output[key.data].extend(chunk)
+                        require(sum(map(len, output)) <= BLOCK, "pipeline group inspection limit")
+        require(inspector.returncode == 0 and not output[1], "pipeline group inspection failed")
+        members = set()
+        for line in output[0].splitlines():
+            fields = line.split()
+            require(len(fields) == 3 and re.fullmatch(rb"[1-9][0-9]*", fields[0])
+                    and fields[1] == str(process.pid).encode()
+                    and re.fullmatch(rb"Z[+<>NAELsVWXS]*", fields[2]),
+                    "pipeline group has live or unknown members")
+            member = int(fields[0])
+            require(member not in members, "pipeline group inspection duplicate")
+            members.add(member)
+        require(process.pid in members, "pipeline group inspection incomplete")
+        require(child_status(process) is not None, "pipeline group identity changed")
+    finally:
+        # ps does not fork; never signal a group or a reaped inspector PID.
+        if inspector.poll() is None:
+            inspector.kill()
+        inspector.wait(timeout=max(.001, deadline - time.monotonic()))
+        inspector.stdout.close()
+        inspector.stderr.close()
 
 
 def durable_json(path, value, reserve):
@@ -108,6 +175,12 @@ def run(commands, destination, *, maximum, reserve, timeout, inputs,
     metadata .pending hardlinks are retained diagnostics, never acceptance.
     """
     require(os.name == "posix", "Recovery pipeline requires POSIX")
+    require(all(hasattr(os, name) for name in
+                ("waitid", "P_PID", "WEXITED", "WNOHANG", "WNOWAIT",
+                 "CLD_EXITED", "CLD_KILLED", "CLD_DUMPED")),
+            "Recovery pipeline requires waitid/WNOWAIT (macOS: Python >= 3.13)")
+    require(signal.getsignal(signal.SIGCHLD) == signal.SIG_DFL,
+            "Recovery pipeline requires the default SIGCHLD handler and sole child reaper")
     require(type(commands) is list and 1 <= len(commands) <= 5, "pipeline length")
     require(all(type(command) is list and command
                 and all(type(value) is str and value and "\0" not in value
@@ -157,10 +230,10 @@ def run(commands, destination, *, maximum, reserve, timeout, inputs,
                 selector.register(process.stderr, selectors.EVENT_READ, ("stderr", index))
             os.set_blocking(source.fileno(), False)
             selector.register(source, selectors.EVENT_READ, ("output", -1))
-            while selector.get_map() or any(process.poll() is None for process in processes):
+            while selector.get_map() or any(child_status(process) is None for process in processes):
                 require(time.monotonic() < deadline, "pipeline deadline")
                 disk_gate(output.fileno(), 0, reserve)
-                require(not any(process.poll() not in (None, 0) for process in processes),
+                require(not any(child_status(process) not in (None, 0) for process in processes),
                         "pipeline nonzero exit")
                 for key, _ in selector.select(min(0.1, max(0, deadline - time.monotonic()))):
                     try:
@@ -190,7 +263,7 @@ def run(commands, destination, *, maximum, reserve, timeout, inputs,
                             count += written
                             view = view[written:]
                 require(time.monotonic() < deadline, "pipeline deadline")
-            require(all(process.poll() == 0 for process in processes), "pipeline exit")
+            require(all(child_status(process) == 0 for process in processes), "pipeline exit")
             require(expected_bytes is None or count == expected_bytes, "truncated output")
             require(expected_sha256 is None or digest.hexdigest() == expected_sha256, "output digest")
             require(all(list(identity(Path(name).lstat())) == value
@@ -208,14 +281,24 @@ def run(commands, destination, *, maximum, reserve, timeout, inputs,
     except BaseException as error:
         failure = str(error) if type(error) is ValueError else type(error).__name__
     finally:
-        # Each child owns a new process group. Kill groups, including descendants
-        # that may have inherited pipes; never wait indefinitely for teardown.
+        # Do not reap any leader until all owned groups have been signaled.
+        # Even an exited, waitable leader reserves its PID, so killpg cannot
+        # address a reused ID. Descendants may still hold inherited pipes.
+        teardown_deadline = time.monotonic() + 2
         for process in processes:
             try:
-                os.killpg(process.pid, signal.SIGKILL)
+                child_status(process)
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except PermissionError:
+                    if sys.platform != "darwin":
+                        raise
+                    terminated_group_only(process, teardown_deadline)
             except ProcessLookupError:
                 pass
-        teardown_deadline = time.monotonic() + 2
+            except (OSError, ValueError, subprocess.TimeoutExpired) as error:
+                failure = failure or (str(error) if type(error) is ValueError
+                                      else "pipeline group teardown failed")
         for process in processes:
             try:
                 process.wait(timeout=max(0.001, teardown_deadline - time.monotonic()))
@@ -227,7 +310,7 @@ def run(commands, destination, *, maximum, reserve, timeout, inputs,
         result = {"passed": failure is None, "failure": failure,
                   "promoted": promoted, "bytes": count, "sha256": digest.hexdigest(),
                   "elapsed_seconds": time.monotonic() - start,
-                  "returncodes": [process.poll() for process in processes],
+                  "returncodes": [process.returncode for process in processes],
                   "stderr_bytes": stderr_sizes,
                   "stderr_sha256": [value.hexdigest() for value in stderr_hashes],
                   "input_identities": verified, "automatic_retry": False,

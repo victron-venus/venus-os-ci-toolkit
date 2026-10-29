@@ -91,6 +91,19 @@ they do not support Windows execution. The archive itself is portable. Live CPU,
 memory, swap and process limits come from a separately reviewed **Linux systemd
 unit**, not from the Python supervisor or a successful local test.
 
+Run the supervisor with Python 3.10 or newer on Linux, or Python 3.13 or newer on
+macOS, where Python first exposes `waitid`. It requires `waitid` with `WNOWAIT`
+and refuses unsupported runtimes before creating files or launching children.
+The adapter must retain the default `SIGCHLD` handler and be the sole reaper of
+its children. The supervisor observes completion without reaping leaders until
+their process groups have been terminated; this preserves group identity while
+cleaning up descendants that hold inherited pipes. An escaped process group
+still needs the outer systemd unit's `KillMode=control-group` boundary.
+On macOS, where signaling a group containing only zombies can return `EPERM`,
+the supervisor uses a bounded `/bin/ps` PID/group/state projection to verify
+that no live member remains. Missing, incomplete or failed inspection is a
+cleanup failure, not permission to ignore an unconfirmed process.
+
 1. **Prepare from trusted metadata.** Supply a JSON list containing each original's
    `name`, `path`, `bytes` and `sha256`. Names are unique short identifiers; paths
    remain private. Run `arc_recovery_payload.py prepare --workspace WORKSPACE --manifest INPUTS.json
