@@ -28,6 +28,7 @@ except ImportError:
     import runner_image_oci as oci
 
 TARGET = 'opt/victron-ci-reserve/guard-ca.crt'
+BLOBS = 'blobs/sha256/'
 PREDICATE = 'https://github.com/victron-venus/venus-os-ci-toolkit/runner-site-conversion/v1'
 SENTINEL = b'UNCONFIGURED SITE CA\n'
 MIB = 1024**2
@@ -49,6 +50,23 @@ def sha(raw):
 
 def converter_identity():
     return {Path(path).name: sha(Path(path).read_bytes()) for path in (__file__, oci.__file__)}
+
+
+def confined_path(workspace, relative, *, must_exist):
+    """Only operator workspace-relative files; no traversal or symlink parents."""
+    root = Path(workspace).resolve(strict=True)
+    require(root.is_dir(), 'Workspace must be an existing directory')
+    relative = Path(relative)
+    require(not relative.is_absolute() and relative.parts and
+            all(part not in {'.', '..'} for part in relative.parts), 'Workspace-relative file path required')
+    path = root / relative
+    for parent in [path, *path.parents]:
+        if parent == root:
+            break
+        require(not parent.is_symlink(), 'Workspace paths cannot contain symlinks')
+    require(path.resolve(strict=must_exist).is_relative_to(root), 'Path escapes workspace')
+    require(path.parent.is_dir(), 'Output parent must already exist')
+    return path
 
 
 class ReserveReader:
@@ -108,7 +126,7 @@ def parent(path, expected, size, source, stage):
     proof = oci.verify(path, expected, size, source, stage, SENTINEL)
     archive = oci.Archive(path, expected, size)
     try:
-        runtime = oci.json_document(archive.read('blobs/sha256/' + proof['platform']['manifest'][7:]))
+        runtime = oci.json_document(archive.read(BLOBS + proof['platform']['manifest'][7:]))
         config = archive.json_descriptor(runtime['config'], oci.CONFIG)
         return archive, proof, runtime, config
     except BaseException:
@@ -160,7 +178,7 @@ def graph(proof, runtime, config, ca):
     root = blob({'schemaVersion': 2, 'manifests': [runtime_descriptor, attestation]}, oci.INDEX)
     files = {'index.json': canonical({'schemaVersion': 2, 'manifests': [root]}),
              'oci-layout': canonical({'imageLayoutVersion': '1.0.0'}),
-             **{'blobs/sha256/' + key: value for key, value in blobs.items()}}
+             **{BLOBS + key: value for key, value in blobs.items()}}
     return files, root, runtime_descriptor, child_config, child_runtime, conversion
 
 
@@ -170,7 +188,7 @@ def verify_site(path, expected, size, parent_path, parent_sha, parent_size, sour
     child = None
     try:
         files, root, descriptor, child_config, child_runtime, conversion = graph(proof, runtime, config, ca)
-        inherited = {'blobs/sha256/' + d['digest'][7:]: d for d in runtime['layers']}
+        inherited = {BLOBS + d['digest'][7:]: d for d in runtime['layers']}
         child = oci.Archive(path, expected, size)
         require(set(child.files) == set(files) | set(inherited), 'Child graph contains unexpected or missing files')
         for name, raw in files.items():
@@ -201,8 +219,10 @@ def verify_site(path, expected, size, parent_path, parent_sha, parent_size, sour
 
 
 def derive(parent_path, parent_sha, parent_size, source, stage, ca_path, ca_sha, output,
-           reserve_bytes=20 * GIB):
-    output = Path(output)
+           *, workspace, reserve_bytes=20 * GIB):
+    parent_path = confined_path(workspace, parent_path, must_exist=True)
+    ca_path = confined_path(workspace, ca_path, must_exist=True)
+    output = confined_path(workspace, output, must_exist=False)
     require(not output.exists() and not output.is_symlink(), 'Output already exists')
     require(type(reserve_bytes) is int and reserve_bytes >= 20 * GIB, 'At least 20 GiB disk reserve required')
     ca = read_ca(ca_path, ca_sha)
@@ -210,7 +230,7 @@ def derive(parent_path, parent_sha, parent_size, source, stage, ca_path, ca_sha,
     temporary = None
     try:
         files, _, _, _, _, _ = graph(proof, runtime, config, ca)
-        inherited = {'blobs/sha256/' + d['digest'][7:]: d for d in runtime['layers']}
+        inherited = {BLOBS + d['digest'][7:]: d for d in runtime['layers']}
         # One output archive plus tar header/padding overhead; no expanded rootfs.
         projected = sum(len(v) for v in files.values()) + sum(d['size'] for d in inherited.values())
         projected += (len(files) + len(inherited)) * 1024 + 10240
@@ -253,6 +273,8 @@ def derive(parent_path, parent_sha, parent_size, source, stage, ca_path, ca_sha,
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--workspace', type=Path, required=True,
+                        help='Existing private operator directory; all file arguments are relative to it')
     parser.add_argument('--parent', type=Path, required=True)
     parser.add_argument('--parent-sha256', required=True)
     parser.add_argument('--parent-bytes', type=int, required=True)
@@ -266,16 +288,19 @@ def main():
     parser.add_argument('--child-sha256', help='Required expected child archive hash with --verify')
     parser.add_argument('--child-bytes', type=int, help='Required expected child archive size with --verify')
     args = parser.parse_args()
+    args.receipt = confined_path(args.workspace, args.receipt, must_exist=False)
     require(not args.receipt.exists() and not args.receipt.is_symlink(), 'Receipt already exists')
     if args.verify:
         require(args.child_sha256 and args.child_bytes, 'Expected child hash and size required')
-        ca = read_ca(args.ca, args.ca_file_sha256)
-        result = verify_site(args.output, args.child_sha256, args.child_bytes, args.parent,
+        ca = read_ca(confined_path(args.workspace, args.ca, must_exist=True), args.ca_file_sha256)
+        result = verify_site(confined_path(args.workspace, args.output, must_exist=True),
+                             args.child_sha256, args.child_bytes,
+                             confined_path(args.workspace, args.parent, must_exist=True),
                              args.parent_sha256, args.parent_bytes, args.source, args.stage, ca)
     else:
         require(not args.child_sha256 and not args.child_bytes, 'Child identity is only an input with --verify')
         result = derive(args.parent, args.parent_sha256, args.parent_bytes, args.source,
-                        args.stage, args.ca, args.ca_file_sha256, args.output)
+                        args.stage, args.ca, args.ca_file_sha256, args.output, workspace=args.workspace)
     oci.save(args.receipt, result)
     print(json.dumps({'receipt': str(args.receipt), 'site_configured': True, 'deployable': False}))
 

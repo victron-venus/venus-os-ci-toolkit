@@ -221,8 +221,15 @@ argument is pinned by the SHA-256 of its **PEM file bytes**, not its DER certifi
 fingerprint. The helper rejects certificate bundles, non-CA certificates and
 certificates that fail current OpenSSL validation.
 
+Create one private operator workspace containing the retained parent and public
+CA file. Pass that directory as `--workspace`; all other file arguments are
+relative paths within it. Absolute paths, traversal and symlinked files or parent
+directories are rejected. The workspace and output parent directories must
+already exist. Keep this workspace outside public repository tracking.
+
 ```sh
 python3 scripts/runner_image_site.py \
+  --workspace "$SITE_WORKSPACE" \
   --parent "$PARENT_ARCHIVE" --parent-sha256 "$PARENT_SHA256" \
   --parent-bytes "$PARENT_BYTES" --source "$PARENT_SOURCE" --stage private \
   --ca "$SITE_CA_FILE" --ca-file-sha256 "$SITE_CA_FILE_SHA256" \

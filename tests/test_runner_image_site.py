@@ -37,6 +37,8 @@ class SiteImages(unittest.TestCase):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
         self.root = Path(self.directory.name)
+        self.local_ca = self.root / 'ca.pem'
+        self.local_ca.write_bytes(self.ca_raw)
         self.parent = self.root / 'parent.oci.tar'
         self.parent_sha, self.parent_size = image(self.parent)
         self.child = self.root / 'child.oci.tar'
@@ -46,8 +48,12 @@ class SiteImages(unittest.TestCase):
         self.addCleanup(self.disk.stop)
 
     def derive(self, **changes):
-        args = dict(parent_path=self.parent, parent_sha=self.parent_sha, parent_size=self.parent_size,
-                    source=SOURCE, stage='public', ca_path=self.ca, ca_sha=self.ca_sha, output=self.child)
+        args = dict(parent_path=self.parent.name, parent_sha=self.parent_sha, parent_size=self.parent_size,
+                    source=SOURCE, stage='public', ca_path=self.local_ca.name, ca_sha=self.ca_sha,
+                    output=self.child.name, workspace=self.root)
+        for key in ('parent_path', 'ca_path', 'output'):
+            if key in changes and isinstance(changes[key], Path):
+                changes[key] = changes[key].relative_to(self.root)
         args.update(changes)
         return site.derive(**args)
 
@@ -92,8 +98,9 @@ class SiteImages(unittest.TestCase):
         invalid = self.root / 'not-ca.pem'
         for raw in (site.SENTINEL, self.ca_raw * 2, b'-----BEGIN PRIVATE KEY-----\nX\n-----END PRIVATE KEY-----\n'):
             invalid.write_bytes(raw)
+            digest = site.sha(raw)
             with self.assertRaisesRegex(ValueError, 'public PEM'):
-                self.derive(ca_path=invalid, ca_sha=site.sha(raw))
+                self.derive(ca_path=invalid, ca_sha=digest)
         self.assertFalse(self.child.exists())
 
     def test_leaf_is_not_accepted_as_ca(self):
@@ -103,8 +110,9 @@ class SiteImages(unittest.TestCase):
                         '-addext', 'basicConstraints=critical,CA:FALSE',
                         '-keyout', str(key), '-out', str(cert)],
                        check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30)
+        digest = oci.digest_file(cert)
         with self.assertRaisesRegex(ValueError, 'not a CA'):
-            self.derive(ca_path=cert, ca_sha=oci.digest_file(cert))
+            self.derive(ca_path=cert, ca_sha=digest)
 
     def test_parent_source_stage_hash_and_size_are_mandatory(self):
         for edit in ({'parent_sha': '0' * 64}, {'parent_size': self.parent_size - 1},
@@ -124,10 +132,10 @@ class SiteImages(unittest.TestCase):
     def test_output_and_ca_symlinks_are_not_followed(self):
         link = self.root / 'ca-link'
         link.symlink_to(self.ca)
-        with self.assertRaises(OSError):
+        with self.assertRaisesRegex(ValueError, 'symlinks'):
             self.derive(ca_path=link)
         self.child.symlink_to(self.root / 'missing')
-        with self.assertRaisesRegex(ValueError, 'already exists'):
+        with self.assertRaisesRegex(ValueError, 'symlinks'):
             self.derive()
         self.assertTrue(self.child.is_symlink())
 
@@ -136,6 +144,16 @@ class SiteImages(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'already exists'):
             self.derive()
         self.assertEqual(self.child.read_bytes(), b'preserve')
+
+    def test_workspace_rejects_escape_absolute_paths_and_linked_directories(self):
+        for path in ('../outside.oci.tar', str(self.root / 'absolute.oci.tar')):
+            with self.subTest(path=path), self.assertRaisesRegex(ValueError, 'Workspace-relative'):
+                self.derive(output=path)
+        linked = self.root / 'linked'
+        linked.symlink_to(self.root, target_is_directory=True)
+        with self.assertRaisesRegex(ValueError, 'symlinks'):
+            self.derive(output='linked/child.oci.tar')
+        self.assertFalse(self.child.exists())
 
     def test_space_budget_and_minimum_reserve(self):
         with self.assertRaisesRegex(ValueError, '20 GiB'):
@@ -193,11 +211,13 @@ class SiteImages(unittest.TestCase):
             files, *_ = site.graph(proof, runtime, config, self.ca_raw)
             with tarfile.open(self.child, 'w') as output:
                 for name, raw in files.items():
-                    info = tarfile.TarInfo(name); info.size = len(raw)
+                    info = tarfile.TarInfo(name)
+                    info.size = len(raw)
                     output.addfile(info, io.BytesIO(raw))
                 for desc in runtime['layers']:
                     name = 'blobs/sha256/' + desc['digest'][7:]
-                    info = tarfile.TarInfo(name); info.size = desc['size']
+                    info = tarfile.TarInfo(name)
+                    info.size = desc['size']
                     output.addfile(info, base.tar.extractfile(base.files[name]))
         finally:
             base.close()
