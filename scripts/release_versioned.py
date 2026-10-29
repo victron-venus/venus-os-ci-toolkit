@@ -209,10 +209,16 @@ def verified_rc(
     rc.require(manifests[0]["size"] == len(raw), "RC asset size mismatch")
     with tempfile.TemporaryDirectory(prefix="verified-rc-") as temp:
         payload = Path(temp) / "payload"
+        budget = rc.DownloadBudget(sum(cast(int, item["size"]) for item in expected.values()))
         for item in assets:
             if item["name"] == rc.MANIFEST:
                 continue
-            identity = rc.download_asset(gh, item["id"], payload)
+            identity = rc.download_asset(
+                gh, item["id"], payload,
+                expected=cast(rc.AssetIdentity, {
+                    key: expected[item["name"]][key] for key in ("size", "sha256")
+                }), budget=budget,
+            )
             payload.unlink()
             rc.require(item["size"] == identity["size"], "RC asset size mismatch")
             declaration = expected[item["name"]]
