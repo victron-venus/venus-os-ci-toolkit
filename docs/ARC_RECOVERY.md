@@ -91,6 +91,10 @@ does not prove that the independent backup can be downloaded and restored.
    it. Otherwise build the pinned source with its reviewed public CA and dependency
    inputs. Verify `linux/amd64` against the worker RuntimeClass, image user/entrypoint,
    source labels and baked file hashes. Import/readback need not launch a worker.
+   For a site archive containing a nested index, use the verified
+   [runtime transport](RUNNER_IMAGE_ARTIFACTS.md#prepare-a-runtime-transport-for-containerd)
+   and require the imported target to match its runtime manifest digest. Keep
+   the full archive, conversion evidence and exact converter tools separately.
    Preserve the new archive and digest; a rebuilt tag need not reproduce old bytes.
 5. **Render a held plan.** Use `--held` for public registrations and leave public
    `CI_RUNNER_MODE=github`. The [portable example](examples/arc-recovery/README.md)

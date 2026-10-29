@@ -1,9 +1,12 @@
 """CA-only OCI conversion: tiny real archives, synthetic certificates, no network."""
+import copy
 import hashlib
 import io
+import json
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tarfile
 import tempfile
 import unittest
@@ -128,6 +131,8 @@ class SiteImages(unittest.TestCase):
         self.assertEqual(result['parent']['archive_sha256'], self.parent_sha)
         self.assertEqual(oci.digest_file(self.parent), self.parent_sha)
         self.assertEqual(self.verify(stage='private'), result)
+        transport = oci.project_runtime_archive(self.child, result, self.root.resolve() / 'private-runtime.tar')
+        self.assertEqual(transport['runtime_manifest'], result['platform']['manifest'])
 
     def test_output_and_ca_symlinks_are_not_followed(self):
         link = self.root / 'ca-link'
@@ -265,6 +270,207 @@ class SiteImages(unittest.TestCase):
         self.assertIn('--cacert /' + site.TARGET, bootstrap)
         self.assertIn('https://${RUNNER_RESERVE_NODE_IP}:19999/ready/${RUNNER_RESERVE_POD_UID}', bootstrap)
         self.assertNotIn('update-ca-certificates', bootstrap)
+
+    def transport(self, **changes):
+        args = dict(path=self.child, proof=self.verify(), output=self.root.resolve() / 'runtime.oci.tar')
+        args.update(changes)
+        return oci.project_runtime_archive(**args)
+
+    def test_transport_preserves_runtime_closure_and_is_deterministic(self):
+        proof = self.derive()
+        result = self.transport()
+        output = self.root / 'runtime.oci.tar'
+        second = self.root.resolve() / 'second.oci.tar'
+        self.transport(output=second)
+        self.assertEqual(output.read_bytes(), second.read_bytes())
+        self.assertEqual(oci.digest_file(self.child), proof['archive_sha256'])
+        self.assertEqual(result['runtime_manifest'], proof['platform']['manifest'])
+        self.assertEqual(result['source_image_index'], proof['image_index'])
+        with tarfile.open(output) as projected, tarfile.open(self.child) as source:
+            index = json.load(projected.extractfile('index.json'))
+            runtime, = index['manifests']
+            self.assertEqual(set(runtime), {'mediaType', 'digest', 'size', 'platform'})
+            self.assertEqual(runtime['digest'], result['runtime_manifest'])
+            manifest = json.load(projected.extractfile('blobs/sha256/' + runtime['digest'][7:]))
+            names = {'blobs/sha256/' + d['digest'][7:] for d in
+                     [runtime, manifest['config'], *manifest['layers']]}
+            self.assertEqual(set(projected.getnames()), names | {'index.json', 'oci-layout'})
+            self.assertEqual(len(names), result['blob_count'])
+            for member in projected.getmembers():
+                self.assertTrue(member.isfile())
+                self.assertEqual((member.mode, member.uid, member.gid, member.mtime), (0o644, 0, 0, 0))
+                if member.name in names:
+                    self.assertEqual(projected.extractfile(member).read(), source.extractfile(member.name).read())
+        for field in ('image_imported', 'image_executed', 'deployable', 'runtime_qualified'):
+            self.assertFalse(result[field])
+        self.assertTrue(result['content_bytes_unchanged'])
+        self.assertTrue(result['no_new_build_or_provenance_claim'])
+
+    def test_transport_rejects_source_and_proof_mismatches(self):
+        proof = self.derive()
+        for field in ('manifest', 'config', 'layers', 'diff_ids'):
+            changed = copy.deepcopy(proof)
+            if field == 'layers':
+                changed['platform'][field][0]['digest'] = 'sha256:' + 'f' * 64
+            elif field == 'diff_ids':
+                changed['platform'][field][0] = 'sha256:' + 'f' * 64
+            else:
+                changed['platform'][field] = 'sha256:' + 'f' * 64
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                self.transport(proof=changed)
+        self.child.write_bytes(self.child.read_bytes() + b'tamper')
+        with self.assertRaises(ValueError):
+            oci.project_runtime_archive(self.child, proof, self.root.resolve() / 'runtime.oci.tar')
+        self.assertFalse((self.root / 'runtime.oci.tar').exists())
+
+    def changed_transport_index(self, edit):
+        proof = self.verify()
+        with tarfile.open(self.child) as source:
+            files = {m.name: source.extractfile(m).read() for m in source.getmembers()}
+        outer = json.loads(files['index.json'])
+        old = 'blobs/sha256/' + outer['manifests'][0]['digest'][7:]
+        index = json.loads(files.pop(old))
+        edit(index['manifests'][0])
+        raw = site.canonical(index)
+        digest = hashlib.sha256(raw).hexdigest()
+        files['blobs/sha256/' + digest] = raw
+        outer['manifests'][0].update(digest='sha256:' + digest, size=len(raw))
+        files['index.json'] = site.canonical(outer)
+        path = self.root / 'changed-index.oci.tar'
+        with tarfile.open(path, 'w') as target:
+            for name, raw in files.items():
+                member = tarfile.TarInfo(name)
+                member.size = len(raw)
+                target.addfile(member, io.BytesIO(raw))
+        proof.update(archive_sha256=oci.digest_file(path), archive_bytes=path.stat().st_size,
+                     image_index='sha256:' + digest)
+        return path, proof
+
+    def test_transport_rejects_wrong_platform_and_drops_name_annotations(self):
+        self.derive()
+        path, proof = self.changed_transport_index(lambda d: d.update(platform={'os': 'linux', 'architecture': 'arm64'}))
+        with self.assertRaisesRegex(ValueError, 'not the verified runtime'):
+            self.transport(path=path, proof=proof)
+        path, proof = self.changed_transport_index(lambda d: d.update(annotations={
+            'io.containerd.image.name': 'unexpected.invalid/other:latest'}))
+        self.transport(path=path, proof=proof)
+        with tarfile.open(self.root / 'runtime.oci.tar') as archive:
+            runtime, = json.load(archive.extractfile('index.json'))['manifests']
+            self.assertNotIn('annotations', runtime)
+
+    def test_transport_preserves_existing_or_linked_outputs(self):
+        self.derive()
+        output = self.root.resolve() / 'runtime.oci.tar'
+        output.write_bytes(b'preserve')
+        with self.assertRaisesRegex(ValueError, 'already exists'):
+            self.transport()
+        self.assertEqual(output.read_bytes(), b'preserve')
+        output.unlink()
+        output.symlink_to(self.root / 'missing')
+        with self.assertRaisesRegex(ValueError, 'Unsafe'):
+            self.transport()
+        self.assertTrue(output.is_symlink())
+        linked = self.root / 'linked'
+        linked.symlink_to(self.root, target_is_directory=True)
+        with self.assertRaisesRegex(ValueError, 'Unsafe'):
+            self.transport(output=linked / 'another.tar')
+
+    def test_transport_bounds_fail_without_leaving_output(self):
+        self.derive()
+        for edit in ({'reserve_bytes': 1}, {'limit': 512}, {'limit': True}, {'limit': 1 << 40}):
+            with self.subTest(edit=edit), self.assertRaises(ValueError):
+                self.transport(**edit)
+        with mock.patch.object(oci.shutil, 'disk_usage', return_value=shutil._ntuple_diskusage(
+                20 * site.GIB, 0, 20 * site.GIB)):
+            with self.assertRaisesRegex(ValueError, 'disk reserve'):
+                self.transport()
+        with mock.patch.object(oci.shutil, 'disk_usage', side_effect=[
+                shutil._ntuple_diskusage(200 * site.GIB, 0, 200 * site.GIB),
+                shutil._ntuple_diskusage(20 * site.GIB, 0, 20 * site.GIB)]):
+            with self.assertRaisesRegex(ValueError, 'disk reserve'):
+                self.transport()
+        self.assertFalse((self.root / 'runtime.oci.tar').exists())
+        self.assertFalse(list(self.root.glob('.runner-runtime-*')))
+
+    def test_transport_source_rehash_does_not_allow_unsafe_tar_entries(self):
+        proof = self.derive()
+        clean = self.child.read_bytes()
+        for kind in ('traversal', 'symlink', 'duplicate'):
+            self.child.write_bytes(clean)
+            with tarfile.open(self.child, 'a') as archive:
+                member = tarfile.TarInfo('../escape' if kind == 'traversal' else 'index.json')
+                if kind == 'symlink':
+                    member.name = 'blobs/sha256/' + 'f' * 64
+                    member.type, member.linkname = tarfile.SYMTYPE, '/outside'
+                archive.addfile(member, io.BytesIO(b''))
+            changed = proof | {'archive_sha256': oci.digest_file(self.child),
+                               'archive_bytes': self.child.stat().st_size}
+            with self.subTest(kind=kind), self.assertRaises(ValueError):
+                oci.project_runtime_archive(self.child, changed, self.root.resolve() / 'runtime.oci.tar')
+        self.assertFalse((self.root / 'runtime.oci.tar').exists())
+
+    def test_transport_failed_fsync_and_concurrent_output_preserve_unrelated_files(self):
+        proof = self.derive()
+        unrelated = self.root / '.runner-runtime-unrelated.partial'
+        unrelated.write_bytes(b'keep')
+        with mock.patch.object(oci.os, 'fsync', side_effect=OSError('fsync failed')):
+            with self.assertRaisesRegex(OSError, 'fsync failed'):
+                self.transport()
+        self.assertFalse((self.root / 'runtime.oci.tar').exists())
+        with mock.patch.object(oci.Archive, 'unchanged', side_effect=ValueError('source changed')):
+            with self.assertRaisesRegex(ValueError, 'source changed'):
+                oci.project_runtime_archive(self.child, proof, self.root.resolve() / 'runtime.oci.tar')
+        self.assertFalse((self.root / 'runtime.oci.tar').exists())
+        link = oci.os.link
+        def competing_output(source, target):
+            Path(target).write_bytes(b'other writer')
+            link(source, target)
+        with mock.patch.object(oci.os, 'link', side_effect=competing_output):
+            with self.assertRaises(FileExistsError):
+                self.transport()
+        self.assertEqual((self.root / 'runtime.oci.tar').read_bytes(), b'other writer')
+        self.assertEqual(list(self.root.glob('.runner-runtime-*')), [unrelated])
+
+    def transport_cli(self, extra=()):
+        argv = ['runner_image_site.py', '--workspace', str(self.root), '--parent', self.parent.name,
+                '--parent-sha256', self.parent_sha, '--parent-bytes', str(self.parent_size),
+                '--source', SOURCE, '--stage', 'public', '--ca', self.local_ca.name,
+                '--ca-file-sha256', self.ca_sha, '--output', self.child.name, '--receipt', 'verified.json',
+                *extra]
+        with mock.patch.object(sys, 'argv', argv), mock.patch('builtins.print'):
+            site.main()
+
+    def test_transport_cli_requires_verified_child_and_separate_receipts(self):
+        proof = self.derive()
+        self.transport_cli(['--verify', '--child-sha256', proof['archive_sha256'],
+                            '--child-bytes', str(proof['archive_bytes']), '--runtime-transport', 'runtime.oci.tar',
+                            '--transport-receipt', 'transport.json'])
+        self.assertEqual(json.loads((self.root / 'verified.json').read_text()), proof)
+        result = json.loads((self.root / 'transport.json').read_text())
+        self.assertEqual(result['archive_sha256'], oci.digest_file(self.root / 'runtime.oci.tar'))
+        self.assertEqual(result['runtime_manifest'], proof['platform']['manifest'])
+
+    def test_transport_cli_rejects_invalid_option_combinations_before_writing(self):
+        self.derive()
+        for extra in (['--runtime-transport', 'runtime.oci.tar'], ['--transport-receipt', 'transport.json'],
+                      ['--runtime-transport', 'runtime.oci.tar', '--transport-receipt', 'transport.json'],
+                      ['--verify', '--runtime-transport', 'verified.json', '--transport-receipt', 'transport.json'],
+                      ['--verify', '--runtime-transport', '../escape', '--transport-receipt', 'transport.json']):
+            with self.subTest(extra=extra), self.assertRaises(ValueError):
+                self.transport_cli(extra)
+        self.assertFalse((self.root / 'runtime.oci.tar').exists())
+        self.assertFalse((self.root / 'verified.json').exists())
+        self.assertFalse((self.root / 'transport.json').exists())
+
+    def test_transport_cli_does_not_rewrite_old_converter_identity(self):
+        proof = self.derive()
+        with mock.patch.object(site, 'converter_identity', return_value={'different': '0' * 64}):
+            with self.assertRaisesRegex(ValueError, 'unexpected or missing|differs'):
+                self.transport_cli(['--verify', '--child-sha256', proof['archive_sha256'],
+                                    '--child-bytes', str(proof['archive_bytes']),
+                                    '--runtime-transport', 'runtime.oci.tar', '--transport-receipt', 'transport.json'])
+        self.assertFalse((self.root / 'runtime.oci.tar').exists())
+        self.assertEqual(oci.digest_file(self.child), proof['archive_sha256'])
 
 
 if __name__ == '__main__':
