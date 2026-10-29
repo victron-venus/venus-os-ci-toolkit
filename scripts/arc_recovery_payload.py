@@ -444,16 +444,38 @@ def verify(stream, catalog, maximum):
     }
 
 
+def workspace_path(workspace, relative, *, must_exist):
+    """Confine CLI file access to one operator-selected, non-shared workspace."""
+    root = Path(workspace).resolve(strict=True)
+    require(root.is_dir(), "Workspace must be an existing directory")
+    relative = Path(relative)
+    require(not relative.is_absolute() and relative.parts
+            and all(part not in {".", ".."} for part in relative.parts),
+            "Workspace-relative path required")
+    path = root / relative
+    for candidate in [path, *path.parents]:
+        if candidate == root:
+            break
+        require(not candidate.is_symlink(), "Workspace paths cannot contain symlinks")
+    require(path.resolve(strict=must_exist).is_relative_to(root), "Path escapes workspace")
+    require(path.parent.is_dir(), "Workspace path parent must already exist")
+    return path
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("operation", choices=["prepare", "pack", "verify"])
+    parser.add_argument("--workspace", type=Path, required=True,
+                        help="Trusted existing root; all file paths are relative to it")
     parser.add_argument("--manifest", type=Path, required=True)
     parser.add_argument("--directory", type=Path)
     parser.add_argument("--max-bytes", type=int, required=True)
     parser.add_argument("--chunk-bytes", type=int, default=128 * BLOCK)
     parser.add_argument("--reserve-bytes", type=int, default=0)
     args = parser.parse_args()
-    with args.manifest.open("rb") as source:
+    manifest = workspace_path(args.workspace, args.manifest, must_exist=True)
+    source, _ = regular(manifest)
+    with source:
         raw = source.read(MAX_MANIFEST + 1)
     require(len(raw) <= MAX_MANIFEST, "Oversized metadata")
 
@@ -467,16 +489,23 @@ def main():
     catalog = json.loads(raw, object_pairs_hook=unique)
     if args.operation == "prepare":
         require(args.directory is not None, "Staging directory required")
+        directory = workspace_path(args.workspace, args.directory, must_exist=False)
+        require(isinstance(catalog, list), "Source inventory must be a list")
+        for item in catalog:
+            require(isinstance(item, dict) and isinstance(item.get("path"), str),
+                    "Source path required")
+            item["path"] = str(workspace_path(args.workspace, item["path"], must_exist=True))
         result = prepare(
             catalog,
-            args.directory,
+            directory,
             args.chunk_bytes,
             args.max_bytes,
             args.reserve_bytes,
         )
     elif args.operation == "pack":
         require(args.directory is not None, "Staging directory required")
-        result = pack(args.directory, catalog, sys.stdout.buffer, args.max_bytes)
+        directory = workspace_path(args.workspace, args.directory, must_exist=True)
+        result = pack(directory, catalog, sys.stdout.buffer, args.max_bytes)
     else:
         result = verify(sys.stdin.buffer, catalog, args.max_bytes)
     print(json.dumps(result), file=sys.stderr)

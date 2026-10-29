@@ -55,12 +55,14 @@ class RecipeTests(unittest.TestCase):
 
     def test_repository_cli_roundtrip_with_trusted_external_manifest(self):
         source = self.root / "inputs.json"
-        source.write_text(json.dumps(self.inputs))
+        source.write_text(json.dumps([dict(item, path=Path(item["path"]).name)
+                                     for item in self.inputs]))
         helper = Path(m.__file__).resolve()
         def cli(operation, manifest, **kwargs):
             return subprocess.run(
-                [sys.executable, str(helper), operation, "--manifest", str(manifest),
-                 "--directory", str(self.stage), "--max-bytes", str(self.limit),
+                [sys.executable, str(helper), operation, "--workspace", str(self.root),
+                 "--manifest", str(manifest.relative_to(self.root)),
+                 "--directory", "stage", "--max-bytes", str(self.limit),
                  "--chunk-bytes", "13"], capture_output=True, check=True,
                 timeout=10, **kwargs)
         cli("prepare", source)
@@ -69,6 +71,38 @@ class RecipeTests(unittest.TestCase):
         checked = cli("verify", manifest, input=packed)
         self.assertTrue(json.loads(checked.stderr)["verified"])
         self.assertEqual(checked.stdout, b"")
+
+    def test_workspace_rejects_absolute_traversal_and_symlink_paths(self):
+        outside = self.root.parent / "outside"
+        (self.root / "linked").symlink_to(outside, target_is_directory=True)
+        for candidate in ("../outside", str(outside), "linked/output", "."):
+            with self.subTest(path=candidate), self.assertRaisesRegex(
+                    ValueError, "Workspace-relative|symlinks"):
+                m.workspace_path(self.root, candidate, must_exist=False)
+
+    def test_cli_refuses_outside_output_before_creating_stage(self):
+        source = self.root / "inputs.json"
+        source.write_text(json.dumps([dict(item, path=Path(item["path"]).name)
+                                     for item in self.inputs]))
+        result = subprocess.run(
+            [sys.executable, m.__file__, "prepare", "--workspace", str(self.root),
+             "--manifest", "inputs.json", "--directory", "../forbidden-stage",
+             "--max-bytes", str(self.limit)], capture_output=True, timeout=10)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(b"Workspace-relative path required", result.stderr)
+        self.assertFalse(self.stage.exists())
+        self.assertFalse((self.root.parent / "forbidden-stage").exists())
+
+    def test_cli_refuses_absolute_source_before_creating_stage(self):
+        source = self.root / "inputs.json"
+        source.write_text(json.dumps(self.inputs))
+        result = subprocess.run(
+            [sys.executable, m.__file__, "prepare", "--workspace", str(self.root),
+             "--manifest", "inputs.json", "--directory", "stage",
+             "--max-bytes", str(self.limit)], capture_output=True, timeout=10)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(b"Workspace-relative path required", result.stderr)
+        self.assertFalse(self.stage.exists())
 
     def test_roundtrip_interleaving_and_standard_manual_concatenation(self):
         catalog = self.prepared()

@@ -83,7 +83,9 @@ ciphertext, metadata and restore workspace before starting.
 
 Keep the site-specific executor in the protected site repository. It must bind
 exact input/tool hashes, arguments, destinations, recipients, free-space reserve
-and deadlines. Use an owner-only workspace without concurrent writers. Preparation
+and deadlines. The payload CLI requires a trusted existing `--workspace`; its
+manifest, staging directory and source paths must be relative to that root, without
+`..` components or symlinks. Use an owner-only workspace without concurrent writers. Preparation
 and the [pipeline supervisor](../scripts/arc_recovery_pipeline.py) require POSIX;
 they do not support Windows execution. The archive itself is portable. Live CPU,
 memory, swap and process limits come from a separately reviewed **Linux systemd
@@ -91,7 +93,7 @@ unit**, not from the Python supervisor or a successful local test.
 
 1. **Prepare from trusted metadata.** Supply a JSON list containing each original's
    `name`, `path`, `bytes` and `sha256`. Names are unique short identifiers; paths
-   remain private. Run `arc_recovery_payload.py prepare --manifest INPUTS.json
+   remain private. Run `arc_recovery_payload.py prepare --workspace WORKSPACE --manifest INPUTS.json
    --directory NEW_STAGE --max-bytes ORIGINAL_LIMIT --reserve-bytes FREE_RESERVE`
    inside the bounded unit. The default part size is 128 MiB. The helper verifies
    original hashes, stages numbered parts and writes a canonical `manifest.json`.
@@ -99,7 +101,7 @@ unit**, not from the Python supervisor or a successful local test.
 2. **Pack, compress, encrypt.** The protected adapter calls
    `arc_recovery_pipeline.run(commands, destination, maximum=..., reserve=...,
    timeout=..., inputs=...)` with separate argv lists for
-   `arc_recovery_payload.py pack --manifest NEW_STAGE/manifest.json --directory
+   `arc_recovery_payload.py pack --workspace WORKSPACE --manifest NEW_STAGE/manifest.json --directory
    NEW_STAGE --max-bytes ORIGINAL_LIMIT`, `zstd` and `age`. Pin public recipient
    identities; never put private keys or tokens in argv. The `inputs` mapping binds
    each reviewed input path to its `bytes` and `sha256`. The supervisor records
@@ -118,7 +120,7 @@ unit**, not from the Python supervisor or a successful local test.
    a finite `TimeoutStopSec`, owned writable paths and no unnecessary privileges.
 4. **Restore and compare every original.** For each required recovery identity,
    stream `age` decryption through `zstd` decompression into
-   `arc_recovery_payload.py verify --manifest TRUSTED_MANIFEST.json --max-bytes
+   `arc_recovery_payload.py verify --workspace WORKSPACE --manifest TRUSTED_MANIFEST.json --max-bytes
    ORIGINAL_LIMIT` under the same resource controls. Use the external trusted
    manifest, not one accepted merely because it appeared inside the archive.
    Verification rejects links, unexpected members/order, oversized or truncated
