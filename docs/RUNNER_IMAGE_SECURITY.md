@@ -87,6 +87,14 @@ revision identify this dependency change separately from security revision 1.
 Lock preparation and cross-compilation alone do not qualify a runner image;
 the normal upstream unit tests, image scans and runtime acceptance remain required.
 
+Containerd security revision 3 also updates `github.com/go-jose/go-jose/v4`
+to 4.1.6 for [GHSA-mgcc-cww5-fp2q](https://github.com/go-jose/go-jose/releases/tag/v4.1.6).
+The Scorecard scanner and maintained Cosign locks use the same fixed version.
+The upstream JWK parser now limits RSA moduli to 4096 bits by default; the
+maintained builds preserve that limit. This source change does not update an
+installed runner or rewrite the older accepted-image manifest. A fresh image
+build, scan and runtime qualification are required before deploying it.
+
 The existing contract-tests adapter tests and compiles all three components in
 separate, sequential Linux jobs when their inputs change, using the same builder
 script and Go 1.26.10. Each job has a 45-minute bound; a timeout fails the check.
