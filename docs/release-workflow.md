@@ -128,6 +128,36 @@ incomplete response or upload conflict stops publication without retrying or
 overwriting the asset. Preserve the draft and its evidence for inspection;
 do not reset the version allocation ledger to reuse the failed build number.
 
+Release-asset downloads use the expected size and SHA-256 from the validated
+inventory before opening a new destination. Every chunk is checked before it is
+written; a longer, shorter or different response is rejected. The transfer also
+has one deadline covering stdout, stderr and silent waiting. Failure or
+cancellation stops and reaps the transfer process and removes only its own
+incomplete file. Existing destinations are never overwritten.
+
+The shared `download_asset` helper requires `expected={"size": ..., "sha256": ...}`
+and a `DownloadBudget(max_bytes, reserve_bytes=...)`. Reuse one budget across the
+whole sequential inventory. `max_bytes` counts cumulative downloaded bytes, even
+if a verified staging file is removed before the next download; hashing the same
+bytes does not charge them twice. The separate `reserve_bytes` is the operator's
+minimum free space on the destination filesystem, checked before each file and
+during transfer, including silent waiting. Its default is zero; callers retain
+any additional environment-specific capacity admission and reserve. Neither
+parameter changes a consumer's release-size cap or reserves space against other
+processes. Before each asset, its full expected size must fit the remaining byte
+budget and currently free space above that floor.
+
+The built-in promotion, closed-build resolution, registry publication and
+versioned verification paths
+share a budget derived from their validated manifest. Upload readback uses the
+known local identities and a shared budget for its complete upload inventory.
+A consumer backport must update `release_control.py`, `release_closed.py`,
+`release_versioned.py` and any installed `publish_verified.py` atomically
+with their generated contract tests; the installer ships this complete bundle.
+Calling the raw transport with an unbounded file object is no longer accepted.
+The final release snapshot, provenance and signature checks still run after the
+transfer. The offline regression suite is `tests/test_release_download.py`.
+
 During publication, the current Actions run and its prerequisite gate can take
 time to appear consistently in the API. The publisher shares one five-minute
 wait across both updates and rechecks execution identity on every read. It

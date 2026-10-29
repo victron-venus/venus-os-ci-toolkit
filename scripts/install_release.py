@@ -1681,7 +1681,7 @@ def release_files(directory: Path, policy: dict) -> dict[str, str]:
         .read_text()
         .replace(TEST_ROOT_EXPRESSION, VENDORED_TEST_ROOT_EXPRESSION)
     )
-    for name in ("change_scope", "release_client_consumer"):
+    for name in ("change_scope", "release_client_consumer", "release_download"):
         files[f".github/release-tests/test_{name}.py"] = (
             (ROOT / f"tests/test_{name}.py").read_text().replace(
                 "Path(__file__).resolve().parents[1]", "Path(__file__).resolve().parents[2]"

@@ -88,6 +88,28 @@ class GeneratorTest(unittest.TestCase):
                                 any("unittest discover" in command for command in commands[1:])
                             )
 
+    def test_bounded_download_contract_runs_from_vendored_bundle(self):
+        """A generated consumer receives the compatible engine and stream tests."""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            adapter = root / ".github/workflows/release-build.yml"
+            adapter.parent.mkdir(parents=True)
+            adapter.write_text("on: {workflow_call: {}}\njobs: {}\n")
+            files = installer.release_files(root, self.policy)
+            contract = ".github/release-tests/test_release_download.py"
+            self.assertIn(contract, files)
+            for name, content in files.items():
+                target = root / name
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(content)
+            result = subprocess.run(
+                [sys.executable, "-m", "unittest", "discover", "-s", ".github/release-tests",
+                 "-p", "test_release_download.py"],
+                cwd=root, capture_output=True, text=True, check=False, timeout=30,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("Ran 17 tests", result.stderr)
+
     def test_runner_preflight_is_vendored_without_rewriting_build_adapter(self):
         """Consumers get the helper/tests; owned packaging integration stays explicit."""
         with tempfile.TemporaryDirectory() as temp:

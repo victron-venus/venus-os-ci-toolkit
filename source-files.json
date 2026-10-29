@@ -427,6 +427,7 @@
   "tests/test_release_closed_workflow.py",
   "tests/test_release_contract_python.py",
   "tests/test_release_control.py",
+  "tests/test_release_download.py",
   "tests/test_release_fuzz.py",
   "tests/test_release_import_modes.py",
   "tests/test_release_notes.py",
