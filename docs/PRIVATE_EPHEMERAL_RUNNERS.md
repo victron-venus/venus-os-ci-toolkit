@@ -4,6 +4,11 @@ The canonical base toolchain and its dependency-patch verification are documente
 in [Runner image security refresh](RUNNER_IMAGE_SECURITY.md). A refreshed base
 requires full image and real-job qualification before an existing pool adopts it.
 
+The opt-in [image qualification canary](../deploy/arc-private/QUALIFICATION_CANARY.md)
+tests one exact site image without creating an ARC pool or changing Actions
+routing. It keeps the existing node guard and exclusive sandbox isolation and
+requires an explicit operator identity; production JIT admission remains intact.
+
 The private image installs official GitHub CLI 2.103.0 at `/usr/local/bin/gh`,
 using the archive and executable hashes in `.github/gh/release.json` and the
 existing `scripts/install_release_gh.py` offline archive mode. Its build checks
