@@ -224,8 +224,15 @@ COPY deploy/runner-reserve/start-runner.sh deploy/runner-reserve/sandbox-docker.
 RUN python3 /opt/victron-image-build/browsers/scripts/install_runner_browsers.py --qualify \
     && rm -rf /opt/victron-image-build/browsers
 RUN chmod 0755 /opt/victron-ci-reserve/*.sh && \
-    node --version && docker --version && /home/runner/bin/Runner.Listener --version
+    node --version && docker --version
 ENV HOME=/home/runner RUNNER_TOOL_CACHE=/opt/hostedtoolcache AGENT_TOOLSDIRECTORY=/opt/hostedtoolcache ImageOS=ubuntu24
 WORKDIR /home/runner
 USER 1001:1001
+# Listener creates _diag even for --version; qualify it as the runtime user so
+# the build cannot leave root-owned diagnostics that prevent later startup.
+RUN test "$(id -u)" = 1001 && test "$(id -u -r)" = 1001 \
+    && test "$(id -g)" = 1001 && test "$(id -g -r)" = 1001 \
+    && ./bin/Runner.Listener --version \
+    && test -d _diag && test ! -L _diag && test -w _diag \
+    && test "$(stat -c '%u:%g' _diag)" = 1001:1001
 ENTRYPOINT ["/opt/victron-ci-reserve/start-runner.sh"]

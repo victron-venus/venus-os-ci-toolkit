@@ -77,6 +77,13 @@ working tree or ignored files. Their contents must exactly match the canonical
 inventory and each Dockerfile's deny-by-default `.dockerignore`. The invalid CA
 is the only separately generated context file.
 
+The image build runs the actual `Runner.Listener --version` smoke check as UID
+and GID 1001, after switching to the runner account. The listener writes diagnostic
+logs even for this command; the build also requires its `_diag` directory to be
+owned by and writable to that account. A root-only smoke check would miss startup
+failures after the runtime bootstrap drops privileges. This build check does not
+replace the separate sandbox and JIT qualification.
+
 The image revision label is the actual dispatched `source_commit`. This can be
 a later workflow/documentation commit, but every canonical build input must
 still match the reviewed inventory. Updating a canonical input requires an
