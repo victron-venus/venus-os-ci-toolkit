@@ -1182,6 +1182,18 @@ class RunnerArtifactsTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 build.scan_summary(bad, proof)
 
+    def test_scan_summary_preserves_only_verified_site_configuration(self):
+        proof = self.verify()
+        report = self.report(proof)
+        for value in (True, False, 'true', 1, None):
+            with self.subTest(site_configured=value):
+                proof['site_configured'] = value
+                result = build.scan_summary(report, proof)
+                self.assertIs(result['site_configured'], value is True)
+                self.assertFalse(result['deployable'])
+        del proof['site_configured']
+        self.assertIs(build.scan_summary(report, proof)['site_configured'], False)
+
     def assessment_report(self, proof):
         report = self.report(proof)
         report['ArtifactName'] = '/verified/input'
