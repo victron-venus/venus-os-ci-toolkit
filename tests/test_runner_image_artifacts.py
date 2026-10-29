@@ -1396,6 +1396,25 @@ class RunnerArtifactsTests(unittest.TestCase):
             self.assertEqual(result['unresolved_count'], 1)
             self.assertEqual(result['raw_blocking_findings'], 2)
 
+    def test_reviewed_fingerprint_never_authorizes_the_next_advisory_revision(self):
+        raw, proof, evidence, context, policy = self.acceptance_fixture()
+        finding = raw['Results'][0]['Vulnerabilities'][0]
+        finding['References'] = ['https://example.invalid/reviewed-advisory']
+        with mock.patch.object(build, 'SCAN_POLICY', policy):
+            self.assertFalse(build.scan_acceptance(raw, proof, evidence, context)['acceptance_passed'])
+        row = build.assessment_findings(raw, proof, context['artifact_name'])[0]
+        policy['advisories'][row['vulnerability']][1] = row['advisory_sha256']
+        before = copy.deepcopy(raw)
+        with mock.patch.object(build, 'SCAN_POLICY', policy):
+            self.assertTrue(build.scan_acceptance(raw, proof, evidence, context)['acceptance_passed'])
+            for edit in ({'References': ['https://example.invalid/unreviewed-advisory']},
+                         {'FutureAdvisoryField': {'new_semantics': True}},
+                         {'VulnerabilityID': 'CVE-2099-99999'}):
+                changed = copy.deepcopy(raw)
+                changed['Results'][0]['Vulnerabilities'][0].update(edit)
+                self.assertFalse(build.scan_acceptance(changed, proof, evidence, context)['acceptance_passed'])
+        self.assertEqual(raw, before)
+
     def test_actual_component_changes_cannot_use_a_version_only_disposition(self):
         raw, proof, evidence, context, policy = self.acceptance_fixture()
         edits = [lambda e: e['components']['headers']['inventory'].clear(),
@@ -1664,6 +1683,8 @@ class RunnerArtifactsTests(unittest.TestCase):
         review = build.document(path)
         self.assertEqual(review['schema'], 1)
         records = review['records']
+        latest = {row['id']: row for row in build.document(
+            build.ROOT / 'docs/RUNNER_ADVISORY_REVIEW_2026_10_29.json')['records']}
         self.assertEqual(len(records), 51)
         self.assertEqual(len({record['id'] for record in records}), len(records))
         self.assertEqual(sum(len(record['packages']) for record in records), 52)
@@ -1674,13 +1695,17 @@ class RunnerArtifactsTests(unittest.TestCase):
                 self.assertNotEqual(record['previous_advisory_sha256'], record['current_advisory_sha256'])
                 self.assertTrue(record['changes'])
                 self.assertTrue(record['unchanged_applicability_basis'])
+                current_hash = record['current_advisory_sha256']
+                if record['id'] in latest:
+                    next_record = latest[record['id']]
+                    self.assertEqual(next_record['previous_advisory_sha256'], current_hash)
+                    current_hash = next_record['current_advisory_sha256']
                 if record['component'] == 'gstreamer':
                     self.assertEqual(record['id'], build.SCAN_POLICY['gstreamer']['advisory'])
-                    self.assertEqual(record['current_advisory_sha256'],
-                                     build.SCAN_POLICY['gstreamer']['advisory_sha256'])
+                    self.assertEqual(current_hash, build.SCAN_POLICY['gstreamer']['advisory_sha256'])
                     self.assertEqual(record['rule_id'], 'installed_gstreamer_h265_backport')
                 else:
-                    self.assertEqual([record['component'], record['current_advisory_sha256'], record['rule_id']],
+                    self.assertEqual([record['component'], current_hash, record['rule_id']],
                                      build.SCAN_POLICY['advisories'][record['id']])
                     self.assertEqual(record['packages'],
                                      [build.SCAN_POLICY['identities'][record['component']]['package_id']])
@@ -1688,6 +1713,33 @@ class RunnerArtifactsTests(unittest.TestCase):
                     self.assertEqual(record['unchanged_applicability_basis'], rationale['rationale'])
                     self.assertIn(rationale['source_document']['url'], record['source_documents'])
                     self.assertEqual(record.get('supplemental_review'), rationale.get('supplemental_review'))
+        self.assertNotIn('/Users/', path.read_text())
+
+    def test_latest_advisory_reassessment_binds_exact_records_without_rewriting_history(self):
+        path = build.ROOT / 'docs/RUNNER_ADVISORY_REVIEW_2026_10_29.json'
+        review = build.document(path)
+        applicability = build.document(build.ROOT / 'docs/RUNNER_SCAN_APPLICABILITY.json')
+        self.assertEqual(applicability['latest_advisory_reassessment'],
+                         {'document': path.name, 'sha256': oci.digest_file(path)})
+        records = review['records']
+        self.assertEqual(len(records), 36)
+        self.assertEqual(len({r['id'] for r in records}), 36)
+        self.assertEqual(sum(len(r['packages']) for r in records), 37)
+        self.assertEqual(review['original_workflow_result'],
+                         'failure at final applicability gate; preserved unchanged')
+        self.assertEqual(len([r for r in records if 'cvss_review' in r]), 4)
+        for record in records:
+            with self.subTest(advisory=record['id']):
+                self.assertNotEqual(record['previous_advisory_sha256'], record['current_advisory_sha256'])
+                self.assertTrue(record['changes'])
+                self.assertTrue(record['unchanged_applicability_basis'])
+                self.assertTrue(record['source_documents'])
+                if record['component'] == 'gstreamer':
+                    self.assertEqual(record['current_advisory_sha256'],
+                                     build.SCAN_POLICY['gstreamer']['advisory_sha256'])
+                else:
+                    self.assertEqual([record['component'], record['current_advisory_sha256'], record['rule_id']],
+                                     build.SCAN_POLICY['advisories'][record['id']])
         self.assertNotIn('/Users/', path.read_text())
 
     def test_database_absence_does_not_disable_unreviewed_analyzers(self):

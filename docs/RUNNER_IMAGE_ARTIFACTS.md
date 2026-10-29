@@ -62,6 +62,12 @@ required component evidence. The hashed build helper embeds the policy and
 binds that review's hash; it reads no external ignore policy. No Trivy ignore or
 severity filter is introduced. See the [security contract](RUNNER_IMAGE_SECURITY.md#payload-bound-scan-acceptance).
 
+The [29 October advisory reassessment](RUNNER_ADVISORY_REVIEW_2026_10_29.json)
+records 36 changed advisory fingerprints affecting 37 findings per image,
+including four substantive CVSS vector changes. It preserves the original failed
+workflow and full reports. The narrow dispositions concern verified image
+payloads; they do not clear the host kernel, a later advisory, or deployment.
+
 ## Source and artifact contract
 
 `.github/containers/runner-artifacts.json` pins the canonical source, exact
