@@ -1753,7 +1753,7 @@ def scan_summary(data, proof):
     return {'schema': 1, 'counts': counts, 'blocking_findings': counts.get('HIGH', 0) + counts.get('CRITICAL', 0),
             'scan_gate_passed': not (counts.get('HIGH', 0) + counts.get('CRITICAL', 0)),
             'suppressed_findings': 0, 'packages': sum(len(r.get('Packages') or []) for r in results),
-            'targets': len(results), 'deployable': False, 'site_configured': False}
+            'targets': len(results), 'deployable': False, 'site_configured': proof.get('site_configured') is True}
 
 
 def stable_digest(value):

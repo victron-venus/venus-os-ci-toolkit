@@ -205,6 +205,39 @@ def gstreamer_image_entries(policy, *, changed_plugin=False):
     return list(entries.items())
 
 
+class StreamDigestTests(unittest.TestCase):
+    def test_empty_and_multichunk_real_files(self):
+        for payload in (b'', bytes(range(256)) * 12345):
+            with self.subTest(bytes=len(payload)), tempfile.TemporaryFile() as stream:
+                stream.write(payload)
+                stream.seek(0)
+                self.assertEqual(oci.digest_stream(stream), hashlib.sha256(payload).hexdigest())
+                self.assertEqual(stream.tell(), len(payload))
+
+    def test_nonzero_position_is_respected(self):
+        with tempfile.TemporaryFile() as stream:
+            stream.write(b'prefix:retained-content')
+            stream.seek(7)
+            self.assertEqual(oci.digest_stream(stream), hashlib.sha256(b'retained-content').hexdigest())
+            self.assertEqual(stream.tell(), len(b'prefix:retained-content'))
+
+    def test_reads_are_bounded_without_seek_requirement(self):
+        data = io.BytesIO(b'x' * (2 * 1024**2 + 17))
+        class Stream:
+            def read(self, count):
+                if count != 1024**2:
+                    raise AssertionError('Unbounded digest read')
+                return data.read(count)
+        self.assertEqual(oci.digest_stream(Stream()), hashlib.sha256(data.getvalue()).hexdigest())
+
+    def test_read_error_propagates(self):
+        class Stream:
+            def read(self, count):
+                raise OSError('fixture unreadable stream')
+        with self.assertRaises(OSError):
+            oci.digest_stream(Stream())
+
+
 class RunnerArtifactsTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -1181,6 +1214,18 @@ class RunnerArtifactsTests(unittest.TestCase):
             edit(bad)
             with self.assertRaises(ValueError):
                 build.scan_summary(bad, proof)
+
+    def test_scan_summary_preserves_only_verified_site_configuration(self):
+        proof = self.verify()
+        report = self.report(proof)
+        for value in (True, False, 'true', 1, None):
+            with self.subTest(site_configured=value):
+                proof['site_configured'] = value
+                result = build.scan_summary(report, proof)
+                self.assertIs(result['site_configured'], value is True)
+                self.assertFalse(result['deployable'])
+        del proof['site_configured']
+        self.assertIs(build.scan_summary(report, proof)['site_configured'], False)
 
     def assessment_report(self, proof):
         report = self.report(proof)

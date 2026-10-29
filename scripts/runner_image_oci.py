@@ -33,9 +33,17 @@ def require(value, message):
         raise ValueError(message)
 
 
+def digest_stream(stream):
+    """Hash from the current stream position with bounded reads on Python 3.10+."""
+    digest = hashlib.sha256()
+    while block := stream.read(1024**2):
+        digest.update(block)
+    return digest.hexdigest()
+
+
 def digest_file(path):
     with Path(path).open('rb') as stream:
-        return hashlib.file_digest(stream, 'sha256').hexdigest()
+        return digest_stream(stream)
 
 
 def save(path, data):
@@ -65,7 +73,7 @@ class Archive:
             require(stat.S_ISREG(info.st_mode) and 0 < info.st_size == size <= MAX_ARCHIVE, 'Archive type/size changed')
             self.before = identity(info)
             self.expected = expected
-            require(hashlib.file_digest(self.stream, 'sha256').hexdigest() == expected, 'Archive hash changed')
+            require(digest_stream(self.stream) == expected, 'Archive hash changed')
             self.stream.seek(0)
             self.tar = tarfile.open(fileobj=self.stream, mode='r:')
             self.files, names = {}, set()
@@ -86,7 +94,7 @@ class Archive:
                 self.files[name] = member
                 if name.startswith('blobs/'):
                     with self.tar.extractfile(member) as stream:
-                        require(hashlib.file_digest(stream, 'sha256').hexdigest() == name.rsplit('/', 1)[1], 'Blob hash mismatch')
+                        require(digest_stream(stream) == name.rsplit('/', 1)[1], 'Blob hash mismatch')
             require({'index.json', 'oci-layout'} <= self.files.keys(), 'OCI metadata missing')
             self.used = set()
         except BaseException:
@@ -116,7 +124,7 @@ class Archive:
         require(identity(os.fstat(self.stream.fileno())) == self.before and
                 identity(self.path.stat(follow_symlinks=False)) == self.before, 'Archive identity changed')
         self.stream.seek(0)
-        require(hashlib.file_digest(self.stream, 'sha256').hexdigest() == self.expected, 'Archive changed after verification')
+        require(digest_stream(self.stream) == self.expected, 'Archive changed after verification')
 
     def close(self):
         self.tar.close()
