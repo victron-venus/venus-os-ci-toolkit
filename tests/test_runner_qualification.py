@@ -47,6 +47,9 @@ def context(pod, actor=OPERATOR, operation='CREATE', old=None):
     pod['spec']['overhead'] = {'cpu': '100m', 'memory': '128Mi'}
     # Kubernetes defaults an omitted PodSecurityContext to an empty object.
     pod['spec'].setdefault('securityContext', {})
+    # Priority admission resolves the fixed non-preempting PriorityClass.
+    if pod['spec'].get('priorityClassName') == arc.QUALIFICATION_PRIORITY_CLASS:
+        pod['spec']['priority'] = 0
     return {'object': pod, 'oldObject': copy.deepcopy(old),
             'request': {'namespace': pod['metadata']['namespace'], 'operation': operation,
                         'userInfo': {'username': actor}}}
@@ -116,6 +119,9 @@ def cel_fixtures():
             ('restarts', spec + ('restartPolicy',), 'Always'),
             ('preemption', spec + ('preemptionPolicy',), 'PreemptLowerPriority'),
             ('raised priority', spec + ('priority',), 1),
+            ('different priority', spec + ('priority',), -1),
+            ('other priority class', spec + ('priorityClassName',), 'other-class'),
+            ('missing priority class', spec + ('priorityClassName',), ''),
             ('more CPU', container + ('resources', 'limits', 'cpu'), '3'),
             ('less memory reservation', container + ('resources', 'requests', 'memory'), '1Gi'),
             ('more memory', container + ('resources', 'limits', 'memory'), '8Gi'),
@@ -185,12 +191,20 @@ def cel_fixtures():
 
 
 class QualificationRenderTests(unittest.TestCase):
-    def test_opt_in_changes_only_one_policy_and_adds_one_pod(self):
+    def test_opt_in_changes_only_one_policy_and_adds_pod_and_priority_class(self):
         baseline = render()
         for mode, cpu_profile in product(('public', 'private'), ('standard', 'low-share')):
             candidate = render(canary(mode, cpu_profile))
-            self.assertEqual(set(candidate) - set(baseline), {'qualification-canary.json'})
+            self.assertEqual(set(candidate) - set(baseline),
+                             {'qualification-canary.json', 'qualification-priority-class.json'})
             candidate.pop('qualification-canary.json')
+            priority = candidate.pop('qualification-priority-class.json')
+            self.assertEqual(priority['apiVersion'], 'scheduling.k8s.io/v1')
+            self.assertEqual(priority['kind'], 'PriorityClass')
+            self.assertEqual(priority['metadata'], {'name': arc.QUALIFICATION_PRIORITY_CLASS})
+            self.assertEqual(priority['value'], 0)
+            self.assertIs(priority['globalDefault'], False)
+            self.assertEqual(priority['preemptionPolicy'], 'Never')
             prior, changed = guard(baseline), guard(candidate)
             self.assertEqual(len(prior['spec']['validations']), 20)
             self.assertEqual(len(changed['spec']['validations']), 22)
