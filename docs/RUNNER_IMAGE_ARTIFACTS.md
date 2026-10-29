@@ -68,6 +68,15 @@ including four substantive CVSS vector changes. It preserves the original failed
 workflow and full reports. The narrow dispositions concern verified image
 payloads; they do not clear the host kernel, a later advisory, or deployment.
 
+The later [Amazon metadata review](RUNNER_ADVISORY_REVIEW_2026_10_29_AMAZON.json)
+records 31 blocking fingerprints whose only change was an added
+`VendorSeverity.amazon` entry. The native scan failure remains preserved; a
+new evaluator must issue a separate assessment over the same complete report.
+Thirty dispositions require absent kernel code in the verified header payload;
+CVE-2026-98626 additionally requires the repaired installed libbpf library.
+Vendor severity aggregation is not an applicability proof. No image rebuild,
+rescan, runtime acceptance or deployment is implied by this policy-data update.
+
 ## Source and artifact contract
 
 `.github/containers/runner-artifacts.json` pins the canonical source, exact
