@@ -19,10 +19,10 @@
         "go.sum": "a38ac3f5c1c0a5ea2747e12b57fbd3547703251bfe02e49647939bec8860b4ff"
       },
       "fixed_locks": {
-        "go.mod": "f227d6ba1ba5b6f41cf79305e6a5a545676fdf70c308414509636293f30d2de0",
-        "go.sum": "9c1f9ea8bf94821e3fbf5c75f28485d7dd9494c1e73f0389330c3bd3be9a261d"
+        "go.mod": "b84a496fed45c7af98d3aa43d9d02011fc20996a1f73251874c2dbe00467222b",
+        "go.sum": "2a52e4bff05042363452e5e5fbef722df9f15856f01dad532f0d67933df49b5b"
       },
-      "downstream_version": "v2.4.2+victron.security.2",
+      "downstream_version": "v2.4.2+victron.security.3",
       "backport": "https://github.com/containerd/containerd/commit/1350ed10d68320f0f3e944b86b92c4dfdf4791a3",
       "backport_patch_sha256": "5811ab4b799ce74499b3ab78dd517c6e2a72d905e5904333f124c78976509203",
       "runtime_test_fix": {
