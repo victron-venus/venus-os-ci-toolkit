@@ -13,9 +13,11 @@ import json
 import os
 from pathlib import Path, PurePosixPath
 import re
+import shutil
 import stat
 import struct
 import tarfile
+import tempfile
 
 INDEX = 'application/vnd.oci.image.index.v1+json'
 MANIFEST = 'application/vnd.oci.image.manifest.v1+json'
@@ -306,7 +308,7 @@ def materialize(path, proof, destination, check):
 
 
 def scan_index(runtime):
-    """Trivy consumes an OCI directory; select the verified runtime explicitly."""
+    """Select the verified runtime explicitly for scanning or transport."""
     return json.dumps({'schemaVersion': 2, 'mediaType': INDEX, 'manifests': [runtime]},
                       sort_keys=True, separators=(',', ':')).encode() + b'\n'
 
@@ -366,32 +368,37 @@ def verify_scan_input(destination, selection, proof, check):
     check()
 
 
+def runtime_descriptors(archive, proof):
+    """Select the proof-bound runtime, without retaining import-name annotations."""
+    outer = json_document(archive.read('index.json'))
+    require(outer.get('schemaVersion') == 2 and len(outer.get('manifests', [])) == 1,
+            'Ambiguous scan archive root')
+    root = outer['manifests'][0]
+    require(root['digest'] == proof['image_index'], 'Scan source index differs')
+    index = archive.json_descriptor(root, INDEX)
+    require(index.get('schemaVersion') == 2, 'Invalid scan source index')
+    matches = [d for d in index['manifests'] if d['digest'] == proof['platform']['manifest']]
+    require(len(matches) == 1, 'Scan runtime is missing or duplicated')
+    runtime = matches[0]
+    require(runtime.get('platform') == {'architecture': 'amd64', 'os': 'linux'} and
+            runtime.get('annotations', {}).get('vnd.docker.reference.type') != 'attestation-manifest',
+            'Scan target is not the verified runtime')
+    manifest = archive.json_descriptor(runtime, MANIFEST)
+    require(manifest.get('schemaVersion') == 2 and manifest['config']['digest'] == proof['platform']['config'] and
+            manifest['layers'] == proof['platform']['layers'], 'Scan manifest differs')
+    config = archive.json_descriptor(manifest['config'], CONFIG)
+    require(config_contract(config, proof['source_commit'], proof['stage']) == proof['platform']['runtime_config'] and
+            config['rootfs'] == {'type': 'layers', 'diff_ids': proof['platform']['diff_ids']},
+            'Scan runtime configuration differs')
+    return {key: runtime[key] for key in ('mediaType', 'digest', 'size', 'platform')}, manifest
+
+
 def project_scan_input(path, proof, destination, check):
     """Copy unchanged runtime blobs from the accepted archive, omitting attestations."""
     destination.mkdir(mode=0o700, exist_ok=False)
     archive = Archive(path, proof['archive_sha256'], proof['archive_bytes'])
     try:
-        outer = json_document(archive.read('index.json'))
-        require(outer.get('schemaVersion') == 2 and len(outer.get('manifests', [])) == 1,
-                'Ambiguous scan archive root')
-        root = outer['manifests'][0]
-        require(root['digest'] == proof['image_index'], 'Scan source index differs')
-        index = archive.json_descriptor(root, INDEX)
-        require(index.get('schemaVersion') == 2, 'Invalid scan source index')
-        matches = [d for d in index['manifests'] if d['digest'] == proof['platform']['manifest']]
-        require(len(matches) == 1, 'Scan runtime is missing or duplicated')
-        runtime = matches[0]
-        require(runtime.get('platform') == {'architecture': 'amd64', 'os': 'linux'} and
-                runtime.get('annotations', {}).get('vnd.docker.reference.type') != 'attestation-manifest',
-                'Scan target is not the verified runtime')
-        manifest = archive.json_descriptor(runtime, MANIFEST)
-        require(manifest.get('schemaVersion') == 2 and manifest['config']['digest'] == proof['platform']['config'] and
-                manifest['layers'] == proof['platform']['layers'], 'Scan manifest differs')
-        config = archive.json_descriptor(manifest['config'], CONFIG)
-        require(config_contract(config, proof['source_commit'], proof['stage']) == proof['platform']['runtime_config'] and
-                config['rootfs'] == {'type': 'layers', 'diff_ids': proof['platform']['diff_ids']},
-                'Scan runtime configuration differs')
-        runtime = {key: runtime[key] for key in ('mediaType', 'digest', 'size', 'platform')}
+        runtime, manifest = runtime_descriptors(archive, proof)
         selection = {'schema': 1, 'archive_sha256': proof['archive_sha256'], 'image_index': proof['image_index'],
                      'runtime': runtime, 'config': manifest['config'], 'layers': manifest['layers'], 'files': {}}
         (destination / 'blobs/sha256').mkdir(mode=0o700, parents=True)
@@ -422,6 +429,105 @@ def project_scan_input(path, proof, destination, check):
         return selection
     finally:
         archive.close()
+
+
+def project_runtime_archive(path, proof, output, *, reserve_bytes=20 * 1024**3, limit=None):
+    """Package verified runtime bytes for import; never import or execute them.
+
+    The caller must first verify the complete source archive and retain that
+    archive and its evidence. This projection deliberately omits attestations.
+    """
+    output = Path(output)
+    require(output.parent == output.parent.resolve(strict=True) and not output.is_symlink(),
+            'Unsafe runtime transport output path')
+    require(not output.exists(), 'Runtime transport output already exists')
+    require(type(reserve_bytes) is int and reserve_bytes >= 20 * 1024**3,
+            'At least 20 GiB disk reserve required')
+    ceiling = proof['archive_bytes'] + 16 * 1024**2
+    limit = ceiling if limit is None else limit
+    require(type(limit) is int and 0 < limit <= ceiling, 'Invalid runtime transport output bound')
+    archive = Archive(path, proof['archive_sha256'], proof['archive_bytes'])
+    temporary = None
+    emitted = 0
+
+    def bound(extra=0):
+        require(emitted + extra <= limit, 'Runtime transport output bound exceeded')
+        require(shutil.disk_usage(output.parent).free >= reserve_bytes + max(0, limit - emitted),
+                'Runtime transport disk reserve or remaining budget exceeded')
+
+    class Writer:
+        def __init__(self, stream):
+            self.stream = stream
+
+        def write(self, data):
+            nonlocal emitted
+            bound(len(data))
+            count = self.stream.write(data)
+            emitted += count
+            return count
+
+        def tell(self):
+            return self.stream.tell()
+
+        def flush(self):
+            return self.stream.flush()
+
+    try:
+        runtime, manifest = runtime_descriptors(archive, proof)
+        descriptors = [runtime, manifest['config'], *manifest['layers']]
+        names = {archive.descriptor(desc) for desc in descriptors}
+        small = {'index.json': scan_index(runtime), 'oci-layout': b'{"imageLayoutVersion":"1.0.0"}\n'}
+        bound()
+        fd, name = tempfile.mkstemp(prefix='.runner-runtime-', suffix='.partial', dir=output.parent)
+        temporary = Path(name)
+        with os.fdopen(fd, 'wb') as stream:
+            with tarfile.open(fileobj=Writer(stream), mode='w|', format=tarfile.USTAR_FORMAT) as target:
+                for name in sorted(set(small) | names):
+                    info = tarfile.TarInfo(name)
+                    info.uid = info.gid = info.mtime = 0
+                    info.mode = 0o644
+                    if name in small:
+                        raw = small[name]
+                        info.size = len(raw)
+                        target.addfile(info, io.BytesIO(raw))
+                    else:
+                        info.size = archive.files[name].size
+                        with archive.tar.extractfile(archive.files[name]) as blob:
+                            target.addfile(info, blob)
+            stream.flush()
+            os.fsync(stream.fileno())
+        bound()
+        archive.unchanged()
+        digest, size = digest_file(temporary), temporary.stat().st_size
+        verification = Archive(temporary, digest, size)
+        try:
+            require(json_document(verification.read('index.json')) == json_document(scan_index(runtime)),
+                    'Runtime transport index differs')
+            require(set(verification.files) == names | set(small), 'Runtime transport inventory differs')
+            for desc in descriptors:
+                verification.descriptor(desc)
+            verification.unchanged()
+        finally:
+            verification.close()
+        bound()
+        os.link(temporary, output)  # Never replace an output created during verification.
+        temporary.unlink()
+        temporary = None
+        directory = os.open(output.parent, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+        return {'schema': 1, 'kind': 'unsigned runtime transport packaging receipt',
+                'source_archive_sha256': proof['archive_sha256'], 'source_archive_bytes': proof['archive_bytes'],
+                'source_image_index': proof['image_index'], 'runtime_manifest': runtime['digest'],
+                'archive_sha256': digest, 'archive_bytes': size, 'blob_count': len(names),
+                'content_bytes_unchanged': True, 'image_imported': False, 'image_executed': False,
+                'deployable': False, 'runtime_qualified': False, 'no_new_build_or_provenance_claim': True}
+    finally:
+        archive.close()
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
 
 
 def effective_path(value):

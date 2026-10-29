@@ -197,6 +197,12 @@ profiles use their separate digest-pinned registry image with `IfNotPresent`.
 After importing a verified OCI archive, or exporting a build directly into the
 node's `k8s.io` containerd namespace, create and label both references:
 
+For the CA-only site converter's nested-index archives, first follow
+[runtime transport preparation](RUNNER_IMAGE_ARTIFACTS.md#prepare-a-runtime-transport-for-containerd).
+Verify the imported record's target equals the selected runtime manifest before
+tagging it: tagging an index reference does not change its target digest. The
+tag used below must already name the intended verified image.
+
 ```sh
 set -eu
 # Obtain this digest from the verified image manifest/build metadata,

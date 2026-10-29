@@ -279,3 +279,68 @@ and raw report, then run the fixed bootstrap probe and representative cold/warm
 JIT jobs. Preserve the parent, child, certificates and complete evidence in the
 approved encrypted recovery storage before artifact expiry. Changing the CA
 requires a new child digest, new scan and new runtime acceptance.
+
+### Prepare a runtime transport for containerd
+
+The complete site archive has an outer index pointing to a second index that
+contains the runtime manifest and its conversion statement. Importing that
+archive can create an image reference whose target is the **index** digest.
+Adding another tag does not change that target to the runtime manifest digest
+used by a worker's image reference.
+
+After verifying the complete site archive, the existing site tool can also
+write a separate OCI transport with the selected `linux/amd64` runtime manifest
+directly in its top-level index. The manifest, configuration and layer bytes
+remain identical; only the transport index and archive packaging change. No
+image-name annotations are copied into the transport. It omits attestations,
+so keep the complete parent/site archives and their verification evidence.
+This transport is not a replacement for them and does not create a new build,
+signature, scan acceptance or runtime qualification.
+
+Use fresh workspace-relative output and receipt paths:
+
+```sh
+python3 scripts/runner_image_site.py \
+  --workspace "$SITE_WORKSPACE" \
+  --parent "$PARENT_ARCHIVE" --parent-sha256 "$PARENT_SHA256" \
+  --parent-bytes "$PARENT_BYTES" --source "$PARENT_SOURCE" --stage private \
+  --ca "$SITE_CA_FILE" --ca-file-sha256 "$SITE_CA_FILE_SHA256" \
+  --output "$SITE_ARCHIVE" --receipt "$SITE_VERIFICATION_RECEIPT" \
+  --verify --child-sha256 "$SITE_ARCHIVE_SHA256" --child-bytes "$SITE_ARCHIVE_BYTES" \
+  --runtime-transport "$RUNTIME_TRANSPORT" --transport-receipt "$TRANSPORT_RECEIPT"
+```
+
+`--runtime-transport` requires `--verify` and its separate `--transport-receipt`.
+The original conversion/verification behavior is unchanged when these options
+are absent. The tool streams one bounded output archive, retains a 20 GiB disk
+reserve, verifies every copied blob and publishes the output without replacing
+an existing file. It never expands a root filesystem, imports an image or runs
+a container. Failed unpublished temporary output is removed; existing files
+and complete source archives remain intact.
+
+The unsigned transport receipt records the original archive SHA-256 and index
+digest, the unchanged `runtime_manifest`, and the new transport archive SHA-256
+and byte count. Treat these as different identities. Before a separately
+authorized import, verify the transport archive against its receipt and budget
+the containerd content store independently. With a containerd version supporting
+these flags, an explicit import is:
+
+```sh
+sudo k3s ctr -n k8s.io images import --local --no-unpack --digests \
+  --base-name localhost/runner-site --platform linux/amd64 "$RUNTIME_TRANSPORT"
+```
+
+Here the archive path must resolve on the target node. Read back the resulting
+image records and require the intended reference's target digest to equal the
+receipt's `runtime_manifest`, not the source index or archive checksum. Inspect
+any automatically created aliases before pinning references. Import success
+alone is not runtime acceptance; retain the existing scan, bootstrap and JIT
+gates and [image retention checks](PRIVATE_EPHEMERAL_RUNNERS.md#local-image-retention-and-recovery).
+
+**Retain the exact converter tools for old archives.** Site conversion evidence
+binds the source bytes of both `runner_image_site.py` and `runner_image_oci.py`.
+Updating either file changes that identity. A newer verifier deliberately rejects
+an archive produced by different converter bytes; do not rewrite its statement
+or relax verification to make it pass. Reproduce old verification with the
+retained tools. Use the updated pinned tools for a new derivation and its new
+evidence, while keeping earlier archives and qualification records unchanged.

@@ -287,9 +287,23 @@ def main():
     parser.add_argument('--verify', action='store_true', help='Verify an existing child instead of creating it')
     parser.add_argument('--child-sha256', help='Required expected child archive hash with --verify')
     parser.add_argument('--child-bytes', type=int, help='Required expected child archive size with --verify')
+    parser.add_argument('--runtime-transport', type=Path,
+                        help='With --verify, also package the selected runtime into a new import archive')
+    parser.add_argument('--transport-receipt', type=Path,
+                        help='Separate unsigned packaging receipt; required with --runtime-transport')
     args = parser.parse_args()
     args.receipt = confined_path(args.workspace, args.receipt, must_exist=False)
     require(not args.receipt.exists() and not args.receipt.is_symlink(), 'Receipt already exists')
+    require((args.runtime_transport is None) == (args.transport_receipt is None),
+            'Both --runtime-transport and --transport-receipt are required together')
+    if args.runtime_transport is not None:
+        require(args.verify, 'Runtime transport requires --verify')
+        args.runtime_transport = confined_path(args.workspace, args.runtime_transport, must_exist=False)
+        args.transport_receipt = confined_path(args.workspace, args.transport_receipt, must_exist=False)
+        require(len({args.receipt, args.runtime_transport, args.transport_receipt}) == 3,
+                'Receipt and runtime transport paths must be distinct')
+        require(not args.runtime_transport.exists() and not args.transport_receipt.exists(),
+                'Runtime transport or receipt already exists')
     if args.verify:
         require(args.child_sha256 and args.child_bytes, 'Expected child hash and size required')
         ca = read_ca(confined_path(args.workspace, args.ca, must_exist=True), args.ca_file_sha256)
@@ -301,8 +315,15 @@ def main():
         require(not args.child_sha256 and not args.child_bytes, 'Child identity is only an input with --verify')
         result = derive(args.parent, args.parent_sha256, args.parent_bytes, args.source,
                         args.stage, args.ca, args.ca_file_sha256, args.output, workspace=args.workspace)
+    if args.runtime_transport is not None:
+        transport = oci.project_runtime_archive(
+            confined_path(args.workspace, args.output, must_exist=True), result, args.runtime_transport)
+        oci.save(args.transport_receipt, transport)
     oci.save(args.receipt, result)
-    print(json.dumps({'receipt': str(args.receipt), 'site_configured': True, 'deployable': False}))
+    summary = {'receipt': str(args.receipt), 'site_configured': True, 'deployable': False}
+    if args.runtime_transport is not None:
+        summary['transport_receipt'] = str(args.transport_receipt)
+    print(json.dumps(summary))
 
 
 if __name__ == '__main__':
