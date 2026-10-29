@@ -32,6 +32,7 @@ PROFILE_LABEL = 'private-runners.github.io/profile'
 SERIAL_LABEL = 'private-runners.github.io/serial-domain'
 CONCURRENCY_LABEL = 'private-runners.github.io/concurrency'
 QUALIFICATION_LABEL = 'private-runners.github.io/qualification'
+QUALIFICATION_CPU_REQUESTS = {'standard': '500m', 'low-share': '100m'}
 DOCKER_DATA = '/var/lib/docker'
 DOCKER_SCRATCH_SIZE = '16Gi'
 # Embed the checked startup code; native workers have no ConfigMap dependency.
@@ -96,15 +97,21 @@ class QualificationCanary(NamedTuple):
     image: str
     bootstrap_profile: str
     creator_username: str
+    cpu_profile: str = 'standard'
 
 
 def load_qualification_canary(path):
     data = RESERVE.read_operator_json(path)
     fields = set(QualificationCanary._fields)
-    if (not isinstance(data, dict) or set(data) != fields | {'schema'}
+    required = fields - {'cpu_profile'}
+    if (not isinstance(data, dict) or not (required | {'schema'}) <= set(data)
+            or set(data) - fields - {'schema'}
             or type(data['schema']) is not int or data['schema'] != 1):
         raise ValueError('Qualification plan requires schema 1 and one complete exact tuple')
-    return QualificationCanary(**{key: data[key] for key in fields})
+    result = QualificationCanary(**{key: data[key] for key in fields if key in data})
+    if not isinstance(result.cpu_profile, str) or result.cpu_profile not in QUALIFICATION_CPU_REQUESTS:
+        raise ValueError('Qualification CPU profile must be standard or low-share')
+    return result
 
 
 def load_nuc_kvm_plan(path):
@@ -972,6 +979,8 @@ def qualification_pod(config, plan, rows, selected_values):
     """Build one fixed probe from an existing standard CI isolation profile."""
     if not isinstance(config, QualificationCanary) or any(not isinstance(v, str) for v in config):
         raise ValueError('Qualification requires a typed, complete canary tuple')
+    if config.cpu_profile not in QUALIFICATION_CPU_REQUESTS:
+        raise ValueError('Qualification CPU profile must be standard or low-share')
     target = NucKvmTarget(config.scope, config.profile)
     if (plan is None or config.profile != 'ci' or target not in selected_values
             or config.namespace != 'arc-private-ci' or config.service_account != 'reserve-worker'
@@ -1007,7 +1016,8 @@ def qualification_pod(config, plan, rows, selected_values):
     runner = spec['containers'][0]
     runner['image'] = config.image
     runner['resources'] = {
-        'requests': {'cpu': '500m', 'memory': '3Gi', 'ephemeral-storage': '1Gi'},
+        'requests': {'cpu': QUALIFICATION_CPU_REQUESTS[config.cpu_profile],
+                     'memory': '3Gi', 'ephemeral-storage': '1Gi'},
         'limits': {'cpu': '2', 'memory': '6Gi', 'ephemeral-storage': '20Gi'}}
     if config.bootstrap_profile == 'public':
         runner['env'] = [env for env in runner['env'] if not env['name'].startswith('RUNNER_PRIVATE_')]
