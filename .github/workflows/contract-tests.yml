@@ -127,6 +127,26 @@ jobs:
       - name: Test the scan-completeness and SARIF contracts
         working-directory: tools/scorecard-scan
         run: go test -mod=readonly ./...
+  runner-admission-contracts:
+    name: Exact runner qualification admission
+    runs-on: ${{ fromJSON((vars.CI_RUNNER_MODE == 'self-hosted' || vars.CI_RUNNER_MODE == 'k3s') && ((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) || (contains(fromJSON('["push","schedule","workflow_dispatch"]'), github.event_name) && github.ref == format('refs/heads/{0}', github.event.repository.default_branch))) && (vars.CI_RUNNER_LABELS || '[]') || '["ubuntu-latest"]') }}
+    timeout-minutes: 10
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version: '1.27.3'
+          cache-dependency-path: tests/cel/go.sum
+      - name: Evaluate emitted CEL against production and qualification fixtures
+        working-directory: tests/cel
+        run: go test -count=1 -mod=readonly ./...
   renovate-contracts:
     name: Atomic dependency update contracts
     runs-on: ${{ fromJSON((vars.CI_RUNNER_MODE == 'self-hosted' || vars.CI_RUNNER_MODE == 'k3s') && ((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) || (contains(fromJSON('["push","schedule","workflow_dispatch"]'), github.event_name) && github.ref == format('refs/heads/{0}', github.event.repository.default_branch))) && (vars.CI_RUNNER_LABELS || '[]') || '["ubuntu-latest"]') }}
@@ -220,6 +240,69 @@ jobs:
         run: python3 scripts/check_release_signer.py "$RUNNER_TEMP/release-signer/cosign"
       - name: Test the actual binary against weak and strong certificate chains
         run: python3 scripts/check_release_signer_tls.py "$RUNNER_TEMP/release-signer/cosign"
+      - name: Record the qualified signer inputs
+        id: signer-receipt
+        env:
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          python3 - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          import subprocess
+          import sys
+
+          sys.path.insert(0, str(Path.cwd() / 'scripts'))
+          from build_release_signer import GO_VERSION, SOURCE
+
+          binary = Path(os.environ['RUNNER_TEMP']) / 'release-signer/cosign'
+          def digest(path):
+              with path.open('rb') as stream:
+                  value = hashlib.file_digest(stream, 'sha256').hexdigest()
+              return {'sha256': value, 'size_bytes': path.stat().st_size}
+
+          metadata = subprocess.check_output(['go', 'version', '-m', str(binary)], text=True)
+          toolchain = metadata.splitlines()[0].rsplit(' ', 1)[-1]
+          settings = dict(line.split('\t')[2].split('=', 1)
+                          for line in metadata.splitlines() if line.startswith('\tbuild\t') and '=' in line)
+          jose = [line.split('\t')[3] for line in metadata.splitlines()
+                  if line.startswith('\tdep\tgithub.com/go-jose/go-jose/v4\t')]
+          upstream = subprocess.check_output(['git', '-C', '.release-cosign-source', 'rev-parse', 'HEAD'], text=True).strip()
+          if (toolchain != GO_VERSION or upstream != SOURCE or jose != ['v4.1.6']
+                  or settings.get('CGO_ENABLED') != '0'
+                  or settings.get('GOOS') not in ('linux', 'darwin')
+                  or settings.get('GOARCH') not in ('amd64', 'arm64')):
+              raise SystemExit('Signer metadata does not match the qualified source/toolchain')
+          inputs = ['.github/cosign/go.mod', '.github/cosign/go.sum',
+                    'scripts/build_release_signer.py', 'scripts/check_release_signer.py',
+                    'scripts/check_release_signer_tls.py']
+          receipt = {
+              'schema': 1, 'kind': 'unsigned-ci-qualification-receipt',
+              'repository': os.environ['GITHUB_REPOSITORY'],
+              'run_id': os.environ['GITHUB_RUN_ID'], 'run_attempt': os.environ['GITHUB_RUN_ATTEMPT'],
+              'event': os.environ['GITHUB_EVENT_NAME'], 'github_sha': os.environ['GITHUB_SHA'],
+              'checkout_commit': subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip(),
+              'pull_request_head': os.environ.get('PR_HEAD_SHA') or None,
+              'upstream_repository': 'sigstore/cosign', 'upstream_commit': upstream,
+              'toolchain': toolchain, 'goos': settings['GOOS'], 'goarch': settings['GOARCH'],
+              'cgo_enabled': settings['CGO_ENABLED'], 'go_jose': jose[0],
+              'inputs': {name: digest(Path(name)) for name in inputs}, 'binary': digest(binary),
+              'qualification': {'upstream_signature': True, 'tampered_payload_rejected': True,
+                                'weak_and_strong_certificate_chains': True}}
+          binary.with_name('receipt.json').write_text(json.dumps(receipt, indent=2) + '\n')
+          with Path(os.environ['GITHUB_OUTPUT']).open('a') as output:
+              output.write('platform=' + settings['GOOS'] + '-' + settings['GOARCH'] + '\n')
+          PY
+      - name: Export only the qualified signer and its unsigned receipt
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-signer-${{ steps.signer-receipt.outputs.platform }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/release-signer/cosign
+            ${{ runner.temp }}/release-signer/receipt.json
+          if-no-files-found: error
+          retention-days: 7
   release-gh-contract:
     name: Qualified GitHub CLI and bootstrap TLS contract
     runs-on: ${{ fromJSON((vars.CI_RUNNER_MODE == 'self-hosted' || vars.CI_RUNNER_MODE == 'k3s') && ((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) || (contains(fromJSON('["push","schedule","workflow_dispatch"]'), github.event_name) && github.ref == format('refs/heads/{0}', github.event.repository.default_branch))) && (vars.CI_RUNNER_LABELS || '[]') || '["ubuntu-latest"]') }}

@@ -1,5 +1,21 @@
 # Patched release signer and verifier
 
+The existing `release-signer-contract` CI job exports its binary only after the
+upstream signature, tamper rejection and certificate-chain checks succeed. The
+artifact `release-signer-<goos>-<goarch>-<run-id>-<attempt>` contains exactly
+`cosign` and `receipt.json`, retained for seven days. It contains no test keys,
+temporary HOME, credentials or environment dump.
+
+The receipt is **unsigned CI evidence**, not a release attestation. It records the
+actual checked-out commit separately from a PR head, upstream source, module-lock
+and qualification-script hashes, exact compiler/platform, selected go-jose version
+and binary hash/size. Before reusing it, independently check the expected
+repository, reviewed commit, trusted workflow/event, successful job and exact
+run/attempt/artifact identity, then verify the receipt inputs and binary hash.
+Never execute an artifact merely because an arbitrary PR supplied a successful
+receipt. This export avoids rebuilding the same verifier for later bounded
+signature checks; it does not change any release or runtime acceptance policy.
+
 Signed-release consumers use Cosign 3.1.3 source commit
 `11926fa5bbbbde47e88fc006b625a17769b743b2`, rebuilt with Go 1.27.3 and the
 reviewed `.github/cosign/go.mod` and `go.sum`. This is a downstream patched build,

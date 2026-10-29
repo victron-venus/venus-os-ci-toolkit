@@ -31,6 +31,7 @@ SCOPE_LABEL = 'private-runners.github.io/scope'
 PROFILE_LABEL = 'private-runners.github.io/profile'
 SERIAL_LABEL = 'private-runners.github.io/serial-domain'
 CONCURRENCY_LABEL = 'private-runners.github.io/concurrency'
+QUALIFICATION_LABEL = 'private-runners.github.io/qualification'
 DOCKER_DATA = '/var/lib/docker'
 DOCKER_SCRATCH_SIZE = '16Gi'
 # Embed the checked startup code; native workers have no ConfigMap dependency.
@@ -81,6 +82,29 @@ class NucKvmPlan(NamedTuple):
     bounded_heavy_ci_scopes: tuple[str, ...] = ()
     bounded_heavy_image: str | None = None
     full_memory_ci_scopes: tuple[str, ...] = ()
+
+
+class QualificationCanary(NamedTuple):
+    """One temporary, credential-free probe; never an ARC pool or route."""
+    name: str
+    namespace: str
+    service_account: str
+    scope: str
+    profile: str
+    node: str
+    runtime_class: str
+    image: str
+    bootstrap_profile: str
+    creator_username: str
+
+
+def load_qualification_canary(path):
+    data = RESERVE.read_operator_json(path)
+    fields = set(QualificationCanary._fields)
+    if (not isinstance(data, dict) or set(data) != fields | {'schema'}
+            or type(data['schema']) is not int or data['schema'] != 1):
+        raise ValueError('Qualification plan requires schema 1 and one complete exact tuple')
+    return QualificationCanary(**{key: data[key] for key in fields})
 
 
 def load_nuc_kvm_plan(path):
@@ -944,8 +968,155 @@ def nuc_kvm_foundations(document, config, values_by_target):
     items += [runtime, *nuc_networks]
 
 
+def qualification_pod(config, plan, rows, selected_values):
+    """Build one fixed probe from an existing standard CI isolation profile."""
+    if not isinstance(config, QualificationCanary) or any(not isinstance(v, str) for v in config):
+        raise ValueError('Qualification requires a typed, complete canary tuple')
+    target = NucKvmTarget(config.scope, config.profile)
+    if (plan is None or config.profile != 'ci' or target not in selected_values
+            or config.namespace != 'arc-private-ci' or config.service_account != 'reserve-worker'
+            or config.node != 'nuc' or config.runtime_class != NUC_RUNTIME
+            or config.bootstrap_profile not in ('public', 'private')):
+        raise ValueError('Qualification requires an existing NUC standard CI target and fixed isolation identity')
+    row = next(row for row in rows if row['name'] == config.scope)
+    if row.get('ci_resource_class', 'standard') != 'standard' or validate_ci_storage(row) != 'tmpfs-2gi':
+        raise ValueError('Qualification requires the standard CI tmpfs-2gi storage contract')
+    if (not re.fullmatch(r'qualification-[a-z0-9](?:[-a-z0-9]{0,48}[a-z0-9])?', config.name)
+            or len(config.name) > 63):
+        raise ValueError('Qualification Pod name must be a bounded qualification-prefixed DNS label')
+    if (not PINNED.fullmatch(config.image)
+            or config.image in {value['template']['spec']['containers'][0]['image']
+                                for value in selected_values.values()}):
+        raise ValueError('Qualification requires a distinct, digest-pinned candidate image')
+    if (not config.creator_username or len(config.creator_username) > 256
+            or re.search(r'[\x00-\x20\x7f]', config.creator_username)
+            or config.creator_username == 'system:anonymous'
+            or config.creator_username.startswith(('system:serviceaccount:', 'system:node:'))):
+        raise ValueError('Qualification requires an explicit operator identity, not a workload identity')
+    pod = copy.deepcopy(selected_values[target]['template'])
+    pod.update(apiVersion='v1', kind='Pod')
+    pod['metadata'].update(name=config.name, namespace=config.namespace)
+    labels = pod['metadata']['labels']
+    labels.pop(CONCURRENCY_LABEL, None)
+    labels[QUALIFICATION_LABEL] = config.bootstrap_profile
+    spec = pod['spec']
+    spec['affinity'] = nuc_serial_affinity()
+    spec['activeDeadlineSeconds'] = 600
+    spec['terminationGracePeriodSeconds'] = 15
+    spec['preemptionPolicy'] = 'Never'
+    runner = spec['containers'][0]
+    runner['image'] = config.image
+    runner['resources'] = {
+        'requests': {'cpu': '500m', 'memory': '3Gi', 'ephemeral-storage': '1Gi'},
+        'limits': {'cpu': '2', 'memory': '6Gi', 'ephemeral-storage': '20Gi'}}
+    if config.bootstrap_profile == 'public':
+        runner['env'] = [env for env in runner['env'] if not env['name'].startswith('RUNNER_PRIVATE_')]
+        next(env for env in runner['env'] if env['name'] == 'RUNNER_DOCKER_STORAGE_DRIVER')['value'] = 'overlay2'
+    runner['env'].append({'name': 'RUNNER_RESERVE_QUALIFICATION', 'value': '1'})
+    return pod
+
+
+def qualification_identity(config, pod, obj='object'):
+    """Identity is not a permission: common isolation and probe checks still apply."""
+    labels = json.dumps(pod['metadata']['labels'], sort_keys=True)
+    selector = json.dumps(pod['spec']['nodeSelector'], sort_keys=True)
+    return ' && '.join([
+        f'{obj} != null',
+        f'request.namespace == {json.dumps(config.namespace)}',
+        f'{obj}.metadata.namespace == {json.dumps(config.namespace)}',
+        f'{obj}.metadata.name == {json.dumps(config.name)}',
+        f'has({obj}.metadata.labels) && {obj}.metadata.labels == {labels}',
+        f'has({obj}.spec.runtimeClassName) && {obj}.spec.runtimeClassName == {json.dumps(config.runtime_class)}',
+        f'{obj}.spec.serviceAccountName == {json.dumps(config.service_account)}',
+        f'has({obj}.spec.nodeSelector) && {obj}.spec.nodeSelector == {selector}',
+        f'size({obj}.spec.containers) == 1 && {obj}.spec.containers[0].name == "runner"',
+        f'{obj}.spec.containers[0].image == {json.dumps(config.image)}',
+    ])
+
+
+def qualification_mentions(config, obj='object'):
+    """Keep malformed probes and UPDATE escapes inside the global admission guard."""
+    key = json.dumps(QUALIFICATION_LABEL)
+    return (f'{obj} != null && ({obj}.metadata.name == {json.dumps(config.name)} || '
+            f'(has({obj}.metadata.labels) && {key} in {obj}.metadata.labels) || '
+            f'{obj}.spec.containers.exists(c, c.image == {json.dumps(config.image)}) || '
+            f'{obj}.spec.containers.exists(c, has(c.env) && '
+            'c.env.exists(e, e.name == "RUNNER_RESERVE_QUALIFICATION")))')
+
+
+def qualification_foundations(document, config, pod):
+    """Add a single temporary alternative; never relax the normal ARC/JIT branch."""
+    guard = next(item for item in document['items'] if item['kind'] == 'ValidatingAdmissionPolicy'
+                 and item['metadata']['name'] == NUC_RUNTIME + '-workers')
+    spec = guard['spec']
+    spec['variables'] = [{'name': 'qualificationCanary', 'expression': qualification_identity(config, pod)}]
+    mentioned = '(' + qualification_mentions(config) + ') || (' + qualification_mentions(config, 'oldObject') + ')'
+    condition = spec['matchConditions'][0]
+    condition['expression'] = '(' + condition['expression'] + ') || (' + mentioned + ')'
+    runner = pod['spec']['containers'][0]
+    resource_check = ('object.spec.containers.all(c, has(c.resources) && '
+                      'has(dyn(c.resources).requests) && has(dyn(c.resources).limits) && '
+                      'dyn(c.resources).requests == ' + json.dumps(runner['resources']['requests']) + ' && '
+                      'dyn(c.resources).limits == ' + json.dumps(runner['resources']['limits']) + ')')
+    names = json.dumps([env['name'] for env in runner['env']])
+    environment_check = (nuc_environment_validation(runner['env']) + ' && '
+                         'object.spec.containers.all(c, size(c.env) == ' + str(len(runner['env']))
+                         + ' && c.env.all(e, e.name in ' + names + '))')
+    alternatives = {
+        'Only the reviewed pinned worker image is allowed': 'true',
+        'NUC workers require one exact scope, namespace, profile, resource and environment tuple':
+            '(' + resource_check + ') && (' + environment_check + ')',
+        'NUC workers keep the bounded single-job lifecycle':
+            'object.spec.restartPolicy == "Never" && object.spec.activeDeadlineSeconds == 600 && '
+            'object.spec.terminationGracePeriodSeconds == 15 && '
+            'has(object.spec.enableServiceLinks) && !object.spec.enableServiceLinks',
+    }
+    found = set()
+    for rule in spec['validations']:
+        if rule['message'] in alternatives:
+            found.add(rule['message'])
+            rule['expression'] = ('variables.qualificationCanary ? (' + alternatives[rule['message']]
+                                  + ') : (' + rule['expression'] + ')')
+    if found != set(alternatives):
+        raise ValueError('The production admission contract changed; qualification requires explicit review')
+    spec['validations'].extend([
+        {'expression': '(!(' + mentioned + ')) || variables.qualificationCanary',
+         'message': 'Qualification name, image, marker and mode require the complete exact canary identity'},
+        {'expression': '!variables.qualificationCanary || (('
+                       '(request.operation == "CREATE" && oldObject == null && '
+                       'request.userInfo.username == ' + json.dumps(config.creator_username) + ') || '
+                       '(request.operation == "UPDATE" && (' + qualification_identity(config, pod, 'oldObject') + '))) && '
+                       '(!has(object.metadata.ownerReferences) || size(object.metadata.ownerReferences) == 0) && '
+                       '(!has(object.metadata.finalizers) || size(object.metadata.finalizers) == 0) && '
+                       '(!has(object.metadata.generateName) || object.metadata.generateName == "") && '
+                       '(!has(object.metadata.annotations) || size(object.metadata.annotations) == 0) && '
+                       '(!has(object.spec.imagePullSecrets) || size(object.spec.imagePullSecrets) == 0) && '
+                       '(!has(object.spec.securityContext) || ('
+                       '!has(object.spec.securityContext.runAsUser) && !has(object.spec.securityContext.runAsGroup) && '
+                       '!has(object.spec.securityContext.runAsNonRoot) && !has(object.spec.securityContext.fsGroup) && '
+                       '!has(object.spec.securityContext.fsGroupChangePolicy) && '
+                       '!has(object.spec.securityContext.supplementalGroups) && !has(object.spec.securityContext.sysctls) && '
+                       '!has(object.spec.securityContext.seLinuxOptions) && !has(object.spec.securityContext.windowsOptions) && '
+                       '!has(object.spec.securityContext.seccompProfile) && !has(object.spec.securityContext.appArmorProfile))) && '
+                       '!has(object.spec.dnsConfig) && '
+                       '(!has(object.spec.hostAliases) || size(object.spec.hostAliases) == 0) && '
+                       '(!has(object.spec.dnsPolicy) || object.spec.dnsPolicy == "ClusterFirst") && '
+                       '(!has(object.spec.priorityClassName) || object.spec.priorityClassName == "") && '
+                       '(!has(object.spec.priority) || object.spec.priority == 0) && '
+                       'has(object.spec.preemptionPolicy) && object.spec.preemptionPolicy == "Never" && '
+                       'object.spec.containers.all(c, '
+                       '(!has(c.ports) || size(c.ports) == 0) && '
+                       '(!has(c.volumeDevices) || size(c.volumeDevices) == 0) && '
+                       '(!has(c.stdin) || !c.stdin) && (!has(c.tty) || !c.tty) && '
+                       '(!has(c.securityContext.procMount) || c.securityContext.procMount == "Default") && '
+                       '!has(c.securityContext.seLinuxOptions) && !has(c.securityContext.windowsOptions)))',
+         'message': 'Only the operator creates the credential-free bounded probe; updates preserve its identity'},
+    ])
+
+
 def render(inventory, sandbox_image, native_image, node_ip, listener_node='mp',
-           sandbox_runtime=SHARED_RUNTIME, nuc_kvm: NucKvmConfig | NucKvmPlan | None = None):
+           sandbox_runtime=SHARED_RUNTIME, nuc_kvm: NucKvmConfig | NucKvmPlan | None = None,
+           qualification: QualificationCanary | None = None):
     rows = validate_inventory(inventory)
     ipaddress.IPv4Address(node_ip)
     validate_listener_node(listener_node)
@@ -974,6 +1145,10 @@ def render(inventory, sandbox_image, native_image, node_ip, listener_node='mp',
     output.update({'index.json': index, 'repository-variables.json': routing})
     if plan is not None:
         nuc_kvm_foundations(output['foundations.json'], plan, selected_values)
+    if qualification is not None:
+        pod = qualification_pod(qualification, plan, rows, selected_values)
+        qualification_foundations(output['foundations.json'], qualification, pod)
+        output['qualification-canary.json'] = pod
     return output
 
 
@@ -992,6 +1167,8 @@ def main():
     parser.add_argument('--nuc-kvm-node-ip', help='NUC address covered by its guard TLS certificate')
     parser.add_argument('--nuc-kvm-plan', type=Path,
                         help='Strict full-state JSON plan with targets, image and node_ip; not an incremental patch')
+    parser.add_argument('--qualification-canary-plan', type=Path,
+                        help='Opt in one exact operator-only, credential-free probe; production pools are unchanged')
     args = parser.parse_args()
     nuc_args = (args.nuc_kvm_scope, args.nuc_kvm_image, args.nuc_kvm_node_ip)
     if args.nuc_kvm_plan is not None and any(x is not None for x in nuc_args):
@@ -1001,10 +1178,12 @@ def main():
     try:
         nuc_kvm = (load_nuc_kvm_plan(args.nuc_kvm_plan) if args.nuc_kvm_plan is not None else
                    NucKvmConfig(*nuc_args) if all(x is not None for x in nuc_args) else None)
+        qualification = (load_qualification_canary(args.qualification_canary_plan)
+                         if args.qualification_canary_plan is not None else None)
     except (ValueError, OSError) as error:
         parser.error(str(error))
     documents = render(json.loads(args.inventory.read_text()), args.sandbox_image, args.native_image,
-                       args.node_ip, args.listener_node, args.sandbox_runtime, nuc_kvm)
+                       args.node_ip, args.listener_node, args.sandbox_runtime, nuc_kvm, qualification)
     args.output.mkdir(parents=True, exist_ok=False, mode=0o700)
     for filename, document in documents.items():
         target = args.output / filename
