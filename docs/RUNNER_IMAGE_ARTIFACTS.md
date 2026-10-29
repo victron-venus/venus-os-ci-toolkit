@@ -227,6 +227,9 @@ relative paths within it. Absolute paths, traversal and symlinked files or paren
 directories are rejected. The workspace and output parent directories must
 already exist. Keep this workspace outside public repository tracking.
 
+The converter and shared OCI reader support Python 3.10 or newer, including the
+default interpreter on existing Ubuntu 22.04 operator hosts.
+
 ```sh
 python3 scripts/runner_image_site.py \
   --workspace "$SITE_WORKSPACE" \
