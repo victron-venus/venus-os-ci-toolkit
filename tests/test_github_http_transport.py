@@ -162,6 +162,8 @@ class RealGitHubCLITests(unittest.TestCase):
         worker.start()
         try:
             with tempfile.TemporaryDirectory() as config:
+                # Keep this real-CLI fixture local, including sampled gh telemetry.
+                Path(config, "config.yml").write_text("telemetry: disabled\n", encoding="utf-8")
                 environment = {
                     "PATH": os.environ.get("PATH", ""),
                     "GH_CONFIG_DIR": config,
@@ -226,6 +228,8 @@ class RealGitHubCLITests(unittest.TestCase):
         real_run = subprocess.run
         try:
             with tempfile.TemporaryDirectory() as config:
+                # Keep this real-CLI fixture local, including sampled gh telemetry.
+                Path(config, "config.yml").write_text("telemetry: disabled\n", encoding="utf-8")
                 environment = {
                     "PATH": os.environ.get("PATH", ""),
                     "GH_CONFIG_DIR": config,
