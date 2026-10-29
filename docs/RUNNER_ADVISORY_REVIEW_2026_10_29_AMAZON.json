@@ -1,0 +1,1359 @@
+{
+  "schema": 1,
+  "review_date": "2026-10-29",
+  "scope": "Refresh 31 exact blocking advisory fingerprints after an Amazon severity entry appeared; preserve every projector, identity, component prerequisite and raw finding.",
+  "issue": "https://github.com/victron-venus/venus-os-ci-toolkit/issues/261",
+  "producer_source": "61a4ae53bdb886a8f8e3f440fb62f2224962c52a",
+  "producer_run_id": 40871514193,
+  "producer_original_result": "success; unchanged",
+  "original_native_result": "failure with 31 unresolved advisory fingerprints; preserved unchanged",
+  "review_policy_base_commit": "5a247fb7245c8f241d25880580fa2afdcb88ee99",
+  "previous_rationale_document_sha256": "a434b97011572348a5c72372b26ea741ecffba3f544a09f78bd21c188dd4cdd7",
+  "previous_review": {
+    "document": "RUNNER_ADVISORY_REVIEW_2026_10_29.json",
+    "sha256": "0a15f01d64ee4222b0d3bd65379099bdf72fe470d1a02c0856e9e04f4846f80c"
+  },
+  "independent_review_receipt_sha256": "9755a67e3430d8bcbb31802c922f332310ee560e3d334eab5ff6db470c963ecf",
+  "evidence": {
+    "raw_scan_sha256": "bcfe9db981afb3e3c744d87345ad720291d3d800835f526cb810e098b2d4af3b",
+    "previous_hosted_raw_scan_sha256": "6f51ecb65daf7363e65a46b0b747b440b6dc9d2898868de2dc3436de0bda1245",
+    "site_proof_sha256": "352eb27a8e16c22f5383889655aedad058615e73450240859282bd0bf07ec2dd",
+    "file_evidence_sha256": "693c42cd6fb5bd1910316f6bce0c20ba627a18078421b71485abcd5e7ccd249b",
+    "original_acceptance_sha256": "254b51dd6c0b74d0aaf631d9b6b2b980c01ad3d84ecc3e5045b0589135ffdd07",
+    "header_inventory_sha256": "ff5df311395966f35d8be4265422da233af4abcb5b89ce923f0257b300f3dbe6",
+    "libbpf_library_sha256": "e616f9f991b66ba01340beadd1ae405dd7b139dee309ba559b0c88a6ed760fbb"
+  },
+  "databases": {
+    "db/trivy.db": "162d88bff697bee519561c90bb5766f2b9d27e3f0f0eb051b7a3d7bf1df42ff7",
+    "db/metadata.json": "e35177e8deea964740d3e3b63dc6b624f3a550d5e291f0964d77504c5f102207",
+    "java-db/trivy-java.db": "e29677d22ba617fe27374a19904ef0838466f3eeec35157b8466de587c9a13c0",
+    "java-db/metadata.json": "c6c90fcccd916652646bca495353e316725095996fc32a9d6f77b9a1c73bde4a"
+  },
+  "comparison": {
+    "full_raw_identities": 3911,
+    "blocking_rows": 390,
+    "added_or_removed_identities": 0,
+    "all_severity_metadata_deltas": 169,
+    "blocking_metadata_deltas": 31,
+    "lower_severity_metadata_deltas": 138,
+    "reviewed_blocking_delta": "Only /VendorSeverity/amazon added with value 3; active SeveritySource remains ubuntu.",
+    "all_other_reviewed_advisory_fields_typed_equal": true,
+    "full_report_note": "The remaining metadata differences are retained as raw evidence; this policy update reviews only the 31 blocking entries."
+  },
+  "applicability": {
+    "kernel_code_absent_from_header_payload": 30,
+    "headers_with_separately_repaired_libbpf": 1,
+    "libbpf_special_advisory": "CVE-2026-98626",
+    "component_prerequisites_all_passed": true,
+    "kernel_paths": [],
+    "perf_paths": []
+  },
+  "vendor_aggregation_caveat": {
+    "meaning": "Trivy aggregate VendorSeverity is preserved as received, not treated as an authoritative Amazon classification or applicability proof.",
+    "direct_readback": [
+      {
+        "id": "CVE-2026-98621",
+        "url": "https://explore.alas.aws.amazon.com/CVE-2026-98621.html",
+        "sha256": "730fcc82122ae07d28c96bc50b7abe6a819056a7067a2e9becb27c0e1b58d028",
+        "displayed_severity": "Medium"
+      },
+      {
+        "id": "CVE-2026-98626",
+        "url": "https://explore.alas.aws.amazon.com/CVE-2026-98626.html",
+        "sha256": "7850d387b7eba3fd5ff18313a1b96ad4ec8d4a3d58ffa5acf0b1ede7208bc67a",
+        "displayed_severity": "Low"
+      }
+    ],
+    "observation": "Amazon pages display Medium for CVE-2026-98621 and Low for CVE-2026-98626, while this Trivy feed adds numeric value 3 for both. No raw data is corrected or removed."
+  },
+  "limitations": [
+    "This record does not change the historical native failure or the successful hosted producer result.",
+    "New evaluator acceptance requires a separate receipt over the same immutable image and complete raw report.",
+    "An exact new fingerprint intentionally does not accept either the old fingerprint or a future changed advisory.",
+    "The 30 absent-kernel-code conclusions apply only to verified exported-header image payloads, not the host kernel.",
+    "CVE-2026-98626 additionally requires the separately repaired installed libbpf library and provenance; a headers-only rationale is insufficient.",
+    "No private image, deployment, runner registration, or site runtime is authorized by this source review."
+  ],
+  "records": [
+    {
+      "id": "CVE-2026-98454",
+      "component": "headers",
+      "packages": [
+        "linux-libc-dev@6.8.0-147.147"
+      ],
+      "previous_advisory_sha256": "60a7dafa1872e78ff268ef3224af3bba4df0bbdb4f33bc9311f7ee045dcf5f62",
+      "current_advisory_sha256": "3f63326916e102e986f874ce50bc0f8a1da79d339dd8a71be0b492e2abb7ee99",
+      "rule_id": "kernel_code_absent_from_header_payload",
+      "changes": [
+        {
+          "path": "/VendorSeverity/amazon",
+          "before_present": false,
+          "after": 3
+        }
+      ],
+      "previous_vendor_severity": {
+        "photon": 3,
+        "redhat": 2,
+        "ubuntu": 3
+      },
+      "current_vendor_severity": {
+        "amazon": 3,
+        "photon": 3,
+        "redhat": 2,
+        "ubuntu": 3
+      },
+      "all_other_advisory_fields_typed_equal": true,
+      "unchanged_advisory_projection_sha256": "46e3d977a65492c2246070f4162e2ce241b79bbf58196dd9428512a22806ca74",
+      "unchanged_applicability_basis": "The parser incorrectly treats the complete response range and canonical layouts as each record's bounds. Fixes constrain kernel client parsing and preserve open behavior; references to context headers mean wire records, not exported C headers.",
+      "source_documents": [
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98454.json",
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/ce42a6ad0e675e4f591bda409d349b6788b6176e/cves/2026/98xxx/CVE-2026-98454.json"
+      ],
+      "current_cna_sha256": "05691af2ba08951396a6110f0cec6317d01fbbddf695542a77e7ed38046aebbc",
+      "prior_cna_sha256": "05691af2ba08951396a6110f0cec6317d01fbbddf695542a77e7ed38046aebbc",
+      "program_files": [
+        "fs/smb/client/smb2ops.c",
+        "fs/smb/client/smb2pdu.c"
+      ],
+      "independent_conclusion": "Conditional image-payload rationale unchanged: affected kernel implementation absent from the exact verified exported-header payload; no host-kernel clearance."
+    },
+    {
+      "id": "CVE-2026-98479",
+      "component": "headers",
+      "packages": [
+        "linux-libc-dev@6.8.0-147.147"
+      ],
+      "previous_advisory_sha256": "4d7a5331b75583d05ed4337ec299bdf3e02641e5e8c84e8f530e155ec4b51d90",
+      "current_advisory_sha256": "1a17327950554fe4a53833055149b893c6c23f5693f12a4490957ed535c87dd9",
+      "rule_id": "kernel_code_absent_from_header_payload",
+      "changes": [
+        {
+          "path": "/VendorSeverity/amazon",
+          "before_present": false,
+          "after": 3
+        }
+      ],
+      "previous_vendor_severity": {
+        "photon": 3,
+        "redhat": 2,
+        "ubuntu": 3
+      },
+      "current_vendor_severity": {
+        "amazon": 3,
+        "photon": 3,
+        "redhat": 2,
+        "ubuntu": 3
+      },
+      "all_other_advisory_fields_typed_equal": true,
+      "unchanged_advisory_projection_sha256": "a0cbe220d425d7080342a2c2bfc67a9c5461777a49fe6451f02aab9bfbf49118",
+      "unchanged_applicability_basis": "Despite the libiscsi name, the described consumer writes into kernel-managed scatterlists, pinned pages and page cache. The fix checks command direction in the kernel initiator; userspace write buffers are affected data, not the implementation.",
+      "source_documents": [
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98479.json",
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/ce42a6ad0e675e4f591bda409d349b6788b6176e/cves/2026/98xxx/CVE-2026-98479.json"
+      ],
+      "current_cna_sha256": "cfdbe649921e00579e3689f5b57272f5491a18446d46852d2a927b2ecb688a04",
+      "prior_cna_sha256": "cfdbe649921e00579e3689f5b57272f5491a18446d46852d2a927b2ecb688a04",
+      "program_files": [
+        "drivers/scsi/libiscsi_tcp.c"
+      ],
+      "independent_conclusion": "Conditional image-payload rationale unchanged: affected kernel implementation absent from the exact verified exported-header payload; no host-kernel clearance."
+    },
+    {
+      "id": "CVE-2026-98487",
+      "component": "headers",
+      "packages": [
+        "linux-libc-dev@6.8.0-147.147"
+      ],
+      "previous_advisory_sha256": "3bce8bad5517f72d7d5c4913b7e7c9725388d60166a9e340cf43aa7c70ec2a99",
+      "current_advisory_sha256": "e3cfc9ab229a2dd6cb445f35ce6b51315eef2e613352f6f81b9a4ce03a4f3c1d",
+      "rule_id": "kernel_code_absent_from_header_payload",
+      "changes": [
+        {
+          "path": "/VendorSeverity/amazon",
+          "before_present": false,
+          "after": 3
+        }
+      ],
+      "previous_vendor_severity": {
+        "photon": 3,
+        "redhat": 2,
+        "ubuntu": 3
+      },
+      "current_vendor_severity": {
+        "amazon": 3,
+        "photon": 3,
+        "redhat": 2,
+        "ubuntu": 3
+      },
+      "all_other_advisory_fields_typed_equal": true,
+      "unchanged_advisory_projection_sha256": "627d4112edb43896b3565da7e6d9afc74c553b4a37c25e5b32d2d6d59e5f02a9",
+      "unchanged_applicability_basis": "Reentrant kernel group deletion invalidates a pointer-to-pointer iterator; RTM_GETMDB later exposes the state, but netlink is only a trigger.",
+      "source_documents": [
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98487.json",
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/ce42a6ad0e675e4f591bda409d349b6788b6176e/cves/2026/98xxx/CVE-2026-98487.json"
+      ],
+      "current_cna_sha256": "49236d4814f711de8c836969e1b22df184665445f3a68aac580efe6328f48594",
+      "prior_cna_sha256": "49236d4814f711de8c836969e1b22df184665445f3a68aac580efe6328f48594",
+      "program_files": [
+        "net/bridge/br_mdb.c"
+      ],
+      "independent_conclusion": "Conditional image-payload rationale unchanged: affected kernel implementation absent from the exact verified exported-header payload; no host-kernel clearance."
+    },
+    {
+      "id": "CVE-2026-98490",
+      "component": "headers",
+      "packages": [
+        "linux-libc-dev@6.8.0-147.147"
+      ],
+      "previous_advisory_sha256": "7a0d53bf9911a0c0f0800d6352921c042dcea2d5dcef2ee00897c2ed8a69da17",
+      "current_advisory_sha256": "98dd08327fed07454320c3b46ed37342e117738c2fe99de793a32121d3bf0663",
+      "rule_id": "kernel_code_absent_from_header_payload",
+      "changes": [
+        {
+          "path": "/VendorSeverity/amazon",
+          "before_present": false,
+          "after": 3
+        }
+      ],
+      "previous_vendor_severity": {
+        "photon": 4,
+        "redhat": 3,
+        "ubuntu": 3
+      },
+      "current_vendor_severity": {
+        "amazon": 3,
+        "photon": 4,
+        "redhat": 3,
+        "ubuntu": 3
+      },
+      "all_other_advisory_fields_typed_equal": true,
+      "unchanged_advisory_projection_sha256": "d9a7097990da1802c0804b358549810360256cc12ed30fa7be9da2c73bf5970d",
+      "unchanged_applicability_basis": "Open vSwitch has userspace components, but this description identifies kernel conntrack expectation pointers invalidated by extension reallocation. It supplies no evidence that the userspace datapath shares this faulty implementation.",
+      "source_documents": [
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98490.json",
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/ce42a6ad0e675e4f591bda409d349b6788b6176e/cves/2026/98xxx/CVE-2026-98490.json"
+      ],
+      "current_cna_sha256": "2c5e8f0fa45f97c49ffce068c5a8b7e66d20c044ab141d7cec3a909cd17ff5cc",
+      "prior_cna_sha256": "2c5e8f0fa45f97c49ffce068c5a8b7e66d20c044ab141d7cec3a909cd17ff5cc",
+      "program_files": [
+        "net/openvswitch/conntrack.c"
+      ],
+      "independent_conclusion": "Conditional image-payload rationale unchanged: affected kernel implementation absent from the exact verified exported-header payload; no host-kernel clearance."
+    },
+    {
+      "id": "CVE-2026-98491",
+      "component": "headers",
+      "packages": [
+        "linux-libc-dev@6.8.0-147.147"
+      ],
+      "previous_advisory_sha256": "a228c4a42ebb3b31b21b4067881eda5a57e27db1b428e6b18a6e71a58c12d894",
+      "current_advisory_sha256": "3a2fc503523e681d6a81bfbc491603c6e92cbc910d9df797b45f272ebf8c4036",
+      "rule_id": "kernel_code_absent_from_header_payload",
+      "changes": [
+        {
+          "path": "/VendorSeverity/amazon",
+          "before_present": false,
+          "after": 3
+        }
+      ],
+      "previous_vendor_severity": {
+        "photon": 3,
+        "redhat": 2,
+        "ubuntu": 3
+      },
+      "current_vendor_severity": {
+        "amazon": 3,
+        "photon": 3,
+        "redhat": 2,
+        "ubuntu": 3
+      },
+      "all_other_advisory_fields_typed_equal": true,
+      "unchanged_advisory_projection_sha256": "fc754218e189b69b91457d5d70993fb5f0ac64cb239e31047f3807e2a2014acd",
+      "unchanged_applicability_basis": "Adding extensions to the shared kernel conntrack entry invalidates expectation-list pointers. Resetting the shared entry during commit repairs packet-path ownership; shared here means packet clones, not shared userspace code.",
+      "source_documents": [
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98491.json",
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/ce42a6ad0e675e4f591bda409d349b6788b6176e/cves/2026/98xxx/CVE-2026-98491.json"
+      ],
+      "current_cna_sha256": "edd0c500e97dc94979aafb38320316c1e93251eced31433e6af30033aae60b89",
+      "prior_cna_sha256": "edd0c500e97dc94979aafb38320316c1e93251eced31433e6af30033aae60b89",
+      "program_files": [
+        "include/net/netfilter/nf_conntrack.h",
+        "net/openvswitch/conntrack.c"
+      ],
+      "independent_conclusion": "Conditional image-payload rationale unchanged: affected kernel implementation absent from the exact verified exported-header payload; no host-kernel clearance."
+    },
+    {
+      "id": "CVE-2026-98503",
+      "component": "headers",
+      "packages": [
+        "linux-libc-dev@6.8.0-147.147"
+      ],
+      "previous_advisory_sha256": "3c91e98ebbfd5c519d76fd4f95ec972fb9ac0dadffa9ead9eaeb4eed1425a1a8",
+      "current_advisory_sha256": "0bcc799c422ad879cc5b93830930c3a47a12c7bfb65bdd9c2addc1480c97e164",
+      "rule_id": "kernel_code_absent_from_header_payload",
+      "changes": [
+        {
+          "path": "/VendorSeverity/amazon",
+          "before_present": false,
+          "after": 3
+        }
+      ],
+      "previous_vendor_severity": {
+        "photon": 3,
+        "redhat": 2,
+        "ubuntu": 3
+      },
+      "current_vendor_severity": {
+        "amazon": 3,
+        "photon": 3,
+        "redhat": 2,
+        "ubuntu": 3
+      },
+      "all_other_advisory_fields_typed_equal": true,
+      "unchanged_advisory_projection_sha256": "83aa9a700608461b193aefe38eafadd93d7306a94e2b40605813fe7f17645425",
+      "unchanged_applicability_basis": "Kernel skb destruction can precede payload release, so shared ring slots need separate completion ownership; shared data with userspace is not shared implementation code.",
+      "source_documents": [
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98503.json",
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/ce42a6ad0e675e4f591bda409d349b6788b6176e/cves/2026/98xxx/CVE-2026-98503.json"
+      ],
+      "current_cna_sha256": "abe3dac544f364a0c527993d1ced17e2d3718e58b80bb88cbc3704a4ff7207c7",
+      "prior_cna_sha256": "abe3dac544f364a0c527993d1ced17e2d3718e58b80bb88cbc3704a4ff7207c7",
+      "program_files": [
+        "include/linux/skbuff.h",
+        "net/packet/af_packet.c"
+      ],
+      "independent_conclusion": "Conditional image-payload rationale unchanged: affected kernel implementation absent from the exact verified exported-header payload; no host-kernel clearance."
+    },
+    {
+      "id": "CVE-2026-98532",
+      "component": "headers",
+      "packages": [
+        "linux-libc-dev@6.8.0-147.147"
+      ],
+      "previous_advisory_sha256": "a6339c6b503c3e8f8ff88d90ba691c72fa9a746466c40d112b1842b1ae09a991",
+      "current_advisory_sha256": "5b16d676494585824de963636241daded83686f5a78dabd1d31503725eeee094",
+      "rule_id": "kernel_code_absent_from_header_payload",
+      "changes": [
+        {
+          "path": "/VendorSeverity/amazon",
+          "before_present": false,
+          "after": 3
+        }
+      ],
+      "previous_vendor_severity": {
+        "photon": 3,
+        "redhat": 3,
+        "ubuntu": 3
+      },
+      "current_vendor_severity": {
+        "amazon": 3,
+        "photon": 3,
+        "redhat": 3,
+        "ubuntu": 3
+      },
+      "all_other_advisory_fields_typed_equal": true,
+      "unchanged_advisory_projection_sha256": "d8630e4f3b4f963918740a32c866a33315ebb1919f3f1e201f2911fe819ff15c",
+      "unchanged_applicability_basis": "The common helper operates on an skb and feeds kernel Open vSwitch checksum updates. Reuse by other kernel callers is not itself evidence of a shared userspace implementation.",
+      "source_documents": [
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98532.json",
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/ce42a6ad0e675e4f591bda409d349b6788b6176e/cves/2026/98xxx/CVE-2026-98532.json"
+      ],
+      "current_cna_sha256": "27a24970158c871b4460390a80a29b4ec4ae046bee757135d3e739a755d51874",
+      "prior_cna_sha256": "27a24970158c871b4460390a80a29b4ec4ae046bee757135d3e739a755d51874",
+      "program_files": [
+        "net/ipv6/exthdrs_core.c"
+      ],
+      "independent_conclusion": "Conditional image-payload rationale unchanged: affected kernel implementation absent from the exact verified exported-header payload; no host-kernel clearance."
+    },
+    {
+      "id": "CVE-2026-98548",
+      "component": "headers",
+      "packages": [
+        "linux-libc-dev@6.8.0-147.147"
+      ],
+      "previous_advisory_sha256": "2965f32a2c90645ef5ff87cb5648820b4e7ff9eedf6d82618305f7ae88ea6ab5",
+      "current_advisory_sha256": "997f0cfe9a739f48b5b6e2173ca5aa7f16bf570c330310689d447fff8dd59124",
+      "rule_id": "kernel_code_absent_from_header_payload",
+      "changes": [
+        {
+          "path": "/VendorSeverity/amazon",
+          "before_present": false,
+          "after": 3
+        }
+      ],
+      "previous_vendor_severity": {
+        "photon": 4,
+        "redhat": 3,
+        "ubuntu": 3
+      },
+      "current_vendor_severity": {
+        "amazon": 3,
+        "photon": 4,
+        "redhat": 3,
+        "ubuntu": 3
+      },
+      "all_other_advisory_fields_typed_equal": true,
+      "unchanged_advisory_projection_sha256": "8ee1810ced09631276917a6f16fd332c3a74407f55776f1f92d20525f353cefe",
+      "unchanged_applicability_basis": "Later chunks reuse a transport removed earlier in kernel packet processing, leaving association state with a dangling pointer. Discarding the remainder repairs protocol-object lifetime; no userspace parser or header implementation is identified.",
+      "source_documents": [
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98548.json",
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/ce42a6ad0e675e4f591bda409d349b6788b6176e/cves/2026/98xxx/CVE-2026-98548.json"
+      ],
+      "current_cna_sha256": "835bf90471160bfbc07be0e21795008c8aded0b76caf89ca153a929cdd05ba63",
+      "prior_cna_sha256": "835bf90471160bfbc07be0e21795008c8aded0b76caf89ca153a929cdd05ba63",
+      "program_files": [
+        "net/sctp/sm_statefuns.c"
+      ],
+      "independent_conclusion": "Conditional image-payload rationale unchanged: affected kernel implementation absent from the exact verified exported-header payload; no host-kernel clearance."
+    },
+    {
+      "id": "CVE-2026-98567",
+      "component": "headers",
+      "packages": [
+        "linux-libc-dev@6.8.0-147.147"
+      ],
+      "previous_advisory_sha256": "d37dbe7e4bcb49244a7c6ba16bcd922fbb960368c1fe02c425e11340afe19080",
+      "current_advisory_sha256": "0e4fb5e381af524fedf6da4b301a09686a2792779a4dc6b7591654ebcecd4402",
+      "rule_id": "kernel_code_absent_from_header_payload",
+      "changes": [
+        {
+          "path": "/VendorSeverity/amazon",
+          "before_present": false,
+          "after": 3
+        }
+      ],
+      "previous_vendor_severity": {
+        "photon": 3,
+        "redhat": 2,
+        "ubuntu": 3
+      },
+      "current_vendor_severity": {
+        "amazon": 3,
+        "photon": 3,
+        "redhat": 2,
+        "ubuntu": 3
+      },
+      "all_other_advisory_fields_typed_equal": true,
+      "unchanged_advisory_projection_sha256": "726c457e0aaf10d1e553b9f2081d75ee93b3e7264dd0665a3764d64cd411e03c",
+      "unchanged_applicability_basis": "The out-of-range write targets a kernel queue map after device traffic-class reconfiguration. A sysfs write is the trigger, not a userspace implementation of the mapping allocator.",
+      "source_documents": [
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98567.json",
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/ce42a6ad0e675e4f591bda409d349b6788b6176e/cves/2026/98xxx/CVE-2026-98567.json"
+      ],
+      "current_cna_sha256": "8ecafc49d5dae8d86579bb2e9d18144dac853ad51e40283f1ea789fcf2633c16",
+      "prior_cna_sha256": "8ecafc49d5dae8d86579bb2e9d18144dac853ad51e40283f1ea789fcf2633c16",
+      "program_files": [
+        "net/core/dev.c"
+      ],
+      "independent_conclusion": "Conditional image-payload rationale unchanged: affected kernel implementation absent from the exact verified exported-header payload; no host-kernel clearance."
+    },
+    {
+      "id": "CVE-2026-98568",
+      "component": "headers",
+      "packages": [
+        "linux-libc-dev@6.8.0-147.147"
+      ],
+      "previous_advisory_sha256": "b30881b34978132f5324c82ec8af5210d6dcf07bdcdf629d6c7652f1efb46aa3",
+      "current_advisory_sha256": "f073cfe9447b61569fca129f13e9c8923e489c3ad0547b2bb534c54c3f6a039b",
+      "rule_id": "kernel_code_absent_from_header_payload",
+      "changes": [
+        {
+          "path": "/VendorSeverity/amazon",
+          "before_present": false,
+          "after": 3
+        }
+      ],
+      "previous_vendor_severity": {
+        "photon": 3,
+        "redhat": 2,
+        "ubuntu": 3
+      },
+      "current_vendor_severity": {
+        "amazon": 3,
+        "photon": 3,
+        "redhat": 2,
+        "ubuntu": 3
+      },
+      "all_other_advisory_fields_typed_equal": true,
+      "unchanged_advisory_projection_sha256": "c8f39f45ccf7f4f1b117102770446632446b1b8f2d4acf4790e04974daca56e8",
+      "unchanged_applicability_basis": "A concurrent link change alters required headroom between allocation and reservation. The kernel driver then writes outside its packet allocation; taking one snapshot is runtime synchronization, not an Ethernet-header definition change.",
+      "source_documents": [
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98568.json",
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/ce42a6ad0e675e4f591bda409d349b6788b6176e/cves/2026/98xxx/CVE-2026-98568.json"
+      ],
+      "current_cna_sha256": "8488cd395765a27abe13f218ca1b52be351df5b77dbd4e4311a7caa23cf58003",
+      "prior_cna_sha256": "8488cd395765a27abe13f218ca1b52be351df5b77dbd4e4311a7caa23cf58003",
+      "program_files": [
+        "drivers/net/vxlan/vxlan_core.c"
+      ],
+      "independent_conclusion": "Conditional image-payload rationale unchanged: affected kernel implementation absent from the exact verified exported-header payload; no host-kernel clearance."
+    },
+    {
+      "id": "CVE-2026-98573",
+      "component": "headers",
+      "packages": [
+        "linux-libc-dev@6.8.0-147.147"
+      ],
+      "previous_advisory_sha256": "2903377e110d8d4aaad880ea7fc1afc6291edbe58639ea640bc8569ca86942b6",
+      "current_advisory_sha256": "5854510058fcca2bd4f2f3835b523792da8ecd05f28fe516d3c13539065abd6c",
+      "rule_id": "kernel_code_absent_from_header_payload",
+      "changes": [
+        {
+          "path": "/VendorSeverity/amazon",
+          "before_present": false,
+          "after": 3
+        }
+      ],
+      "previous_vendor_severity": {
+        "photon": 3,
+        "redhat": 3,
+        "ubuntu": 3
+      },
+      "current_vendor_severity": {
+        "amazon": 3,
+        "photon": 3,
+        "redhat": 3,
+        "ubuntu": 3
+      },
+      "all_other_advisory_fields_typed_equal": true,
+      "unchanged_advisory_projection_sha256": "f8ce6a42bba2e37dcc0355996f5dbc17d52a84d8e145ff02f01c2c19a840bb0a",
+      "unchanged_applicability_basis": "Unsigned subtraction creates an invalid copy length in kernel skb helpers. Packet extension headers are parsed data; the affected implementation is kernel buffer management, not exported networking headers.",
+      "source_documents": [
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98573.json",
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/ce42a6ad0e675e4f591bda409d349b6788b6176e/cves/2026/98xxx/CVE-2026-98573.json"
+      ],
+      "current_cna_sha256": "2c81f3b88ddfec794d8c0593e70855ef75784709e65ba4eecb08c0946b2ae56b",
+      "prior_cna_sha256": "2c81f3b88ddfec794d8c0593e70855ef75784709e65ba4eecb08c0946b2ae56b",
+      "program_files": [
+        "net/core/skbuff.c"
+      ],
+      "independent_conclusion": "Conditional image-payload rationale unchanged: affected kernel implementation absent from the exact verified exported-header payload; no host-kernel clearance."
+    },
+    {
+      "id": "CVE-2026-98586",
+      "component": "headers",
+      "packages": [
+        "linux-libc-dev@6.8.0-147.147"
+      ],
+      "previous_advisory_sha256": "dc6445f7a2c72c73fc1c483d24ceb5354c22f5c48ecead7fd2c0086be8eef4df",
+      "current_advisory_sha256": "dcdd1282f09bd140b27fb143d79feffd749e80cff5573876c26d0f46b809975f",
+      "rule_id": "kernel_code_absent_from_header_payload",
+      "changes": [
+        {
+          "path": "/VendorSeverity/amazon",
+          "before_present": false,
+          "after": 3
+        }
+      ],
+      "previous_vendor_severity": {
+        "photon": 2,
+        "redhat": 2,
+        "ubuntu": 3
+      },
+      "current_vendor_severity": {
+        "amazon": 3,
+        "photon": 2,
+        "redhat": 2,
+        "ubuntu": 3
+      },
+      "all_other_advisory_fields_typed_equal": true,
+      "unchanged_advisory_projection_sha256": "181add6fe0a6c6a28a9f3abadcbae2b3120e29345beeb07b2c7b2155321ef643",
+      "unchanged_applicability_basis": "The reference underflow arises when kernel timer cleanup races with handlers using transport/association objects. This lifetime ordering is not implemented by exported SCTP constants.",
+      "source_documents": [
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98586.json",
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/ce42a6ad0e675e4f591bda409d349b6788b6176e/cves/2026/98xxx/CVE-2026-98586.json"
+      ],
+      "current_cna_sha256": "51b3b3f35ab228ff272b70fe2c09bbe1ca1b335039047a076b578631891e8ea2",
+      "prior_cna_sha256": "51b3b3f35ab228ff272b70fe2c09bbe1ca1b335039047a076b578631891e8ea2",
+      "program_files": [
+        "net/sctp/input.c",
+        "net/sctp/sm_sideeffect.c"
+      ],
+      "independent_conclusion": "Conditional image-payload rationale unchanged: affected kernel implementation absent from the exact verified exported-header payload; no host-kernel clearance."
+    },
+    {
+      "id": "CVE-2026-98588",
+      "component": "headers",
+      "packages": [
+        "linux-libc-dev@6.8.0-147.147"
+      ],
+      "previous_advisory_sha256": "18180d6bfd2da221e15a292b064e326dfacbc233c29bed72f9056e3c5eed2967",
+      "current_advisory_sha256": "a317b87921fe9d05c70924418301ce53d706abdf649fb1fafbf9197edb7e5009",
+      "rule_id": "kernel_code_absent_from_header_payload",
+      "changes": [
+        {
+          "path": "/VendorSeverity/amazon",
+          "before_present": false,
+          "after": 3
+        }
+      ],
+      "previous_vendor_severity": {
+        "photon": 3,
+        "redhat": 2,
+        "ubuntu": 3
+      },
+      "current_vendor_severity": {
+        "amazon": 3,
+        "photon": 3,
+        "redhat": 2,
+        "ubuntu": 3
+      },
+      "all_other_advisory_fields_typed_equal": true,
+      "unchanged_advisory_projection_sha256": "b999f59a1b49eca9cbb4b0cfb8f0249ab8c9a071338de69db142fcbc654dbcec",
+      "unchanged_applicability_basis": "The allocation accepts a size the kernel destructor's signed index cannot represent. Restricting map creation prevents invalid kernel writes; BPF syscalls are inputs, not evidence that userspace headers execute the faulty loop.",
+      "source_documents": [
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98588.json",
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/ce42a6ad0e675e4f591bda409d349b6788b6176e/cves/2026/98xxx/CVE-2026-98588.json"
+      ],
+      "current_cna_sha256": "58da44f54113ae7d7266b43b0ab1b8148526dd2b494287255ae67ae31d6ace6d",
+      "prior_cna_sha256": "58da44f54113ae7d7266b43b0ab1b8148526dd2b494287255ae67ae31d6ace6d",
+      "program_files": [
+        "net/core/sock_map.c"
+      ],
+      "independent_conclusion": "Conditional image-payload rationale unchanged: affected kernel implementation absent from the exact verified exported-header payload; no host-kernel clearance."
+    },
+    {
+      "id": "CVE-2026-98590",
+      "component": "headers",
+      "packages": [
+        "linux-libc-dev@6.8.0-147.147"
+      ],
+      "previous_advisory_sha256": "21bfeb4e4260ec1103cb9c2ca442c22eb874e58f6501a831444cf077166caff9",
+      "current_advisory_sha256": "e29216e245f27fd19a2ab5607e6bc408ef1757b34fbf96c6d61e7b55974ccdcf",
+      "rule_id": "kernel_code_absent_from_header_payload",
+      "changes": [
+        {
+          "path": "/VendorSeverity/amazon",
+          "before_present": false,
+          "after": 3
+        }
+      ],
+      "previous_vendor_severity": {
+        "photon": 1,
+        "redhat": 2,
+        "ubuntu": 3
+      },
+      "current_vendor_severity": {
+        "amazon": 3,
+        "photon": 1,
+        "redhat": 2,
+        "ubuntu": 3
+      },
+      "all_other_advisory_fields_typed_equal": true,
+      "unchanged_advisory_projection_sha256": "76f038760adb07481820e329f2a3a49e005144d2a3769b068027ee2979d6519f",
+      "unchanged_applicability_basis": "The faulty runtime-generated access returns bits that contradict kernel verifier state. It is kernel BPF code generation, not a compiler or userspace-header build change.",
+      "source_documents": [
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98590.json",
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/ce42a6ad0e675e4f591bda409d349b6788b6176e/cves/2026/98xxx/CVE-2026-98590.json"
+      ],
+      "current_cna_sha256": "0a09e7335191abdc1221fbdd875591cfe4967f0065481417d0f529bc26686dcf",
+      "prior_cna_sha256": "0a09e7335191abdc1221fbdd875591cfe4967f0065481417d0f529bc26686dcf",
+      "program_files": [
+        "net/core/filter.c"
+      ],
+      "independent_conclusion": "Conditional image-payload rationale unchanged: affected kernel implementation absent from the exact verified exported-header payload; no host-kernel clearance."
+    },
+    {
+      "id": "CVE-2026-98591",
+      "component": "headers",
+      "packages": [
+        "linux-libc-dev@6.8.0-147.147"
+      ],
+      "previous_advisory_sha256": "20b3b9726333214cd9b4866a491dc096928e447b8c693dfcfcd068fc585a785b",
+      "current_advisory_sha256": "d2bd71470958c8d6d2a0dad2fc18f457b086e55e926f682cd902739f2139ef7b",
+      "rule_id": "kernel_code_absent_from_header_payload",
+      "changes": [
+        {
+          "path": "/VendorSeverity/amazon",
+          "before_present": false,
+          "after": 3
+        }
+      ],
+      "previous_vendor_severity": {
+        "photon": 3,
+        "redhat": 2,
+        "ubuntu": 3
+      },
+      "current_vendor_severity": {
+        "amazon": 3,
+        "photon": 3,
+        "redhat": 2,
+        "ubuntu": 3
+      },
+      "all_other_advisory_fields_typed_equal": true,
+      "unchanged_advisory_projection_sha256": "47faaa2b91495ce72cd7ccc510d4a8f9b0035ba2f2c3a7ac969549189087b19c",
+      "unchanged_applicability_basis": "The description explicitly identifies skb-backed BPF dynptr code as the only current consumer. Although the helper is in a header, its arithmetic governs kernel packet pointers and no userspace/shared consumer is identified.",
+      "source_documents": [
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98591.json",
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/ce42a6ad0e675e4f591bda409d349b6788b6176e/cves/2026/98xxx/CVE-2026-98591.json"
+      ],
+      "current_cna_sha256": "cb7358ba0c9bc5c287990a8860e4038fc078904e06133a0183bc30441fc81abe",
+      "prior_cna_sha256": "cb7358ba0c9bc5c287990a8860e4038fc078904e06133a0183bc30441fc81abe",
+      "program_files": [
+        "include/linux/skbuff.h"
+      ],
+      "independent_conclusion": "Conditional image-payload rationale unchanged: affected kernel implementation absent from the exact verified exported-header payload; no host-kernel clearance."
+    },
+    {
+      "id": "CVE-2026-98606",
+      "component": "headers",
+      "packages": [
+        "linux-libc-dev@6.8.0-147.147"
+      ],
+      "previous_advisory_sha256": "454f9cd65ad295d04a4764a12664ff100d4b47cb3781a29474923e14a2e014f6",
+      "current_advisory_sha256": "069f8101df211c5e903c8089adfb75007258d6b75a4eabb6c5adaa6d4694d4ba",
+      "rule_id": "kernel_code_absent_from_header_payload",
+      "changes": [
+        {
+          "path": "/VendorSeverity/amazon",
+          "before_present": false,
+          "after": 3
+        }
+      ],
+      "previous_vendor_severity": {
+        "photon": 3,
+        "redhat": 2,
+        "ubuntu": 3
+      },
+      "current_vendor_severity": {
+        "amazon": 3,
+        "photon": 3,
+        "redhat": 2,
+        "ubuntu": 3
+      },
+      "all_other_advisory_fields_typed_equal": true,
+      "unchanged_advisory_projection_sha256": "2059f6ca99ec1797ada3a0683000dfbfd289222eee798fd8bd7a2d537a498174",
+      "unchanged_applicability_basis": "The freed object remains in the kernel DRM VMA interval tree and leaves synchronization resources alive. Device initialization failure triggers kernel object cleanup, not userspace graphics-library execution.",
+      "source_documents": [
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98606.json",
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/ce42a6ad0e675e4f591bda409d349b6788b6176e/cves/2026/98xxx/CVE-2026-98606.json"
+      ],
+      "current_cna_sha256": "71e0ab92b271ff3e1c493cd1685b9cadc9296bfdfda3c64492f1d05821e53ee1",
+      "prior_cna_sha256": "71e0ab92b271ff3e1c493cd1685b9cadc9296bfdfda3c64492f1d05821e53ee1",
+      "program_files": [
+        "drivers/gpu/drm/virtio/virtgpu_vram.c"
+      ],
+      "independent_conclusion": "Conditional image-payload rationale unchanged: affected kernel implementation absent from the exact verified exported-header payload; no host-kernel clearance."
+    },
+    {
+      "id": "CVE-2026-98621",
+      "component": "headers",
+      "packages": [
+        "linux-libc-dev@6.8.0-147.147"
+      ],
+      "previous_advisory_sha256": "1dd0f2c2b3dca39a6a5e7fb71c5d705cd7565ee5f7d12a461845d207bb5547ec",
+      "current_advisory_sha256": "963daf07f19af4ea935ee59102cc769f31ed4f5ff96c2d429a908d49df200ff3",
+      "rule_id": "kernel_code_absent_from_header_payload",
+      "changes": [
+        {
+          "path": "/VendorSeverity/amazon",
+          "before_present": false,
+          "after": 3
+        }
+      ],
+      "previous_vendor_severity": {
+        "photon": 3,
+        "redhat": 3,
+        "ubuntu": 4
+      },
+      "current_vendor_severity": {
+        "amazon": 3,
+        "photon": 3,
+        "redhat": 3,
+        "ubuntu": 4
+      },
+      "all_other_advisory_fields_typed_equal": true,
+      "unchanged_advisory_projection_sha256": "5d0e33ebd3520778f97c95602dbbe6309b4b94c9a3f6e98af3c468276e7b4ce8",
+      "unchanged_applicability_basis": "The offset underflow propagates into kernel skb checksum metadata and a network-driver copy. The described header helper has explicit kernel packet-processing consumers; the REMCSUM packet option is not itself an exported C header.",
+      "source_documents": [
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98621.json",
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/ce42a6ad0e675e4f591bda409d349b6788b6176e/cves/2026/98xxx/CVE-2026-98621.json"
+      ],
+      "current_cna_sha256": "8e26433425d7451a687097685b004fde709186eed3f84787df62511d99634590",
+      "prior_cna_sha256": "8e26433425d7451a687097685b004fde709186eed3f84787df62511d99634590",
+      "program_files": [
+        "include/net/gue.h"
+      ],
+      "independent_conclusion": "Conditional image-payload rationale unchanged: affected kernel implementation absent from the exact verified exported-header payload; no host-kernel clearance."
+    },
+    {
+      "id": "CVE-2026-98624",
+      "component": "headers",
+      "packages": [
+        "linux-libc-dev@6.8.0-147.147"
+      ],
+      "previous_advisory_sha256": "83d06fc0b3ceb42a2b288673d7ed888dbb351b5b68d33781593a896f7c447c9d",
+      "current_advisory_sha256": "f50aa9f319cab67b3e35e0e3e046d00f89be14a3f1f3e781250f1f924420c7f9",
+      "rule_id": "kernel_code_absent_from_header_payload",
+      "changes": [
+        {
+          "path": "/VendorSeverity/amazon",
+          "before_present": false,
+          "after": 3
+        }
+      ],
+      "previous_vendor_severity": {
+        "photon": 2,
+        "redhat": 2,
+        "ubuntu": 3
+      },
+      "current_vendor_severity": {
+        "amazon": 3,
+        "photon": 2,
+        "redhat": 2,
+        "ubuntu": 3
+      },
+      "all_other_advisory_fields_typed_equal": true,
+      "unchanged_advisory_projection_sha256": "23555eb9413cc6f1fcdd70cb7151055d90586938aacd8276f2c3a594eb4331bf",
+      "unchanged_applicability_basis": "Concurrent kernel notification and configuration handlers can destroy an unrefcounted instance; socket close and UNBIND are triggers only.",
+      "source_documents": [
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98624.json",
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/ce42a6ad0e675e4f591bda409d349b6788b6176e/cves/2026/98xxx/CVE-2026-98624.json"
+      ],
+      "current_cna_sha256": "3a14649e3707e5633f72d397d3e03914a88539695470b7514457d7e2567551cd",
+      "prior_cna_sha256": "3a14649e3707e5633f72d397d3e03914a88539695470b7514457d7e2567551cd",
+      "program_files": [
+        "net/netfilter/nfnetlink_queue.c"
+      ],
+      "independent_conclusion": "Conditional image-payload rationale unchanged: affected kernel implementation absent from the exact verified exported-header payload; no host-kernel clearance."
+    },
+    {
+      "id": "CVE-2026-98625",
+      "component": "headers",
+      "packages": [
+        "linux-libc-dev@6.8.0-147.147"
+      ],
+      "previous_advisory_sha256": "1b199e7f603df97c99f4a22ce5367a29073e25b5696b3224b08a8505fbafac0c",
+      "current_advisory_sha256": "b5f478e62a2c20e61460315e9d18b284e2f2013a70f307a4a0032808d40fcd97",
+      "rule_id": "kernel_code_absent_from_header_payload",
+      "changes": [
+        {
+          "path": "/VendorSeverity/amazon",
+          "before_present": false,
+          "after": 3
+        }
+      ],
+      "previous_vendor_severity": {
+        "photon": 3,
+        "redhat": 2,
+        "ubuntu": 3
+      },
+      "current_vendor_severity": {
+        "amazon": 3,
+        "photon": 3,
+        "redhat": 2,
+        "ubuntu": 3
+      },
+      "all_other_advisory_fields_typed_equal": true,
+      "unchanged_advisory_projection_sha256": "c5d58a25a4343fbcf9f814070ba54af7eeb1e2c315447e10700cd80bd282dd9f",
+      "unchanged_applicability_basis": "The worker and garbage collector race over a kernel flow whose RCU reclamation becomes permitted too early. Status bits here synchronize runtime lifetime rather than define exported behavior.",
+      "source_documents": [
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98625.json",
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/ce42a6ad0e675e4f591bda409d349b6788b6176e/cves/2026/98xxx/CVE-2026-98625.json"
+      ],
+      "current_cna_sha256": "84edcab357ae72db9bf00e7212083fd4892d4274453689fccf18800a774eb302",
+      "prior_cna_sha256": "84edcab357ae72db9bf00e7212083fd4892d4274453689fccf18800a774eb302",
+      "program_files": [
+        "net/netfilter/nf_flow_table_offload.c"
+      ],
+      "independent_conclusion": "Conditional image-payload rationale unchanged: affected kernel implementation absent from the exact verified exported-header payload; no host-kernel clearance."
+    },
+    {
+      "id": "CVE-2026-98626",
+      "component": "headers",
+      "packages": [
+        "linux-libc-dev@6.8.0-147.147"
+      ],
+      "previous_advisory_sha256": "1ec1cf46d2928535aafcdef989b8fd75cf61fd5ba6b6fa8d4a4f20edb1c4ae5e",
+      "current_advisory_sha256": "c24847de6219fc5c1a7b4e888d1af864706ad8ebaafdf028ed15e6e91f9fc38a",
+      "rule_id": "headers_with_separately_repaired_libbpf",
+      "changes": [
+        {
+          "path": "/VendorSeverity/amazon",
+          "before_present": false,
+          "after": 3
+        }
+      ],
+      "previous_vendor_severity": {
+        "photon": 2,
+        "redhat": 2,
+        "ubuntu": 3
+      },
+      "current_vendor_severity": {
+        "amazon": 3,
+        "photon": 2,
+        "redhat": 2,
+        "ubuntu": 3
+      },
+      "all_other_advisory_fields_typed_equal": true,
+      "unchanged_advisory_projection_sha256": "9cf1922d081fae0d6c9eb8626cacfa9f0099f3a1f398d8fc7956f140061e58ed",
+      "unchanged_applicability_basis": "Shared userspace libbpf and in-kernel CO-RE code. An affected libbpf1 package is present in the old image, so no current-image clearance is possible.",
+      "source_documents": [
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98626.json",
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/ce42a6ad0e675e4f591bda409d349b6788b6176e/cves/2026/98xxx/CVE-2026-98626.json"
+      ],
+      "current_cna_sha256": "7daf57c5435c67cb906295f37508a6eb0b8904a0e8aa62a9034b614f8540ae26",
+      "prior_cna_sha256": "7daf57c5435c67cb906295f37508a6eb0b8904a0e8aa62a9034b614f8540ae26",
+      "program_files": [
+        "tools/lib/bpf/relo_core.c"
+      ],
+      "independent_conclusion": "Conditional rationale unchanged only with independently required installed libbpf backport and ABI/source evidence; not a headers-only exclusion."
+    },
+    {
+      "id": "CVE-2026-98634",
+      "component": "headers",
+      "packages": [
+        "linux-libc-dev@6.8.0-147.147"
+      ],
+      "previous_advisory_sha256": "afae57e89fc9d617d29c4a0d11c2de97288106708b84689182b89d79af3d6a6f",
+      "current_advisory_sha256": "32e179d68cf231bc588a75d2dca1ea79ed5957ac73fbd6712d4ed8c65cf97b0f",
+      "rule_id": "kernel_code_absent_from_header_payload",
+      "changes": [
+        {
+          "path": "/VendorSeverity/amazon",
+          "before_present": false,
+          "after": 3
+        }
+      ],
+      "previous_vendor_severity": {
+        "photon": 2,
+        "redhat": 2,
+        "ubuntu": 3
+      },
+      "current_vendor_severity": {
+        "amazon": 3,
+        "photon": 2,
+        "redhat": 2,
+        "ubuntu": 3
+      },
+      "all_other_advisory_fields_typed_equal": true,
+      "unchanged_advisory_projection_sha256": "06dbbb394926b6b8c1252ffaa5b932e09232ec9c512634c49afc280bda7e5cdd",
+      "unchanged_applicability_basis": "Kernel scan bookkeeping truncates or overflows device-reported zone counts; the zone data is an input rather than executable exported-header logic.",
+      "source_documents": [
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98634.json",
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/ce42a6ad0e675e4f591bda409d349b6788b6176e/cves/2026/98xxx/CVE-2026-98634.json"
+      ],
+      "current_cna_sha256": "3e6731114b46c4020f3868f8d370a93f3b6ee7b57853b3bdaae5a2dcd41bafcb",
+      "prior_cna_sha256": "3e6731114b46c4020f3868f8d370a93f3b6ee7b57853b3bdaae5a2dcd41bafcb",
+      "program_files": [
+        "drivers/scsi/sd_zbc.c"
+      ],
+      "independent_conclusion": "Conditional image-payload rationale unchanged: affected kernel implementation absent from the exact verified exported-header payload; no host-kernel clearance."
+    },
+    {
+      "id": "CVE-2026-98642",
+      "component": "headers",
+      "packages": [
+        "linux-libc-dev@6.8.0-147.147"
+      ],
+      "previous_advisory_sha256": "5759927284da99b5980d6de61fa4cb63f67611a554f287fcd8192a27dbc9417a",
+      "current_advisory_sha256": "ccb37edcbf2e3816482135fe45c55bbb41b47eb417701eba165585aa87a3c3e5",
+      "rule_id": "kernel_code_absent_from_header_payload",
+      "changes": [
+        {
+          "path": "/VendorSeverity/amazon",
+          "before_present": false,
+          "after": 3
+        }
+      ],
+      "previous_vendor_severity": {
+        "photon": 3,
+        "redhat": 2,
+        "ubuntu": 3
+      },
+      "current_vendor_severity": {
+        "amazon": 3,
+        "photon": 3,
+        "redhat": 2,
+        "ubuntu": 3
+      },
+      "all_other_advisory_fields_typed_equal": true,
+      "unchanged_advisory_projection_sha256": "9912366cceb4fa8c70615d0116ce70f17152f7f0ea750369102daa9d05bff330",
+      "unchanged_applicability_basis": "Both consumers access kernel allocator lists around RCU Tasks Trace callbacks. References to the generic list helper are call-trace context, not evidence of a userspace shared-library defect.",
+      "source_documents": [
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98642.json",
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/ce42a6ad0e675e4f591bda409d349b6788b6176e/cves/2026/98xxx/CVE-2026-98642.json"
+      ],
+      "current_cna_sha256": "3a57b3398209f2500a3c352ccd7095141793bf17a5198d371f37f7cce1277b7c",
+      "prior_cna_sha256": "3a57b3398209f2500a3c352ccd7095141793bf17a5198d371f37f7cce1277b7c",
+      "program_files": [
+        "kernel/bpf/memalloc.c"
+      ],
+      "independent_conclusion": "Conditional image-payload rationale unchanged: affected kernel implementation absent from the exact verified exported-header payload; no host-kernel clearance."
+    },
+    {
+      "id": "CVE-2026-98752",
+      "component": "headers",
+      "packages": [
+        "linux-libc-dev@6.8.0-147.147"
+      ],
+      "previous_advisory_sha256": "055f890aa8526acfbc4a1f0b96854c118e555a9a5bb760a0ce6c3e1498c26b3a",
+      "current_advisory_sha256": "b0ec0d773e177f854151d682d8dbf4701b7cac424580765a983dedd49bc1fa65",
+      "rule_id": "kernel_code_absent_from_header_payload",
+      "changes": [
+        {
+          "path": "/VendorSeverity/amazon",
+          "before_present": false,
+          "after": 3
+        }
+      ],
+      "previous_vendor_severity": {
+        "redhat": 2,
+        "ubuntu": 3
+      },
+      "current_vendor_severity": {
+        "amazon": 3,
+        "redhat": 2,
+        "ubuntu": 3
+      },
+      "all_other_advisory_fields_typed_equal": true,
+      "unchanged_advisory_projection_sha256": "2221bb6fa51b222f34540ff9af0bcc1df5569ba14a9661e76f23347e44f8533f",
+      "unchanged_applicability_basis": "Driver deregistration assumes synchronous kernel shutdown before freeing resources. Racing ioctls are callers of that lifecycle contract, not a separate userspace implementation.",
+      "source_documents": [
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98752.json",
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/ce42a6ad0e675e4f591bda409d349b6788b6176e/cves/2026/98xxx/CVE-2026-98752.json"
+      ],
+      "current_cna_sha256": "1d5276f356a13d0950d4165f92d43377bf94f1ef336e8608a68f0862a016ef1c",
+      "prior_cna_sha256": "1d5276f356a13d0950d4165f92d43377bf94f1ef336e8608a68f0862a016ef1c",
+      "program_files": [
+        "drivers/tty/tty_port.c",
+        "include/linux/tty_port.h"
+      ],
+      "independent_conclusion": "Conditional image-payload rationale unchanged: affected kernel implementation absent from the exact verified exported-header payload; no host-kernel clearance."
+    },
+    {
+      "id": "CVE-2026-98763",
+      "component": "headers",
+      "packages": [
+        "linux-libc-dev@6.8.0-147.147"
+      ],
+      "previous_advisory_sha256": "7ba6be2af57543a48367c370c25d6fe7588c1d3e0956ccc37e91a5318a97253e",
+      "current_advisory_sha256": "76beaa3930b5e8f70b52872ddf2c54eca76aa67a2b66a1645b6f3cc8de47ecaf",
+      "rule_id": "kernel_code_absent_from_header_payload",
+      "changes": [
+        {
+          "path": "/VendorSeverity/amazon",
+          "before_present": false,
+          "after": 3
+        }
+      ],
+      "previous_vendor_severity": {
+        "photon": 2,
+        "redhat": 2,
+        "ubuntu": 3
+      },
+      "current_vendor_severity": {
+        "amazon": 3,
+        "photon": 2,
+        "redhat": 2,
+        "ubuntu": 3
+      },
+      "all_other_advisory_fields_typed_equal": true,
+      "unchanged_advisory_projection_sha256": "7f08a2420f7bca8c9c5a2f17523de4483dc86f25c7161c3f0fc47ae4213b2ec5",
+      "unchanged_applicability_basis": "Kernel endpoint setup stores the same object in two arrays but teardown clears only one, leaving a stale endpoint pointer.",
+      "source_documents": [
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98763.json",
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/ce42a6ad0e675e4f591bda409d349b6788b6176e/cves/2026/98xxx/CVE-2026-98763.json"
+      ],
+      "current_cna_sha256": "f6d09a3b3011c23611d63ea6a6a37247d1ab30b4cdd05a77b8b53ba916ec82d4",
+      "prior_cna_sha256": "f6d09a3b3011c23611d63ea6a6a37247d1ab30b4cdd05a77b8b53ba916ec82d4",
+      "program_files": [
+        "drivers/usb/core/message.c"
+      ],
+      "independent_conclusion": "Conditional image-payload rationale unchanged: affected kernel implementation absent from the exact verified exported-header payload; no host-kernel clearance."
+    },
+    {
+      "id": "CVE-2026-98792",
+      "component": "headers",
+      "packages": [
+        "linux-libc-dev@6.8.0-147.147"
+      ],
+      "previous_advisory_sha256": "e55c9f7f5f53a696c7399c92c0679aa5ecb0a2177a53ce45f4929a127650d344",
+      "current_advisory_sha256": "8b0b1913f76bbe018cd1b6a691ad429a0e302cf1c6bb0e7bd8a0dd332c3d3caa",
+      "rule_id": "kernel_code_absent_from_header_payload",
+      "changes": [
+        {
+          "path": "/VendorSeverity/amazon",
+          "before_present": false,
+          "after": 3
+        }
+      ],
+      "previous_vendor_severity": {
+        "photon": 2,
+        "redhat": 2,
+        "ubuntu": 3
+      },
+      "current_vendor_severity": {
+        "amazon": 3,
+        "photon": 2,
+        "redhat": 2,
+        "ubuntu": 3
+      },
+      "all_other_advisory_fields_typed_equal": true,
+      "unchanged_advisory_projection_sha256": "c4e1881a83c00b47f26fe7bdaa67bd09abe0b515df37cad7d1c166a0466d2791",
+      "unchanged_applicability_basis": "The renamed pending flag prevents a runtime garbage collector from deleting flows still used by offload workers. An internal header constant rename does not establish an exported-header behavioral change.",
+      "source_documents": [
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98792.json",
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/ce42a6ad0e675e4f591bda409d349b6788b6176e/cves/2026/98xxx/CVE-2026-98792.json"
+      ],
+      "current_cna_sha256": "2de834421ce576eaeae3cc932bf90213e3dd28987fb8c50e5c2a8ea9c3bcebfa",
+      "prior_cna_sha256": "2de834421ce576eaeae3cc932bf90213e3dd28987fb8c50e5c2a8ea9c3bcebfa",
+      "program_files": [
+        "include/net/netfilter/nf_flow_table.h",
+        "net/netfilter/nf_flow_table_core.c",
+        "net/netfilter/nf_flow_table_offload.c",
+        "net/sched/act_ct.c"
+      ],
+      "independent_conclusion": "Conditional image-payload rationale unchanged: affected kernel implementation absent from the exact verified exported-header payload; no host-kernel clearance."
+    },
+    {
+      "id": "CVE-2026-98794",
+      "component": "headers",
+      "packages": [
+        "linux-libc-dev@6.8.0-147.147"
+      ],
+      "previous_advisory_sha256": "7677925a75d8e018c83a5c067a27ec0dc9dc8796e878404f25b68b6474b5697e",
+      "current_advisory_sha256": "16f67ea50f761decde78e838f0b60ad33fe167c0e47c15400e9c61e46da54239",
+      "rule_id": "kernel_code_absent_from_header_payload",
+      "changes": [
+        {
+          "path": "/VendorSeverity/amazon",
+          "before_present": false,
+          "after": 3
+        }
+      ],
+      "previous_vendor_severity": {
+        "photon": 3,
+        "redhat": 2,
+        "ubuntu": 3
+      },
+      "current_vendor_severity": {
+        "amazon": 3,
+        "photon": 3,
+        "redhat": 2,
+        "ubuntu": 3
+      },
+      "all_other_advisory_fields_typed_equal": true,
+      "unchanged_advisory_projection_sha256": "2671af690900b3b9905fb3ce0a0f7d5af9b50b922961c604a10ea3a2f6b02ab0",
+      "unchanged_applicability_basis": "The backup server constructs kernel connection/template state from synchronization messages with insufficient flag filtering. Protocol-version handling is runtime validation; it does not establish a change to exported flag definitions.",
+      "source_documents": [
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98794.json",
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/ce42a6ad0e675e4f591bda409d349b6788b6176e/cves/2026/98xxx/CVE-2026-98794.json"
+      ],
+      "current_cna_sha256": "cd464b7d003214dddde4c3d4e8d13b2799fa931b7b1b8797868456bec6bc71fa",
+      "prior_cna_sha256": "cd464b7d003214dddde4c3d4e8d13b2799fa931b7b1b8797868456bec6bc71fa",
+      "program_files": [
+        "net/netfilter/ipvs/ip_vs_sync.c"
+      ],
+      "independent_conclusion": "Conditional image-payload rationale unchanged: affected kernel implementation absent from the exact verified exported-header payload; no host-kernel clearance."
+    },
+    {
+      "id": "CVE-2026-98797",
+      "component": "headers",
+      "packages": [
+        "linux-libc-dev@6.8.0-147.147"
+      ],
+      "previous_advisory_sha256": "89cbc4eefb308e97d0a83614e16fc3eae92e62207edcfce315e2f2c4ca270d32",
+      "current_advisory_sha256": "b9177c5f1e889387f83d1af993a46ed1be8ca1d08b8f8c1efcf408156fc2986e",
+      "rule_id": "kernel_code_absent_from_header_payload",
+      "changes": [
+        {
+          "path": "/VendorSeverity/amazon",
+          "before_present": false,
+          "after": 3
+        }
+      ],
+      "previous_vendor_severity": {
+        "photon": 2,
+        "redhat": 2,
+        "ubuntu": 3
+      },
+      "current_vendor_severity": {
+        "amazon": 3,
+        "photon": 2,
+        "redhat": 2,
+        "ubuntu": 3
+      },
+      "all_other_advisory_fields_typed_equal": true,
+      "unchanged_advisory_projection_sha256": "40f44166cb6df18b2f958d30c0412aa1546a2b076aad8c1fbef97d0537b9acf4",
+      "unchanged_applicability_basis": "Nested kernel transmission leaks per-CPU flag state and can index beyond a qdisc array. The described conditional fields/stubs concern internal kernel compilation, with no described userspace export change.",
+      "source_documents": [
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98797.json",
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/ce42a6ad0e675e4f591bda409d349b6788b6176e/cves/2026/98xxx/CVE-2026-98797.json"
+      ],
+      "current_cna_sha256": "c49404d14a2337261217420d1e78716527870ace0ff217bf48fd3a537437c31d",
+      "prior_cna_sha256": "c49404d14a2337261217420d1e78716527870ace0ff217bf48fd3a537437c31d",
+      "program_files": [
+        "include/linux/netfilter_netdev.h",
+        "include/linux/rtnetlink.h",
+        "include/linux/skbuff.h",
+        "include/net/sch_generic.h",
+        "net/core/dev.c",
+        "net/sched/act_skbedit.c"
+      ],
+      "independent_conclusion": "Conditional image-payload rationale unchanged: affected kernel implementation absent from the exact verified exported-header payload; no host-kernel clearance."
+    },
+    {
+      "id": "CVE-2026-98805",
+      "component": "headers",
+      "packages": [
+        "linux-libc-dev@6.8.0-147.147"
+      ],
+      "previous_advisory_sha256": "17eccc0e5df7ecda348371800b5977b234f2c71a0de2335f1e6ed264b69a711a",
+      "current_advisory_sha256": "a00b2090b499c078cdba95c283a059a8c9b1decbbbf39b16c13265dc45c882f5",
+      "rule_id": "kernel_code_absent_from_header_payload",
+      "changes": [
+        {
+          "path": "/VendorSeverity/amazon",
+          "before_present": false,
+          "after": 3
+        }
+      ],
+      "previous_vendor_severity": {
+        "photon": 4,
+        "redhat": 3,
+        "ubuntu": 4
+      },
+      "current_vendor_severity": {
+        "amazon": 3,
+        "photon": 4,
+        "redhat": 3,
+        "ubuntu": 4
+      },
+      "all_other_advisory_fields_typed_equal": true,
+      "unchanged_advisory_projection_sha256": "fd0675e5e63605793c78c3cbabf2300816ddbd55819f9e5d57e87bda381d5fce",
+      "unchanged_applicability_basis": "The cryptographic risk comes from kernel TIPC peer/key state resetting a counter, not from the generic AES-GCM implementation. A shared algorithm or wire format does not establish shared vulnerable userspace code.",
+      "source_documents": [
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98805.json",
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/ce42a6ad0e675e4f591bda409d349b6788b6176e/cves/2026/98xxx/CVE-2026-98805.json"
+      ],
+      "current_cna_sha256": "ed728105c41fe281c20b2b60195b47652d6ff39d71ce7f3a0fa2239496c21b1b",
+      "prior_cna_sha256": "ed728105c41fe281c20b2b60195b47652d6ff39d71ce7f3a0fa2239496c21b1b",
+      "program_files": [
+        "net/tipc/crypto.c"
+      ],
+      "independent_conclusion": "Conditional image-payload rationale unchanged: affected kernel implementation absent from the exact verified exported-header payload; no host-kernel clearance."
+    },
+    {
+      "id": "CVE-2026-98846",
+      "component": "headers",
+      "packages": [
+        "linux-libc-dev@6.8.0-147.147"
+      ],
+      "previous_advisory_sha256": "88f9173cc0a627bbf9bbe585bbaa0b6c4a56731e0a7009665f09a961b7cf844d",
+      "current_advisory_sha256": "314d05aa7f7b48b4575e19a3272be08105ee97fc4a1bf127b55f2985cd153ab0",
+      "rule_id": "kernel_code_absent_from_header_payload",
+      "changes": [
+        {
+          "path": "/VendorSeverity/amazon",
+          "before_present": false,
+          "after": 3
+        }
+      ],
+      "previous_vendor_severity": {
+        "photon": 3,
+        "redhat": 2,
+        "ubuntu": 3
+      },
+      "current_vendor_severity": {
+        "amazon": 3,
+        "photon": 3,
+        "redhat": 2,
+        "ubuntu": 3
+      },
+      "all_other_advisory_fields_typed_equal": true,
+      "unchanged_advisory_projection_sha256": "58cde0c846d978bcb011d76ec21f904dcf87704da1f010889ef27766ed942de8",
+      "unchanged_applicability_basis": "Kernel wait processing releases the socket lock and may drop the final association reference; sendmsg/shutdown calls trigger the race, not userspace implementation.",
+      "source_documents": [
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98846.json",
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/ce42a6ad0e675e4f591bda409d349b6788b6176e/cves/2026/98xxx/CVE-2026-98846.json"
+      ],
+      "current_cna_sha256": "35a39998b29814a3a3926a4b7d0a4984c00cef151163dac3c2c55fa7a605b5cf",
+      "prior_cna_sha256": "35a39998b29814a3a3926a4b7d0a4984c00cef151163dac3c2c55fa7a605b5cf",
+      "program_files": [
+        "net/sctp/socket.c"
+      ],
+      "independent_conclusion": "Conditional image-payload rationale unchanged: affected kernel implementation absent from the exact verified exported-header payload; no host-kernel clearance."
+    },
+    {
+      "id": "CVE-2026-98862",
+      "component": "headers",
+      "packages": [
+        "linux-libc-dev@6.8.0-147.147"
+      ],
+      "previous_advisory_sha256": "9a5caad91d62d64c5473f24db1182c1849072a92f0034386ff2ab71e2f1b7873",
+      "current_advisory_sha256": "3a6405997806d4f47e39d6d567eee94a9c47a91ff21e16b7963b264459ac2fb3",
+      "rule_id": "kernel_code_absent_from_header_payload",
+      "changes": [
+        {
+          "path": "/VendorSeverity/amazon",
+          "before_present": false,
+          "after": 3
+        }
+      ],
+      "previous_vendor_severity": {
+        "photon": 2,
+        "redhat": 2,
+        "ubuntu": 3
+      },
+      "current_vendor_severity": {
+        "amazon": 3,
+        "photon": 2,
+        "redhat": 2,
+        "ubuntu": 3
+      },
+      "all_other_advisory_fields_typed_equal": true,
+      "unchanged_advisory_projection_sha256": "f0cacc372a7d136b1758f1c69fbca186ab7cbef638668d404e47ebc0907820fb",
+      "unchanged_applicability_basis": "The freed fsnotify mark remains visible through kernel audit RCU lists. Administrative rule installation and watched-directory changes are triggers, not implementation in userspace audit tools.",
+      "source_documents": [
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98862.json",
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/ce42a6ad0e675e4f591bda409d349b6788b6176e/cves/2026/98xxx/CVE-2026-98862.json"
+      ],
+      "current_cna_sha256": "d9ace6fbac034c4f7133f7b4e1f78ffce40cdf011f0123cfea1844d0defe34b2",
+      "prior_cna_sha256": "d9ace6fbac034c4f7133f7b4e1f78ffce40cdf011f0123cfea1844d0defe34b2",
+      "program_files": [
+        "kernel/audit_tree.c"
+      ],
+      "independent_conclusion": "Conditional image-payload rationale unchanged: affected kernel implementation absent from the exact verified exported-header payload; no host-kernel clearance."
+    },
+    {
+      "id": "CVE-2026-98863",
+      "component": "headers",
+      "packages": [
+        "linux-libc-dev@6.8.0-147.147"
+      ],
+      "previous_advisory_sha256": "e06b3cbee4b2c905d65680cf451e432898d63d3edcd387c778c264a171e65ca1",
+      "current_advisory_sha256": "7fc25dbc6bdf2e95ae485f2859426ddbfb4aeecf1c4ed64f5ff4c5aef72debda",
+      "rule_id": "kernel_code_absent_from_header_payload",
+      "changes": [
+        {
+          "path": "/VendorSeverity/amazon",
+          "before_present": false,
+          "after": 3
+        }
+      ],
+      "previous_vendor_severity": {
+        "redhat": 2,
+        "ubuntu": 3
+      },
+      "current_vendor_severity": {
+        "amazon": 3,
+        "redhat": 2,
+        "ubuntu": 3
+      },
+      "all_other_advisory_fields_typed_equal": true,
+      "unchanged_advisory_projection_sha256": "8e390b1dcaf67273093e2ac80d0fc1e537abdca0495ea6be460b1898c566c4bd",
+      "unchanged_applicability_basis": "A userspace VMM can retry KVM_RUN, but KVM retains stale unpinned page-frame mappings if the acquisition request is not re-pended. This is kernel nested-MMU state management, not userspace header behavior.",
+      "source_documents": [
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98863.json",
+        "https://raw.githubusercontent.com/CVEProject/cvelistV5/ce42a6ad0e675e4f591bda409d349b6788b6176e/cves/2026/98xxx/CVE-2026-98863.json"
+      ],
+      "current_cna_sha256": "aa3d596309f4e4cf8ec88c734ec3747e6986f4e4710c94a0caaebb84aacee822",
+      "prior_cna_sha256": "aa3d596309f4e4cf8ec88c734ec3747e6986f4e4710c94a0caaebb84aacee822",
+      "program_files": [
+        "arch/x86/kvm/x86.c"
+      ],
+      "independent_conclusion": "Conditional image-payload rationale unchanged: affected kernel implementation absent from the exact verified exported-header payload; no host-kernel clearance."
+    }
+  ]
+}

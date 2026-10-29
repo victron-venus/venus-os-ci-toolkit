@@ -1685,6 +1685,8 @@ class RunnerArtifactsTests(unittest.TestCase):
         records = review['records']
         latest = {row['id']: row for row in build.document(
             build.ROOT / 'docs/RUNNER_ADVISORY_REVIEW_2026_10_29.json')['records']}
+        amazon = {row['id']: row for row in build.document(
+            build.ROOT / 'docs/RUNNER_ADVISORY_REVIEW_2026_10_29_AMAZON.json')['records']}
         self.assertEqual(len(records), 51)
         self.assertEqual(len({record['id'] for record in records}), len(records))
         self.assertEqual(sum(len(record['packages']) for record in records), 52)
@@ -1696,10 +1698,11 @@ class RunnerArtifactsTests(unittest.TestCase):
                 self.assertTrue(record['changes'])
                 self.assertTrue(record['unchanged_applicability_basis'])
                 current_hash = record['current_advisory_sha256']
-                if record['id'] in latest:
-                    next_record = latest[record['id']]
-                    self.assertEqual(next_record['previous_advisory_sha256'], current_hash)
-                    current_hash = next_record['current_advisory_sha256']
+                for later in (latest, amazon):
+                    if record['id'] in later:
+                        next_record = later[record['id']]
+                        self.assertEqual(next_record['previous_advisory_sha256'], current_hash)
+                        current_hash = next_record['current_advisory_sha256']
                 if record['component'] == 'gstreamer':
                     self.assertEqual(record['id'], build.SCAN_POLICY['gstreamer']['advisory'])
                     self.assertEqual(current_hash, build.SCAN_POLICY['gstreamer']['advisory_sha256'])
@@ -1715,12 +1718,13 @@ class RunnerArtifactsTests(unittest.TestCase):
                     self.assertEqual(record.get('supplemental_review'), rationale.get('supplemental_review'))
         self.assertNotIn('/Users/', path.read_text())
 
-    def test_latest_advisory_reassessment_binds_exact_records_without_rewriting_history(self):
+    def test_oct29_advisory_reassessment_preserves_the_historical_hash_chain(self):
         path = build.ROOT / 'docs/RUNNER_ADVISORY_REVIEW_2026_10_29.json'
         review = build.document(path)
-        applicability = build.document(build.ROOT / 'docs/RUNNER_SCAN_APPLICABILITY.json')
-        self.assertEqual(applicability['latest_advisory_reassessment'],
+        amazon = build.document(build.ROOT / 'docs/RUNNER_ADVISORY_REVIEW_2026_10_29_AMAZON.json')
+        self.assertEqual(amazon['previous_review'],
                          {'document': path.name, 'sha256': oci.digest_file(path)})
+        following = {row['id']: row for row in amazon['records']}
         records = review['records']
         self.assertEqual(len(records), 36)
         self.assertEqual(len({r['id'] for r in records}), 36)
@@ -1734,13 +1738,73 @@ class RunnerArtifactsTests(unittest.TestCase):
                 self.assertTrue(record['changes'])
                 self.assertTrue(record['unchanged_applicability_basis'])
                 self.assertTrue(record['source_documents'])
+                current_hash = record['current_advisory_sha256']
+                if record['id'] in following:
+                    next_record = following[record['id']]
+                    self.assertEqual(next_record['previous_advisory_sha256'], current_hash)
+                    current_hash = next_record['current_advisory_sha256']
                 if record['component'] == 'gstreamer':
-                    self.assertEqual(record['current_advisory_sha256'],
-                                     build.SCAN_POLICY['gstreamer']['advisory_sha256'])
+                    self.assertEqual(current_hash, build.SCAN_POLICY['gstreamer']['advisory_sha256'])
                 else:
-                    self.assertEqual([record['component'], record['current_advisory_sha256'], record['rule_id']],
+                    self.assertEqual([record['component'], current_hash, record['rule_id']],
                                      build.SCAN_POLICY['advisories'][record['id']])
         self.assertNotIn('/Users/', path.read_text())
+
+    def test_amazon_reassessment_binds_only_the_reviewed_blocking_metadata(self):
+        path = build.ROOT / 'docs/RUNNER_ADVISORY_REVIEW_2026_10_29_AMAZON.json'
+        review = build.document(path)
+        applicability = build.document(build.ROOT / 'docs/RUNNER_SCAN_APPLICABILITY.json')
+        self.assertEqual(applicability['latest_advisory_reassessment'],
+                         {'document': path.name, 'sha256': oci.digest_file(path)})
+        records = review['records']
+        self.assertEqual(len(records), 31)
+        self.assertEqual(len({record['id'] for record in records}), 31)
+        self.assertEqual(review['comparison']['blocking_metadata_deltas'], 31)
+        self.assertEqual(review['comparison']['added_or_removed_identities'], 0)
+        self.assertEqual(review['original_native_result'],
+                         'failure with 31 unresolved advisory fingerprints; preserved unchanged')
+        self.assertEqual(sum(r['rule_id'] == 'kernel_code_absent_from_header_payload' for r in records), 30)
+        special = [r for r in records if r['rule_id'] == 'headers_with_separately_repaired_libbpf']
+        self.assertEqual([r['id'] for r in special], ['CVE-2026-98626'])
+        for record in records:
+            with self.subTest(advisory=record['id']):
+                self.assertEqual(record['changes'],
+                                 [{'path': '/VendorSeverity/amazon', 'before_present': False, 'after': 3}])
+                self.assertNotIn('amazon', record['previous_vendor_severity'])
+                self.assertEqual(record['current_vendor_severity'],
+                                 {**record['previous_vendor_severity'], 'amazon': 3})
+                self.assertTrue(record['all_other_advisory_fields_typed_equal'])
+                self.assertEqual(record['current_cna_sha256'], record['prior_cna_sha256'])
+                self.assertNotEqual(record['previous_advisory_sha256'], record['current_advisory_sha256'])
+                self.assertEqual([record['component'], record['current_advisory_sha256'], record['rule_id']],
+                                 build.SCAN_POLICY['advisories'][record['id']])
+        self.assertNotIn('/Users/', path.read_text())
+        self.assertNotIn('/home/', path.read_text())
+
+    def test_reviewed_vendor_addition_does_not_normalize_old_or_future_metadata(self):
+        raw, proof, evidence, context, policy = self.acceptance_fixture()
+        raw['Results'][0]['Vulnerabilities'][0]['VendorSeverity'] = {'ubuntu': 3}
+        row = build.assessment_findings(raw, proof, context['artifact_name'])[0]
+        policy['advisories'][row['vulnerability']][1] = row['advisory_sha256']
+        updated = copy.deepcopy(raw)
+        updated['Results'][0]['Vulnerabilities'][0]['VendorSeverity']['amazon'] = 3
+        with mock.patch.object(build, 'SCAN_POLICY', policy):
+            self.assertTrue(build.scan_acceptance(raw, proof, evidence, context)['acceptance_passed'])
+            self.assertFalse(build.scan_acceptance(updated, proof, evidence, context)['acceptance_passed'])
+        row = build.assessment_findings(updated, proof, context['artifact_name'])[0]
+        policy['advisories'][row['vulnerability']][1] = row['advisory_sha256']
+        with mock.patch.object(build, 'SCAN_POLICY', policy):
+            self.assertTrue(build.scan_acceptance(updated, proof, evidence, context)['acceptance_passed'])
+            self.assertFalse(build.scan_acceptance(raw, proof, evidence, context)['acceptance_passed'])
+            for edit in ({'VendorSeverity': {'ubuntu': 3, 'amazon': 4}},
+                         {'Description': 'Changed affected behavior'},
+                         {'FutureAdvisoryField': {'changed': True}}):
+                changed = copy.deepcopy(updated)
+                changed['Results'][0]['Vulnerabilities'][0].update(edit)
+                self.assertFalse(build.scan_acceptance(changed, proof, evidence, context)['acceptance_passed'])
+            broken = copy.deepcopy(evidence)
+            broken['components']['libbpf']['library']['sha256'] = policy['libbpf']['unpatched_library_sha256']
+            self.assertFalse(build.scan_acceptance(updated, proof, broken, context)['acceptance_passed'])
 
     def test_database_absence_does_not_disable_unreviewed_analyzers(self):
         raw, proof, _, context, _ = self.acceptance_fixture()
