@@ -93,6 +93,23 @@ The canary policy requires that exact class and the priority zero resolved by
 the API server. There is no configurable priority or class-name override.
 See [non-preempting PriorityClass](https://kubernetes.io/docs/concepts/scheduling-eviction/pod-priority-preemption/#non-preempting-priorityclass).
 
+A matching `observedGeneration` and empty type-check warnings do not by themselves
+prove that a Pod request will use the updated admission policy. Treat the exact
+positive Pod server dry run as a separate readiness check. Hash its body once
+and submit those same bytes on stdin (`-f -`) for every probe. Bound this phase to
+30 seconds from the first probe, with each call limited to at most 5 seconds and
+the remaining total budget. Only the expected rejection from the preceding image
+policy may be retried within that window. Stop on transport, authorization,
+schema or unrelated policy errors; retain every response and restore the
+previous policy if readiness fails. This does not authorize a runtime retry.
+
+After the positive dry run succeeds, verify all planned negative cases are
+denied by the intended admission policy. A wrong-namespace case needs the same
+service-account name to exist in its selected namespace: an earlier missing
+service-account error does not test the policy. Compare all protected fields in
+the accepted Pod response with the reviewed plan, then refresh absence and
+capacity checks before creating the one authorized Pod.
+
 Ensure the candidate image is already present by digest on the selected node,
 the existing node guard has healthy TLS and the node has sufficient free disk,
 CPU and memory. The Pod keeps `imagePullPolicy: Never`, the gVisor RuntimeClass,
