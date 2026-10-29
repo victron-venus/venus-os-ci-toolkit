@@ -22,6 +22,7 @@ from urllib.parse import quote
 if __package__:
     from .release_control import (
         MANIFEST,
+        DownloadBudget,
         GitHub,
         ReleaseError,
         download_asset,
@@ -37,6 +38,7 @@ if __package__:
 else:
     from release_control import (
         MANIFEST,
+        DownloadBudget,
         GitHub,
         ReleaseError,
         download_asset,
@@ -118,11 +120,15 @@ def verified_assets(gh, tag, directory):
         and {a["name"] for a in assets} == set(expected) | {MANIFEST},
         "Stable inventory differs from RC evidence",
     )
+    budget = DownloadBudget(sum(item["size"] for item in expected.values()))
     for asset in assets:
         if asset["name"] == MANIFEST:
             continue
         item = expected[asset["name"]]
-        identity = download_asset(gh, asset["id"], directory / asset["name"])
+        identity = download_asset(
+            gh, asset["id"], directory / asset["name"],
+            expected={key: item[key] for key in ("size", "sha256")}, budget=budget,
+        )
         require(
             asset.get("state") == "uploaded"
             and identity["size"] == item["size"]

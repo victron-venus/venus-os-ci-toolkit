@@ -48,6 +48,18 @@ class StableAssetVerificationTests(unittest.TestCase):
         self.assertEqual(gh.policy_reads, [SHA])
         self.assertEqual(gh.writes, [])
 
+    def test_oversized_download_stops_before_registry_publication(self):
+        """Trusted manifest bytes bound the transfer, not only its final digest."""
+        gh = self.github()
+
+        def oversize(path, output):
+            output.write(gh.binary(path) + b"extra")
+
+        with mock.patch.object(gh, "download_asset", side_effect=oversize):
+            with self.assertRaisesRegex(ReleaseError, "exceeds expected size"):
+                self.verify(gh)
+        self.assertEqual(gh.writes, [])
+
     def test_claimed_clean_snapshot_cannot_qualify_blocked_source(self):
         """Claimed clean snapshot cannot qualify blocked source."""
         for field in ("release_blockers", "stable_blockers"):

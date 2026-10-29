@@ -941,7 +941,7 @@ class ReleaseControlTests(unittest.TestCase):
     def test_corrupt_upload_leaves_draft_and_does_not_publish(self):
         """Corrupt upload leaves draft and does not publish."""
         self.gh.corrupt_upload = True
-        with self.assertRaisesRegex(rc.ReleaseError, "Uploaded bytes differ"):
+        with self.assertRaisesRegex(rc.ReleaseError, "Release asset size or checksum mismatch"):
             rc.promote(self.args)
         stable = next(
             release

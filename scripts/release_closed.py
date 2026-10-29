@@ -155,11 +155,15 @@ def resolve(gh: rc.GitHub, tag: str, output: Path, current_sha: str, current_run
         stage = Path(temporary) / "context"
         payloads = stage / "payloads"
         payloads.mkdir(parents=True)
+        budget = rc.DownloadBudget(sum(item["size"] for item in expected.values()))
         for asset in initial[2]:
             name = asset["name"]
             if name == rc.MANIFEST:
                 continue
-            identity = rc.download_asset(gh, asset["id"], payloads / name)
+            identity = rc.download_asset(
+                gh, asset["id"], payloads / name,
+                expected={key: expected[name][key] for key in ("size", "sha256")}, budget=budget,
+            )
             rc.require(identity == {key: expected[name][key] for key in ("size", "sha256")},
                        "Public release payload changed")
         verify_receipts(payloads, plan, manifest["assets"], policy)
