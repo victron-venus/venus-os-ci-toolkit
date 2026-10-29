@@ -196,3 +196,70 @@ separately reviewed contract. It must not copy the parent's attestation as thoug
 it attested the new child digest. Neither the hosted workflow nor a successful
 scan proves gVisor compatibility, physical deployment, or a suitable CI memory
 limit. See [runner image security](RUNNER_IMAGE_SECURITY.md).
+
+### Produce and verify a CA-only site derivative
+
+`scripts/runner_image_site.py` creates a deterministic child OCI archive from an
+accepted hosted parent. It verifies the complete parent archive, descriptors,
+compressed and uncompressed layer hashes, source identity, runtime configuration
+and invalid CA before copying any parent layer. It appends one regular file at
+`/opt/victron-ci-reserve/guard-ca.crt`, with mode `0644`, UID/GID `0`, and timestamp
+`0`. The child retains every parent layer and the complete runtime configuration.
+Only the root filesystem history and the appended CA layer change.
+
+The bootstrap uses `curl --cacert /opt/victron-ci-reserve/guard-ca.crt` explicitly
+for the node-guard TLS request. It does not use the system trust store for that
+request, so this conversion neither runs `update-ca-certificates` nor changes
+other programs' trust configuration. Keep the existing guard address and node
+binding in the private operator configuration; neither belongs in this public
+repository. A CA certificate is public material, but its local identity can still
+reveal deployment details. Never supply a private key.
+
+After independently accepting the hosted run and selecting its exact parent
+archive, pass the recorded SHA-256, byte count, source commit and stage. The CA
+argument is pinned by the SHA-256 of its **PEM file bytes**, not its DER certificate
+fingerprint. The helper rejects certificate bundles, non-CA certificates and
+certificates that fail current OpenSSL validation.
+
+```sh
+python3 scripts/runner_image_site.py \
+  --parent "$PARENT_ARCHIVE" --parent-sha256 "$PARENT_SHA256" \
+  --parent-bytes "$PARENT_BYTES" --source "$PARENT_SOURCE" --stage private \
+  --ca "$SITE_CA_FILE" --ca-file-sha256 "$SITE_CA_FILE_SHA256" \
+  --output "$SITE_ARCHIVE" --receipt "$SITE_CONVERSION_RECEIPT"
+```
+
+Use the public parent with `--stage public` to produce a public-bootstrap child.
+The private child descends from its own hosted private parent; it does **not**
+claim to descend from the separately produced public site child. Existing output
+files are never replaced. The helper budgets the new archive in addition to a
+20 GiB disk reserve and checks available space during copying. The operator must
+also budget downloads, scanner projection/cache, runtime content storage and
+temporary CI scratch before running it.
+
+Each child contains a new unsigned in-toto conversion statement naming its own
+runtime manifest and binding the parent archive/index/manifest, source commit,
+stage and exact CA change. The parent's SLSA build statement is retained with the
+parent archive; it is not relabelled as an attestation for the child. Neither
+conversion evidence nor a source label is a publisher signature. The statement
+identifies `parent_source_commit` separately from the source-file hashes of both
+`runner_image_site.py` and `runner_image_oci.py`. Retain those exact tool files for
+later independent verification. The receipt's `source_commit` remains the parent
+source identity used by scan binding; it is not the converter's revision.
+
+The conversion immediately rechecks the child's complete graph and every blob.
+To independently recheck a retained child against externally recorded archive
+identity, use the same arguments with a fresh receipt path and add:
+
+```sh
+  --verify --child-sha256 "$SITE_ARCHIVE_SHA256" --child-bytes "$SITE_ARCHIVE_BYTES"
+```
+
+A conversion receipt always records `site_configured: true`, `deployable: false`,
+`scan_accepted: false` and `runtime_qualified: false`. These fields are not a
+shortcut around acceptance. Scan the actual child using the existing OCI scanner
+projection and full scan/applicability functions, retain its database identities
+and raw report, then run the fixed bootstrap probe and representative cold/warm
+JIT jobs. Preserve the parent, child, certificates and complete evidence in the
+approved encrypted recovery storage before artifact expiry. Changing the CA
+requires a new child digest, new scan and new runtime acceptance.
