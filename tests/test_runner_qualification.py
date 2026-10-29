@@ -1,6 +1,7 @@
 """Offline rendering checks and fixtures for the real, separately locked CEL evaluator."""
 import copy
 import importlib.util
+from itertools import product
 import json
 from pathlib import Path
 import sys
@@ -19,9 +20,9 @@ ROW = {'name': 'example/standard', 'visibility': 'private',
        'profiles': ['ci', 'automation', 'release'], 'ci_storage': 'tmpfs-2gi'}
 
 
-def canary(mode='private'):
+def canary(mode='private', cpu_profile='standard'):
     return arc.QualificationCanary('qualification-' + mode, 'arc-private-ci', 'reserve-worker',
-                                   ROW['name'], 'ci', 'nuc', arc.NUC_RUNTIME, IMAGE, mode, OPERATOR)
+                                   ROW['name'], 'ci', 'nuc', arc.NUC_RUNTIME, IMAGE, mode, OPERATOR, cpu_profile)
 
 
 def render(probe=None, rows=None, targets=None):
@@ -60,8 +61,8 @@ def set_at(value, path, replacement):
 def cel_fixtures():
     """Evaluate emitted CEL, not a handwritten equivalent Python predicate."""
     suites = []
-    for mode in ('public', 'private'):
-        documents = render(canary(mode))
+    for mode, cpu_profile in product(('public', 'private'), ('standard', 'low-share')):
+        documents = render(canary(mode, cpu_profile))
         pod = documents['qualification-canary.json']
         base = context(pod)
         cases = [{'name': 'operator creates exact ' + mode, 'context': base, 'allow': True}]
@@ -127,6 +128,9 @@ def cel_fixtures():
         ]
         for name, path, value in mutations:
             changed(name, path, value)
+        for cpu in ('0', '99m', '100m', '101m', '499m', '500m', '501m', '2', 100):
+            if cpu != pod['spec']['containers'][0]['resources']['requests']['cpu']:
+                changed('wrong CPU request ' + str(cpu), container + ('resources', 'requests', 'cpu'), cpu)
         for name, extra in [
                 ('unexpected environment', {'name': 'LD_PRELOAD', 'value': '/tmp/untrusted'}),
                 ('JIT literal', {'name': 'ACTIONS_RUNNER_INPUT_JITCONFIG', 'value': 'synthetic'}),
@@ -170,12 +174,12 @@ def cel_fixtures():
         mixed = copy.deepcopy(normal)
         mixed['object']['spec']['containers'][0]['env'].append({'name': 'RUNNER_RESERVE_QUALIFICATION', 'value': '1'})
         cases.append({'name': 'production JIT cannot opt into qualification', 'context': mixed, 'allow': False})
-        suites.append({'name': mode, 'policy': guard(documents)['spec'], 'cases': cases})
+        suites.append({'name': mode + '-' + cpu_profile, 'policy': guard(documents)['spec'], 'cases': cases})
     disabled = [copy.deepcopy(next(c for c in suites[0]['cases']
                                   if c['name'] == 'normal ARC production JIT remains accepted'))]
-    for mode in ('public', 'private'):
-        disabled.append({'name': mode + ' probe denied without opt-in',
-                         'context': context(render(canary(mode))['qualification-canary.json']), 'allow': False})
+    for mode, cpu_profile in product(('public', 'private'), ('standard', 'low-share')):
+        disabled.append({'name': mode + '-' + cpu_profile + ' probe denied without opt-in',
+                         'context': context(render(canary(mode, cpu_profile))['qualification-canary.json']), 'allow': False})
     suites.append({'name': 'production-only', 'policy': guard(render())['spec'], 'cases': disabled})
     return suites
 
@@ -183,8 +187,8 @@ def cel_fixtures():
 class QualificationRenderTests(unittest.TestCase):
     def test_opt_in_changes_only_one_policy_and_adds_one_pod(self):
         baseline = render()
-        for mode in ('public', 'private'):
-            candidate = render(canary(mode))
+        for mode, cpu_profile in product(('public', 'private'), ('standard', 'low-share')):
+            candidate = render(canary(mode, cpu_profile))
             self.assertEqual(set(candidate) - set(baseline), {'qualification-canary.json'})
             candidate.pop('qualification-canary.json')
             prior, changed = guard(baseline), guard(candidate)
@@ -196,6 +200,20 @@ class QualificationRenderTests(unittest.TestCase):
             candidate['foundations.json']['items'][candidate['foundations.json']['items'].index(changed)] = copy.deepcopy(prior)
             self.assertEqual(candidate, baseline)
 
+    def test_cpu_profile_changes_only_the_exact_request_and_guard(self):
+        for mode in ('public', 'private'):
+            standard = render(canary(mode))
+            low_share = render(canary(mode, 'low-share'))
+            standard_pod = standard['qualification-canary.json']
+            low_pod = low_share['qualification-canary.json']
+            self.assertEqual(standard_pod['spec']['containers'][0]['resources']['requests']['cpu'], '500m')
+            self.assertEqual(low_pod['spec']['containers'][0]['resources']['requests']['cpu'], '100m')
+            low_pod['spec']['containers'][0]['resources']['requests']['cpu'] = '500m'
+            self.assertEqual(low_pod, standard_pod)
+            low_guard = guard(low_share)
+            low_share['foundations.json']['items'][low_share['foundations.json']['items'].index(low_guard)] = guard(standard)
+            self.assertEqual(low_share, standard)
+
     def test_full_fleet_pool_count_and_routes_are_unchanged(self):
         rows = [dict(ROW, name=f'example/project-{i}', profiles=['ci', 'automation'],
                      automation_storage='tmpfs-3gi') for i in range(20)]
@@ -205,16 +223,18 @@ class QualificationRenderTests(unittest.TestCase):
         rows[2]['lan_egress'] = [{'cidr': '192.0.2.20/32', 'port': 9443}]
         targets = tuple(arc.NucKvmTarget(r['name'], p) for r in rows for p in ('ci', 'automation'))
         baseline = render(rows=rows, targets=targets)
-        candidate = render(canary()._replace(scope=rows[0]['name']), rows=rows, targets=targets)
-        self.assertEqual(len(candidate['index.json']), 43)
-        for key in baseline:
-            if key != 'foundations.json':
-                self.assertEqual(candidate[key], baseline[key], key)
+        for mode, cpu_profile in product(('public', 'private'), ('standard', 'low-share')):
+            candidate = render(canary(mode, cpu_profile)._replace(scope=rows[0]['name']), rows=rows, targets=targets)
+            self.assertEqual(len(candidate['index.json']), 43)
+            for key in baseline:
+                if key != 'foundations.json':
+                    self.assertEqual(candidate[key], baseline[key], key)
 
     def test_strict_plan_rejects_unsafe_or_incomplete_inputs(self):
         invalid = {'name': ['ordinary-worker', '../probe'], 'namespace': ['default'],
                    'service_account': ['default'], 'scope': ['example/unknown'], 'profile': ['release'],
                    'node': ['other-node'], 'runtime_class': ['runc'], 'image': ['image:latest', PRODUCTION_IMAGE],
+                   'cpu_profile': ['arbitrary', '100m', '', None, 100, [], {}],
                    'bootstrap_profile': ['arbitrary'], 'creator_username': ['', 'system:anonymous',
                    'system:serviceaccount:arc:controller', 'system:node:nuc', 'line\nbreak']}
         for field, values in invalid.items():
@@ -226,26 +246,39 @@ class QualificationRenderTests(unittest.TestCase):
             value = dict(canary()._asdict(), schema=1)
             path.write_text(json.dumps(value))
             self.assertEqual(arc.load_qualification_canary(path), canary())
-            for mutation in ({**value, 'unknown': 1}, {**value, 'schema': True}, {'schema': 1}):
+            legacy = {key: item for key, item in value.items() if key != 'cpu_profile'}
+            path.write_text(json.dumps(legacy))
+            self.assertEqual(arc.load_qualification_canary(path), canary())
+            for cpu_profile in ('standard', 'low-share'):
+                path.write_text(json.dumps(dict(value, cpu_profile=cpu_profile)))
+                self.assertEqual(arc.load_qualification_canary(path), canary(cpu_profile=cpu_profile))
+            for cpu_profile in ('100m', 'arbitrary', '', None, 100, [], {}):
+                path.write_text(json.dumps(dict(value, cpu_profile=cpu_profile)))
+                with self.assertRaises(ValueError):
+                    arc.load_qualification_canary(path)
+            for mutation in ({**value, 'unknown': 1}, {**value, 'cpu_request': '100m'}, {**value, 'schema': True}, {'schema': 1}):
                 path.write_text(json.dumps(mutation))
                 with self.assertRaises(ValueError):
                     arc.load_qualification_canary(path)
-            path.write_text('{"schema":1,"schema":1}')
-            with self.assertRaises(ValueError):
-                arc.load_qualification_canary(path)
+            for text in ('{"schema":1,"schema":1}',
+                         json.dumps(value)[:-1] + ',"cpu_profile":"low-share"}'):
+                path.write_text(text)
+                with self.assertRaises(ValueError):
+                    arc.load_qualification_canary(path)
 
     def test_node_guard_discovers_probe_without_jit_or_a_new_namespace(self):
         spec = importlib.util.spec_from_file_location('qualification_guard', ROOT / 'deploy/runner-reserve/node_guard.py')
         node_guard = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(node_guard)
-        pod = render(canary())['qualification-canary.json']
-        record = {'id': 'a' * 64, 'metadata': {'namespace': pod['metadata']['namespace'], 'uid': 'synthetic-uid'},
-                  'labels': pod['metadata']['labels'], 'state': 'SANDBOX_READY'}
-        with mock.patch.object(node_guard, 'command', return_value=json.dumps({'items': [record]})), \
-                mock.patch.object(node_guard, 'cached_worker', return_value={'uid': 'synthetic-uid'}) as cached:
-            self.assertEqual(node_guard.discover(), [{'uid': 'synthetic-uid'}])
-            cached.assert_called_once_with(record)
-        self.assertFalse(any(e['name'] == 'ACTIONS_RUNNER_INPUT_JITCONFIG' for e in pod['spec']['containers'][0]['env']))
+        for mode, cpu_profile in product(('public', 'private'), ('standard', 'low-share')):
+            pod = render(canary(mode, cpu_profile))['qualification-canary.json']
+            record = {'id': 'a' * 64, 'metadata': {'namespace': pod['metadata']['namespace'], 'uid': 'synthetic-uid'},
+                      'labels': pod['metadata']['labels'], 'state': 'SANDBOX_READY'}
+            with mock.patch.object(node_guard, 'command', return_value=json.dumps({'items': [record]})), \
+                    mock.patch.object(node_guard, 'cached_worker', return_value={'uid': 'synthetic-uid'}) as cached:
+                self.assertEqual(node_guard.discover(), [{'uid': 'synthetic-uid'}])
+                cached.assert_called_once_with(record)
+            self.assertFalse(any(e['name'] == 'ACTIONS_RUNNER_INPUT_JITCONFIG' for e in pod['spec']['containers'][0]['env']))
 
 
 if __name__ == '__main__':

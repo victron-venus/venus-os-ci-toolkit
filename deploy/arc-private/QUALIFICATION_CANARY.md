@@ -40,6 +40,13 @@ This example uses placeholder data and cannot be deployed as written:
 }
 ```
 
+The optional `cpu_profile` accepts only `standard` (the default) or `low-share`.
+Existing plan files remain valid and retain the original resource budget. Set
+`"cpu_profile": "low-share"` explicitly to qualify the same complete probe with
+a smaller CPU reservation. Arbitrary CPU values are not accepted. This choice
+applies only to the temporary canary; production pool resource profiles stay
+unchanged.
+
 Add `--qualification-canary-plan /private/path/qualification.json` to the existing
 reviewed renderer command. The new `qualification-canary.json` contains the Pod.
 The only changed existing resource is `victron-private-nuc-kvm-workers` in
@@ -80,11 +87,24 @@ existing scoped egress and cross-namespace exclusive NUC anti-affinity. It canno
 preempt existing jobs and waits for active workers to finish. No service or runner
 is restarted by rendering this plan.
 
-The fixed budget is 500m/2 CPU, 3/6 GiB memory, 1/20 GiB ephemeral storage
-(request/limit), with the existing RuntimeClass overhead and 16 GiB disk scratch.
-`activeDeadlineSeconds` is 600 and termination grace is 15 seconds. Capture the
-image digest, rendered inputs, Pod status and qualification log before cleanup;
-do not record credentials. A failed or timed-out qualification is not acceptance.
+The `standard` budget requests 500m CPU; `low-share` requests 100m. Both retain
+the 2 CPU limit, 3/6 GiB memory and 1/20 GiB ephemeral storage (request/limit),
+16 GiB disk scratch, and the existing RuntimeClass overhead. Including that
+100m CPU overhead, the scheduler must have 600m or 200m available respectively.
+The CPU reservation controls scheduling and the relative share during contention;
+it is not a measured minimum or a guarantee that the probe will finish. The
+unchanged 2 CPU ceiling allows bounded bursts for nested Docker, image unpacking,
+BuildKit and PostgreSQL startup. The probe performs no full project compilation.
+
+Use `low-share` only after checking current reservations, queued CI and node
+capacity. It runs the same TLS, isolation, toolchain, offline npm, BuildKit,
+Compose and PostgreSQL checks. No test, per-step deadline or admission condition
+is skipped. `activeDeadlineSeconds` remains 600 and termination grace 15 seconds.
+Capture the selected CPU profile, image digest, rendered inputs, Pod status,
+elapsed time, CPU usage/throttling and qualification log before cleanup; do not
+record credentials. A failed or timed-out qualification is not acceptance. A
+successful low-share probe does not establish general CI capacity or worst-case
+performance while other services are busy.
 
 After each attempt, delete only that exact Pod and restore the reviewed existing
 policy rendered **without** the optional plan. Confirm the candidate name/image
@@ -102,7 +122,8 @@ go test -count=1 -mod=readonly ./...
 
 The Python checks verify output isolation, all 43 fixture pools and node-guard
 discovery. The separate locked Go module evaluates the **emitted expressions**
-with the CEL interpreter against positive production and both canary modes,
+with the CEL interpreter against positive production and all combinations of
+both bootstrap modes and CPU profiles,
 malformed inputs, identity changes, JIT mixing and UPDATE escapes. Compile errors
 fail the test; they cannot count as successful negative cases. These are dynamic
 CEL fixtures, not a Kubernetes API server or a claim of hardware acceptance.
