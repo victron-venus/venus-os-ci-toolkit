@@ -70,6 +70,74 @@ Keep older known-working generations until the new one has a verified off-device
 restore. A local decryption proves local custody only; a synchronizing folder icon
 does not prove that the independent backup can be downloaded and restored.
 
+## Stream large recovery assets within a measured budget
+
+Use [arc_recovery_payload.py](../scripts/arc_recovery_payload.py) for large,
+already identified assets such as retained OCI archives. This is an ordinary
+USTAR envelope with a parts manifest, not a replacement for the source packager
+or the secret catalog. Compression and encryption remain standard `zstd` and
+`age`; the helper does not discover credentials, upload files or delete originals.
+Interleaving equal-size parts can improve compression for similar archives, but
+no compression ratio is guaranteed. Budget the original files, staged parts,
+ciphertext, metadata and restore workspace before starting.
+
+Keep the site-specific executor in the protected site repository. It must bind
+exact input/tool hashes, arguments, destinations, recipients, free-space reserve
+and deadlines. Use an owner-only workspace without concurrent writers. Preparation
+and the [pipeline supervisor](../scripts/arc_recovery_pipeline.py) require POSIX;
+they do not support Windows execution. The archive itself is portable. Live CPU,
+memory, swap and process limits come from a separately reviewed **Linux systemd
+unit**, not from the Python supervisor or a successful local test.
+
+1. **Prepare from trusted metadata.** Supply a JSON list containing each original's
+   `name`, `path`, `bytes` and `sha256`. Names are unique short identifiers; paths
+   remain private. Run `arc_recovery_payload.py prepare --manifest INPUTS.json
+   --directory NEW_STAGE --max-bytes ORIGINAL_LIMIT --reserve-bytes FREE_RESERVE`
+   inside the bounded unit. The default part size is 128 MiB. The helper verifies
+   original hashes, stages numbered parts and writes a canonical `manifest.json`.
+   Retain this manifest and its hash independently of the encrypted stream.
+2. **Pack, compress, encrypt.** The protected adapter calls
+   `arc_recovery_pipeline.run(commands, destination, maximum=..., reserve=...,
+   timeout=..., inputs=...)` with separate argv lists for
+   `arc_recovery_payload.py pack --manifest NEW_STAGE/manifest.json --directory
+   NEW_STAGE --max-bytes ORIGINAL_LIMIT`, `zstd` and `age`. Pin public recipient
+   identities; never put private keys or tokens in argv. The `inputs` mapping binds
+   each reviewed input path to its `bytes` and `sha256`. The supervisor records
+   argv and input paths in private intent metadata, caps output/stderr bytes,
+   checks free space while writing, terminates its process groups on failure and
+   never retries or overwrites an existing destination. It does not itself select
+   safe commands or enforce a network policy.
+3. **Require complete acceptance.** Preserve `.partial` and `.pending` files after
+   failure. A final ciphertext filename, a pending receipt or `passed: true` copied
+   from an earlier attempt is insufficient. Require the matching final receipt,
+   its exact ciphertext size/hash, successful overall unit exit and the independent
+   restore proof. The supervisor deliberately reports
+   `cpu_memory_limits_verified: false`: separately retain the actual unit limits
+   and observed result. Unit policy must bound `CPUQuota`, `MemoryMax`,
+   `MemorySwapMax`, `TasksMax` and `RuntimeMaxSec`, with `KillMode=control-group`,
+   a finite `TimeoutStopSec`, owned writable paths and no unnecessary privileges.
+4. **Restore and compare every original.** For each required recovery identity,
+   stream `age` decryption through `zstd` decompression into
+   `arc_recovery_payload.py verify --manifest TRUSTED_MANIFEST.json --max-bytes
+   ORIGINAL_LIMIT` under the same resource controls. Use the external trusted
+   manifest, not one accepted merely because it appeared inside the archive.
+   Verification rejects links, unexpected members/order, oversized or truncated
+   streams and incorrect part/original hashes without extracting files. It checks
+   the SHA-256 and byte count of every reassembled original. Record the manifest
+   hash, ciphertext hash, tool identities, unit result and verification output.
+
+Manual recovery remains possible with standard tools: decrypt and decompress to
+USTAR, inspect the complete member list against the trusted manifest, then extract
+only its regular-file members into a new empty directory. Concatenate each
+original's numbered parts **in the manifest's order**, then compare its declared
+byte count and SHA-256. Do not trust an arbitrary archive for extraction or assume
+that tar member order groups all parts of one original together. Keep a tested
+manual restore record as well as the streaming verification result.
+
+A local synchronized-folder copy still needs a later independent download and
+restore before it counts as an off-device backup. Do not prune old generations,
+staging files or originals solely because packing, encryption or upload finished.
+
 ## Restore in order, with admission held
 
 1. **Identify what survived.** Compare actual owners, inventories, cluster objects,
