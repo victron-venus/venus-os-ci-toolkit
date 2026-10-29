@@ -33,6 +33,7 @@ SERIAL_LABEL = 'private-runners.github.io/serial-domain'
 CONCURRENCY_LABEL = 'private-runners.github.io/concurrency'
 QUALIFICATION_LABEL = 'private-runners.github.io/qualification'
 QUALIFICATION_CPU_REQUESTS = {'standard': '500m', 'low-share': '100m'}
+QUALIFICATION_PRIORITY_CLASS = 'victron-qualification'
 DOCKER_DATA = '/var/lib/docker'
 DOCKER_SCRATCH_SIZE = '16Gi'
 # Embed the checked startup code; native workers have no ConfigMap dependency.
@@ -975,6 +976,16 @@ def nuc_kvm_foundations(document, config, values_by_target):
     items += [runtime, *nuc_networks]
 
 
+def qualification_priority_class():
+    """A fixed non-preempting class required by Kubernetes Priority admission."""
+    return {
+        'apiVersion': 'scheduling.k8s.io/v1', 'kind': 'PriorityClass',
+        'metadata': {'name': QUALIFICATION_PRIORITY_CLASS},
+        'value': 0, 'globalDefault': False, 'preemptionPolicy': 'Never',
+        'description': 'Temporary runner image qualification at normal priority without preemption.',
+    }
+
+
 def qualification_pod(config, plan, rows, selected_values):
     """Build one fixed probe from an existing standard CI isolation profile."""
     if not isinstance(config, QualificationCanary) or any(not isinstance(v, str) for v in config):
@@ -1012,6 +1023,7 @@ def qualification_pod(config, plan, rows, selected_values):
     spec['affinity'] = nuc_serial_affinity()
     spec['activeDeadlineSeconds'] = 600
     spec['terminationGracePeriodSeconds'] = 15
+    spec['priorityClassName'] = QUALIFICATION_PRIORITY_CLASS
     spec['preemptionPolicy'] = 'Never'
     runner = spec['containers'][0]
     runner['image'] = config.image
@@ -1111,8 +1123,9 @@ def qualification_foundations(document, config, pod):
                        '!has(object.spec.dnsConfig) && '
                        '(!has(object.spec.hostAliases) || size(object.spec.hostAliases) == 0) && '
                        '(!has(object.spec.dnsPolicy) || object.spec.dnsPolicy == "ClusterFirst") && '
-                       '(!has(object.spec.priorityClassName) || object.spec.priorityClassName == "") && '
-                       '(!has(object.spec.priority) || object.spec.priority == 0) && '
+                       'has(object.spec.priorityClassName) && object.spec.priorityClassName == '
+                       + json.dumps(QUALIFICATION_PRIORITY_CLASS) + ' && '
+                       'has(object.spec.priority) && object.spec.priority == 0 && '
                        'has(object.spec.preemptionPolicy) && object.spec.preemptionPolicy == "Never" && '
                        'object.spec.containers.all(c, '
                        '(!has(c.ports) || size(c.ports) == 0) && '
@@ -1159,6 +1172,7 @@ def render(inventory, sandbox_image, native_image, node_ip, listener_node='mp',
         pod = qualification_pod(qualification, plan, rows, selected_values)
         qualification_foundations(output['foundations.json'], qualification, pod)
         output['qualification-canary.json'] = pod
+        output['qualification-priority-class.json'] = qualification_priority_class()
     return output
 
 

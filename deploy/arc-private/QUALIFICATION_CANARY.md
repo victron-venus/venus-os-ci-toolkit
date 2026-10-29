@@ -1,8 +1,9 @@
 # Qualify a site runner image without enabling a runner pool
 
 The private ARC renderer can produce one temporary, credential-free qualification
-Pod and one exact alternative in the existing NUC admission policy. This is an
-operator-controlled image acceptance step, not a new ARC pool. Omitting
+Pod, a fixed non-preempting PriorityClass, and one exact alternative in the existing
+NUC admission policy. This is an operator-controlled image acceptance step, not a
+new ARC pool. Omitting
 `--qualification-canary-plan` preserves the existing rendered configuration.
 Pool values, repository Actions variables, JIT rules and public runner defaults
 do not change when the option is present either.
@@ -49,6 +50,8 @@ unchanged.
 
 Add `--qualification-canary-plan /private/path/qualification.json` to the existing
 reviewed renderer command. The new `qualification-canary.json` contains the Pod.
+The separate `qualification-priority-class.json` contains `victron-qualification`,
+with priority zero, `preemptionPolicy: Never` and `globalDefault: false`.
 The only changed existing resource is `victron-private-nuc-kvm-workers` in
 `foundations.json`. Compare with output from the same command without the option:
 all pool definitions, network policy, node guard and routing must be identical.
@@ -79,6 +82,16 @@ the policy's type-checking status. The CEL unit tests below do not replace that
 integration check. A Pod dry run against an unchanged production-only policy is
 expected to reject the qualification environment: the exact temporary policy
 must first be reviewed and installed in the authorized maintenance step.
+
+Kubernetes Priority admission obtains the preemption policy from the selected
+PriorityClass. An explicit `preemptionPolicy: Never` without a corresponding class
+is rejected before validating admission policies run. First server-dry-run the
+emitted PriorityClass. Create it only if it is absent and that creation has been
+approved; record its returned UID. If it already exists, verify its exact name,
+value zero, `Never` policy and non-default status; do not replace or modify it.
+The canary policy requires that exact class and the priority zero resolved by
+the API server. There is no configurable priority or class-name override.
+See [non-preempting PriorityClass](https://kubernetes.io/docs/concepts/scheduling-eviction/pod-priority-preemption/#non-preempting-priorityclass).
 
 Ensure the candidate image is already present by digest on the selected node,
 the existing node guard has healthy TLS and the node has sufficient free disk,
@@ -111,6 +124,11 @@ policy rendered **without** the optional plan. Confirm the candidate name/image
 and qualification environment are rejected again. Leave production pool images,
 Actions routing and JIT issuance unchanged. Promotion, if approved later, is a
 separate reviewed configuration change.
+If this attempt created the temporary PriorityClass, remove it only after the
+owned Pod is gone and no other Pod references the class, using the recorded UID
+as a deletion precondition. Preserve a pre-existing class and stop for ownership
+review if its UID or specification changed. Rendering never creates or deletes
+cluster resources automatically.
 
 ## Repeatable software checks
 
