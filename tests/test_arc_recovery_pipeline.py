@@ -1,11 +1,15 @@
 import hashlib
 import json
 import os
+import signal
+import socket
 import stat
 from pathlib import Path
+import subprocess
 import sys
 import tempfile
 import time
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -41,6 +45,152 @@ class PipelineTests(unittest.TestCase):
                          maximum=10, reserve=0, timeout=1, inputs={})
         launch.assert_not_called()
         self.assertEqual(list(self.root.iterdir()), [])
+
+    def test_missing_waitid_fails_before_any_output_or_process(self):
+        with patch.dict(pipeline.os.__dict__), \
+                patch.object(pipeline.subprocess, "Popen") as launch:
+            pipeline.os.__dict__.pop("waitid", None)
+            with self.assertRaisesRegex(ValueError, r"waitid/WNOWAIT.*Python >= 3.13"):
+                self.run_pipe([python("print(1)")])
+        launch.assert_not_called()
+        self.assertEqual(list(self.root.iterdir()), [])
+
+    def test_child_reaper_handler_fails_before_launch(self):
+        with patch.object(pipeline.signal, "getsignal", return_value=signal.SIG_IGN), \
+                patch.object(pipeline.subprocess, "Popen") as launch, \
+                self.assertRaisesRegex(ValueError, "sole child reaper"):
+            self.run_pipe([python("print(1)")])
+        launch.assert_not_called()
+        self.assertEqual(list(self.root.iterdir()), [])
+
+    def test_repeated_status_peeks_leave_leader_waitable(self):
+        with subprocess.Popen(python("raise SystemExit(7)"), start_new_session=True) as child:
+            deadline = time.monotonic() + 2
+            status = None
+            while status is None and time.monotonic() < deadline:
+                status = pipeline.child_status(child)
+                time.sleep(0.005)
+            self.assertEqual(status, 7)
+            self.assertEqual(pipeline.child_status(child), 7)
+            self.assertIsNone(child.returncode)
+            self.assertEqual(child.wait(timeout=1), 7)
+
+    def test_early_stage_stays_waitable_until_group_teardown(self):
+        kill_group = os.killpg
+        retained = []
+
+        def check_then_kill(pid, sig):
+            status = os.waitid(os.P_PID, pid, os.WEXITED | os.WNOHANG | os.WNOWAIT)
+            self.assertIsNotNone(status)
+            self.assertEqual(status.si_pid, pid)
+            retained.append(pid)
+            kill_group(pid, sig)
+
+        with patch.object(pipeline.os, "killpg", side_effect=check_then_kill):
+            result = self.run_pipe([python("print('a',end='')"),
+                                    python("import sys,time;sys.stdout.write(sys.stdin.read());time.sleep(.1)")])
+        self.assertTrue(result["passed"])
+        self.assertEqual(result["returncodes"], [0, 0])
+        self.assertEqual(len(retained), 2)
+
+    def test_exited_leaders_pipe_holding_descendant_is_terminated(self):
+        address = str(self.root / "owned.sock")
+        code = ("import os,socket,time\n"
+                "if os.fork(): os._exit(0)\n"
+                "peer=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM)\n"
+                f"peer.connect({address!r})\n"
+                "peer.sendall(b'ready')\n"
+                "time.sleep(10)\n")
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as server:
+            server.bind(address)
+            server.listen(1)
+            server.settimeout(2)
+            start = time.monotonic()
+            result = self.run_pipe([python(code)], timeout=1)
+            self.assertEqual(result["failure"], "pipeline deadline")
+            self.assertLess(time.monotonic() - start, 4)
+            self.assertEqual(result["returncodes"], [0])
+            peer, _ = server.accept()
+            with peer:
+                peer.settimeout(1)
+                self.assertEqual(peer.recv(5), b"ready")
+                # Only the owned descendant has this connection. EOF proves
+                # it did not survive its already-exited leader's teardown.
+                self.assertEqual(peer.recv(1), b"")
+
+    def test_consumed_leader_identity_is_never_signaled_or_accepted(self):
+        status = pipeline.child_status
+
+        def consumed(child):
+            child.wait(timeout=2)
+            return status(child)
+
+        with patch.object(pipeline, "child_status", side_effect=consumed), \
+                patch.object(pipeline.os, "killpg") as kill_group:
+            result = self.run_pipe([python("pass")])
+        self.assertEqual(result["failure"], "pipeline child ownership lost")
+        self.assertFalse(result["passed"])
+        kill_group.assert_not_called()
+
+    def test_signal_error_does_not_skip_other_groups_or_failure_receipt(self):
+        kill_group = os.killpg
+        signaled = []
+
+        def signal_then_error(pid, sig):
+            try:
+                kill_group(pid, sig)
+            except PermissionError:
+                # Native Darwin reports EPERM for an all-zombie group.
+                pass
+            signaled.append(pid)
+            if len(signaled) == 1:
+                raise OSError("simulated signal failure")
+
+        with patch.object(pipeline.os, "killpg", side_effect=signal_then_error):
+            result = self.run_pipe([python("pass"), python("pass")])
+        self.assertEqual(result["failure"], "pipeline group teardown failed")
+        self.assertFalse(result["passed"])
+        self.assertEqual(len(signaled), 2)
+        self.assertEqual(result["returncodes"], [0, 0])
+
+    def inspect_fixture(self, code, timeout=1):
+        launch = subprocess.Popen
+        inspectors = []
+
+        def fixture(command, **kwargs):
+            self.assertEqual(command, ["/bin/ps", "-g", "12345", "-o", "pid=,pgid=,stat="])
+            child = launch(python(code), **kwargs)
+            inspectors.append(child)
+            return child
+
+        try:
+            with patch.object(pipeline, "child_status", return_value=0), \
+                    patch.object(pipeline.subprocess, "Popen", side_effect=fixture), \
+                    patch.object(pipeline.os, "killpg") as group_signal:
+                pipeline.terminated_group_only(SimpleNamespace(pid=12345), time.monotonic() + timeout)
+                group_signal.assert_not_called()
+        finally:
+            self.assertTrue(all(child.returncode is not None for child in inspectors))
+
+    def test_darwin_zombie_only_projection_is_accepted(self):
+        self.inspect_fixture("print('12345 12345 Z\\n12346 12345 Z')")
+
+    def test_darwin_live_or_unknown_group_is_not_accepted(self):
+        for projection in ["12345 12345 Z\n12346 12345 S", "12346 12345 Z",
+                           "12345 99999 Z", "12345 12345 Z\n12345 12345 Z", "truncated"]:
+            with self.subTest(projection=projection), self.assertRaises(ValueError):
+                self.inspect_fixture(f"print({projection!r})")
+
+    def test_darwin_projection_errors_and_timeouts_are_not_accepted(self):
+        for code in ["raise SystemExit(1)", "import time;time.sleep(10)",
+                     "print('x'*100000)"]:
+            with self.subTest(code=code), self.assertRaises(ValueError):
+                self.inspect_fixture(code, timeout=.15)
+
+    def test_missing_waitable_child_is_ownership_failure(self):
+        with patch.object(pipeline.os, "waitid", side_effect=ChildProcessError), \
+                self.assertRaisesRegex(ValueError, "ownership lost"):
+            pipeline.child_status(SimpleNamespace(pid=12345, returncode=None))
 
     def test_roundtrip_and_exact_hash(self):
         result = self.run_pipe(
