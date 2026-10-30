@@ -30,6 +30,7 @@ import release_fuzz  # pylint: disable=wrong-import-position
 import release_signing_workflow  # pylint: disable=wrong-import-position
 import release_gh_workflow  # pylint: disable=wrong-import-position
 import release_closed_workflow  # pylint: disable=wrong-import-position
+import release_attempt_workflow  # pylint: disable=wrong-import-position
 from workflow_hardening import harden_jobs  # pylint: disable=wrong-import-position
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -1271,6 +1272,7 @@ def release(policy):
     configure_fuzzing(workflow, policy)
     release_closed_workflow.apply(workflow, policy, ACTION_REFS)
     release_gh_workflow.apply(workflow, ACTION_REFS)
+    release_attempt_workflow.scope(workflow, policy.get("artifact_pattern", "release-assets*"))
     return workflow
 
 
@@ -1538,6 +1540,8 @@ def release_files(directory: Path, policy: dict) -> dict[str, str]:
     if not (directory / RELEASE_BUILD_PATH).is_file():
         raise ValueError("A real release-build.yml adapter is required")
     files = {".github/workflows/release-pipeline.yml": dump(release(policy))}
+    if policy.get("versioning"):
+        files.update(attempt_scoped_build_adapters(directory, policy))
     for path in ("scripts/install_release_gh.py", "scripts/download_release_gh.go", ".github/gh/release.json", ".github/gh/LICENSE", "docs/release-github-cli.md"):
         files[path] = (ROOT / path).read_text()
     files["scripts/release_validation.py"] = (ROOT / "scripts/release_validation.py").read_text()
@@ -1957,6 +1961,41 @@ def render_fuzz(directory: Path) -> dict[str, str]:
     return prepare_consumer_files(directory, files)
 
 
+def attempt_scoped_build_adapters(directory: Path, policy: dict) -> dict[str, str]:
+    """Refresh local build artifact selectors together with their publisher."""
+    editor, _ = coverage_yaml()
+    pending = [RELEASE_BUILD_PATH]
+    seen = set()
+    files = {}
+    workflows = {}
+    producers = set()
+    while pending:
+        name = pending.pop()
+        if name in seen:
+            continue
+        seen.add(name)
+        source = (directory / name).read_text()
+        # Validate before round-trip editing, including duplicate mapping keys.
+        yaml.load(source, Loader=WorkflowLoader)  # nosec B506
+        workflow = editor.load(source)
+        workflows[name] = workflow
+        producers.update(release_attempt_workflow.producer_selectors(workflow))
+        for job in workflow.get("jobs", {}).values():
+            local = job.get("uses", "")
+            if local.startswith("./.github/workflows/"):
+                if not re.fullmatch(r"\./\.github/workflows/[A-Za-z0-9_-]+\.ya?ml", local):
+                    raise ValueError("Invalid local release build workflow")
+                pending.append(local[2:])
+    for name, workflow in workflows.items():
+        if release_attempt_workflow.scope(
+            workflow, policy.get("artifact_pattern", "release-assets*"), producers
+        ):
+            output = io.StringIO()
+            editor.dump(workflow, output)
+            files[name] = output.getvalue()
+    return files
+
+
 def render(directory: Path) -> dict[str, str]:
     """Validate adapters and assemble generated workflows, clients and operator docs."""
     policy = json.loads((directory / POLICY_FILE).read_text())
@@ -2036,6 +2075,16 @@ Change scope job checks the complete Git diff first; the gate accepts only prove
 documentation skips. Missing, failed or unexpectedly skipped workflows fail the
 gate. Unknown files, incomplete history, code, workflows and lockfile changes run
 full validation.
+
+The required ordinary **CI gate** uses `always()` so its existing result checks
+still run after cancellation. [GitHub accepts skipped required checks](https://docs.github.com/en/pull-requests/how-tos/merge-and-close-pull-requests/troubleshooting-required-status-checks#handling-skipped-but-required-checks),
+so using `!cancelled()` on this aggregate could allow an unfinished validator to
+be hidden behind a skipped gate. Failed, cancelled, missing or unauthorized
+skipped dependencies must produce a failing aggregate. A cancelled run whose
+validators already all succeeded retains that valid result. Superseded runs can
+therefore retain a short queued aggregate; do not trade this protection for
+faster queue cleanup. Keep the separate release publication and signing guards
+unchanged: cancellation must still stop those operations.
 
 The optional `change_scope` policy provides exact `documentation_paths`, exact
 `required_paths` for documentation used as a build input, and
@@ -2126,6 +2175,14 @@ Candidate tags are unique and immutable: `vX.Y.Z-beta.N`, `vX.Y.Z-rc.N`, or
 never update stable/latest. All required platforms must build before publication.
 `release-manifest.json` records source SHA, workflow/run attempt and every payload
 SHA-256. The manifest is also saved in immutable Actions evidence for 90 days.
+Versioned Actions packages also record their producer repository, run ID, attempt
+and source in every receipt; publication requires the current verified run identity.
+The installer scopes build, signing and collection artifact names to that attempt.
+ID-selected candidate downloads require a separate consumer check of receipt
+producer identity and payload digest; the name-scoping helper does not verify them.
+After a partial failure, use **Re-run all jobs**: older-attempt packages must not
+fill missing current builds. Update shared fuzz workflow pins with the producer
+and collector rollout. Local offline receipts cannot qualify live publication.
 
 Automatic push betas and scheduled nightlies publish the current default HEAD.
 An older source is explicitly marked `superseded` only after ancestry and one
@@ -2152,6 +2209,61 @@ branch ancestry, Release gate, immutable evidence and every payload checksum.
 Stable `vX.Y.Z` copies the tested RC bytes without rebuilding. No override or
 force-tag option exists. Expired/missing evidence requires a new RC. A partial
 upload remains an unpublished draft; inspect it before any manual recovery.
+
+Assets are uploaded to the draft's known release ID, using one bounded request
+per file. Publication does not repeat a tag lookup for each upload: a draft may
+not appear in the published-release-by-tag API. Each response must confirm a
+created asset with the expected name and size; the final verification still
+downloads and checks every payload before making the release public. A timeout,
+incomplete response or upload conflict stops publication without retrying or
+overwriting the asset. Preserve the draft and its evidence for inspection;
+do not reset the version allocation ledger to reuse the failed build number.
+
+Release-asset downloads use the expected size and SHA-256 from the validated
+inventory before opening a new destination. Every chunk is checked before it is
+written; a longer, shorter or different response is rejected. The transfer also
+has one deadline covering stdout, stderr and silent waiting. Failure or
+cancellation stops and reaps the transfer process and removes only its own
+incomplete file. Existing destinations are never overwritten.
+
+The shared `download_asset` helper requires `expected={"size": ..., "sha256": ...}`
+and a `DownloadBudget(max_bytes, reserve_bytes=...)`. Reuse one budget across the
+whole sequential inventory. `max_bytes` counts cumulative downloaded bytes, even
+if a verified staging file is removed before the next download; hashing the same
+bytes does not charge them twice. The separate `reserve_bytes` is the operator's
+minimum free space on the destination filesystem, checked before each file and
+during transfer, including silent waiting. Its default is zero; callers retain
+any additional environment-specific capacity admission and reserve. Neither
+parameter changes a consumer's release-size cap or reserves space against other
+processes. Before each asset, its full expected size must fit the remaining byte
+budget and currently free space above that floor.
+
+The built-in promotion, closed-build resolution, registry publication and
+versioned verification paths
+share a budget derived from their validated manifest. Upload readback uses the
+known local identities and a shared budget for its complete upload inventory.
+A consumer backport must update `release_control.py`, `release_closed.py`,
+`release_versioned.py` and any installed `publish_verified.py` atomically
+with their generated contract tests; the installer ships this complete bundle.
+Calling the raw transport with an unbounded file object is no longer accepted.
+The final release snapshot, provenance and signature checks still run after the
+transfer. The offline regression suite is `tests/test_release_download.py`.
+
+During publication, the current Actions run and its prerequisite gate can take
+time to appear consistently in the API. The publisher shares one five-minute
+wait across both updates and rechecks execution identity on every read. It
+publishes only after the exact Release gate reports completed success. Failed,
+skipped, duplicate or mismatched gates stop immediately; validating a previously
+completed release never uses this propagation wait.
+
+For a targeted consumer backport, record the reviewed toolkit commit and the
+resulting client/test file hashes in the change review. Preserve that consumer's
+signing requirements, asset restrictions and import adaptations. A partial
+backport does not update every vendored module, so it must not claim a new
+whole-toolkit revision. The installer reads files from its own checkout; a later
+full regeneration from an older checkout can overwrite the backport. Regenerate
+from a reviewed checkout containing these fixes, inspect the complete diff and
+update the general revision only as part of that full migration.
 
 GitHub releases do not deploy production. Existing push/tag/CI deployment hooks
 must be migrated or disabled before enabling automatic prereleases. Container

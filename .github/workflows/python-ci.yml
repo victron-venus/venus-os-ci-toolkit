@@ -93,7 +93,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup Python
-        uses: victron-venus/venus-os-ci-toolkit/actions/setup-python@e9d505643bc562d6f725a4d3183d9c67ac7e536b # main
+        uses: victron-venus/venus-os-ci-toolkit/actions/setup-python@368320994ed55ae68935dcadb4062000a4648b92 # main
         with:
           python-version: ${{ inputs.python-version }}
 
@@ -155,7 +155,7 @@ jobs:
           # only girepository-2.0 exists there, older runners ship the 1.0 names.
           echo "Checking for dbus-1, glib-2.0, cairo and gobject introspection via pkg-config..."
           if ! pkg-config --exists dbus-1; then
-            echo "ERROR: dbus-1 not found by pkg-config"
+            echo "ERROR: dbus-1 not found by pkg-config" >&2
             echo "PKG_CONFIG_PATH: $PKG_CONFIG_PATH"
             echo "Available dbus-related packages:"
             dpkg -l | grep dbus
@@ -164,7 +164,7 @@ jobs:
             exit 1
           fi
           if ! pkg-config --exists glib-2.0; then
-            echo "ERROR: glib-2.0 not found by pkg-config"
+            echo "ERROR: glib-2.0 not found by pkg-config" >&2
             echo "PKG_CONFIG_PATH: $PKG_CONFIG_PATH"
             echo "Available glib-related packages:"
             dpkg -l | grep glib
@@ -173,7 +173,7 @@ jobs:
             exit 1
           fi
           if ! pkg-config --exists cairo; then
-            echo "ERROR: cairo not found by pkg-config"
+            echo "ERROR: cairo not found by pkg-config" >&2
             echo "PKG_CONFIG_PATH: $PKG_CONFIG_PATH"
             echo "Available cairo-related packages:"
             dpkg -l | grep cairo
@@ -189,7 +189,7 @@ jobs:
             fi
           done
           if [ -z "$GI_MOD" ]; then
-            echo "ERROR: no girepository/gobject-introspection module found by pkg-config"
+            echo "ERROR: no girepository/gobject-introspection module found by pkg-config" >&2
             echo "PKG_CONFIG_PATH: $PKG_CONFIG_PATH"
             echo "Available girepository-related packages:"
             dpkg -l | grep girepository

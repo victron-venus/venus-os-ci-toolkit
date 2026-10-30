@@ -237,3 +237,33 @@ list, for example `{"suffixes": [".apk", ".aab"], "reason": "Android publication
 The renderer embeds these reviewed restrictions in the release engine. It rejects
 matching suffixes case-insensitively before staging any bytes and before any
 publication API call, including promotion of an older RC.
+
+## Package identity across reruns
+
+Each Actions package receipt records its producer repository, workflow run ID,
+run attempt and exact source SHA. The live publisher compares these fields with
+its independently verified GitHub run before it signs or publishes packages.
+Missing identity and earlier-attempt packages fail closed even when their version
+plan and payload hashes match. Offline local packaging remains available, but an
+offline receipt cannot qualify a live Actions publication.
+
+The generated build adapters, signer and publisher also scope Actions artifact
+names to `-run-<run ID>-attempt-<attempt>`. Payload filenames inside the archive
+stay unchanged. Browser-candidate artifact IDs, frozen plan selection and retained
+historical RC verification retain their separate existing contracts.
+
+Downloads selected by artifact ID require an independent consumer check: the
+name-scoping helper does not authenticate their provenance. Before using an ID
+selected candidate, its adapter must verify the receipt's repository, run,
+attempt, source and payload digest against the expected execution. A nonempty
+artifact ID alone is not proof. Name-based downloads must use one explicit
+selector; unknown run or repository overrides require the verified ID path.
+
+After a failed or partial run, use **Re-run all jobs**. Re-running only failed jobs
+can leave required packages missing from the current attempt; the publisher must
+not fill those gaps with older artifacts. Duplicate package names remain errors.
+
+Update producers and collectors together with the release installer. Projects
+using shared RC fuzzing must also pin a toolkit revision whose fuzz workflow emits
+the attempt-scoped artifact name. Updating only the publisher is deliberately
+insufficient. Previously published releases keep their original immutable evidence.
