@@ -134,7 +134,10 @@ is replaced by this site, so add the installer to an existing site's build
 instead of enabling this standalone deployment when a repository already hosts
 a documentation website. Both jobs honor the existing `CI_RUNNER_MODE` and
 `CI_RUNNER_RELEASE_LABELS` opt-in for trusted default-branch runs; GitHub-hosted
-Ubuntu remains the default.
+Ubuntu remains the default. Each build uses a new directory under `runner.temp`,
+identified by the run and attempt plus a unique suffix. Downloads and generated
+sites cannot reuse files left by another job on a persistent runner. The pinned
+`_toolkit` checkout is explicitly cleaned before use.
 
 Call the installer after the project's successful publication/gates, or dispatch
 an explicit default-branch workflow that downloads and verifies an existing

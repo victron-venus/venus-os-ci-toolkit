@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import os
 from pathlib import Path
 import struct
 import shutil
@@ -9,6 +10,8 @@ import subprocess
 import tempfile
 import unittest
 from unittest import mock
+
+import yaml
 
 from scripts import esp_web_installer as installer
 
@@ -197,6 +200,109 @@ class InstallerTests(unittest.TestCase):
                 self.generate()
         self.assertFalse(self.output.exists())
         self.assertEqual(list(self.root.glob(".esp-installer-*")), [])
+
+
+class InstallerWorkflowTests(unittest.TestCase):
+    def setUp(self):
+        workflow = (
+            Path(__file__).resolve().parents[1]
+            / ".github/workflows/esp-web-installer.yml"
+        )
+        self.steps = yaml.safe_load(workflow.read_text())["jobs"]["build"]["steps"]
+
+    def test_download_build_verify_and_upload_share_isolated_paths(self):
+        firmware = "${{ steps.paths.outputs.firmware }}"
+        site = "${{ steps.paths.outputs.site }}"
+        checkout = next(
+            step
+            for step in self.steps
+            if step.get("uses", "").startswith("actions/checkout@")
+        )
+        self.assertEqual(checkout["with"]["path"], "_toolkit")
+        self.assertIs(checkout["with"]["clean"], True)
+        download = next(
+            step
+            for step in self.steps
+            if step.get("uses", "").startswith("actions/download-artifact@")
+        )
+        self.assertEqual(download["with"]["path"], firmware)
+        build = next(
+            step
+            for step in self.steps
+            if step.get("uses") == "./_toolkit/actions/esp-web-installer"
+        )
+        self.assertEqual(build["with"]["input-directory"], firmware)
+        self.assertEqual(build["with"]["output-directory"], site)
+        verification = next(
+            step
+            for step in self.steps
+            if step.get("run") == "sha256sum --check SHA256SUMS"
+        )
+        self.assertEqual(verification["working-directory"], site)
+        uploads = [
+            step
+            for step in self.steps
+            if step.get("uses", "").startswith(
+                ("actions/upload-artifact@", "actions/upload-pages-artifact@")
+            )
+        ]
+        self.assertEqual(len(uploads), 2)
+        self.assertTrue(all(step["with"]["path"] == site for step in uploads))
+
+    @unittest.skipUnless(shutil.which("bash"), "Workflow path preparation uses Bash")
+    def test_repeated_attempts_never_reuse_persistent_runner_content(self):
+        prepare = next(step for step in self.steps if step.get("id") == "paths")
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            runner_temp = root / "runner-temp"
+            runner_temp.mkdir()
+            for name in ("_firmware", "_site"):
+                (root / name).mkdir()
+                (root / name / "previous-run").write_text("keep")
+            directories = []
+            for index, attempt in enumerate(("1", "2", "2")):
+                output = root / f"outputs-{index}"
+                result = subprocess.run(
+                    [
+                        shutil.which("bash"),
+                        "-e",
+                        "-o",
+                        "pipefail",
+                        "-c",
+                        prepare["run"],
+                    ],
+                    cwd=root,
+                    env={
+                        **os.environ,
+                        "RUNNER_TEMP": str(runner_temp),
+                        "GITHUB_RUN_ID": "12345",
+                        "GITHUB_RUN_ATTEMPT": attempt,
+                        "GITHUB_OUTPUT": str(output),
+                    },
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                paths = dict(
+                    line.split("=", 1) for line in output.read_text().splitlines()
+                )
+                firmware, site = Path(paths["firmware"]), Path(paths["site"])
+                self.assertTrue(firmware.is_dir())
+                self.assertEqual(list(firmware.iterdir()), [])
+                self.assertFalse(site.exists())
+                self.assertEqual(firmware.parent, site.parent)
+                self.assertEqual(site.parent.parent, runner_temp)
+                self.assertTrue(
+                    site.parent.name.startswith(f"esp-web-installer-12345-{attempt}-")
+                )
+                self.assertNotIn(site.parent, directories)
+                directories.append(site.parent)
+                site.mkdir()
+                (site / "previous-run").write_text("old site")
+                (firmware / "previous-run").write_text("old firmware")
+            for name in ("_firmware", "_site"):
+                self.assertEqual((root / name / "previous-run").read_text(), "keep")
 
 
 if __name__ == "__main__":

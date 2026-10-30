@@ -69,35 +69,44 @@ jobs:
           repository: victron-venus/venus-os-ci-toolkit
           ref: ${{ inputs.toolkit-ref }}
           path: _toolkit
+          clean: true
           persist-credentials: false
+      - name: Prepare isolated artifact directories
+        id: paths
+        shell: bash
+        run: |
+          root="$(mktemp -d "$RUNNER_TEMP/esp-web-installer-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-XXXXXX")"
+          root="$(cd "$root" && pwd -P)"
+          mkdir "$root/firmware"
+          printf 'firmware=%s\nsite=%s\n' "$root/firmware" "$root/site" >> "$GITHUB_OUTPUT"
       - name: Download only the selected current-run firmware artifact
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: ${{ inputs.artifact-name }}
-          path: _firmware
+          path: ${{ steps.paths.outputs.firmware }}
       - name: Build the installer
         uses: ./_toolkit/actions/esp-web-installer
         with:
-          input-directory: _firmware
+          input-directory: ${{ steps.paths.outputs.firmware }}
           catalog-file: ${{ inputs.catalog-file }}
-          output-directory: _site
+          output-directory: ${{ steps.paths.outputs.site }}
           version: ${{ inputs.version }}
           channel: ${{ inputs.channel }}
       - name: Verify all generated files
-        working-directory: _site
+        working-directory: ${{ steps.paths.outputs.site }}
         run: sha256sum --check SHA256SUMS
       - name: Save the complete installer for review
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: esp-web-installer-site-${{ github.run_id }}-${{ github.run_attempt }}
-          path: _site/
+          path: ${{ steps.paths.outputs.site }}
           if-no-files-found: error
           retention-days: 14
       - name: Package the Pages site
         if: inputs.deploy
         uses: actions/upload-pages-artifact@7b1f4a764d45c48632c6b24a0339c27f5614fb0b # v4
         with:
-          path: _site
+          path: ${{ steps.paths.outputs.site }}
   deploy:
     if: inputs.deploy
     needs: build
