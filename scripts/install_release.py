@@ -2076,6 +2076,16 @@ documentation skips. Missing, failed or unexpectedly skipped workflows fail the
 gate. Unknown files, incomplete history, code, workflows and lockfile changes run
 full validation.
 
+The required ordinary **CI gate** uses `always()` so its existing result checks
+still run after cancellation. [GitHub accepts skipped required checks](https://docs.github.com/en/pull-requests/how-tos/merge-and-close-pull-requests/troubleshooting-required-status-checks#handling-skipped-but-required-checks),
+so using `!cancelled()` on this aggregate could allow an unfinished validator to
+be hidden behind a skipped gate. Failed, cancelled, missing or unauthorized
+skipped dependencies must produce a failing aggregate. A cancelled run whose
+validators already all succeeded retains that valid result. Superseded runs can
+therefore retain a short queued aggregate; do not trade this protection for
+faster queue cleanup. Keep the separate release publication and signing guards
+unchanged: cancellation must still stop those operations.
+
 The optional `change_scope` policy provides exact `documentation_paths`, exact
 `required_paths` for documentation used as a build input, and
 `always_validate_workflows` for independently required checks. Documentation paths
@@ -2197,6 +2207,61 @@ branch ancestry, Release gate, immutable evidence and every payload checksum.
 Stable `vX.Y.Z` copies the tested RC bytes without rebuilding. No override or
 force-tag option exists. Expired/missing evidence requires a new RC. A partial
 upload remains an unpublished draft; inspect it before any manual recovery.
+
+Assets are uploaded to the draft's known release ID, using one bounded request
+per file. Publication does not repeat a tag lookup for each upload: a draft may
+not appear in the published-release-by-tag API. Each response must confirm a
+created asset with the expected name and size; the final verification still
+downloads and checks every payload before making the release public. A timeout,
+incomplete response or upload conflict stops publication without retrying or
+overwriting the asset. Preserve the draft and its evidence for inspection;
+do not reset the version allocation ledger to reuse the failed build number.
+
+Release-asset downloads use the expected size and SHA-256 from the validated
+inventory before opening a new destination. Every chunk is checked before it is
+written; a longer, shorter or different response is rejected. The transfer also
+has one deadline covering stdout, stderr and silent waiting. Failure or
+cancellation stops and reaps the transfer process and removes only its own
+incomplete file. Existing destinations are never overwritten.
+
+The shared `download_asset` helper requires `expected={"size": ..., "sha256": ...}`
+and a `DownloadBudget(max_bytes, reserve_bytes=...)`. Reuse one budget across the
+whole sequential inventory. `max_bytes` counts cumulative downloaded bytes, even
+if a verified staging file is removed before the next download; hashing the same
+bytes does not charge them twice. The separate `reserve_bytes` is the operator's
+minimum free space on the destination filesystem, checked before each file and
+during transfer, including silent waiting. Its default is zero; callers retain
+any additional environment-specific capacity admission and reserve. Neither
+parameter changes a consumer's release-size cap or reserves space against other
+processes. Before each asset, its full expected size must fit the remaining byte
+budget and currently free space above that floor.
+
+The built-in promotion, closed-build resolution, registry publication and
+versioned verification paths
+share a budget derived from their validated manifest. Upload readback uses the
+known local identities and a shared budget for its complete upload inventory.
+A consumer backport must update `release_control.py`, `release_closed.py`,
+`release_versioned.py` and any installed `publish_verified.py` atomically
+with their generated contract tests; the installer ships this complete bundle.
+Calling the raw transport with an unbounded file object is no longer accepted.
+The final release snapshot, provenance and signature checks still run after the
+transfer. The offline regression suite is `tests/test_release_download.py`.
+
+During publication, the current Actions run and its prerequisite gate can take
+time to appear consistently in the API. The publisher shares one five-minute
+wait across both updates and rechecks execution identity on every read. It
+publishes only after the exact Release gate reports completed success. Failed,
+skipped, duplicate or mismatched gates stop immediately; validating a previously
+completed release never uses this propagation wait.
+
+For a targeted consumer backport, record the reviewed toolkit commit and the
+resulting client/test file hashes in the change review. Preserve that consumer's
+signing requirements, asset restrictions and import adaptations. A partial
+backport does not update every vendored module, so it must not claim a new
+whole-toolkit revision. The installer reads files from its own checkout; a later
+full regeneration from an older checkout can overwrite the backport. Regenerate
+from a reviewed checkout containing these fixes, inspect the complete diff and
+update the general revision only as part of that full migration.
 
 GitHub releases do not deploy production. Existing push/tag/CI deployment hooks
 must be migrated or disabled before enabling automatic prereleases. Container

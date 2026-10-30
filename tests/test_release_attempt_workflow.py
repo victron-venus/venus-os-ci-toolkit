@@ -13,6 +13,20 @@ import release_attempt_workflow as attempts
 
 
 class AttemptWorkflowTests(unittest.TestCase):
+    def test_generated_runbook_retains_existing_publication_safeguards(self):
+        policy = json.loads((install_release.ROOT / ".release-policy.json").read_text())
+        guide = install_release.operator_guide(policy)
+        for explanation in (
+            "The required ordinary **CI gate** uses `always()`",
+            "Assets are uploaded to the draft's known release ID",
+            "Reuse one budget across the",
+            "wait across both updates and rechecks execution identity",
+            "must not claim a new",
+            "Re-run all jobs",
+        ):
+            with self.subTest(explanation=explanation):
+                self.assertIn(explanation, guide)
+
     def test_upload_and_download_scope_preserves_other_artifacts_and_is_idempotent(self):
         steps = [
             {"uses": "actions/upload-artifact@pinned", "with": {"name": "release-assets-${{ matrix.os }}"}},
