@@ -75,6 +75,14 @@ a partial site masquerading as a finished installer. The output contains the
 HTML/CSS/JavaScript, per-profile manifests, declared firmware copies, a catalog
 with firmware digests, and `SHA256SUMS`. Unlisted files are never copied.
 
+Firmware URLs and manifest filenames include their own SHA-256 digests. Changed
+bytes therefore receive new URLs even when the original filename stays the same.
+The catalog points to the hashed manifest, whose relative URLs point to the
+matching firmware. This matters because ESP Web Tools 10.4.0 uses ordinary
+cacheable fetches for both files. An already-open page can need a reload after
+another release replaces the site and removes old files; it cannot silently
+substitute the new release's bytes at an old firmware URL.
+
 The checks reject path traversal, symlinks, unsupported chips, split/overlapping
 parts, empty files, missing ESP boot/partition/application headers, mismatching
 bootloader/application chip IDs, known private
@@ -134,7 +142,10 @@ is replaced by this site, so add the installer to an existing site's build
 instead of enabling this standalone deployment when a repository already hosts
 a documentation website. Both jobs honor the existing `CI_RUNNER_MODE` and
 `CI_RUNNER_RELEASE_LABELS` opt-in for trusted default-branch runs; GitHub-hosted
-Ubuntu remains the default.
+Ubuntu remains the default. Each build uses a new directory under `runner.temp`,
+identified by the run and attempt plus a unique suffix. Downloads and generated
+sites cannot reuse files left by another job on a persistent runner. The pinned
+`_toolkit` checkout is explicitly cleaned before use.
 
 Call the installer after the project's successful publication/gates, or dispatch
 an explicit default-branch workflow that downloads and verifies an existing
@@ -192,6 +203,7 @@ installer does not invent a Wi-Fi form for firmware lacking Improv.
 ## References and acceptance
 
 - [ESP Web Tools](https://esphome.github.io/esp-web-tools/) — manifests, merged images, HTTPS and CORS.
+- [Pinned manifest fetch](https://github.com/esphome/esp-web-tools/blob/10.4.0/src/util/manifest.ts) and [firmware fetch](https://github.com/esphome/esp-web-tools/blob/10.4.0/src/flash.ts) — default browser caching behavior.
 - [Espressif esptool image targets](https://github.com/espressif/esptool/tree/v5.1.0/esptool/targets) — bootloader offsets and image chip IDs.
 - [ESPHome Improv serial](https://esphome.io/components/improv_serial/) — local Wi-Fi setup and logger requirements.
 - [ESPHome build action](https://github.com/esphome/build-action) — native firmware and complete manifest generation.
