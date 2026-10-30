@@ -60,10 +60,11 @@ class SigningWorkflowTests(unittest.TestCase):
             original = root / ".release-download/release-assets-linux"
             original.mkdir(parents=True)
             (original / "application.tar.gz").write_bytes(b"original reviewed build")
-            previous = root / ".release-download/release-assets-signature"
+            previous = root / ".release-download/release-assets-signature-run-123-attempt-2"
             previous.mkdir()
             (previous / "release-signatures.json").write_text("stale retry")
-            subprocess.run(["bash", "-e", "-o", "pipefail", "-c", command], cwd=root, check=True)
+            subprocess.run(["bash", "-e", "-o", "pipefail", "-c", command], cwd=root, check=True,
+                           env={**os.environ, "GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "2"})
             assets = root / ".release-assets"
             self.assertEqual([path.name for path in assets.iterdir()], ["application.tar.gz"])
             self.assertEqual((assets / "application.tar.gz").read_bytes(), b"original reviewed build")

@@ -11,6 +11,7 @@
 
 ### Fixed
 
+- Bind release package receipts and Actions artifact selection to the exact producer run attempt, including native assembly inputs. A partial rerun cannot publish earlier-attempt packages; complete reruns retain source, version, signature and payload checks.
 - Use the provisioned Ubuntu fallback package mirror for hosted browser workers while preserving the existing planning/browser budgets and required compatibility checks.
 - Preserve usable version metadata when migrating immutable workflow references to the canonical atomic Renovate updater, including coupled fuzz workflow and runtime pins.
 - Upload release assets through the existing draft release ID, with one bounded write and complete byte readback. Wait within one fixed deadline for current-run gate metadata without accepting skipped, failed or mismatched checks.
@@ -21,6 +22,8 @@
 ### Upgrade
 
 This source package does not deploy runner images or update consumer workflow pins. Adopt a reviewed immutable toolkit revision explicitly. Existing vendored publisher clients require the corresponding reviewed file update, and native image changes require artifact and workload qualification before activation. Keep the persistent release-version ledger and the previous qualified runtime for rollback.
+
+Refresh release producers, collectors and shared fuzz workflow pins together with the installer. Use **Re-run all jobs** after partial failures: missing current-attempt packages must not be replaced by artifacts from earlier attempts.
 
 ### Security
 

@@ -30,6 +30,7 @@ import release_fuzz  # pylint: disable=wrong-import-position
 import release_signing_workflow  # pylint: disable=wrong-import-position
 import release_gh_workflow  # pylint: disable=wrong-import-position
 import release_closed_workflow  # pylint: disable=wrong-import-position
+import release_attempt_workflow  # pylint: disable=wrong-import-position
 from workflow_hardening import harden_jobs  # pylint: disable=wrong-import-position
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -1271,6 +1272,7 @@ def release(policy):
     configure_fuzzing(workflow, policy)
     release_closed_workflow.apply(workflow, policy, ACTION_REFS)
     release_gh_workflow.apply(workflow, ACTION_REFS)
+    release_attempt_workflow.scope(workflow, policy.get("artifact_pattern", "release-assets*"))
     return workflow
 
 
@@ -1538,6 +1540,8 @@ def release_files(directory: Path, policy: dict) -> dict[str, str]:
     if not (directory / RELEASE_BUILD_PATH).is_file():
         raise ValueError("A real release-build.yml adapter is required")
     files = {".github/workflows/release-pipeline.yml": dump(release(policy))}
+    if policy.get("versioning"):
+        files.update(attempt_scoped_build_adapters(directory, policy))
     for path in ("scripts/install_release_gh.py", "scripts/download_release_gh.go", ".github/gh/release.json", ".github/gh/LICENSE", "docs/release-github-cli.md"):
         files[path] = (ROOT / path).read_text()
     files["scripts/release_validation.py"] = (ROOT / "scripts/release_validation.py").read_text()
@@ -1957,6 +1961,41 @@ def render_fuzz(directory: Path) -> dict[str, str]:
     return prepare_consumer_files(directory, files)
 
 
+def attempt_scoped_build_adapters(directory: Path, policy: dict) -> dict[str, str]:
+    """Refresh local build artifact selectors together with their publisher."""
+    editor, _ = coverage_yaml()
+    pending = [RELEASE_BUILD_PATH]
+    seen = set()
+    files = {}
+    workflows = {}
+    producers = set()
+    while pending:
+        name = pending.pop()
+        if name in seen:
+            continue
+        seen.add(name)
+        source = (directory / name).read_text()
+        # Validate before round-trip editing, including duplicate mapping keys.
+        yaml.load(source, Loader=WorkflowLoader)  # nosec B506
+        workflow = editor.load(source)
+        workflows[name] = workflow
+        producers.update(release_attempt_workflow.producer_selectors(workflow))
+        for job in workflow.get("jobs", {}).values():
+            local = job.get("uses", "")
+            if local.startswith("./.github/workflows/"):
+                if not re.fullmatch(r"\./\.github/workflows/[A-Za-z0-9_-]+\.ya?ml", local):
+                    raise ValueError("Invalid local release build workflow")
+                pending.append(local[2:])
+    for name, workflow in workflows.items():
+        if release_attempt_workflow.scope(
+            workflow, policy.get("artifact_pattern", "release-assets*"), producers
+        ):
+            output = io.StringIO()
+            editor.dump(workflow, output)
+            files[name] = output.getvalue()
+    return files
+
+
 def render(directory: Path) -> dict[str, str]:
     """Validate adapters and assemble generated workflows, clients and operator docs."""
     policy = json.loads((directory / POLICY_FILE).read_text())
@@ -2126,6 +2165,12 @@ Candidate tags are unique and immutable: `vX.Y.Z-beta.N`, `vX.Y.Z-rc.N`, or
 never update stable/latest. All required platforms must build before publication.
 `release-manifest.json` records source SHA, workflow/run attempt and every payload
 SHA-256. The manifest is also saved in immutable Actions evidence for 90 days.
+Versioned Actions packages also record their producer repository, run ID, attempt
+and source in every receipt; publication requires the current verified run identity.
+The installer scopes build, signing and collection artifact names to that attempt.
+After a partial failure, use **Re-run all jobs**: older-attempt packages must not
+fill missing current builds. Update shared fuzz workflow pins with the producer
+and collector rollout. Local offline receipts cannot qualify live publication.
 
 Automatic push betas and scheduled nightlies publish the current default HEAD.
 An older source is explicitly marked `superseded` only after ancestry and one
