@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>__TITLE__ — USB installer</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="app.js" defer></script>
+  <script type="module" src="https://unpkg.com/esp-web-tools@10.4.0/dist/web/install-button.js?module" crossorigin="anonymous"></script>
+</head>
+<body><main>
+  <p class="eyebrow">USB FIRMWARE INSTALLER</p>
+  <h1>__TITLE__</h1>
+  <p id="release" class="badge">Loading release information…</p>
+  <p>Install the published firmware directly from this browser. No terminal or local build tools required.</p>
+  <ol class="steps">
+    <li><b>Choose your exact board</b><br>Check the model, chip and wiring in its setup guide.</li>
+    <li><b>Connect USB</b><br>Use a data cable and close other serial terminals.</li>
+    <li><b>Connect and install</b><br>Choose the USB port and review the erase prompt.</li>
+  </ol>
+  <section>
+    <h2>Hardware and firmware</h2>
+    <label for="profile">Exact hardware profile</label>
+    <select id="profile" disabled><option value="">Choose your board…</option></select>
+    <div id="details" aria-live="polite"></div>
+    <p id="support" role="status"></p>
+    <esp-web-install-button id="installer" hidden>
+      <button slot="activate">Connect and install</button>
+      <span slot="unsupported">Use a desktop browser with Web Serial support, such as Chrome or Edge.</span>
+      <span slot="not-allowed">Open the HTTPS installer directly in its own browser tab.</span>
+    </esp-web-install-button>
+    <p class="warning"><b>Back up existing settings first.</b> Factory installation can erase firmware, Wi-Fi credentials and other device data. This does not remotely update a running device. The browser only accesses the serial port you choose.</p>
+    <p id="setup"></p>
+    <p id="downloads"></p>
+  </section>
+  <section>
+    <h2>If the board does not connect</h2>
+    <ul>
+      <li>Use desktop Chrome or Edge with Web Serial enabled. Safari, mobile browsers and embedded views may not support installation.</li>
+      <li>Try a known data cable and a direct USB port. Close ESPHome, Arduino and serial consoles that already hold the port.</li>
+      <li>If no port appears, follow the board manufacturer's USB driver instructions; Linux may require serial-port group permissions.</li>
+      <li>For boards that need download mode, hold BOOT while connecting USB or tapping RESET, then release BOOT after connection. Follow the exact board guide.</li>
+      <li>A chip match does not confirm the board's pins, flash size or attached hardware. Do not install a profile for another model.</li>
+      <li>After flashing, reset or reconnect the board if needed. Follow the selected profile's setup guide for networking and application configuration.</li>
+    </ul>
+  </section>
+  <footer>
+    <a id="project">Project and source</a> · <a id="release-notes" hidden>Release notes</a> · <a href="SHA256SUMS">SHA256 checksums</a>
+    <p>Generated from declared release inputs. Structural image checks do not establish physical hardware compatibility; consult the release's test evidence.</p>
+  </footer>
+</main></body>
+</html>

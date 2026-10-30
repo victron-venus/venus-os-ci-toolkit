@@ -95,6 +95,11 @@ copy both trusted-evaluator and unprivileged review-event caller templates.
 
 ## CI and release documentation
 
+[ESP browser installation](docs/ESP_WEB_INSTALLER.md) turns verified public factory
+firmware into a board-specific USB installer with a shared action and optional
+GitHub Pages deployment. Images, setup instructions and release gates remain
+owned by each firmware project.
+
 The [private OTTPlay k3s runner configuration](docs/ottplay-k3s-runners.md) adds
 an opt-in GitHub/ARC switch, ephemeral worker images and a verified manual
 activation command. It does not alter the fleet's default execution policy.
