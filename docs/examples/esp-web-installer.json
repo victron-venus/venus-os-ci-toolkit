@@ -1,0 +1,24 @@
+{
+  "schema": 1,
+  "name": "Example sensor",
+  "version": "1.2.3-rc.1",
+  "channel": "rc",
+  "project_url": "https://github.com/example/sensor",
+  "profiles": [
+    {
+      "id": "esp32-devkit",
+      "label": "ESP32 DevKit \u2014 4 MB",
+      "board": "ESP32-WROOM DevKit, 4 MB flash; follow the documented wiring",
+      "chip_family": "ESP32",
+      "provisioning": "improv",
+      "description": "USB Wi-Fi setup, then follow the application setup guide.",
+      "setup_url": "https://github.com/example/sensor/blob/main/docs/setup.md",
+      "parts": [
+        {
+          "path": "firmware/sensor.factory.bin",
+          "offset": 0
+        }
+      ]
+    }
+  ]
+}

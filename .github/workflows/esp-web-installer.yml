@@ -1,0 +1,120 @@
+name: ESP USB installer
+'on':
+  workflow_call:
+    inputs:
+      artifact-name:
+        description: Exact firmware artifact from this workflow run, containing only public release inputs
+        type: string
+        required: true
+      catalog-file:
+        description: Catalog path inside the firmware artifact
+        type: string
+        default: web-flasher.json
+      toolkit-ref:
+        description: Reviewed full commit SHA, normally the same pin as this reusable workflow
+        type: string
+        required: true
+      version:
+        description: Version if omitted from catalog; an existing version must match
+        type: string
+        default: ''
+      channel:
+        description: stable, beta, rc or nightly; an existing catalog channel must match
+        type: string
+        default: ''
+      deploy:
+        description: Publish the generated site; enable only after release gates have succeeded
+        type: boolean
+        default: false
+    outputs:
+      page-url:
+        description: Deployed GitHub Pages URL, empty for validation-only runs
+        value: ${{ jobs.deploy.outputs.page-url }}
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ${{ fromJSON((vars.CI_RUNNER_MODE == 'self-hosted' || vars.CI_RUNNER_MODE == 'k3s') && (contains(fromJSON('["push","schedule","workflow_dispatch"]'), github.event_name) && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)) && (vars.CI_RUNNER_RELEASE_LABELS || '[]') || '["ubuntu-latest"]') }}
+    timeout-minutes: 15
+    steps:
+      - name: Harden the runner
+        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
+      - name: Validate source pin and deployment context
+        env:
+          TOOLKIT_REF: ${{ inputs.toolkit-ref }}
+          ARTIFACT_NAME: ${{ inputs.artifact-name }}
+          DEPLOY: ${{ inputs.deploy }}
+          EVENT_NAME: ${{ github.event_name }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          PRIVATE_REPOSITORY: ${{ github.event.repository.private }}
+        run: |
+          python3 - <<'PY'
+          import os, re
+          if not re.fullmatch(r'[0-9a-f]{40}', os.environ['TOOLKIT_REF']):
+              raise SystemExit('toolkit-ref must be a reviewed full commit SHA')
+          suffix = f"-run-{os.environ['GITHUB_RUN_ID']}-attempt-{os.environ['GITHUB_RUN_ATTEMPT']}"
+          if not os.environ['ARTIFACT_NAME'].endswith(suffix):
+              raise SystemExit('Firmware artifact must identify this run and attempt')
+          if os.environ['DEPLOY'] == 'true':
+              if (os.environ['EVENT_NAME'] not in {'push', 'schedule', 'workflow_dispatch'}
+                      or os.environ['GITHUB_REF'] != 'refs/heads/' + os.environ['DEFAULT_BRANCH']
+                      or os.environ['PRIVATE_REPOSITORY'] != 'false'):
+                  raise SystemExit('Deployment requires a public repository and trusted default-branch event')
+          PY
+      - name: Check out the reviewed toolkit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: victron-venus/venus-os-ci-toolkit
+          ref: ${{ inputs.toolkit-ref }}
+          path: _toolkit
+          persist-credentials: false
+      - name: Download only the selected current-run firmware artifact
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ inputs.artifact-name }}
+          path: _firmware
+      - name: Build the installer
+        uses: ./_toolkit/actions/esp-web-installer
+        with:
+          input-directory: _firmware
+          catalog-file: ${{ inputs.catalog-file }}
+          output-directory: _site
+          version: ${{ inputs.version }}
+          channel: ${{ inputs.channel }}
+      - name: Verify all generated files
+        working-directory: _site
+        run: sha256sum --check SHA256SUMS
+      - name: Save the complete installer for review
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: esp-web-installer-site-${{ github.run_id }}-${{ github.run_attempt }}
+          path: _site/
+          if-no-files-found: error
+          retention-days: 14
+      - name: Package the Pages site
+        if: inputs.deploy
+        uses: actions/upload-pages-artifact@7b1f4a764d45c48632c6b24a0339c27f5614fb0b # v4
+        with:
+          path: _site
+  deploy:
+    if: inputs.deploy
+    needs: build
+    runs-on: ${{ fromJSON((vars.CI_RUNNER_MODE == 'self-hosted' || vars.CI_RUNNER_MODE == 'k3s') && (vars.CI_RUNNER_RELEASE_LABELS || '[]') || '["ubuntu-latest"]') }}
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    concurrency:
+      group: esp-web-installer-pages-${{ github.repository }}
+      cancel-in-progress: false
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    outputs:
+      page-url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Publish the validated site
+        id: deployment
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4

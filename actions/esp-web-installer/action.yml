@@ -1,0 +1,35 @@
+name: Prepare ESP USB installer
+description: Validate explicit factory images and build a versioned ESP Web Tools site
+inputs:
+  input-directory:
+    description: Directory containing the catalog and declared public firmware binaries
+    required: true
+  catalog-file:
+    description: Catalog path relative to input-directory
+    default: web-flasher.json
+  output-directory:
+    description: New output directory; existing directories are never overwritten
+    required: true
+  version:
+    description: Explicit version when the catalog does not already declare it
+    default: ''
+  channel:
+    description: stable, beta, rc or nightly; must match an existing catalog channel
+    default: ''
+runs:
+  using: composite
+  steps:
+    - name: Validate factory images and create installer
+      shell: bash
+      env:
+        INPUT_DIRECTORY: ${{ inputs.input-directory }}
+        CATALOG_FILE: ${{ inputs.catalog-file }}
+        OUTPUT_DIRECTORY: ${{ inputs.output-directory }}
+        RELEASE_VERSION: ${{ inputs.version }}
+        RELEASE_CHANNEL: ${{ inputs.channel }}
+        ACTION_DIRECTORY: ${{ github.action_path }}
+      run: |
+        args=(--input-dir "$INPUT_DIRECTORY" --catalog "$CATALOG_FILE" --output "$OUTPUT_DIRECTORY")
+        if [[ -n "$RELEASE_VERSION" ]]; then args+=(--version "$RELEASE_VERSION"); fi
+        if [[ -n "$RELEASE_CHANNEL" ]]; then args+=(--channel "$RELEASE_CHANNEL"); fi
+        python3 "$ACTION_DIRECTORY/../../scripts/esp_web_installer.py" "${args[@]}"
