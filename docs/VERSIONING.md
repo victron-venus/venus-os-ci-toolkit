@@ -252,6 +252,13 @@ names to `-run-<run ID>-attempt-<attempt>`. Payload filenames inside the archive
 stay unchanged. Browser-candidate artifact IDs, frozen plan selection and retained
 historical RC verification retain their separate existing contracts.
 
+Downloads selected by artifact ID require an independent consumer check: the
+name-scoping helper does not authenticate their provenance. Before using an ID
+selected candidate, its adapter must verify the receipt's repository, run,
+attempt, source and payload digest against the expected execution. A nonempty
+artifact ID alone is not proof. Name-based downloads must use one explicit
+selector; unknown run or repository overrides require the verified ID path.
+
 After a failed or partial run, use **Re-run all jobs**. Re-running only failed jobs
 can leave required packages missing from the current attempt; the publisher must
 not fill those gaps with older artifacts. Duplicate package names remain errors.

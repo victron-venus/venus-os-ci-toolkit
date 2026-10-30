@@ -2,10 +2,12 @@
 
 import copy
 import json
+import os
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 import install_release
@@ -23,6 +25,7 @@ class AttemptWorkflowTests(unittest.TestCase):
             "wait across both updates and rechecks execution identity",
             "must not claim a new",
             "Re-run all jobs",
+            "name-scoping helper does not verify them",
         ):
             with self.subTest(explanation=explanation):
                 self.assertIn(explanation, guide)
@@ -31,7 +34,7 @@ class AttemptWorkflowTests(unittest.TestCase):
         steps = [
             {"uses": "actions/upload-artifact@pinned", "with": {"name": "release-assets-${{ matrix.os }}"}},
             {"uses": "actions/download-artifact@pinned", "with": {"pattern": "release-assets*"}},
-            {"uses": "actions/download-artifact@pinned", "with": {"name": "browser-candidate", "artifact-ids": "123"}},
+            {"uses": "actions/download-artifact@pinned", "with": {"artifact-ids": "123"}},
             {"uses": "actions/upload-artifact@pinned", "with": {"name": "diagnostics"}},
         ]
         workflow = {"jobs": {"build": {"steps": copy.deepcopy(steps)}}}
@@ -116,6 +119,53 @@ class AttemptWorkflowTests(unittest.TestCase):
         ]}}}
         with self.assertRaisesRegex(ValueError, "explicit lineage"):
             attempts.scope(workflow, "release-assets*", {"native-*"})
+
+    def test_current_context_downloads_still_receive_the_attempt_suffix(self):
+        for context in ({"run-id": "${{ github.run_id }}"},
+                        {"repository": "${{github.repository}}"},
+                        {"run-id": "${{github.run_id}}", "repository": "${{ github.repository }}"}):
+            with self.subTest(context=context):
+                options = {"pattern": "native-*", **context}
+                workflow = {"jobs": {"build": {"steps": [
+                    {"uses": "actions/download-artifact@pin", "with": options},
+                ]}}}
+                self.assertTrue(attempts.scope(workflow, "release-assets*", {"native-amd64"}))
+                self.assertEqual(options["pattern"], "native-*" + attempts.SUFFIX)
+                self.assertFalse(attempts.scope(workflow, "release-assets*", {"native-amd64"}))
+
+    def test_unknown_or_literal_run_and_repository_overrides_fail_closed(self):
+        for context in ({"run-id": "123"}, {"run-id": 123},
+                        {"run-id": "${{ inputs.run_id }}"},
+                        {"repository": "example/project"},
+                        {"repository": "${{ inputs.repository }}"}):
+            with self.subTest(context=context):
+                workflow = {"jobs": {"build": {"steps": [
+                    {"uses": "actions/download-artifact@pin", "with": {"pattern": "native-*", **context}},
+                ]}}}
+                with self.assertRaisesRegex(ValueError, "artifact IDs and explicit lineage"):
+                    attempts.scope(workflow, "release-assets*", {"native-amd64"})
+
+    def test_selector_free_or_ambiguous_id_downloads_fail_closed(self):
+        for options in ({}, {"name": ""}, {"name": None}, {"pattern": " "},
+                        {"pattern": 123}, {"name": 123, "pattern": "native-*"},
+                        {"name": "native-amd64", "pattern": "native-*"},
+                        {"artifact-ids": ""}, {"artifact-ids": 123},
+                        {"artifact-ids": "123", "name": "native-amd64"},
+                        {"artifact-ids": "123", "pattern": "native-*"}):
+            with self.subTest(options=options):
+                workflow = {"jobs": {"build": {"steps": [
+                    {"uses": "actions/download-artifact@pin", "with": options},
+                ]}}}
+                with self.assertRaises(ValueError):
+                    attempts.scope(workflow, "release-assets*", {"native-amd64"})
+
+    def test_literal_generator_run_id_cannot_be_pinned_into_future_workflows(self):
+        workflow = {"jobs": {"build": {"steps": [
+            {"uses": "actions/download-artifact@pin", "with": {"run-id": "123", "pattern": "native-*"}},
+        ]}}}
+        with patch.dict(os.environ, {"GITHUB_RUN_ID": "123"}):
+            with self.assertRaisesRegex(ValueError, "artifact IDs and explicit lineage"):
+                attempts.scope(workflow, "release-assets*", {"native-amd64"})
 
 
 if __name__ == "__main__":

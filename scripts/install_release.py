@@ -2178,6 +2178,8 @@ SHA-256. The manifest is also saved in immutable Actions evidence for 90 days.
 Versioned Actions packages also record their producer repository, run ID, attempt
 and source in every receipt; publication requires the current verified run identity.
 The installer scopes build, signing and collection artifact names to that attempt.
+ID-selected candidate downloads require a separate consumer check of receipt
+producer identity and payload digest; the name-scoping helper does not verify them.
 After a partial failure, use **Re-run all jobs**: older-attempt packages must not
 fill missing current builds. Update shared fuzz workflow pins with the producer
 and collector rollout. Local offline receipts cannot qualify live publication.

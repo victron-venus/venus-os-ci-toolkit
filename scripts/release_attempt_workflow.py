@@ -49,6 +49,44 @@ def overlaps(value: str, selector: str) -> bool:
     )
 
 
+def separate_download_identity(options: dict) -> bool:
+    """Require exact candidate IDs or unambiguous current-run name selection."""
+    if "artifact-ids" in options:
+        identity = options["artifact-ids"]
+        if not isinstance(identity, str) or not identity.strip():
+            raise ValueError("Release artifact IDs require explicit lineage")
+        if any(key in options for key in ("name", "pattern")):
+            raise ValueError("Release artifact IDs cannot be mixed with name selectors")
+        # Exact IDs retain the caller's independent candidate-lineage verification.
+        return True
+    for key, expression in (("run-id", "github.run_id"), ("repository", "github.repository")):
+        if key in options:
+            value = options[key]
+            if not isinstance(value, str) or not re.fullmatch(
+                r"\$\{\{\s*" + re.escape(expression) + r"\s*\}\}", value
+            ):
+                # A literal ID cannot be proven current across generated executions.
+                raise ValueError("External or ambiguous release downloads require artifact IDs and explicit lineage")
+    selectors = [key for key in ("name", "pattern") if key in options]
+    if len(selectors) != 1:
+        raise ValueError("Release downloads require exactly one explicit name or pattern selector")
+    value = options[selectors[0]]
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("Release download selectors must be nonempty strings")
+    return False
+
+
+def scope_selector(value: object, selectors: set[str]) -> object:
+    """Keep named release plans and reject unknown dynamic name resolution."""
+    if isinstance(value, str) and re.fullmatch(r"\$\{\{.*?\}\}", value):
+        if value[3:-2].strip() in PLAN_NAMES:
+            return value
+        raise ValueError("Dynamic release artifact selector needs explicit lineage")
+    if isinstance(value, str) and any(overlaps(value, selector) for selector in selectors):
+        return scoped_name(value)
+    return value
+
+
 def scope(workflow: dict, pattern: str, producers: set[str] | None = None) -> bool:
     """Scope matching uploads/downloads without changing plans or diagnostics."""
     changed = False
@@ -59,22 +97,12 @@ def scope(workflow: dict, pattern: str, producers: set[str] | None = None) -> bo
             if action not in {"actions/upload-artifact", "actions/download-artifact"}:
                 continue
             options = step.get("with", {})
-            if action == "actions/download-artifact" and any(
-                key in options for key in ("artifact-ids", "run-id", "repository")
-            ):
-                # Explicit external/candidate identity has an independent contract.
+            if action == "actions/download-artifact" and separate_download_identity(options):
                 continue
             for key in ("name", "pattern"):
                 value = options.get(key)
-                if isinstance(value, str) and re.fullmatch(r"\$\{\{.*?\}\}", value):
-                    if value[3:-2].strip() in PLAN_NAMES:
-                        continue
-                    raise ValueError("Dynamic release artifact selector needs explicit lineage")
-                if isinstance(value, str) and any(
-                    overlaps(value, selector)
-                    for selector in selectors
-                ):
-                    scoped = scoped_name(value)
-                    changed = changed or scoped != value
+                scoped = scope_selector(value, selectors)
+                if scoped != value:
+                    changed = True
                     options[key] = scoped
     return changed
