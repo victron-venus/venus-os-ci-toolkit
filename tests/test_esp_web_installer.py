@@ -10,6 +10,7 @@ import subprocess
 import tempfile
 import unittest
 from unittest import mock
+from urllib.parse import urljoin
 
 import yaml
 
@@ -64,11 +65,12 @@ class InstallerTests(unittest.TestCase):
 
     def test_factory_padding_and_deterministic_complete_site(self):
         self.generate()
-        manifest = json.loads((self.output / "manifests/devkit.json").read_text())
+        profile = json.loads((self.output / "catalog.json").read_text())["profiles"][0]
+        manifest = json.loads((self.output / profile["manifest"]).read_text())
         self.assertTrue(manifest["new_install_prompt_erase"])
         self.assertEqual(manifest["builds"][0]["parts"][0]["offset"], 0)
         self.assertEqual(
-            (self.output / "firmware/devkit/board.factory.bin").read_bytes(),
+            (self.output / profile["parts"][0]["path"]).read_bytes(),
             self.binary,
         )
         for line in (self.output / "SHA256SUMS").read_text().splitlines():
@@ -84,6 +86,47 @@ class InstallerTests(unittest.TestCase):
                     path.read_bytes(),
                     (other / path.relative_to(self.output)).read_bytes(),
                 )
+
+    def test_firmware_and_manifest_urls_cannot_mix_release_bytes(self):
+        published = {}
+        manifest_urls, firmware_urls = [], []
+        for index, version in enumerate(("1.2.3-rc.1", "1.2.3-rc.2")):
+            binary = self.binary[:-1] + bytes([index])
+            (self.inputs / "board.factory.bin").write_bytes(binary)
+            self.doc["version"] = version
+            self.output = self.root / f"release-{index}"
+            self.generate()
+            profile = json.loads((self.output / "catalog.json").read_text())[
+                "profiles"
+            ][0]
+            manifest_path = profile["manifest"]
+            firmware_path = profile["parts"][0]["path"]
+            manifest_raw = (self.output / manifest_path).read_bytes()
+            manifest = json.loads(manifest_raw)
+            self.assertEqual(manifest["version"], version)
+            self.assertIn(hashlib.sha256(manifest_raw).hexdigest(), manifest_path)
+            self.assertIn(hashlib.sha256(binary).hexdigest(), firmware_path)
+            self.assertEqual(Path(firmware_path).name, "board.factory.bin")
+            self.assertEqual((self.output / firmware_path).read_bytes(), binary)
+            self.assertEqual(
+                urljoin(
+                    "https://example.com/installer/" + manifest_path,
+                    manifest["builds"][0]["parts"][0]["path"],
+                ),
+                "https://example.com/installer/" + firmware_path,
+            )
+            for directory in ("manifests", "firmware"):
+                for path in (self.output / directory).rglob("*"):
+                    if path.is_file():
+                        url = path.relative_to(self.output).as_posix()
+                        self.assertEqual(
+                            published.setdefault(url, path.read_bytes()),
+                            path.read_bytes(),
+                        )
+            manifest_urls.append(manifest_path)
+            firmware_urls.append(firmware_path)
+        self.assertNotEqual(*manifest_urls)
+        self.assertNotEqual(*firmware_urls)
 
     def test_chip_specific_offsets_and_ids(self):
         # Independent expected layouts cover both padded and non-padded families.

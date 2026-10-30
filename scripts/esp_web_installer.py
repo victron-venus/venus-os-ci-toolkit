@@ -48,6 +48,12 @@ def contains_credential(data):
     return any(pattern.search(data) for pattern in PRIVATE_MARKERS)
 
 
+def json_bytes(value):
+    return (
+        json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    ).encode()
+
+
 def require(ok, message):
     if not ok:
         raise ValueError(message)
@@ -212,7 +218,6 @@ def load_profile(root, profile):
         "board": text(profile["board"], "board"),
         "chip_family": chip,
         "provisioning": provisioning,
-        "manifest": f"manifests/{ident}.json",
     }
     if "description" in profile:
         metadata["description"] = text(profile["description"], "description", 700)
@@ -246,7 +251,7 @@ def load_profile(root, profile):
     )
     validate_factory(data, chip, partition_offset)
     return metadata, {
-        "path": f"firmware/{ident}/{Path(row['path']).name}",
+        "path": f"firmware/{ident}/{digest}/{Path(row['path']).name}",
         "offset": 0,
         "data": data,
         "sha256": digest,
@@ -349,13 +354,7 @@ def generate(root, catalog, output, version=None, channel=None):
             checksums.append(f"{hashlib.sha256(raw).hexdigest()}  {name}\n")
 
         def write_json(name, value):
-            write(
-                name,
-                (
-                    json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True)
-                    + "\n"
-                ).encode(),
-            )
+            write(name, json_bytes(value))
 
         for profile, part in profiles:
             write(part["path"], part["data"])
@@ -373,8 +372,11 @@ def generate(root, catalog, output, version=None, channel=None):
             }
             if profile["provisioning"] != "improv":
                 manifest["new_install_improv_wait_time"] = 0
-            write_json(profile["manifest"], manifest)
-            inventory.append({**profile, "parts": [entry]})
+            manifest_raw = json_bytes(manifest)
+            manifest_digest = hashlib.sha256(manifest_raw).hexdigest()
+            manifest_path = f"manifests/{profile['id']}-{manifest_digest}.json"
+            write(manifest_path, manifest_raw)
+            inventory.append({**profile, "manifest": manifest_path, "parts": [entry]})
         write_json("catalog.json", {**metadata, "profiles": inventory})
         page = (
             (templates / "index.html")
