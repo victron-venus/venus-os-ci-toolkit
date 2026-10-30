@@ -3,7 +3,8 @@
 The shared installer turns **already built, public factory firmware** into an
 HTTPS page: choose the exact board, connect USB, install, and complete the
 firmware's own setup. Visitors do not need Python, PlatformIO or ESPHome on their
-computer. The installer uses [ESP Web Tools 10.4.0](https://github.com/esphome/esp-web-tools/releases/tag/10.4.0).
+computer. The installer pins the module version and its Subresource Integrity (SHA384)
+digest. It uses [ESP Web Tools 10.4.0](https://github.com/esphome/esp-web-tools/releases/tag/10.4.0).
 
 The shared code does not compile firmware, change production devices, discover
 private credentials, or imply hardware acceptance. Each project owns its build,
@@ -180,7 +181,8 @@ installer does not invent a Wi-Fi form for firmware lacking Improv.
   The installer retains ESP Web Tools' explicit erase choice rather than
   promising that every installation preserves existing data.
 - If the USB installer module cannot load, the connect button stays hidden.
-  Check access to the pinned `unpkg.com` module and content-blocker settings;
+  Check access to the pinned `unpkg.com` module and content-blocker settings.
+  When upgrading ESP Web Tools, update and verify both its version and SRI digest;
   release downloads remain usable.
 - If the website loads but firmware cannot be downloaded, verify the generated
   relative URLs and `SHA256SUMS`. Files are hosted beside the page, avoiding

@@ -1,9 +1,15 @@
 import assert from 'node:assert/strict';
-import {readFile} from 'node:fs/promises';
-import test from 'node:test';
-import vm from 'node:vm';
+import test, {afterEach} from 'node:test';
 
-const script = await readFile(new URL('../templates/esp-web-installer/app.js', import.meta.url), 'utf8');
+const globalNames = ['document', 'window', 'navigator', 'fetch', 'customElements'];
+const originalGlobals = new Map(globalNames.map(name => [name, Object.getOwnPropertyDescriptor(globalThis, name)]));
+let scenario = 0;
+afterEach(() => {
+  for (const [name, descriptor] of originalGlobals) {
+    if (descriptor) Object.defineProperty(globalThis, name, descriptor);
+    else delete globalThis[name];
+  }
+});
 
 async function page({serial = true, loaded = true, metadataAvailable = true} = {}) {
   const elements = new Map();
@@ -19,8 +25,8 @@ async function page({serial = true, loaded = true, metadataAvailable = true} = {
     if (!elements.has(selector)) elements.set(selector, create());
     return elements.get(selector);
   };
-  let define;
-  const defined = loaded ? Promise.resolve() : new Promise(resolve => { define = resolve; });
+  let define, reject;
+  const defined = loaded ? Promise.resolve() : new Promise((resolve, fail) => { define = resolve; reject = fail; });
   const timers = new Map();
   const catalog = {name: 'Sensor', version: '1.2.3-beta.1', channel: 'beta',
     project_url: 'https://example.com/project', profiles: [{
@@ -28,16 +34,22 @@ async function page({serial = true, loaded = true, metadataAvailable = true} = {
       provisioning: 'manual', manifest: 'manifests/board.json',
       parts: [{path: 'firmware/board/factory.bin', offset: 0}],
     }]};
-  await vm.runInNewContext(script, {
+  const globals = {
     document: {querySelector: get, createElement: create},
-    window: {isSecureContext: true}, navigator: serial ? {serial: {}} : {},
+    window: {isSecureContext: true,
+      setTimeout: fn => { const id = timers.size + 1; timers.set(id, fn); return id; },
+      clearTimeout: id => timers.delete(id),
+    },
+    navigator: serial ? {serial: {}} : {},
     fetch: async url => { assert.equal(url, 'catalog.json'); return {ok: metadataAvailable, json: async () => catalog}; },
     customElements: {get: () => loaded ? {} : undefined, whenDefined: () => defined},
-    setTimeout: fn => { const id = timers.size + 1; timers.set(id, fn); return id; },
-    clearTimeout: id => timers.delete(id),
-  });
+  };
+  for (const [name, value] of Object.entries(globals)) {
+    Object.defineProperty(globalThis, name, {configurable: true, writable: true, value});
+  }
+  await import(`../templates/esp-web-installer/app.mjs?scenario=${++scenario}`);
   const select = id => { get('#profile').value = id; get('#profile').listeners.change(); };
-  return {get, select, define, expire: () => [...timers.values()].forEach(fn => fn())};
+  return {get, select, define, reject, expire: () => [...timers.values()].forEach(fn => fn())};
 }
 
 test('exact selection is required; downloads and prerelease label remain explicit', async () => {
@@ -79,4 +91,14 @@ test('metadata failure disables installation', async () => {
   assert.equal(p.get('#installer').hidden, true);
   assert.equal(p.get('#profile').disabled, true);
   assert.match(p.get('#support').textContent, /Installer unavailable/);
+});
+
+test('module initialization rejection stays visible as an error', async () => {
+  const p = await page({loaded: false});
+  p.select('board');
+  p.reject(new Error('Registration failed'));
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(p.get('#installer').hidden, true);
+  assert.match(p.get('#support').textContent, /installer is unavailable/);
 });

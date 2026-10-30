@@ -122,7 +122,7 @@ class InstallerTests(unittest.TestCase):
         self.generate()
         self.assertNotIn("<img src=x", (self.output / "index.html").read_text())
         self.assertIn("&lt;img", (self.output / "index.html").read_text())
-        self.assertNotIn("innerHTML", (self.output / "app.js").read_text())
+        self.assertNotIn("innerHTML", (self.output / "app.mjs").read_text())
 
     def test_bad_catalog_rejected_before_output(self):
         mutations = [

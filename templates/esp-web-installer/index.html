@@ -6,8 +6,8 @@
   <meta name="referrer" content="no-referrer">
   <title>__TITLE__ — USB installer</title>
   <link rel="stylesheet" href="style.css">
-  <script src="app.js" defer></script>
-  <script type="module" src="https://unpkg.com/esp-web-tools@10.4.0/dist/web/install-button.js?module" crossorigin="anonymous"></script>
+  <script type="module" src="app.mjs"></script>
+  <script type="module" src="https://unpkg.com/esp-web-tools@10.4.0/dist/web/install-button.js?module" crossorigin="anonymous" integrity="sha384-f+fR3K1mnKB2tVps4hdEh+qJvLgH2bKw81Yn+eNE3+gE8YpqocjkxQON4k19I3e/"></script>
 </head>
 <body><main>
   <p class="eyebrow">USB FIRMWARE INSTALLER</p>
@@ -24,7 +24,7 @@
     <label for="profile">Exact hardware profile</label>
     <select id="profile" disabled><option value="">Choose your board…</option></select>
     <div id="details" aria-live="polite"></div>
-    <p id="support" role="status"></p>
+    <output id="support" aria-live="polite"></output>
     <esp-web-install-button id="installer" hidden>
       <button slot="activate">Connect and install</button>
       <span slot="unsupported">Use a desktop browser with Web Serial support, such as Chrome or Edge.</span>

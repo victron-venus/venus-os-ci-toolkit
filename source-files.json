@@ -339,7 +339,7 @@
   "scripts/write_binary_build_metadata.py",
   "scripts/write_web_build_metadata.py",
   "source-files.json",
-  "templates/esp-web-installer/app.js",
+  "templates/esp-web-installer/app.mjs",
   "templates/esp-web-installer/index.html",
   "templates/esp-web-installer/style.css",
   "templates/local-operations.md",

@@ -34,9 +34,18 @@ CHIPS = set(IMAGE_LAYOUTS)
 CHANNELS = {"stable", "beta", "rc", "nightly"}
 MAX_BINARY = 32 * 1024 * 1024
 MAX_TOTAL = 128 * 1024 * 1024
-PRIVATE_MARKERS = re.compile(
-    rb"-----BEGIN (?:[A-Z ]+ )?PRIVATE KEY-----|(?:gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{30,})|AKIA[0-9A-Z]{16}"
+PRIVATE_MARKERS = tuple(
+    re.compile(pattern)
+    for pattern in (
+        rb"-----BEGIN (?:[A-Z ]+ )?PRIVATE KEY-----",
+        rb"(?:gh[pousr]_[A-Za-z0-9]{30,}|github_pat_\w{30,})",
+        rb"AKIA[0-9A-Z]{16}",
+    )
 )
+
+
+def contains_credential(data):
+    return any(pattern.search(data) for pattern in PRIVATE_MARKERS)
 
 
 def require(ok, message):
@@ -53,9 +62,7 @@ def fields(value, allowed, required, context):
 def text(value, context, maximum=240):
     require(isinstance(value, str) and 0 < len(value) <= maximum, f"Invalid {context}")
     require(not any(ord(c) < 32 for c in value), f"Control character in {context}")
-    require(
-        not PRIVATE_MARKERS.search(value.encode()), f"Credential marker in {context}"
-    )
+    require(not contains_credential(value.encode()), f"Credential marker in {context}")
     return value
 
 
@@ -91,7 +98,7 @@ def local_file(root, name, maximum):
     parts = name.split("/")
     require(
         all(
-            re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.-]*", p)
+            re.fullmatch(r"\w[\w.-]*", p, flags=re.ASCII)
             and p not in (".", "..")
             and not p.lower().startswith(("secret", "private"))
             for p in parts
@@ -117,7 +124,7 @@ def local_file(root, name, maximum):
         "Input changed during read",
     )
     require(len(data) == before.st_size, "Input changed or exceeds size limit")
-    require(not PRIVATE_MARKERS.search(data), "Credential marker found in public input")
+    require(not contains_credential(data), "Credential marker found in public input")
     return data
 
 
@@ -168,6 +175,82 @@ def validate_factory(data, chip, partition_offset):
         struct.unpack_from("<H", application, 12)[0] == chip_id,
         "Application chip ID does not match the hardware profile",
     )
+
+
+def load_profile(root, profile):
+    fields(
+        profile,
+        {
+            "id",
+            "label",
+            "board",
+            "chip_family",
+            "provisioning",
+            "description",
+            "setup_url",
+            "parts",
+            "partition_offset",
+        },
+        {"id", "label", "board", "chip_family", "provisioning", "parts"},
+        "profile",
+    )
+    ident = profile["id"]
+    require(
+        isinstance(ident, str) and re.fullmatch(r"[a-z0-9][a-z0-9-]{0,63}", ident),
+        "Profile IDs must be lowercase slugs",
+    )
+    chip = profile["chip_family"]
+    require(isinstance(chip, str) and chip in CHIPS, "Unsupported ESP chip family")
+    provisioning = profile["provisioning"]
+    require(
+        isinstance(provisioning, str) and provisioning in {"improv", "manual", "none"},
+        "Unknown provisioning method",
+    )
+    metadata = {
+        "id": ident,
+        "label": text(profile["label"], "label", 120),
+        "board": text(profile["board"], "board"),
+        "chip_family": chip,
+        "provisioning": provisioning,
+        "manifest": f"manifests/{ident}.json",
+    }
+    if "description" in profile:
+        metadata["description"] = text(profile["description"], "description", 700)
+    if "setup_url" in profile:
+        metadata["setup_url"] = public_url(profile["setup_url"], "setup_url")
+    rows = profile["parts"]
+    require(
+        isinstance(rows, list) and len(rows) == 1,
+        "Use one merged factory binary per profile; overlapping/split parts are not supported",
+    )
+    row = rows[0]
+    fields(row, {"path", "offset", "sha256"}, {"path", "offset"}, "part")
+    require(
+        isinstance(row["path"], str) and row["path"].endswith(".bin"),
+        "Only explicit .bin inputs accepted",
+    )
+    require(
+        type(row["offset"]) is int and row["offset"] == 0,
+        "Merged factory image must start at offset 0",
+    )
+    data = local_file(root, row["path"], MAX_BINARY)
+    digest = hashlib.sha256(data).hexdigest()
+    if "sha256" in row:
+        require(row["sha256"] == digest, "Binary SHA256 mismatch")
+    partition_offset = profile.get("partition_offset", 0x8000)
+    require(
+        type(partition_offset) is int
+        and 0x1000 <= partition_offset < MAX_BINARY
+        and partition_offset % 4096 == 0,
+        "Invalid partition table offset",
+    )
+    validate_factory(data, chip, partition_offset)
+    return metadata, {
+        "path": f"firmware/{ident}/{Path(row['path']).name}",
+        "offset": 0,
+        "data": data,
+        "sha256": digest,
+    }
 
 
 def load_inputs(root, catalog, version=None, channel=None):
@@ -227,90 +310,12 @@ def load_inputs(root, catalog, version=None, channel=None):
     )
     seen, total, prepared = set(), 0, []
     for profile in profiles:
-        fields(
-            profile,
-            {
-                "id",
-                "label",
-                "board",
-                "chip_family",
-                "provisioning",
-                "description",
-                "setup_url",
-                "parts",
-                "partition_offset",
-            },
-            {"id", "label", "board", "chip_family", "provisioning", "parts"},
-            "profile",
-        )
-        ident = profile["id"]
-        require(
-            isinstance(ident, str)
-            and re.fullmatch(r"[a-z0-9][a-z0-9-]{0,63}", ident)
-            and ident not in seen,
-            "Profile IDs must be unique lowercase slugs",
-        )
-        seen.add(ident)
-        chip = profile["chip_family"]
-        require(isinstance(chip, str) and chip in CHIPS, "Unsupported ESP chip family")
-        provisioning = profile["provisioning"]
-        require(
-            isinstance(provisioning, str)
-            and provisioning in {"improv", "manual", "none"},
-            "Unknown provisioning method",
-        )
-        metadata = {
-            "id": ident,
-            "label": text(profile["label"], "label", 120),
-            "board": text(profile["board"], "board"),
-            "chip_family": chip,
-            "provisioning": provisioning,
-            "manifest": f"manifests/{ident}.json",
-        }
-        if "description" in profile:
-            metadata["description"] = text(profile["description"], "description", 700)
-        if "setup_url" in profile:
-            metadata["setup_url"] = public_url(profile["setup_url"], "setup_url")
-        rows = profile["parts"]
-        require(
-            isinstance(rows, list) and len(rows) == 1,
-            "Use one merged factory binary per profile; overlapping/split parts are not supported",
-        )
-        row = rows[0]
-        fields(row, {"path", "offset", "sha256"}, {"path", "offset"}, "part")
-        require(
-            isinstance(row["path"], str) and row["path"].endswith(".bin"),
-            "Only explicit .bin inputs accepted",
-        )
-        require(
-            type(row["offset"]) is int and row["offset"] == 0,
-            "Merged factory image must start at offset 0",
-        )
-        data = local_file(root, row["path"], MAX_BINARY)
-        digest = hashlib.sha256(data).hexdigest()
-        if "sha256" in row:
-            require(row["sha256"] == digest, "Binary SHA256 mismatch")
-        total += len(data)
+        metadata, part = load_profile(root, profile)
+        require(metadata["id"] not in seen, "Profile IDs must be unique")
+        seen.add(metadata["id"])
+        total += len(part["data"])
         require(total <= MAX_TOTAL, "Combined firmware inputs exceed size limit")
-        partition_offset = profile.get("partition_offset", 0x8000)
-        require(
-            type(partition_offset) is int
-            and 0x1000 <= partition_offset < MAX_BINARY
-            and partition_offset % 4096 == 0,
-            "Invalid partition table offset",
-        )
-        validate_factory(data, chip, partition_offset)
-        prepared.append(
-            (
-                metadata,
-                {
-                    "path": f"firmware/{ident}/{Path(row['path']).name}",
-                    "offset": 0,
-                    "data": data,
-                    "sha256": digest,
-                },
-            )
-        )
+        prepared.append((metadata, part))
     return {
         "schema": 1,
         "name": name,
@@ -377,7 +382,7 @@ def generate(root, catalog, output, version=None, channel=None):
             .replace("__TITLE__", html.escape(metadata["name"]))
         )
         write("index.html", page.encode())
-        for name in ("app.js", "style.css"):
+        for name in ("app.mjs", "style.css"):
             write(name, (templates / name).read_bytes())
         (staging / "SHA256SUMS").write_text("".join(sorted(checksums)))
         require(
