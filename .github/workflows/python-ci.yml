@@ -155,7 +155,7 @@ jobs:
           # only girepository-2.0 exists there, older runners ship the 1.0 names.
           echo "Checking for dbus-1, glib-2.0, cairo and gobject introspection via pkg-config..."
           if ! pkg-config --exists dbus-1; then
-            echo "ERROR: dbus-1 not found by pkg-config"
+            echo "ERROR: dbus-1 not found by pkg-config" >&2
             echo "PKG_CONFIG_PATH: $PKG_CONFIG_PATH"
             echo "Available dbus-related packages:"
             dpkg -l | grep dbus
@@ -164,7 +164,7 @@ jobs:
             exit 1
           fi
           if ! pkg-config --exists glib-2.0; then
-            echo "ERROR: glib-2.0 not found by pkg-config"
+            echo "ERROR: glib-2.0 not found by pkg-config" >&2
             echo "PKG_CONFIG_PATH: $PKG_CONFIG_PATH"
             echo "Available glib-related packages:"
             dpkg -l | grep glib
@@ -173,7 +173,7 @@ jobs:
             exit 1
           fi
           if ! pkg-config --exists cairo; then
-            echo "ERROR: cairo not found by pkg-config"
+            echo "ERROR: cairo not found by pkg-config" >&2
             echo "PKG_CONFIG_PATH: $PKG_CONFIG_PATH"
             echo "Available cairo-related packages:"
             dpkg -l | grep cairo
@@ -189,7 +189,7 @@ jobs:
             fi
           done
           if [ -z "$GI_MOD" ]; then
-            echo "ERROR: no girepository/gobject-introspection module found by pkg-config"
+            echo "ERROR: no girepository/gobject-introspection module found by pkg-config" >&2
             echo "PKG_CONFIG_PATH: $PKG_CONFIG_PATH"
             echo "Available girepository-related packages:"
             dpkg -l | grep girepository
