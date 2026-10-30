@@ -97,6 +97,26 @@ class AttemptWorkflowTests(unittest.TestCase):
         self.assertEqual(steps[3]["with"]["artifact-ids"], "123")
         self.assertFalse(attempts.scope(assembly, "release-assets*", selectors))
 
+    def test_broad_and_overlapping_download_patterns_cover_producer_inputs(self):
+        for producer, download in (("native-amd64", "native-*"),
+                                   ("container-platform-*", "container-*"),
+                                   ("native-linux-*", "native-*-amd64")):
+            with self.subTest(producer=producer, download=download):
+                workflow = {"jobs": {"assemble": {"steps": [
+                    {"uses": "actions/download-artifact@pin", "with": {"pattern": download}},
+                ]}}}
+                self.assertTrue(attempts.scope(workflow, "release-assets*", {producer}))
+                self.assertEqual(workflow["jobs"]["assemble"]["steps"][0]["with"]["pattern"],
+                                 download + attempts.SUFFIX)
+                self.assertFalse(attempts.scope(workflow, "release-assets*", {producer}))
+
+    def test_unknown_dynamic_in_run_download_requires_explicit_lineage(self):
+        workflow = {"jobs": {"assemble": {"steps": [
+            {"uses": "actions/download-artifact@pin", "with": {"name": "${{ needs.other.outputs.name }}"}},
+        ]}}}
+        with self.assertRaisesRegex(ValueError, "explicit lineage"):
+            attempts.scope(workflow, "release-assets*", {"native-*"})
+
 
 if __name__ == "__main__":
     unittest.main()

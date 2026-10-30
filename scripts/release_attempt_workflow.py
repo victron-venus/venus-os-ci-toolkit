@@ -6,6 +6,10 @@ import fnmatch
 import re
 
 SUFFIX = "-run-${{ github.run_id }}-attempt-${{ github.run_attempt }}"
+PLAN_NAMES = {
+    "inputs.release_plan_artifact", "inputs.release-plan-artifact",
+    "needs.prepare.outputs.plan_artifact", "steps.metadata.outputs.plan_artifact",
+}
 
 
 def scoped_name(value: str) -> str:
@@ -30,6 +34,21 @@ def producer_selectors(workflow: dict) -> set[str]:
     return selectors
 
 
+def overlaps(value: str, selector: str) -> bool:
+    """Conservatively include intersecting globs rather than miss an input edge."""
+    value = re.sub(r"\$\{\{.*?\}\}", "*", value.removesuffix(SUFFIX))
+    if fnmatch.fnmatchcase(value, selector) or fnmatch.fnmatchcase(selector, value):
+        return True
+    # Compatible fixed ends are an over-approximation for glob intersections.
+    # Scoping an extra local selector can fail a build, but never admits an old input.
+    prefixes = [re.split(r"[\[*?]", item, maxsplit=1)[0] for item in (value, selector)]
+    suffixes = [re.split(r"[\]*?]", item)[-1] for item in (value, selector)]
+    return (
+        (prefixes[0].startswith(prefixes[1]) or prefixes[1].startswith(prefixes[0]))
+        and (suffixes[0].endswith(suffixes[1]) or suffixes[1].endswith(suffixes[0]))
+    )
+
+
 def scope(workflow: dict, pattern: str, producers: set[str] | None = None) -> bool:
     """Scope matching uploads/downloads without changing plans or diagnostics."""
     changed = False
@@ -47,8 +66,12 @@ def scope(workflow: dict, pattern: str, producers: set[str] | None = None) -> bo
                 continue
             for key in ("name", "pattern"):
                 value = options.get(key)
+                if isinstance(value, str) and re.fullmatch(r"\$\{\{.*?\}\}", value):
+                    if value[3:-2].strip() in PLAN_NAMES:
+                        continue
+                    raise ValueError("Dynamic release artifact selector needs explicit lineage")
                 if isinstance(value, str) and any(
-                    fnmatch.fnmatchcase(value.removesuffix(SUFFIX), selector)
+                    overlaps(value, selector)
                     for selector in selectors
                 ):
                     scoped = scoped_name(value)

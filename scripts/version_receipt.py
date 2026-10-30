@@ -61,6 +61,21 @@ def current_producer(source_sha: str) -> dict[str, object] | None:
     )
 
 
+def verify_producer_identity(
+    receipt: dict[str, object], expected: dict[str, object]
+) -> None:
+    """Reject missing, malformed or mismatched package execution identity."""
+    producer = receipt.get("producer")
+    if not isinstance(producer, dict) or set(producer) != set(expected):
+        raise ValueError("Receipt lacks current package producer identity")
+    checked = producer_identity(
+        producer["repository"], producer["run_id"],
+        producer["run_attempt"], producer["source_sha"],
+    )
+    if checked != expected:
+        raise ValueError("Receipt belongs to a different package producer attempt")
+
+
 def sha256(data: bytes) -> str:
     """Hash an immutable build input or payload."""
     return hashlib.sha256(data).hexdigest()
@@ -205,15 +220,7 @@ def verify_receipt_evidence(
     if receipt.get("source_sha") != plan["source_sha"] or not receipt.get("files"):
         raise ValueError("Receipt lacks source-bound version input evidence")
     if expected_producer is not None:
-        producer = receipt.get("producer")
-        if not isinstance(producer, dict) or set(producer) != set(expected_producer):
-            raise ValueError("Receipt lacks current package producer identity")
-        checked = producer_identity(
-            producer["repository"], producer["run_id"],
-            producer["run_attempt"], producer["source_sha"],
-        )
-        if checked != expected_producer:
-            raise ValueError("Receipt belongs to a different package producer attempt")
+        verify_producer_identity(receipt, expected_producer)
     if not isinstance(receipt.get("toolchain"), dict) or not cast(
         dict[str, object], receipt["toolchain"]
     ).get("python"):
