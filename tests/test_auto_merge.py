@@ -412,7 +412,14 @@ class WithdrawalTests(unittest.TestCase):
         ):
             with self.subTest(enabled=enabled):
                 value = self.withdrawn(autoMergeRequest={"enabledAt": enabled})
-                self.assertEqual(len(self.run_workflow([value])), 1)
+                with patch("builtins.print") as output:
+                    self.assertEqual(len(self.run_workflow([value])), 1)
+                self.assertTrue(
+                    any(
+                        "Preserved pending auto-merge" in str(call)
+                        for call in output.call_args_list
+                    )
+                )
         event = removal_event()
         event["pull_request"]["head"]["sha"] = "other-head"
         self.assertEqual(len(self.run_workflow([self.withdrawn()], event)), 1)
@@ -494,8 +501,8 @@ class CallerWithdrawalTests(unittest.TestCase):
             with self.subTest(event=event):
                 self.assertTrue(self.reachable(**event))
 
-    def test_fork_cleanup_keeps_the_default_context_boundary(self):
-        """Off-default fork retarget needs a separate trusted-context evaluator."""
+    def test_target_cleanup_keeps_the_default_context_boundary(self):
+        """Fork and Dependabot off-default retarget need a trusted-context evaluator."""
         fork = {
             "github.event_name": "pull_request_target",
             "github.event.pull_request.head.repo.full_name": "fork/repo",
@@ -506,6 +513,16 @@ class CallerWithdrawalTests(unittest.TestCase):
         )
         self.assertFalse(
             self.reachable(**(fork | {"github.event_name": "pull_request"}))
+        )
+        dependabot = {
+            "github.event_name": "pull_request_target",
+            "github.event.pull_request.user.login": "dependabot[bot]",
+        }
+        self.assertTrue(self.reachable(**dependabot))
+        self.assertFalse(
+            self.reachable(
+                **(dependabot | {"github.event.pull_request.base.ref": "other"})
+            )
         )
 
     def test_untrusted_authors_and_irrelevant_edits_remain_excluded(self):

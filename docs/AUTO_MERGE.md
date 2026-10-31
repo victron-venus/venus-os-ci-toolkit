@@ -30,14 +30,15 @@ is left for its new event; unrelated PRs are not scanned or modified. As with
 merge requests, GitHub provides no atomic operation combining this read with
 cancellation, so a final concurrent metadata change remains possible.
 
-Keep the example's default-base guard for fork `pull_request_target` events.
-Retargeting a fork PR away from the default branch does not reach this handler;
+Keep the example's default-base guard for `pull_request_target` events. Fork
+PRs and same-repository Dependabot PRs use that route. Retargeting either away
+from the default branch does not reach this handler;
 do not remove that guard to expose credentials in another workflow context.
 Until the separate trusted default-context cleanup in
 [issue #330](https://github.com/victron-venus/venus-os-ci-toolkit/issues/330) is
 implemented, a maintainer must explicitly check and disable any remaining native
 auto-merge request on such a retarget. This caller does not promise universal
-revocation across all fork/base transitions.
+revocation across all PR author/base transitions.
 
 `single_entry_ci: true` in `.release-policy.json` installs required CI configuration
 contracts. Callable validators keep `workflow_call` (and optional manual dispatch),

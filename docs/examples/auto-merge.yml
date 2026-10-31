@@ -19,7 +19,7 @@ permissions:
 jobs:
   auto-merge:
     # Withdrawal must reach the shared metadata-only cleanup, including draft/base changes.
-    # Fork pull_request_target remains restricted to the trusted default-base context.
+    # PR-target remains in the trusted default-base context for forks and Dependabot.
     if: >-
       (github.event.action != 'edited' || github.event.changes.base) &&
       ((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository &&

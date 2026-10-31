@@ -229,8 +229,12 @@ jobs:
                   enabled = datetime.fromisoformat(pr['autoMergeRequest']['enabledAt'].replace('Z', '+00:00'))
                   withdrawn = datetime.fromisoformat(pull['updated_at'].replace('Z', '+00:00'))
               except (KeyError, TypeError, ValueError, AttributeError):
+                  print('Preserved pending auto-merge: withdrawal/request timestamps are unavailable or invalid.')
                   return False
-              return enabled.tzinfo is not None and withdrawn.tzinfo is not None and enabled < withdrawn
+              if enabled.tzinfo is None or withdrawn.tzinfo is None or enabled >= withdrawn:
+                  print('Preserved pending auto-merge: request does not provably predate the withdrawal event.')
+                  return False
+              return True
 
 
           def cancel_withdrawn_request(repo, number, pr, default_branch, authors, previous_request=None):
