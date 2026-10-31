@@ -97,14 +97,38 @@ the Python adapter requires its existing apt/sudo and DBus build dependencies.
 An offline or missing pool will leave jobs queued. Keep GitHub mode until this
 admission is complete; do not change group visibility as an automatic fallback.
 
-For GitHub-hosted Linux, the Python and browser workflows prepare the
-image-provisioned Ubuntu mirror list before installing system packages. When
-the list contains the recognized Azure primary and HTTPS Ubuntu fallback,
-they remove only the Azure entry and retain the existing fallback. A missing
-or unfamiliar list is left unchanged with a diagnostic; self-hosted runners
-are not modified. Package requirements, signature verification, test commands
-and job timeouts remain unchanged. Consumers pinned to an older workflow SHA
-must explicitly adopt a commit containing this preparation step.
+The Python workflow keeps the runner's APT sources and mirror priorities intact,
+on hosted and self-hosted Linux. It does not force an Ubuntu mirror: the
+previous forced fallback could itself stall and consume the full CI job.
+APT retains its normal mirror selection and signature/authentication checks.
+The system dependency step now uses these fixed budgets:
+
+- HTTP/HTTPS connection and idle timeout: 20 seconds; two retries per failed file.
+- Package lock wait: at most 60 seconds, included in the command deadline.
+- Index refresh: 180 seconds; any index error fails the step rather than allowing
+  installation from a partial or stale refresh (`apt-get update --error-on=any`).
+- Package installation: 360 seconds. Each command sends TERM at its deadline,
+  with 15 seconds before KILL if necessary; the complete step has a 10-minute limit.
+
+Exit 124 identifies a command deadline; exit 137 means the command was killed;
+other failures retain APT's exit code. On failure, inspect the preceding APT
+output for the affected source, DNS/TLS failures, package errors or lock
+contention before retrying. On a persistent runner, inspect package-manager
+state after an interrupted installation. Do not disable signature verification
+or add an arbitrary mirror to make CI green. These budgets stop a stalled
+repository from consuming the entire job; they do not guarantee that an
+unavailable repository will recover. Consumers pinned to an older SHA must
+explicitly adopt the updated Python workflow. Ubuntu 24.04's APT supports the
+[strict refresh option](https://manpages.ubuntu.com/manpages/noble/man8/apt-get.8.html);
+[transport timeouts](https://manpages.ubuntu.com/manpages/noble/man1/apt-transport-http.1.html)
+and the [outer command deadline](https://www.gnu.org/software/coreutils/manual/html_node/timeout-invocation.html)
+cover different failure modes.
+
+The browser workflow retains its separate GitHub-hosted Linux preparation:
+when the image-provisioned list contains the recognized Azure primary and HTTPS
+Ubuntu fallback, it removes only the Azure entry. A missing or unfamiliar list
+is left unchanged with a diagnostic; self-hosted sources are not modified by
+that browser step. Its package requirements and timeouts are unchanged.
 
 Self-hosted runners still depend on GitHub Actions orchestration, authentication,
 checkout and artifact services. They cover hosted compute outages, not a complete
