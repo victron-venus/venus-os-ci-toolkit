@@ -251,12 +251,15 @@ attempt. Re-running only a failed job can leave no current inputs, or an incompl
 set; older packages must not fill those gaps. Duplicate payload names within the
 current attempt remain errors, even when their bytes match.
 
-Name selection is not receipt verification. Existing publication checks still
-verify source, repository, run and attempt. Platform completeness depends on the
-project's explicit artifact declarations; a valid receipt for one platform does
-not establish that all required platforms were built. The regression suite uses
-synthetic packages with the actual selector, collector and receipt verifiers;
-it does not claim a live release retry or device acceptance.
+Name selection does not add receipt verification. This mode leaves vendored
+runtimes unchanged. Before qualifying releases, confirm that the consumer's
+publisher verifies source, repository, run and attempt; older receipt/publisher
+code needs a separately reviewed runtime update. Platform completeness depends
+on the project's explicit artifact declarations: a valid receipt for one platform
+does not establish that all required platforms were built. The regression suite
+uses synthetic packages with the toolkit's actual selector, collector and receipt
+verifiers; it does not certify an older consumer runtime, a live release retry or
+device acceptance.
 
 ## Automatic version preparation
 
