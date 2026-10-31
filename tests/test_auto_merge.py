@@ -386,8 +386,10 @@ class WithdrawalTests(unittest.TestCase):
 
     def test_revocation_read_failure_aborts_without_mutation(self):
         """Unavailable fresh metadata cannot authorize cancellation."""
+        withdrawn = self.withdrawn()
+        unavailable = RuntimeError("metadata unavailable")
         with self.assertRaisesRegex(RuntimeError, "metadata unavailable"):
-            self.run_workflow([self.withdrawn(), RuntimeError("metadata unavailable")])
+            self.run_workflow([withdrawn, unavailable])
 
     def test_unrelated_event_preserves_manual_native_request(self):
         """No automation opt-in means unrelated events cannot revoke manual intent."""
