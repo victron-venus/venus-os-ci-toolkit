@@ -436,6 +436,7 @@
   "tests/test_public_runner_image.py",
   "tests/test_python_hashed_requirements.py",
   "tests/test_python_locked_dependencies.py",
+  "tests/test_python_system_dependencies.py",
   "tests/test_python_typecheck.py",
   "tests/test_release_attempt_workflow.py",
   "tests/test_release_bandit.py",
