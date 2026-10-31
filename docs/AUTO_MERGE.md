@@ -16,6 +16,30 @@ caller: the reusable workflow disables an existing auto-merge request when eligi
 is withdrawn. Approval remains a separate workflow: Dependabot uses `GITHUB_TOKEN`;
 human PRs use the independent bot's `BOT_PAT`.
 
+The example caller lets label removal, draft conversion and same-repository base
+retargeting reach the shared handler. Both the default check-waiting path and the
+protected native path cancel an existing request only for the observed trusted
+PR, after a second metadata read confirms the same head, base, author and request
+and that eligibility is still withdrawn. Cancellation also needs an explicit
+current `automerge` label, an earlier eligible observation of the same request,
+or the matching webhook that removed that label. For a removal webhook, the
+request must predate the event's PR update time; missing timestamps and equal
+second ambiguity do not authorize cancellation. This preserves manual native
+requests after unrelated or stale events. A restored label or changed identity
+is left for its new event; unrelated PRs are not scanned or modified. As with
+merge requests, GitHub provides no atomic operation combining this read with
+cancellation, so a final concurrent metadata change remains possible.
+
+Keep the example's default-base guard for `pull_request_target` events. Fork
+PRs and same-repository Dependabot PRs use that route. Retargeting either away
+from the default branch does not reach this handler;
+do not remove that guard to expose credentials in another workflow context.
+Until the separate trusted default-context cleanup in
+[issue #330](https://github.com/victron-venus/venus-os-ci-toolkit/issues/330) is
+implemented, a maintainer must explicitly check and disable any remaining native
+auto-merge request on such a retarget. This caller does not promise universal
+revocation across all PR author/base transitions.
+
 `single_entry_ci: true` in `.release-policy.json` installs required CI configuration
 contracts. Callable validators keep `workflow_call` (and optional manual dispatch),
 while Quality gate or Release pipeline owns automatic triggers. Dependency Review
