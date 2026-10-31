@@ -815,15 +815,15 @@ class LifecycleTests(unittest.TestCase):  # pylint: disable=too-many-public-meth
         self.require_build_receipts(["release-inputs-linux.json"])
         self.test_partial_rerun_rejects_prior_attempt_package_before_publication()
 
-    def test_rc_validation_receipt_is_separate_from_required_builds(self):
-        policy = {"fuzzing": {}, "versioning": {"required_build_receipts": ["release-inputs-linux.json"]}}
-        records = [{"name": "release-inputs-linux.json"},
-                   {"name": "release-inputs-fuzz.json", "inputs": {"artifacts": [{"name": "fuzz-report.json"}]}}]
-        packages, validation = lifecycle.candidate_fuzz_receipts(policy, "rc", records)
+    def test_validation_receipt_cannot_satisfy_required_build_inventory(self):
+        policy = {"versioning": {"required_build_receipts": ["release-inputs-linux.json"]}}
+        packages = [{"name": "release-inputs-linux.json"}]
+        validation = [{"name": "release-inputs-fuzz.json"}]
         receipt.verify_required_build_receipts(packages, policy)
-        self.assertEqual([x["name"] for x in validation], ["release-inputs-fuzz.json"])
         with self.assertRaisesRegex(ValueError, "unexpected=.*release-inputs-fuzz"):
-            receipt.verify_required_build_receipts(records, policy)
+            receipt.verify_required_build_receipts(packages + validation, policy)
+        with self.assertRaisesRegex(ValueError, "missing=.*release-inputs-linux"):
+            receipt.verify_required_build_receipts(validation, policy)
 
     def test_historical_promotion_keeps_the_accepted_source_policy(self):
         self.policy["versioning"]["promotion"] = "promote-bytes"

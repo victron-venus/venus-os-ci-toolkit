@@ -2221,9 +2221,14 @@ and source in every receipt; publication requires the current verified run ident
 The installer scopes build, signing and collection artifact names to that attempt.
 ID-selected candidate downloads require a separate consumer check of receipt
 producer identity and payload digest; the name-scoping helper does not verify them.
-After a partial failure, use **Re-run all jobs**: older-attempt packages must not
-fill missing current builds. Update shared fuzz workflow pins with the producer
-and collector rollout. Local offline receipts cannot qualify live publication.
+Before publication starts, use **Re-run all jobs** only if the allocator and
+release policy permit reuse of that reservation. Recreate every required input
+in the same attempt; older packages must not fill missing current builds. After
+publication starts, or its result is partial or uncertain, inspect existing tags,
+releases and assets before a policy-authorized new run. Never reset the ledger or
+overwrite published assets. See [publication-phase retry rules](VERSIONING.md#package-identity-across-reruns).
+Update shared fuzz workflow pins with the producer and collector rollout. Local
+offline receipts cannot qualify live publication.
 
 Automatic push betas and scheduled nightlies publish the current default HEAD.
 An older source is explicitly marked `superseded` only after ancestry and one

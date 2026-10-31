@@ -97,9 +97,14 @@ and source in every receipt; publication requires the current verified run ident
 The installer scopes build, signing and collection artifact names to that attempt.
 ID-selected candidate downloads require a separate consumer check of receipt
 producer identity and payload digest; the name-scoping helper does not verify them.
-After a partial failure, use **Re-run all jobs**: older-attempt packages must not
-fill missing current builds. Update shared fuzz workflow pins with the producer
-and collector rollout. Local offline receipts cannot qualify live publication.
+Before publication starts, use **Re-run all jobs** only if the allocator and
+release policy permit reuse of that reservation. Recreate every required input
+in the same attempt; older packages must not fill missing current builds. After
+publication starts, or its result is partial or uncertain, inspect existing tags,
+releases and assets before a policy-authorized new run. Never reset the ledger or
+overwrite published assets. See [publication-phase retry rules](VERSIONING.md#package-identity-across-reruns).
+Update shared fuzz workflow pins with the producer and collector rollout. Local
+offline receipts cannot qualify live publication.
 
 Automatic push betas and scheduled nightlies publish the current default HEAD.
 An older source is explicitly marked `superseded` only after ancestry and one
@@ -250,18 +255,23 @@ Workflow files and policy text are read and written as UTF-8 on every platform.
 
 Every ordinary release artifact name now ends in
 `-run-<run_id>-attempt-<run_attempt>`. A full same-run retry can retain previous
-attempts without mixing their payloads. After a partial release failure, use
-**Re-run all jobs**, so every required producer creates inputs for the same new
-attempt. Re-running only a failed job can leave no current inputs, or an incomplete
-set; older packages must not fill those gaps. Duplicate payload names within the
-current attempt remain errors, even when their bytes match.
+attempts without mixing their payloads. Before publication starts, use
+**Re-run all jobs** only if the allocator and release policy permit reuse of that
+reservation, so every required producer creates inputs for the same new attempt.
+Re-running only a failed job can leave no current inputs, or an incomplete set;
+older packages must not fill those gaps. Once publication starts, or its result
+is partial or uncertain, inspect existing tags, releases and assets before a
+policy-authorized new run. Never reset the ledger or overwrite published assets.
+See [publication-phase retry rules](VERSIONING.md#package-identity-across-reruns).
+Duplicate payload names remain errors, even when their bytes match.
 
 Name selection does not add receipt verification. This mode leaves vendored
 runtimes unchanged. Before qualifying releases, confirm that the consumer's
 publisher verifies source, repository, run and attempt; older receipt/publisher
-code needs a separately reviewed runtime update. Platform completeness depends
-on the project's explicit artifact declarations: a valid receipt for one platform
-does not establish that all required platforms were built. The regression suite
+code needs a separately reviewed runtime update. Platform completeness requires
+a source-declared set of required producer receipts plus package-specific checks:
+a valid receipt for one platform does not establish that all required platforms
+were built. The regression suite
 uses synthetic packages with the toolkit's actual selector, collector and receipt
 verifiers; it does not certify an older consumer runtime, a live release retry or
 device acceptance.
@@ -304,4 +314,45 @@ an offline receipt cannot qualify fresh publication through the migrated publish
 Receipt coverage proves that
 the staged files have matching receipts; package-set completeness is a separate
 check for targets explicitly listed in `versioning.artifacts`. It does not infer
-all intended platforms from workflow names. No release is dispatched by this mode.
+all intended platforms from workflow names. To require every intended producer,
+declare `versioning.required_build_receipts` and apply `--release-inventory-only`
+as described below. No release is dispatched by this mode.
+
+### Require the complete set of package producers
+
+Declare `versioning.required_build_receipts` as a nonempty list of exact receipt
+filenames after reviewing every release-build matrix and conditional producer.
+Include the final signature receipt when the publisher consumes one. For example,
+an ordinary package and a later signing job require:
+
+```json
+"required_build_receipts": [
+  "release-inputs-package.json",
+  "release-inputs-signature.json"
+]
+```
+
+Do not include `release-inputs-fuzz.json`: the authenticated RC validation receipt
+is checked and separated from package receipts before this inventory check.
+An intentionally smaller release scope needs its own reviewed policy; a skipped
+producer cannot silently reduce the declared set.
+
+For runtimes that already have package producer identity checks, apply only the
+reviewed inventory delta with:
+
+```sh
+python3 scripts/install_release.py /path/to/consumer --release-inventory-only --check
+python3 scripts/install_release.py /path/to/consumer --release-inventory-only
+```
+
+This mode changes only the known version-plan validator, receipt validator and
+publisher. It does not infer or rewrite policy, workflow pins or signing code.
+Unknown or partially migrated files fail before any changes are written.
+The final fresh publisher authenticates each receipt's repository, source, run
+and attempt, then rejects missing, duplicate or unexpected producer receipts.
+Pre-signing validation remains separate because signature receipts do not yet
+exist at that stage. Historical RC promotion retains its original source policy.
+
+Update the declared set whenever producer jobs or matrices change. Receipt-set
+completeness does not prove every package format inside a producer group; retain
+declared artifact metadata checks and release asset verification.

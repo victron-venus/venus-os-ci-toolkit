@@ -277,8 +277,12 @@ their separate final-build acceptance rules; fuzzing does not waive those rules.
 
 On failure, download diagnostics, reproduce the smallest input against the same
 source, fix the production bug and commit a regression seed/test. Publish a new
-RC from the fixed source. If retrying an infrastructure failure, rerun all jobs
-so the report and release evidence refer to one coherent attempt.
+RC from the fixed source. Before publication starts, an infrastructure retry may
+use **Re-run all jobs** only when the allocator and release policy permit reuse of
+that reservation. Recreate the report and all required packages in one attempt.
+After publication starts, or its result is partial or uncertain, inspect existing
+tags, releases and assets before a policy-authorized new run. Never reset the
+ledger or overwrite published assets. See the [publication-phase retry rules](VERSIONING.md#package-identity-across-reruns).
 
 Successful generated corpora are retained for inspection, not automatically
 restored into later RCs. Review and minimize useful inputs offline with the
@@ -337,5 +341,5 @@ behavior. The toolkit's own policy requires its sole package receipt.
 Configure this field together with the matching policy parser and publisher
 update. An older parser may reject the new field, and a publisher without the
 inventory guard must not be presented as enforcing it. No release is dispatched
-by adding the contract. Use a fresh complete attempt under the existing allocator
-and publication-phase retry rules above.
+by adding the contract. Use a complete attempt only as permitted by the
+[allocator and publication-phase retry rules](VERSIONING.md#package-identity-across-reruns).
