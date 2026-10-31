@@ -425,6 +425,7 @@
   "tests/test_private_nuc_kvm.py",
   "tests/test_private_nuc_light.py",
   "tests/test_private_nuc_low_share.py",
+  "tests/test_private_nuc_opportunistic.py",
   "tests/test_private_nuc_profiles.py",
   "tests/test_private_runner_image.py",
   "tests/test_private_tmpfs.py",
