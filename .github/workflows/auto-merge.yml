@@ -80,6 +80,7 @@ jobs:
           import re
           import subprocess
           import time
+          from datetime import datetime
           from urllib.parse import quote, urlparse
 
 
@@ -206,11 +207,57 @@ jobs:
               return ready, (checks, reviews)
 
 
+          def withdrawal_intent(repo, number, pr, previous_request):
+              if 'automerge' in {label['name'] for label in pr['labels']}:
+                  return True
+              if previous_request is not None and pr.get('autoMergeRequest') == previous_request:
+                  return True
+              # A stale removal event must not cancel a later manual request.
+              path = os.environ.get('GITHUB_EVENT_PATH')
+              if not path or os.environ.get('GITHUB_EVENT_NAME') not in {'pull_request', 'pull_request_target'}:
+                  return False
+              with open(path, encoding='utf-8') as stream:
+                  event = json.load(stream)
+              pull = event.get('pull_request') or {}
+              if not (event.get('action') == 'unlabeled'
+                      and (event.get('label') or {}).get('name') == 'automerge'
+                      and (event.get('repository') or {}).get('full_name') == repo
+                      and event.get('number') == int(number)
+                      and (pull.get('head') or {}).get('sha') == pr['headRefOid']):
+                  return False
+              try:
+                  enabled = datetime.fromisoformat(pr['autoMergeRequest']['enabledAt'].replace('Z', '+00:00'))
+                  withdrawn = datetime.fromisoformat(pull['updated_at'].replace('Z', '+00:00'))
+              except (KeyError, TypeError, ValueError, AttributeError):
+                  return False
+              return enabled.tzinfo is not None and withdrawn.tzinfo is not None and enabled < withdrawn
+
+
+          def cancel_withdrawn_request(repo, number, pr, default_branch, authors, previous_request=None):
+              # Only the observed trusted target may lose its existing request. Recheck
+              # identity and intent so a newly eligible or replaced request is preserved.
+              if (pr['state'] != 'OPEN' or not pr.get('autoMergeRequest')
+                      or canonical_author(pr['author']) not in authors
+                      or not withdrawal_intent(repo, number, pr, previous_request)):
+                  return
+              identity = ('headRefOid', 'baseRefOid', 'baseRefName', 'isCrossRepository')
+              if any(pr.get(key) is None for key in identity):
+                  raise RuntimeError('Cannot verify withdrawn request identity')
+              fresh = snapshot(repo, number)
+              if (fresh['state'] != 'OPEN' or eligible(fresh, default_branch, authors)
+                      or canonical_author(fresh['author']) != canonical_author(pr['author'])
+                      or any(fresh.get(key) != pr[key] for key in identity)
+                      or fresh.get('autoMergeRequest') != pr['autoMergeRequest']):
+                  print('Withdrawal changed; a later event must evaluate the current intent.')
+                  return
+              gh('pr', 'merge', number, '--repo', repo, '--disable-auto')
+              print('Disabled the existing auto-merge request after verified withdrawal.')
+
+
           def request_protected_merge(repo, number, default_branch, authors, method, required):
               pr = snapshot(repo, number)
               if not eligible(pr, default_branch, authors):
-                  if pr['state'] == 'OPEN' and pr.get('autoMergeRequest'):
-                      gh('pr', 'merge', number, '--repo', repo, '--disable-auto')
+                  cancel_withdrawn_request(repo, number, pr, default_branch, authors)
                   print('PR is not eligible for auto-merge.')
                   return
               # GitHub evaluates effective active rules, including organization rules.
@@ -228,8 +275,8 @@ jobs:
                   raise RuntimeError('Native mode requires a strict protected branch and every required check, including CI gate.')
               fresh = snapshot(repo, number)
               if not eligible(fresh, default_branch, authors):
-                  if fresh['state'] == 'OPEN' and fresh.get('autoMergeRequest'):
-                      gh('pr', 'merge', number, '--repo', repo, '--disable-auto')
+                  cancel_withdrawn_request(repo, number, fresh, default_branch, authors,
+                                           pr.get('autoMergeRequest') if fresh['headRefOid'] == pr['headRefOid'] else None)
                   print('Eligibility changed; no merge requested.')
                   return
               if fresh['headRefOid'] != pr['headRefOid']:
@@ -400,18 +447,29 @@ jobs:
                   return
               deadline = time.monotonic() + 120 * 60
               previous_green = None
+              opt_in_head = None
+              opt_in_request = None
               while time.monotonic() < deadline:
                   pr = snapshot(repo, number, reviewed=True) if reviewed else snapshot(repo, number)
                   if reviewed and pr.get('isCrossRepository') is not False:
                       print('Reviewed merge excludes forks and unknown repository identity.')
                       return
                   if not eligible(pr, default_branch, authors):
+                      cancel_withdrawn_request(repo, number, pr, default_branch, authors,
+                                               opt_in_request if opt_in_head == pr['headRefOid'] else None)
                       print('PR is not eligible: author, label, draft, target branch, or open state does not match.')
                       return
+                  opt_in_head = pr['headRefOid']
+                  opt_in_request = pr.get('autoMergeRequest')
                   ready, checks = checked_snapshot(pr, required, os.environ.get('GITHUB_RUN_ID', ''), reviewed, actions_authors)
                   fingerprint = (pr['headRefOid'], checks)
                   if ready and fingerprint == previous_green:
                       fresh = snapshot(repo, number, reviewed=True) if reviewed else snapshot(repo, number)
+                      if not eligible(fresh, default_branch, authors):
+                          cancel_withdrawn_request(repo, number, fresh, default_branch, authors,
+                                                   opt_in_request if opt_in_head == fresh['headRefOid'] else None)
+                          print('Eligibility changed; no merge requested.')
+                          return
                       fresh_ready, fresh_checks = checked_snapshot(fresh, required, os.environ.get('GITHUB_RUN_ID', ''), reviewed, actions_authors)
                       if (eligible(fresh, default_branch, authors) and fresh_ready
                               and (fresh['headRefOid'], fresh_checks) == fingerprint):
