@@ -19,6 +19,10 @@ on:
         description: Request auto-merge immediately; requires all validation in the protected CI gate
         type: boolean
         default: false
+      withdrawal-only:
+        description: Cancel only the matching withdrawn request from a trusted default-context PR-target event; never enable or merge
+        type: boolean
+        default: false
       reviewed-merge:
         description: Wait for successful named checks and an independent trusted current-head approval, then merge that head
         type: boolean
@@ -51,7 +55,7 @@ jobs:
   auto-merge:
     name: Auto Merge
     runs-on: ${{ fromJSON((github.event.repository.private || ((contains(fromJSON('["pull_request","pull_request_target","pull_request_review"]'), github.event_name) && github.event.pull_request.head.repo.full_name == github.repository) || (contains(fromJSON('["push","schedule","workflow_dispatch"]'), github.event_name) && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)))) && inputs.runner-labels != '["ubuntu-latest"]' && inputs.runner-labels || ((vars.CI_RUNNER_MODE == 'self-hosted' || vars.CI_RUNNER_MODE == 'k3s') && ((contains(fromJSON('["pull_request","pull_request_target","pull_request_review"]'), github.event_name) && github.event.pull_request.head.repo.full_name == github.repository) || (contains(fromJSON('["push","schedule","workflow_dispatch"]'), github.event_name) && github.ref == format('refs/heads/{0}', github.event.repository.default_branch))) && (vars.CI_RUNNER_AUTOMATION_LABELS || '[]') || '["ubuntu-latest"]')) }}
-    timeout-minutes: ${{ (inputs.native-auto-merge || inputs.reviewed-single-pass) && 5 || 125 }}
+    timeout-minutes: ${{ (inputs.withdrawal-only || inputs.native-auto-merge || inputs.reviewed-single-pass) && 5 || 125 }}
     permissions:
       contents: read
       pull-requests: write
@@ -68,6 +72,7 @@ jobs:
           PR_AUTHORS: ${{ inputs.pr-author }}
           MERGE_METHOD: ${{ inputs.merge-method }}
           NATIVE_AUTO_MERGE: ${{ inputs.native-auto-merge }}
+          WITHDRAWAL_ONLY: ${{ inputs.withdrawal-only }}
           REQUIRED_CHECKS: ${{ inputs.required-status-checks }}
           REVIEWED_MERGE: ${{ inputs.reviewed-merge }}
           REVIEWED_SINGLE_PASS: ${{ inputs.reviewed-single-pass }}
@@ -85,6 +90,7 @@ jobs:
 
 
           TRUSTED_AUTHORS = {'4alvit', 'californiantiramisu', 'dependabot[bot]', 'renovate[bot]'}
+          UNOBSERVED_REQUEST = object()
 
 
           class CheckFailure(RuntimeError):
@@ -207,24 +213,46 @@ jobs:
               return ready, (checks, reviews)
 
 
-          def withdrawal_intent(repo, number, pr, previous_request):
-              if 'automerge' in {label['name'] for label in pr['labels']}:
-                  return True
-              if previous_request is not None and pr.get('autoMergeRequest') == previous_request:
-                  return True
-              # A stale removal event must not cancel a later manual request.
+          def event_identity_matches(repo, pr, pull):
+              base, head = pull.get('base') or {}, pull.get('head') or {}
+              head_repo = (head.get('repo') or {}).get('full_name')
+              return (bool(head_repo) and (base.get('repo') or {}).get('full_name') == repo
+                      and bool(head.get('sha')) and pr.get('headRefOid') == head['sha']
+                      and bool(base.get('sha')) and pr.get('baseRefOid') == base['sha']
+                      and bool(base.get('ref')) and pr.get('baseRefName') == base['ref']
+                      and pr.get('isCrossRepository') is (head_repo != repo)
+                      and canonical_author(pr['author']) == (pull.get('user') or {}).get('login'))
+
+
+          def withdrawal_intent(repo, number, pr, previous_request, default_branch):
+              # A surviving positive evaluator owns only the request it observed
+              # while eligible. Observing no request also forbids cancelling a new one.
+              if previous_request is not UNOBSERVED_REQUEST:
+                  return pr.get('autoMergeRequest') == previous_request
+              # A queued or stale evaluator has no ownership merely from a current
+              # label. Require the withdrawal event and reject later manual requests.
               path = os.environ.get('GITHUB_EVENT_PATH')
               if not path or os.environ.get('GITHUB_EVENT_NAME') not in {'pull_request', 'pull_request_target'}:
                   return False
               with open(path, encoding='utf-8') as stream:
                   event = json.load(stream)
               pull = event.get('pull_request') or {}
-              if not (event.get('action') == 'unlabeled'
-                      and (event.get('label') or {}).get('name') == 'automerge'
+              removal = (event.get('action') == 'unlabeled'
+                         and (event.get('label') or {}).get('name') == 'automerge')
+              labelled_withdrawal = ('automerge' in {label['name'] for label in pr['labels']}
+                                    and (event.get('action') == 'converted_to_draft'
+                                         or (event.get('action') == 'edited'
+                                             and (event.get('changes') or {}).get('base')
+                                             and pr['baseRefName'] != default_branch)))
+              if not ((removal or labelled_withdrawal)
                       and (event.get('repository') or {}).get('full_name') == repo
                       and event.get('number') == int(number)
-                      and (pull.get('head') or {}).get('sha') == pr['headRefOid']):
+                      and event_identity_matches(repo, pr, pull)):
                   return False
+              return request_predates_event(pr, pull)
+
+
+          def request_predates_event(pr, pull):
               try:
                   enabled = datetime.fromisoformat(pr['autoMergeRequest']['enabledAt'].replace('Z', '+00:00'))
                   withdrawn = datetime.fromisoformat(pull['updated_at'].replace('Z', '+00:00'))
@@ -237,12 +265,12 @@ jobs:
               return True
 
 
-          def cancel_withdrawn_request(repo, number, pr, default_branch, authors, previous_request=None):
+          def cancel_withdrawn_request(repo, number, pr, default_branch, authors, previous_request=UNOBSERVED_REQUEST):
               # Only the observed trusted target may lose its existing request. Recheck
               # identity and intent so a newly eligible or replaced request is preserved.
               if (pr['state'] != 'OPEN' or not pr.get('autoMergeRequest')
                       or canonical_author(pr['author']) not in authors
-                      or not withdrawal_intent(repo, number, pr, previous_request)):
+                      or not withdrawal_intent(repo, number, pr, previous_request, default_branch)):
                   return
               identity = ('headRefOid', 'baseRefOid', 'baseRefName', 'isCrossRepository')
               if any(pr.get(key) is None for key in identity):
@@ -256,6 +284,38 @@ jobs:
                   return
               gh('pr', 'merge', number, '--repo', repo, '--disable-auto')
               print('Disabled the existing auto-merge request after verified withdrawal.')
+
+
+          def cancel_from_target_event(repo, number, default_branch, authors):
+              # This path never evaluates checks, enables auto-merge, or merges. PTR
+              # runs the default-branch workflow; no PR code is checked out or run.
+              if (os.environ.get('GITHUB_EVENT_NAME') != 'pull_request_target'
+                      or os.environ.get('GITHUB_REF') != f'refs/heads/{default_branch}'):
+                  raise RuntimeError('Withdrawal-only requires the trusted default PR-target context.')
+              with open(os.environ['GITHUB_EVENT_PATH'], encoding='utf-8') as stream:
+                  event = json.load(stream)
+              pull = event.get('pull_request') or {}
+              base, head = pull.get('base') or {}, pull.get('head') or {}
+              withdrawal = ((event.get('action') == 'unlabeled'
+                             and (event.get('label') or {}).get('name') == 'automerge')
+                            or event.get('action') == 'converted_to_draft'
+                            or (event.get('action') == 'edited'
+                                and (event.get('changes') or {}).get('base')
+                                and base.get('ref') != default_branch))
+              head_repo = (head.get('repo') or {}).get('full_name')
+              if (not withdrawal or not head_repo
+                      or (event.get('repository') or {}).get('full_name') != repo
+                      or (base.get('repo') or {}).get('full_name') != repo
+                      or event.get('number') != int(number)):
+                  print('No matching withdrawal event; no request changed.')
+                  return
+              pr = snapshot(repo, number)
+              if (eligible(pr, default_branch, authors)
+                      or not event_identity_matches(repo, pr, pull)
+                      or not request_predates_event(pr, pull)):
+                  print('Withdrawal identity, eligibility or request time changed; no request changed.')
+                  return
+              cancel_withdrawn_request(repo, number, pr, default_branch, authors)
 
 
           def request_protected_merge(repo, number, default_branch, authors, method, required):
@@ -422,7 +482,8 @@ jobs:
                   raise RuntimeError('BOT_PAT is missing. Configure it and explicitly forward it from the caller.')
               repo, number = os.environ['GITHUB_REPOSITORY'], os.environ['PR_NUMBER']
               single_pass = os.environ.get('REVIEWED_SINGLE_PASS') == 'true'
-              if not single_pass and not number.isdecimal():
+              withdrawal_only = os.environ.get('WITHDRAWAL_ONLY') == 'true'
+              if (withdrawal_only or not single_pass) and not number.isdecimal():
                   raise RuntimeError('A pull-request metadata event with a numeric PR number is required.')
               authors = {item.strip() for item in os.environ['PR_AUTHORS'].split(',') if item.strip()}
               if not authors or not authors <= TRUSTED_AUTHORS:
@@ -439,6 +500,11 @@ jobs:
                   actions_authors.add('dependabot[bot]')
               if os.environ.get('ALLOW_OWNED_BOT_ACTIONS_REVIEW') == 'true':
                   actions_authors.add('californiantiramisu')
+              if withdrawal_only:
+                  if native or reviewed or single_pass or actions_authors:
+                      raise RuntimeError('Withdrawal-only cannot be combined with merge or review modes.')
+                  cancel_from_target_event(repo, number, default_branch, authors)
+                  return
               if (single_pass or actions_authors) and not reviewed:
                   raise RuntimeError('Single-pass and Actions approval options require reviewed merge')
               if reviewed and (native or not required):
@@ -452,7 +518,7 @@ jobs:
               deadline = time.monotonic() + 120 * 60
               previous_green = None
               opt_in_head = None
-              opt_in_request = None
+              opt_in_request = UNOBSERVED_REQUEST
               while time.monotonic() < deadline:
                   pr = snapshot(repo, number, reviewed=True) if reviewed else snapshot(repo, number)
                   if reviewed and pr.get('isCrossRepository') is not False:
@@ -460,7 +526,7 @@ jobs:
                       return
                   if not eligible(pr, default_branch, authors):
                       cancel_withdrawn_request(repo, number, pr, default_branch, authors,
-                                               opt_in_request if opt_in_head == pr['headRefOid'] else None)
+                                               opt_in_request if opt_in_head in {None, pr['headRefOid']} else None)
                       print('PR is not eligible: author, label, draft, target branch, or open state does not match.')
                       return
                   opt_in_head = pr['headRefOid']

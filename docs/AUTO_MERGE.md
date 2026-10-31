@@ -16,29 +16,43 @@ caller: the reusable workflow disables an existing auto-merge request when eligi
 is withdrawn. Approval remains a separate workflow: Dependabot uses `GITHUB_TOKEN`;
 human PRs use the independent bot's `BOT_PAT`.
 
-The example caller lets label removal, draft conversion and same-repository base
-retargeting reach the shared handler. Both the default check-waiting path and the
-protected native path cancel an existing request only for the observed trusted
-PR, after a second metadata read confirms the same head, base, author and request
-and that eligibility is still withdrawn. Cancellation also needs an explicit
-current `automerge` label, an earlier eligible observation of the same request,
-or the matching webhook that removed that label. For a removal webhook, the
-request must predate the event's PR update time; missing timestamps and equal
-second ambiguity do not authorize cancellation. This preserves manual native
-requests after unrelated or stale events. A restored label or changed identity
-is left for its new event; unrelated PRs are not scanned or modified. As with
-merge requests, GitHub provides no atomic operation combining this read with
-cancellation, so a final concurrent metadata change remains possible.
+The example caller sends label removal, draft conversion and retargeting away
+from the default branch to a separate `withdrawal-only: true` job. It listens to
+`pull_request_target`, which also runs for conflicted PRs, and verifies the default
+workflow ref. The mode is incompatible with native, reviewed and single-pass
+merge modes: it only considers the event's PR and can disable an existing request;
+it cannot enable auto-merge, approve, merge or scan other PRs. Returning to the
+default branch still wakes the normal positive evaluator.
 
-Keep the example's default-base guard for `pull_request_target` events. Fork
-PRs and same-repository Dependabot PRs use that route. Retargeting either away
-from the default branch does not reach this handler;
-do not remove that guard to expose credentials in another workflow context.
-Until the separate trusted default-context cleanup in
-[issue #330](https://github.com/victron-venus/venus-os-ci-toolkit/issues/330) is
-implemented, a maintainer must explicitly check and disable any remaining native
-auto-merge request on such a retarget. This caller does not promise universal
-revocation across all PR author/base transitions.
+Each withdrawal event has its own concurrency group, including while pending.
+Later unrelated labels or edits cannot cancel or replace the only copy of that
+evidence. Ordinary positive evaluations still coalesce; the cancellation-only job
+has a five-minute timeout instead of holding a check-waiting runner.
+
+The cancellation-only path binds the webhook repository, PR number, author, head,
+base and fork identity to fresh API metadata. The request must strictly predate
+the event's PR update time. A second metadata read must confirm the same head,
+base, author and request, with eligibility still withdrawn. Missing timestamps,
+equal-second ambiguity, a restored label, a changed identity or a newer manual
+request leave the request untouched. Cancellation also needs an explicit
+withdrawal event with current `automerge` opt-in, the matching label-removal event,
+or the same request previously observed while eligible. An already running
+positive evaluator cannot claim a different request (including one created after
+it observed no request), and an older queued positive event cannot revoke a
+manual request merely because the label remains. GitHub has no atomic
+read-and-cancel operation, so a final concurrent metadata change remains possible.
+
+GitHub's current `pull_request_target` behavior uses the base repository's
+**default-branch workflow**, even when the PR targets another branch. The earlier
+warning that an off-default target alone selected another workflow context was
+incorrect; see [GitHub's event documentation](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#pull_request_target)
+and [security guidance](https://docs.github.com/en/actions/reference/security/securely-using-pull_request_target).
+The shared workflow performs metadata queries only, with no checkout, cache
+restore, dependency installation or PR-code execution. Keep that boundary and
+pin it to a reviewed full SHA. The positive merge route still requires the
+default target; off-default events can only request cancellation. Installing both
+the new shared pin and caller routing addresses the cases tracked by
+[issue #330](https://github.com/victron-venus/venus-os-ci-toolkit/issues/330).
 
 `single_entry_ci: true` in `.release-policy.json` installs required CI configuration
 contracts. Callable validators keep `workflow_call` (and optional manual dispatch),
