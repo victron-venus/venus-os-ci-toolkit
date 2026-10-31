@@ -237,8 +237,10 @@ collector changes together. This mode does not update dependencies, run builds,
 dispatch releases, fetch Git objects, or delete retained Actions artifacts.
 
 Unsupported or ambiguous layouts stop before any files are written. These include
-legacy pipelines, aliases on changed artifact edges, adapters used by ordinary CI, opaque remote
-build producers and shared fuzz revisions that still upload unscoped artifacts.
+legacy pipelines, closed-build importers, aliases on changed artifact edges,
+adapters used by ordinary CI, opaque remote build producers and shared fuzz
+revisions that still upload unscoped artifacts. Closed-build scripts can import
+artifacts by exact name; their importers and workflow must be reviewed together.
 Such revisions need a separately reviewed producer upgrade; changing only the
 collector would leave it without a matching input. The pinned producer is checked
 from its exact local Git object, with replacement objects and lazy fetching disabled.

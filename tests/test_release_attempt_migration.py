@@ -120,6 +120,13 @@ class ReleaseAttemptMigrationTests(unittest.TestCase):
         self.write()
         self.rejected_without_writes("version-plan")
 
+    def test_closed_build_importers_require_a_coordinated_migration(self):
+        for configuration in ({"enabled": True}, {"enabled": False}, None):
+            with self.subTest(configuration=configuration):
+                self.policy["closed_build"] = configuration
+                self.write()
+                self.rejected_without_writes("Closed-build release importers")
+
     def test_drifted_collector_pattern_is_not_partially_migrated(self):
         self.policy["artifact_pattern"] = "packages*"
         self.write()

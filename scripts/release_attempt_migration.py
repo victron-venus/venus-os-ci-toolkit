@@ -70,6 +70,8 @@ def policy_supported(policy: dict) -> None:
     """Do not convert legacy releases or local/private CI as a side effect."""
     if not isinstance(policy, dict):
         raise ValueError("Release-attempt migration requires a release policy object")
+    if "closed_build" in policy:
+        raise ValueError("Closed-build release importers require a separate coordinated migration")
     versioning = policy.get("versioning")
     if (policy.get("mode", "release") != "release"
             or policy.get("visibility", "public") != "public"
@@ -249,8 +251,10 @@ collector changes together. This mode does not update dependencies, run builds,
 dispatch releases, fetch Git objects, or delete retained Actions artifacts.
 
 Unsupported or ambiguous layouts stop before any files are written. These include
-legacy pipelines, aliases on changed artifact edges, adapters used by ordinary CI, opaque remote
-build producers and shared fuzz revisions that still upload unscoped artifacts.
+legacy pipelines, closed-build importers, aliases on changed artifact edges,
+adapters used by ordinary CI, opaque remote build producers and shared fuzz
+revisions that still upload unscoped artifacts. Closed-build scripts can import
+artifacts by exact name; their importers and workflow must be reviewed together.
 Such revisions need a separately reviewed producer upgrade; changing only the
 collector would leave it without a matching input. The pinned producer is checked
 from its exact local Git object, with replacement objects and lazy fetching disabled.
