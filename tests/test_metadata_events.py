@@ -46,6 +46,7 @@ def evaluate(expression, context):
     expression = re.sub(r"\bnull\b", "None", expression)
 
     def visit(node):
+        """Interpret supported metadata expressions without executing arbitrary code."""
         if isinstance(node, ast.Constant):
             return node.value
         if isinstance(node, (ast.Dict, ast.List)):
@@ -68,6 +69,8 @@ def evaluate(expression, context):
                 return left != right
         if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
             args = [visit(arg) for arg in node.args]
+            if node.func.id == "format" and args:
+                return args[0].format(*args[1:])
             if node.func.id == "fromJSON" and len(args) == 1:
                 return json.loads(args[0])
             if node.func.id == "contains" and len(args) == 2:
@@ -82,6 +85,7 @@ def context(action="opened", changes=None, run="10", event="pull_request_target"
     return {
         "github": {
             "workflow": "metadata",
+            "ref": "refs/heads/main",
             "repository": "example/repo",
             "run_id": run,
             "event_name": event,
@@ -128,9 +132,10 @@ class MetadataEventsTests(unittest.TestCase):
                     self.assertFalse(evaluate(job["if"], context("edited", changes)))
 
     def test_retarget_and_other_state_events_remain_eligible(self):
+        """Preserve a matching evaluator for meaningful PR state transitions."""
         base = {"base": {"ref": {"from": "old"}, "sha": {"from": "a" * 40}}}
         for name in CALLERS:
-            job = next(iter(definition(name)["jobs"].values()))
+            jobs = definition(name)["jobs"].values()
             for action, changes in (
                 ("edited", base),
                 ("edited", base | {"body": {"from": "old"}}),
@@ -142,7 +147,7 @@ class MetadataEventsTests(unittest.TestCase):
                 ("unlabeled", {}),
             ):
                 with self.subTest(workflow=name, action=action):
-                    self.assertTrue(evaluate(job["if"], context(action, changes)))
+                    self.assertTrue(any(evaluate(job["if"], context(action, changes)) for job in jobs))
 
     def test_ignored_edits_cannot_cancel_or_replace_meaningful_runs(self):
         for name in CALLERS:
@@ -215,6 +220,102 @@ class MetadataEventsTests(unittest.TestCase):
         data["github"]["event"] = {}
         data["inputs"].update({"pull-request-number": "42", "expected-head": "a" * 40})
         self.assertTrue(evaluate(job["if"], data))
+
+
+class WithdrawalSequenceTests(unittest.TestCase):
+    """Model one running/one pending slot per actual GitHub concurrency group."""
+
+    def test_later_labels_cannot_drop_a_pending_withdrawal_and_manual_races_stay_safe(self):
+        """Retain withdrawal evidence and execute the actual declared caller modes."""
+        from test_auto_merge import TargetWithdrawalTests
+
+        for name in ("docs/examples/auto-merge.yml", ".github/workflows/auto-merge-prs.yml"):
+            workflow = definition(name)
+            for action in ("unlabeled", "converted_to_draft", "edited"):
+                removal = context(action, run="20")
+                removal["github"]["event"]["label"] = {"name": "automerge"}
+                removal["github"]["event"]["pull_request"]["head"]["repo"]["full_name"] = "example/repo"
+                if action == "edited":
+                    removal["github"]["event"]["changes"] = {"base": {"ref": {"from": "main"}}}
+                    removal["github"]["event"]["pull_request"]["base"]["ref"] = "other"
+                # Even a run not started yet must not be replaced by the next webhook.
+                pending = {}
+                for event in (removal, context("labeled", run="21"), context("edited", run="22")):
+                    pending[group(workflow, event)] = event
+                with self.subTest(workflow=name, action=action):
+                    self.assertIn(removal, pending.values())
+                    jobs = [job for job in workflow["jobs"].values() if evaluate(job["if"], removal)]
+                    self.assertEqual(len(jobs), 1)
+                    inputs = jobs[0]["with"]
+                    modes = {}
+                    for key in ("withdrawal-only", "native-auto-merge"):
+                        value = inputs.get(key, "false")
+                        enabled = evaluate(value, removal) if value.startswith("${{") else value == "true"
+                        modes[key.replace("-", "_").upper()] = str(bool(enabled)).lower()
+                    self.assertEqual(modes, {"WITHDRAWAL_ONLY": "true", "NATIVE_AUTO_MERGE": "false"})
+                    # Execute the selected caller's real input modes, without a PR run.
+                    runtime = TargetWithdrawalTests()
+                    runtime.setUp()
+                    changes = ({"baseRefName": "other", "labels": [{"name": "automerge"}]} if action == "edited"
+                               else {"isDraft": True, "labels": [{"name": "automerge"}]} if action == "converted_to_draft" else {})
+                    value = runtime.value(**changes)
+                    event = runtime.event(value, action)
+                    calls = runtime.run_target([value, dict(value)], event, **modes)
+                    self.assertIn("--disable-auto", calls[-1].args)
+                    # A manual request created while the unique job waited is not its request.
+                    value["autoMergeRequest"] = {"enabledAt": "2026-10-31T12:02:00Z"}
+                    self.assertEqual(len(runtime.run_target([value], event, **modes)), 1)
+
+    def test_surviving_example_positive_waiter_uses_observed_request_identity(self):
+        """Ensure an earlier waiter cannot cancel a request it never observed."""
+        from test_auto_merge import AutoMergeTests, TargetWithdrawalTests, event_environment, existing_request, pr
+
+        workflow = definition("docs/examples/auto-merge.yml")
+        positive = context("opened", event="pull_request", run="10")
+        positive["github"]["event"]["pull_request"]["head"]["repo"]["full_name"] = "example/repo"
+        withdrawal = context("converted_to_draft", event="pull_request", run="11")
+        self.assertTrue(evaluate(workflow["jobs"]["auto-merge"]["if"], positive))
+        # The unique withdrawal group does not terminate the existing positive waiter.
+        self.assertNotEqual(group(workflow, positive), group(workflow, withdrawal))
+        inputs = workflow["jobs"]["auto-merge"].get("with", {})
+        modes = {key.replace("-", "_").upper(): str(inputs.get(key, "false") == "true").lower()
+                 for key in ("native-auto-merge", "withdrawal-only")}
+        for original in (None, existing_request()):
+            runtime = AutoMergeTests()
+            runtime.setUp()
+            observed = pr(state="PENDING") | {"autoMergeRequest": original}
+            current = pr() | {"isDraft": True, "autoMergeRequest": {"enabledAt": "2026-10-31T12:02:00Z"}}
+            event = TargetWithdrawalTests.event(observed, "opened")
+            with self.subTest(original=original), event_environment(event) as env:
+                calls = runtime.run_workflow([observed, current, current], env | modes)
+                self.assertFalse(any("merge" in call.args for call in calls))
+
+    def test_toolkit_caller_retains_positive_native_mode_after_return_to_default(self):
+        """Treat returning to the default branch as a positive native evaluation."""
+        workflow = definition(".github/workflows/auto-merge-prs.yml")
+        job = workflow["jobs"]["auto-merge"]
+        for event in (context("opened"), context("edited", {"base": {"ref": {"from": "other"}}})):
+            with self.subTest(event=event):
+                self.assertTrue(evaluate(job["if"], event))
+                self.assertTrue(evaluate(job["with"]["native-auto-merge"], event))
+                self.assertFalse(evaluate(job["with"]["withdrawal-only"], event))
+                self.assertEqual(job["with"]["required-status-checks"], "CodeQL,SonarCloud Code Analysis")
+
+    def test_each_withdrawal_gets_its_own_group_but_normal_evaluation_coalesces(self):
+        """Isolate withdrawal queues while retaining ordinary state-event coalescing."""
+        workflow = definition("docs/examples/auto-merge.yml")
+        for action in ("unlabeled", "converted_to_draft", "edited"):
+            first = context(action, run="10")
+            first["github"]["event"]["label"] = {"name": "automerge"}
+            first["github"]["event"]["changes"] = {"base": {"ref": {"from": "main"}}}
+            first["github"]["event"]["pull_request"]["base"]["ref"] = "other"
+            import copy
+            second = copy.deepcopy(first)
+            second["github"]["run_id"] = "11"
+            with self.subTest(action=action):
+                self.assertNotEqual(group(workflow, first), group(workflow, second))
+        self.assertEqual(group(workflow, context("opened", run="10")),
+                         group(workflow, context("synchronize", run="11")))
 
 
 if __name__ == "__main__":

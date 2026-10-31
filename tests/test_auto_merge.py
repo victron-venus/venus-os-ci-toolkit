@@ -303,7 +303,12 @@ def removal_event():
         "label": {"name": "automerge"},
         "repository": {"full_name": "example/repo"},
         "number": 7,
-        "pull_request": {"head": {"sha": "abc"}, "updated_at": "2026-10-31T12:01:00Z"},
+        "pull_request": {
+            "head": {"sha": "abc", "repo": {"full_name": "example/repo"}},
+            "base": {"sha": "base", "ref": "main", "repo": {"full_name": "example/repo"}},
+            "user": {"login": "californiantiramisu"},
+            "updated_at": "2026-10-31T12:01:00Z",
+        },
     }
 
 
@@ -338,7 +343,9 @@ class WithdrawalTests(unittest.TestCase):
         for change in ({"labels": []}, {"isDraft": True}, {"baseRefName": "other"}):
             withdrawn = pr() | {"autoMergeRequest": existing_request()} | change
             with self.subTest(change=change):
-                calls = self.run_workflow([withdrawn, copy.deepcopy(withdrawn)])
+                event = removal_event()
+                event["pull_request"]["base"]["ref"] = withdrawn["baseRefName"]
+                calls = self.run_workflow([withdrawn, copy.deepcopy(withdrawn)], event=event)
                 self.assertEqual(
                     calls[-1].args,
                     ("pr", "merge", "7", "--repo", "example/repo", "--disable-auto"),
@@ -355,6 +362,42 @@ class WithdrawalTests(unittest.TestCase):
         )
         self.assertIn("--disable-auto", calls[-1].args)
         self.assertFalse(any("--auto" in call.args for call in calls))
+
+    def test_surviving_positive_waiter_preserves_a_new_manual_request(self):
+        """Unique cleanup groups leave old waiters alive; they cannot claim a new request."""
+        for original in (None, existing_request()):
+            for changes in ({"isDraft": True}, {"baseRefName": "other"}, {"labels": []}):
+                opted_in = pr(state="PENDING") | {"autoMergeRequest": original}
+                newer = pr() | changes | {"autoMergeRequest": {"enabledAt": "2026-10-31T12:02:00Z"}}
+                with self.subTest(original=original, changes=changes):
+                    calls = self.run_workflow([opted_in, newer, newer],
+                                              event=removal_event() | {"action": "opened"})
+                    self.assertFalse(any("merge" in call.args for call in calls))
+
+    def test_queued_positive_event_does_not_claim_a_labelled_manual_request(self):
+        """An old positive run may start only after a later explicit manual request."""
+        for action in ("opened", "labeled", "reopened", "edited"):
+            for changes in ({"isDraft": True}, {"baseRefName": "other"}):
+                value = pr() | changes | {"autoMergeRequest": existing_request()}
+                with self.subTest(action=action, changes=changes):
+                    calls = self.run_workflow([value, value], event=removal_event() | {"action": action})
+                    self.assertFalse(any("merge" in call.args for call in calls))
+
+    def test_return_to_default_while_draft_preserves_later_manual_request(self):
+        """A positive base-return event cannot revive a previous draft withdrawal."""
+        value = pr() | {"isDraft": True, "autoMergeRequest": {"enabledAt": "2026-10-31T12:00:30Z"}}
+        event = removal_event() | {"action": "edited", "changes": {"base": {"ref": {"from": "other"}}}}
+        # Draft conversion was earlier; this new return-to-default event is not withdrawal.
+        calls = self.run_workflow([value, value], event=event)
+        self.assertFalse(any("merge" in call.args for call in calls))
+
+    def test_surviving_waiter_can_still_cancel_its_same_observed_request(self):
+        """Request ownership is retained despite a separate cleanup event queue."""
+        opted_in = pr(state="PENDING") | {"autoMergeRequest": existing_request()}
+        withdrawn = opted_in | {"isDraft": True}
+        calls = self.run_workflow([opted_in, withdrawn, withdrawn],
+                                  event=removal_event() | {"action": "opened"})
+        self.assertIn("--disable-auto", calls[-1].args)
 
     def test_new_intent_or_changed_identity_is_never_cancelled(self):
         """A different head, base, author or native request belongs to a later event."""
@@ -403,6 +446,20 @@ class WithdrawalTests(unittest.TestCase):
             with self.subTest(event=event):
                 self.assertEqual(len(self.run_workflow([self.withdrawn()], event)), 1)
 
+    def test_default_cleanup_requires_complete_matching_event_identity(self):
+        """Reject withdrawal payloads that describe a different PR identity."""
+        value = self.withdrawn()
+        for field, replacement in (
+            ("base", {"sha": "different", "ref": "main", "repo": {"full_name": "example/repo"}}),
+            ("base", {"sha": "base", "ref": "other", "repo": {"full_name": "example/repo"}}),
+            ("head", {"sha": "abc", "repo": {"full_name": "contributor/fork"}}),
+            ("user", {"login": "4alvit"}),
+        ):
+            event = removal_event()
+            event["pull_request"][field] = replacement
+            with self.subTest(field=field, replacement=replacement):
+                self.assertEqual(len(self.run_workflow([value], event)), 1)
+
     def test_stale_removal_cannot_cancel_newer_or_ambiguous_request(self):
         """Rerun webhooks and missing timestamps cannot claim a later manual request."""
         for enabled in (
@@ -430,12 +487,14 @@ class WithdrawalTests(unittest.TestCase):
 class CallerWithdrawalTests(unittest.TestCase):
     """Evaluate the real caller guard against bounded event fixtures."""
 
-    def reachable(self, **changes):
+    def reachable(self, job="auto-merge", **changes):
         """Translate only this trusted expression's booleans and fixed metadata keys."""
         path = WORKFLOW.parents[2] / "docs/examples/auto-merge.yml"
         workflow = yaml.safe_load(path.read_text())
         values = {
             "github.event_name": "pull_request",
+            "github.ref": "refs/heads/main",
+            "github.event.label.name": "automerge",
             "github.event.action": "unlabeled",
             "github.event.changes.base": False,
             "github.event.pull_request.head.repo.full_name": "example/repo",
@@ -446,7 +505,7 @@ class CallerWithdrawalTests(unittest.TestCase):
             "github.event.pull_request.labels.*.name": [],
             "github.event.pull_request.draft": False,
         } | changes
-        expression = workflow["jobs"]["auto-merge"]["if"]
+        expression = workflow["jobs"][job]["if"]
         expression = re.sub(
             r"github\.[A-Za-z_.*]+", lambda match: repr(values[match[0]]), expression
         )
@@ -457,6 +516,7 @@ class CallerWithdrawalTests(unittest.TestCase):
         )
 
         def evaluate(node):
+            """Evaluate only the supported expression nodes used by the caller guard."""
             if isinstance(node, ast.Constant):
                 return node.value
             if isinstance(node, ast.List):
@@ -478,6 +538,8 @@ class CallerWithdrawalTests(unittest.TestCase):
                 and not node.keywords
             ):
                 args = [evaluate(value) for value in node.args]
+                if node.func.id == "format" and args:
+                    return args[0].format(*args[1:])
                 if node.func.id == "fromJSON" and len(args) == 1:
                     return json.loads(args[0])
                 if node.func.id == "contains" and len(args) == 2:
@@ -486,53 +548,168 @@ class CallerWithdrawalTests(unittest.TestCase):
 
         return evaluate(ast.parse(" ".join(expression.split()), mode="eval").body)
 
-    def test_same_repo_withdrawals_reach_shared_cleanup(self):
-        """No label, draft and base retarget events must execute the trusted handler."""
-        for event in (
-            {},
-            {
-                "github.event.action": "converted_to_draft",
-                "github.event.pull_request.draft": True,
-            },
-            {
-                "github.event.action": "edited",
-                "github.event.changes.base": True,
-                "github.event.pull_request.base.ref": "other",
-            },
-        ):
-            with self.subTest(event=event):
-                self.assertTrue(self.reachable(**event))
+    def test_withdrawals_use_only_the_target_cleanup_route(self):
+        """Conflicts need no pull_request run; off-default forks use metadata only."""
+        for author in ("4alvit", "dependabot[bot]", "californiantiramisu", "renovate[bot]"):
+            for head_repo in ("example/repo", "contributor/fork"):
+                for event in (
+                    {},
+                    {"github.event.action": "converted_to_draft", "github.event.pull_request.draft": True},
+                    {"github.event.action": "edited", "github.event.changes.base": True,
+                     "github.event.pull_request.base.ref": "other"},
+                ):
+                    values = {"github.event.pull_request.user.login": author,
+                              "github.event.pull_request.head.repo.full_name": head_repo} | event
+                    with self.subTest(values=values):
+                        self.assertFalse(self.reachable(**values))
+                        self.assertFalse(self.reachable("withdraw-auto-merge", **values))
+                        values["github.event_name"] = "pull_request_target"
+                        self.assertFalse(self.reachable(**values))
+                        self.assertTrue(self.reachable("withdraw-auto-merge", **values))
 
-    def test_target_cleanup_keeps_the_default_context_boundary(self):
-        """Fork and Dependabot off-default retarget need a trusted-context evaluator."""
-        fork = {
-            "github.event_name": "pull_request_target",
-            "github.event.pull_request.head.repo.full_name": "fork/repo",
-        }
-        self.assertTrue(self.reachable(**fork))
-        self.assertFalse(
-            self.reachable(**(fork | {"github.event.pull_request.base.ref": "other"}))
-        )
-        self.assertFalse(
-            self.reachable(**(fork | {"github.event_name": "pull_request"}))
-        )
-        dependabot = {
-            "github.event_name": "pull_request_target",
-            "github.event.pull_request.user.login": "dependabot[bot]",
-        }
-        self.assertTrue(self.reachable(**dependabot))
-        self.assertFalse(
-            self.reachable(
-                **(dependabot | {"github.event.pull_request.base.ref": "other"})
-            )
-        )
+    def test_positive_default_base_routing_and_return_are_preserved(self):
+        """Retargeting back to default can enable again through the ordinary path."""
+        for head_repo, author, event in (
+            ("example/repo", "4alvit", "pull_request"),
+            ("contributor/fork", "4alvit", "pull_request_target"),
+            ("example/repo", "dependabot[bot]", "pull_request_target"),
+        ):
+            for action in ("opened", "edited"):
+                values = {"github.event.action": action, "github.event.changes.base": True,
+                          "github.event_name": event,
+                          "github.event.pull_request.head.repo.full_name": head_repo,
+                          "github.event.pull_request.user.login": author}
+                with self.subTest(values=values):
+                    self.assertTrue(self.reachable(**values))
+                    self.assertFalse(self.reachable("withdraw-auto-merge", **values))
+                    if event == "pull_request_target":
+                        self.assertFalse(self.reachable(**(values | {"github.event.pull_request.base.ref": "other"})))
 
     def test_untrusted_authors_and_irrelevant_edits_remain_excluded(self):
-        """Making withdrawal reachable does not widen the author or edit scope."""
-        self.assertFalse(
-            self.reachable(**{"github.event.pull_request.user.login": "stranger"})
+        """No credentials or jobs for an untrusted author, ref or irrelevant edit."""
+        for job in ("auto-merge", "withdraw-auto-merge"):
+            self.assertFalse(self.reachable(job, **{"github.event.pull_request.user.login": "stranger"}))
+            self.assertFalse(self.reachable(job, **{"github.event.action": "edited"}))
+        self.assertFalse(self.reachable("withdraw-auto-merge", **{
+            "github.event_name": "pull_request_target", "github.ref": "refs/heads/other"}))
+
+
+class TargetWithdrawalTests(unittest.TestCase):
+    """Run the real cancellation-only entry point with bounded webhook sequences."""
+
+    setUp = AutoMergeTests.setUp
+
+    @staticmethod
+    def value(**changes):
+        """Build a ready PR with an existing request and its opt-in label removed."""
+        return pr() | {"labels": [], "autoMergeRequest": existing_request()} | changes
+
+    @staticmethod
+    def event(value, action="unlabeled"):
+        """Create a matching withdrawal webhook with an explicit event timestamp."""
+        return {
+            "action": action, "number": 7, "label": {"name": "automerge"},
+            "repository": {"full_name": "example/repo"},
+            "changes": {"base": {"ref": {"from": "main"}}},
+            "pull_request": {
+                "head": {"sha": value["headRefOid"], "repo": {"full_name":
+                    "contributor/fork" if value["isCrossRepository"] else "example/repo"}},
+                "base": {"sha": value["baseRefOid"], "ref": value["baseRefName"],
+                         "repo": {"full_name": "example/repo"}},
+                "user": {"login": value["author"]["login"]},
+                "updated_at": "2026-10-31T12:01:00Z",
+            },
+        }
+
+    def run_target(self, snapshots, event, **environment):
+        """Execute the real target-only mode with mocked transport and event data."""
+        with event_environment(event) as env:
+            return AutoMergeTests.run_workflow(self, snapshots, env | {
+                "WITHDRAWAL_ONLY": "true", "GITHUB_EVENT_NAME": "pull_request_target",
+                "GITHUB_REF": "refs/heads/main",
+            } | environment)
+
+    def test_conflicted_and_off_default_prs_cancel_without_positive_evaluation(self):
+        """Revoke matching requests without relying on a pull-request workflow run."""
+        for fork in (False, True):
+            for action, changes in (
+                ("unlabeled", {}),
+                ("converted_to_draft", {"labels": [{"name": "automerge"}], "isDraft": True}),
+                ("edited", {"labels": [{"name": "automerge"}], "baseRefName": "other"}),
+            ):
+                value = self.value(isCrossRepository=fork, **changes)
+                with self.subTest(fork=fork, action=action):
+                    calls = self.run_target([value, copy.deepcopy(value)], self.event(value, action))
+                    self.assertEqual(calls[-1].args, ("pr", "merge", "7", "--repo", "example/repo", "--disable-auto"))
+                    self.assertEqual(len(calls), 2)
+
+    def test_input_rejects_merge_modes_and_untrusted_execution_context(self):
+        """Reject conflicting modes and execution outside the trusted default context."""
+        value = self.value()
+        event = self.event(value)
+        for env in (
+            {"NATIVE_AUTO_MERGE": "true"}, {"REVIEWED_MERGE": "true"},
+            {"REVIEWED_SINGLE_PASS": "true"}, {"ALLOW_DEPENDABOT_ACTIONS_REVIEW": "true"},
+            {"ALLOW_OWNED_BOT_ACTIONS_REVIEW": "true"},
+            {"GITHUB_EVENT_NAME": "pull_request"}, {"GITHUB_REF": "refs/heads/other"},
+        ):
+            with self.subTest(env=env), self.assertRaises(RuntimeError):
+                self.run_target([], event, **env)
+
+    def test_eligible_pr_never_enables_or_merges_even_with_successful_checks(self):
+        """Keep the cancellation-only path inert when current eligibility is restored."""
+        value = self.value(labels=[{"name": "automerge"}])
+        calls = self.run_target([value], self.event(value))
+        self.assertEqual(len(calls), 1)
+
+    def test_stale_draft_and_retarget_preserve_manual_and_ambiguous_requests(self):
+        """Preserve newer requests and requests whose ordering cannot be proven."""
+        for action, change in (("converted_to_draft", {"isDraft": True}), ("edited", {"baseRefName": "other"})):
+            value = self.value(labels=[{"name": "automerge"}], **change)
+            event = self.event(value, action)
+            for request in (None, {"enabledAt": "2026-10-31T12:02:00Z"},
+                            {"enabledAt": "2026-10-31T12:01:00Z"}, {"enabledAt": None}):
+                with self.subTest(action=action, request=request):
+                    current = value | {"autoMergeRequest": request}
+                    self.assertEqual(len(self.run_target([current], event)), 1)
+
+    def test_webhook_and_fresh_snapshot_identity_must_both_match(self):
+        """Require both webhook identity and the final metadata observation to agree."""
+        value = self.value()
+        event = self.event(value)
+        changes = (
+            {"headRefOid": "new-head"}, {"baseRefOid": "new-base"},
+            {"baseRefName": "other"}, {"isCrossRepository": True},
+            {"author": {"login": "4alvit"}}, {"labels": [{"name": "automerge"}]},
         )
-        self.assertFalse(self.reachable(**{"github.event.action": "edited"}))
+        for change in changes:
+            with self.subTest(change=change):
+                self.assertEqual(len(self.run_target([value | change], event)), 1)
+                self.assertEqual(len(self.run_target([value, value | change], event)), 1)
+        for field in ("head", "base", "user"):
+            malformed = copy.deepcopy(event)
+            malformed["pull_request"].pop(field)
+            with self.subTest(missing=field):
+                self.assertEqual(len(self.run_target([value], malformed)), 1)
+        for change in ({"number": 8}, {"repository": {"full_name": "other/repo"}},
+                       {"action": "labeled", "label": {"name": "bug"}}):
+            self.assertEqual(len(self.run_target([], event | change)), 1)
+
+    def test_new_manual_request_after_first_read_is_preserved(self):
+        """Do not revoke a replacement request created between metadata reads."""
+        value = self.value()
+        newer = value | {"autoMergeRequest": {"enabledAt": "2026-10-31T12:02:00Z"}}
+        self.assertEqual(len(self.run_target([value, newer], self.event(value))), 1)
+
+    def test_metadata_only_implementation_and_bounded_runtime(self):
+        """Keep withdrawal execution bounded and free of PR-code checkout."""
+        workflow = yaml.safe_load(WORKFLOW.read_text())
+        job = workflow["jobs"]["auto-merge"]
+        self.assertIn("inputs.withdrawal-only", job["timeout-minutes"])
+        self.assertEqual(len(job["steps"]), 2)
+        self.assertTrue(job["steps"][0]["uses"].startswith("step-security/harden-runner@"))
+        self.assertNotIn("checkout", str(job["steps"]))
+        self.assertNotIn("gh pr checkout", SOURCE)
 
 
 class CheckAttemptOrderingTests(unittest.TestCase):
@@ -725,6 +902,26 @@ class NativeAutoMergeTests(AutoMergeTests):
                 calls = self.run_native(snapshots, environment=environment)
                 self.assertIn("--disable-auto", calls[-1].args)
                 self.assertFalse(any("--auto" in call.args for call in calls))
+
+    def test_native_revalidation_does_not_cancel_a_replaced_request(self):
+        """Bind native-mode cancellation to the earlier eligible request observation."""
+        for original in (None, existing_request()):
+            opted_in = pr() | {"autoMergeRequest": original}
+            newer = pr() | {"isDraft": True, "autoMergeRequest": {"enabledAt": "2026-10-31T12:02:00Z"}}
+            with self.subTest(original=original), event_environment(removal_event()) as environment:
+                calls = self.run_native([opted_in, newer, newer], environment=environment)
+                self.assertFalse(any("merge" in call.args for call in calls))
+
+    def test_native_initial_ineligible_stale_positive_event_preserves_manual_request(self):
+        """Prevent a stale positive wakeup from claiming a later manual request."""
+        for action in ("opened", "labeled", "edited"):
+            for change in ({"isDraft": True}, {"baseRefName": "other"}):
+                value = pr() | change | {"autoMergeRequest": {"enabledAt": "2026-10-31T12:02:00Z"}}
+                event = removal_event() | {"action": action}
+                event["pull_request"]["base"]["ref"] = value["baseRefName"]
+                with self.subTest(action=action, change=change), event_environment(event) as environment:
+                    calls = self.run_native([value, value], environment=environment)
+                    self.assertFalse(any("merge" in call.args for call in calls))
 
     def test_untrusted_author_never_enables_native_merge(self):
         """Native mode retains the shared trusted-author boundary."""
