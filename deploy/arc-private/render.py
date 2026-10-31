@@ -84,6 +84,7 @@ class NucKvmPlan(NamedTuple):
     bounded_heavy_ci_scopes: tuple[str, ...] = ()
     bounded_heavy_image: str | None = None
     full_memory_ci_scopes: tuple[str, ...] = ()
+    opportunistic_cpu_targets: tuple[NucKvmTarget, ...] = ()
 
 
 class QualificationCanary(NamedTuple):
@@ -130,13 +131,18 @@ def load_nuc_kvm_plan(path):
     if (not isinstance(data, dict) or not required <= set(data)
             or set(data) - required - {'light_ci_scopes', 'low_share_ci_scopes',
                                       'bounded_heavy_ci_scopes', 'bounded_heavy_image',
-                                      'full_memory_ci_scopes'}):
-        raise ValueError('NUC KVM plan requires targets, image and node_ip, with optional CI scope lists')
+                                      'full_memory_ci_scopes', 'opportunistic_cpu_targets'}):
+        raise ValueError('NUC KVM plan requires targets, image and node_ip, with optional scoped selections')
     if not isinstance(data['targets'], list) or not data['targets']:
         raise ValueError('NUC KVM plan requires an explicit nonempty target list')
     if any(not isinstance(target, dict) or set(target) != {'scope', 'profile'}
            for target in data['targets']):
         raise ValueError('Each NUC KVM target requires exactly scope and profile')
+    opportunistic = data.get('opportunistic_cpu_targets', [])
+    if (not isinstance(opportunistic, list)
+            or any(not isinstance(target, dict) or set(target) != {'scope', 'profile'}
+                   for target in opportunistic)):
+        raise ValueError('opportunistic_cpu_targets requires an explicit list of scope/profile pairs')
     light = data.get('light_ci_scopes', [])
     if not isinstance(light, list) or any(not isinstance(scope, str) for scope in light):
         raise ValueError('light_ci_scopes must be an explicit list of repository scopes')
@@ -155,7 +161,8 @@ def load_nuc_kvm_plan(path):
         raise ValueError('Bounded heavy selection must not be empty')
     return NucKvmPlan(tuple(NucKvmTarget(**target) for target in data['targets']),
                       data['image'], data['node_ip'], tuple(light), tuple(low_share),
-                      tuple(bounded), data.get('bounded_heavy_image'), tuple(full_memory))
+                      tuple(bounded), data.get('bounded_heavy_image'), tuple(full_memory),
+                      tuple(NucKvmTarget(**target) for target in opportunistic))
 
 
 def validate_nuc_kvm(rows, config, sandbox_runtime, node_ip):
@@ -197,6 +204,21 @@ def validate_nuc_kvm(rows, config, sandbox_runtime, node_ip):
         raise ValueError('Every low-share CI scope must already be a selected NUC CI target')
     if set(plan.light_ci_scopes) & set(plan.low_share_ci_scopes):
         raise ValueError('Light concurrency and low-share exclusive CI cannot overlap')
+    if (not isinstance(plan.opportunistic_cpu_targets, tuple)
+            or any(not isinstance(target, NucKvmTarget)
+                   or not isinstance(target.scope, str) or not SCOPE.fullmatch(target.scope)
+                   or not isinstance(target.profile, str) or target.profile not in ('ci', 'automation')
+                   for target in plan.opportunistic_cpu_targets)):
+        raise ValueError('opportunistic_cpu_targets requires typed CI or automation scope/profile pairs')
+    if len(set(plan.opportunistic_cpu_targets)) != len(plan.opportunistic_cpu_targets):
+        raise ValueError('Duplicate opportunistic CPU target')
+    if any(target not in plan.targets for target in plan.opportunistic_cpu_targets):
+        raise ValueError('Every opportunistic CPU target must already be a selected NUC target')
+    if {target.scope for target in plan.opportunistic_cpu_targets} & set(plan.light_ci_scopes):
+        raise ValueError('Opportunistic CPU targets cannot share a scope with light concurrency')
+    if any(target.profile == 'ci' and target.scope in plan.low_share_ci_scopes
+           for target in plan.opportunistic_cpu_targets):
+        raise ValueError('Opportunistic and low-share CPU selections cannot overlap for the same CI target')
     if (not isinstance(plan.bounded_heavy_ci_scopes, tuple)
             or any(not isinstance(scope, str) or not SCOPE.fullmatch(scope)
                    for scope in plan.bounded_heavy_ci_scopes)
@@ -254,7 +276,8 @@ def validate_nuc_kvm(rows, config, sandbox_runtime, node_ip):
     return NucKvmPlan(tuple(sorted(plan.targets)), plan.image, plan.node_ip,
                       tuple(sorted(plan.light_ci_scopes)), tuple(sorted(plan.low_share_ci_scopes)),
                       tuple(sorted(plan.bounded_heavy_ci_scopes)), plan.bounded_heavy_image,
-                      tuple(sorted(plan.full_memory_ci_scopes)))
+                      tuple(sorted(plan.full_memory_ci_scopes)),
+                      tuple(sorted(plan.opportunistic_cpu_targets)))
 
 
 def name(scope, profile):
@@ -700,6 +723,10 @@ def nuc_kvm_value(value, config):
             for env in runner['env']:
                 if env['name'] == 'RUNNER_PRIVATE_DOCKER_STORAGE':
                     env['value'] = 'ci-bounded-heavy-v1-tmpfs-6gi'
+    if (labels[SCOPE_LABEL], labels[PROFILE_LABEL]) in {
+            (name(target.scope, 'scope'), target.profile)
+            for target in config.opportunistic_cpu_targets}:
+        runner['resources']['requests']['cpu'] = '25m'
     for env in runner['env']:
         if env['name'] == 'RUNNER_RESERVE_NODE_IP':
             env['value'] = config.node_ip
