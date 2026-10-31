@@ -40,6 +40,9 @@
         "value": "package"
       }
     ],
+    "required_build_receipts": [
+      "release-inputs-package.json"
+    ],
     "artifacts": [
       {
         "path": "venus-os-ci-toolkit-*.tar.gz",

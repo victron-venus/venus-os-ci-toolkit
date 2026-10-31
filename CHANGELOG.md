@@ -11,6 +11,7 @@
 
 ### Fixed
 
+- Reject incomplete current-attempt package sets when `versioning.required_build_receipts` declares the expected producers. The dedicated `--release-inventory-only` migration adds this check to known runtimes while preserving earlier receipt-identity checks and historical promotion policy.
 - Bind release package receipts and Actions artifact selection to the exact producer run attempt, including native assembly inputs. A partial rerun cannot publish earlier-attempt packages; complete reruns retain source, version, signature and payload checks.
 - Use the provisioned Ubuntu fallback package mirror for hosted browser workers while preserving the existing planning/browser budgets and required compatibility checks.
 - Preserve usable version metadata when migrating immutable workflow references to the canonical atomic Renovate updater, including coupled fuzz workflow and runtime pins.
@@ -23,7 +24,7 @@
 
 This source package does not deploy runner images or update consumer workflow pins. Adopt a reviewed immutable toolkit revision explicitly. Existing vendored publisher clients require the corresponding reviewed file update, and native image changes require artifact and workload qualification before activation. Keep the persistent release-version ledger and the previous qualified runtime for rollback.
 
-Refresh release producers, collectors and shared fuzz workflow pins together with the installer. Use **Re-run all jobs** after partial failures: missing current-attempt packages must not be replaced by artifacts from earlier attempts.
+Refresh release producers, collectors and shared fuzz workflow pins together with the installer. Before publication starts, use **Re-run all jobs** only when the allocator and policy permit reusing the reservation. After publication begins or its outcome is uncertain, inspect tags, releases and assets before reserving a new policy-authorized run. Never reset the ledger or overwrite an immutable release to retry; earlier-attempt packages cannot fill a current-attempt gap.
 
 ### Security
 

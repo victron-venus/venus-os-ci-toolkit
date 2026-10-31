@@ -133,5 +133,7 @@ an offline receipt cannot qualify fresh publication through the migrated publish
 Receipt coverage proves that
 the staged files have matching receipts; package-set completeness is a separate
 check for targets explicitly listed in `versioning.artifacts`. It does not infer
-all intended platforms from workflow names. No release is dispatched by this mode.
+all intended platforms from workflow names. To require every intended producer,
+declare `versioning.required_build_receipts` and apply `--release-inventory-only`
+as described below. No release is dispatched by this mode.
 """

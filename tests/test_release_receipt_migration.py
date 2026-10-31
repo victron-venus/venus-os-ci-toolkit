@@ -14,6 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 installer = importlib.import_module("install_release")
 migration = importlib.import_module("release_receipt_migration")
+inventory = importlib.import_module("release_inventory_migration")
 
 PREFIX = "#!/usr/bin/env python3\n" + migration.HEADER
 SOURCES = {
@@ -180,6 +181,7 @@ class ShippedDeltaTests(unittest.TestCase):
                 self.assertIsNotNone(module)
                 current = Path(module.origin).read_text()
                 current = current.replace(migration.HEADER, "", 1)
+                current = inventory.previous_canonical_source(current, name)
                 specification = specifications[name]
                 self.assertIn(sha(current), specification["current"])
                 old = current

@@ -31,6 +31,7 @@ import release_signing_workflow  # pylint: disable=wrong-import-position
 import release_gh_workflow  # pylint: disable=wrong-import-position
 import release_closed_workflow  # pylint: disable=wrong-import-position
 import release_receipt_migration  # pylint: disable=wrong-import-position
+import release_inventory_migration  # pylint: disable=wrong-import-position
 import release_attempt_workflow  # pylint: disable=wrong-import-position
 import release_attempt_migration  # pylint: disable=wrong-import-position
 from workflow_hardening import harden_jobs  # pylint: disable=wrong-import-position
@@ -2031,6 +2032,11 @@ def render_release_receipts(directory: Path) -> dict[str, str]:
     return release_receipt_migration.render(directory)
 
 
+def render_release_inventory(directory: Path) -> dict[str, str]:
+    """Apply the known inventory guard after an operator declares its required set."""
+    return release_inventory_migration.render(directory)
+
+
 def render(directory: Path) -> dict[str, str]:
     """Validate adapters and assemble generated workflows, clients and operator docs."""
     policy = json.loads((directory / POLICY_FILE).read_text())
@@ -2430,6 +2436,7 @@ References: [GitHub schedules](https://docs.github.com/en/actions/reference/work
             "build command and explicitly local version identity.\n"
         )
         text += "\n" + release_receipt_migration.operator_guide()
+        text += "\n" + release_inventory_migration.operator_guide()
         if policy["versioning"]["promotion"] == "final-build":
             text = text.replace(
                 "Stable `vX.Y.Z` copies the tested RC bytes without rebuilding. "
@@ -2485,6 +2492,10 @@ def main():
     modes.add_argument(
         "--release-receipts-only", action="store_const", dest="renderer", const=render_release_receipts,
         help="migrate known package receipt identity checks without upgrading other release tooling",
+    )
+    modes.add_argument(
+        "--release-inventory-only", action="store_const", dest="renderer", const=render_release_inventory,
+        help="enforce declared package receipt inventory without replacing other release tooling",
     )
     args = parser.parse_args()
     try:

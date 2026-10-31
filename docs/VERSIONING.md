@@ -259,9 +259,20 @@ attempt, source and payload digest against the expected execution. A nonempty
 artifact ID alone is not proof. Name-based downloads must use one explicit
 selector; unknown run or repository overrides require the verified ID path.
 
-After a failed or partial run, use **Re-run all jobs**. Re-running only failed jobs
-can leave required packages missing from the current attempt; the publisher must
-not fill those gaps with older artifacts. Duplicate package names remain errors.
+Before publication starts, use **Re-run all jobs** only if the allocator and
+release policy permit reuse of that run's reservation. Recreate every required
+input in the same attempt; failed-only or individual retries can leave inputs
+missing, and older artifacts must not fill those gaps.
+
+For a fresh candidate or final build, once publication has started
+(`begin_publication`), or its external publication result is partial or uncertain,
+inspect the existing release, tags and assets before retrying. A consumed build
+number requires a new workflow run and reservation authorized by the release
+policy; an existing immutable tag may also require a new base version. Never
+reset the release ledger, overwrite assets or retag to force a retry. Historical
+byte promotion of an accepted RC keeps its reserved number and follows the
+existing promotion policy.
+Duplicate package names remain errors.
 
 Update producers and collectors together with the release installer. Projects
 using shared RC fuzzing must also pin a toolkit revision whose fuzz workflow emits
