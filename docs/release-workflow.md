@@ -219,6 +219,45 @@ References: [GitHub schedules](https://docs.github.com/en/actions/reference/work
 [protected environments](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/manage-environments),
 [artifact provenance](https://docs.github.com/en/rest/actions/artifacts).
 
+## Migrating artifact selection without upgrading a consumer
+
+For an existing public, hosted, versioned release pipeline, run the following
+from a toolkit Git checkout containing the consumer's pinned shared fuzz commit:
+
+```sh
+python3 scripts/install_release.py /path/to/consumer --release-attempts-only --check
+python3 scripts/install_release.py /path/to/consumer --release-attempts-only
+```
+
+The check reports drift without writing. The migration changes artifact names
+and selectors in the existing generated release pipeline and its exclusive local
+build adapters. It retains workflow pins, commands, gates, permissions, version
+plans, exact-ID downloads and runtime files. Review and merge the producer and
+collector changes together. This mode does not update dependencies, run builds,
+dispatch releases, fetch Git objects, or delete retained Actions artifacts.
+
+Unsupported or ambiguous layouts stop before any files are written. These include
+legacy pipelines, aliases on changed artifact edges, adapters used by ordinary CI, opaque remote
+build producers and shared fuzz revisions that still upload unscoped artifacts.
+Such revisions need a separately reviewed producer upgrade; changing only the
+collector would leave it without a matching input. The pinned producer is checked
+from its exact local Git object, with replacement objects and lazy fetching disabled.
+
+Every ordinary release artifact name now ends in
+`-run-<run_id>-attempt-<run_attempt>`. A full same-run retry can retain previous
+attempts without mixing their payloads. After a partial release failure, use
+**Re-run all jobs**, so every required producer creates inputs for the same new
+attempt. Re-running only a failed job can leave no current inputs, or an incomplete
+set; older packages must not fill those gaps. Duplicate payload names within the
+current attempt remain errors, even when their bytes match.
+
+Name selection is not receipt verification. Existing publication checks still
+verify source, repository, run and attempt. Platform completeness depends on the
+project's explicit artifact declarations; a valid receipt for one platform does
+not establish that all required platforms were built. The regression suite uses
+synthetic packages with the actual selector, collector and receipt verifiers;
+it does not claim a live release retry or device acceptance.
+
 ## Automatic version preparation
 
 Run `python3 scripts/release.py prepare-version --pr` from the clean default-branch HEAD. The command refreshes tags and opens a PR with synchronized owned version fields. An existing unreleased base is retained; use `--bump minor`, `--bump major`, or `--version X.Y.Z` for explicit intent. See [version plans](VERSIONING.md) for build overlays, the dedicated allocation ledger and recovery.
