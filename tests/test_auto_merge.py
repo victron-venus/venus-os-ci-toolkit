@@ -447,6 +447,7 @@ class WithdrawalTests(unittest.TestCase):
                 self.assertEqual(len(self.run_workflow([self.withdrawn()], event)), 1)
 
     def test_default_cleanup_requires_complete_matching_event_identity(self):
+        """Reject withdrawal payloads that describe a different PR identity."""
         value = self.withdrawn()
         for field, replacement in (
             ("base", {"sha": "different", "ref": "main", "repo": {"full_name": "example/repo"}}),
@@ -515,6 +516,7 @@ class CallerWithdrawalTests(unittest.TestCase):
         )
 
         def evaluate(node):
+            """Evaluate only the supported expression nodes used by the caller guard."""
             if isinstance(node, ast.Constant):
                 return node.value
             if isinstance(node, ast.List):
@@ -599,10 +601,12 @@ class TargetWithdrawalTests(unittest.TestCase):
 
     @staticmethod
     def value(**changes):
+        """Build a ready PR with an existing request and its opt-in label removed."""
         return pr() | {"labels": [], "autoMergeRequest": existing_request()} | changes
 
     @staticmethod
     def event(value, action="unlabeled"):
+        """Create a matching withdrawal webhook with an explicit event timestamp."""
         return {
             "action": action, "number": 7, "label": {"name": "automerge"},
             "repository": {"full_name": "example/repo"},
@@ -618,6 +622,7 @@ class TargetWithdrawalTests(unittest.TestCase):
         }
 
     def run_target(self, snapshots, event, **environment):
+        """Execute the real target-only mode with mocked transport and event data."""
         with event_environment(event) as env:
             return AutoMergeTests.run_workflow(self, snapshots, env | {
                 "WITHDRAWAL_ONLY": "true", "GITHUB_EVENT_NAME": "pull_request_target",
@@ -625,6 +630,7 @@ class TargetWithdrawalTests(unittest.TestCase):
             } | environment)
 
     def test_conflicted_and_off_default_prs_cancel_without_positive_evaluation(self):
+        """Revoke matching requests without relying on a pull-request workflow run."""
         for fork in (False, True):
             for action, changes in (
                 ("unlabeled", {}),
@@ -638,7 +644,9 @@ class TargetWithdrawalTests(unittest.TestCase):
                     self.assertEqual(len(calls), 2)
 
     def test_input_rejects_merge_modes_and_untrusted_execution_context(self):
+        """Reject conflicting modes and execution outside the trusted default context."""
         value = self.value()
+        event = self.event(value)
         for env in (
             {"NATIVE_AUTO_MERGE": "true"}, {"REVIEWED_MERGE": "true"},
             {"REVIEWED_SINGLE_PASS": "true"}, {"ALLOW_DEPENDABOT_ACTIONS_REVIEW": "true"},
@@ -646,14 +654,16 @@ class TargetWithdrawalTests(unittest.TestCase):
             {"GITHUB_EVENT_NAME": "pull_request"}, {"GITHUB_REF": "refs/heads/other"},
         ):
             with self.subTest(env=env), self.assertRaises(RuntimeError):
-                self.run_target([], self.event(value), **env)
+                self.run_target([], event, **env)
 
     def test_eligible_pr_never_enables_or_merges_even_with_successful_checks(self):
+        """Keep the cancellation-only path inert when current eligibility is restored."""
         value = self.value(labels=[{"name": "automerge"}])
         calls = self.run_target([value], self.event(value))
         self.assertEqual(len(calls), 1)
 
     def test_stale_draft_and_retarget_preserve_manual_and_ambiguous_requests(self):
+        """Preserve newer requests and requests whose ordering cannot be proven."""
         for action, change in (("converted_to_draft", {"isDraft": True}), ("edited", {"baseRefName": "other"})):
             value = self.value(labels=[{"name": "automerge"}], **change)
             event = self.event(value, action)
@@ -664,6 +674,7 @@ class TargetWithdrawalTests(unittest.TestCase):
                     self.assertEqual(len(self.run_target([current], event)), 1)
 
     def test_webhook_and_fresh_snapshot_identity_must_both_match(self):
+        """Require both webhook identity and the final metadata observation to agree."""
         value = self.value()
         event = self.event(value)
         changes = (
@@ -685,11 +696,13 @@ class TargetWithdrawalTests(unittest.TestCase):
             self.assertEqual(len(self.run_target([], event | change)), 1)
 
     def test_new_manual_request_after_first_read_is_preserved(self):
+        """Do not revoke a replacement request created between metadata reads."""
         value = self.value()
         newer = value | {"autoMergeRequest": {"enabledAt": "2026-10-31T12:02:00Z"}}
         self.assertEqual(len(self.run_target([value, newer], self.event(value))), 1)
 
     def test_metadata_only_implementation_and_bounded_runtime(self):
+        """Keep withdrawal execution bounded and free of PR-code checkout."""
         workflow = yaml.safe_load(WORKFLOW.read_text())
         job = workflow["jobs"]["auto-merge"]
         self.assertIn("inputs.withdrawal-only", job["timeout-minutes"])
@@ -891,6 +904,7 @@ class NativeAutoMergeTests(AutoMergeTests):
                 self.assertFalse(any("--auto" in call.args for call in calls))
 
     def test_native_revalidation_does_not_cancel_a_replaced_request(self):
+        """Bind native-mode cancellation to the earlier eligible request observation."""
         for original in (None, existing_request()):
             opted_in = pr() | {"autoMergeRequest": original}
             newer = pr() | {"isDraft": True, "autoMergeRequest": {"enabledAt": "2026-10-31T12:02:00Z"}}
@@ -899,6 +913,7 @@ class NativeAutoMergeTests(AutoMergeTests):
                 self.assertFalse(any("merge" in call.args for call in calls))
 
     def test_native_initial_ineligible_stale_positive_event_preserves_manual_request(self):
+        """Prevent a stale positive wakeup from claiming a later manual request."""
         for action in ("opened", "labeled", "edited"):
             for change in ({"isDraft": True}, {"baseRefName": "other"}):
                 value = pr() | change | {"autoMergeRequest": {"enabledAt": "2026-10-31T12:02:00Z"}}

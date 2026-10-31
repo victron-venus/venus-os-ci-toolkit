@@ -46,6 +46,7 @@ def evaluate(expression, context):
     expression = re.sub(r"\bnull\b", "None", expression)
 
     def visit(node):
+        """Interpret supported metadata expressions without executing arbitrary code."""
         if isinstance(node, ast.Constant):
             return node.value
         if isinstance(node, (ast.Dict, ast.List)):
@@ -131,6 +132,7 @@ class MetadataEventsTests(unittest.TestCase):
                     self.assertFalse(evaluate(job["if"], context("edited", changes)))
 
     def test_retarget_and_other_state_events_remain_eligible(self):
+        """Preserve a matching evaluator for meaningful PR state transitions."""
         base = {"base": {"ref": {"from": "old"}, "sha": {"from": "a" * 40}}}
         for name in CALLERS:
             jobs = definition(name)["jobs"].values()
@@ -224,6 +226,7 @@ class WithdrawalSequenceTests(unittest.TestCase):
     """Model one running/one pending slot per actual GitHub concurrency group."""
 
     def test_later_labels_cannot_drop_a_pending_withdrawal_and_manual_races_stay_safe(self):
+        """Retain withdrawal evidence and execute the actual declared caller modes."""
         from test_auto_merge import TargetWithdrawalTests
 
         for name in ("docs/examples/auto-merge.yml", ".github/workflows/auto-merge-prs.yml"):
@@ -264,6 +267,7 @@ class WithdrawalSequenceTests(unittest.TestCase):
                     self.assertEqual(len(runtime.run_target([value], event, **modes)), 1)
 
     def test_surviving_example_positive_waiter_uses_observed_request_identity(self):
+        """Ensure an earlier waiter cannot cancel a request it never observed."""
         from test_auto_merge import AutoMergeTests, TargetWithdrawalTests, event_environment, existing_request, pr
 
         workflow = definition("docs/examples/auto-merge.yml")
@@ -287,6 +291,7 @@ class WithdrawalSequenceTests(unittest.TestCase):
                 self.assertFalse(any("merge" in call.args for call in calls))
 
     def test_toolkit_caller_retains_positive_native_mode_after_return_to_default(self):
+        """Treat returning to the default branch as a positive native evaluation."""
         workflow = definition(".github/workflows/auto-merge-prs.yml")
         job = workflow["jobs"]["auto-merge"]
         for event in (context("opened"), context("edited", {"base": {"ref": {"from": "other"}}})):
@@ -297,6 +302,7 @@ class WithdrawalSequenceTests(unittest.TestCase):
                 self.assertEqual(job["with"]["required-status-checks"], "CodeQL,SonarCloud Code Analysis")
 
     def test_each_withdrawal_gets_its_own_group_but_normal_evaluation_coalesces(self):
+        """Isolate withdrawal queues while retaining ordinary state-event coalescing."""
         workflow = definition("docs/examples/auto-merge.yml")
         for action in ("unlabeled", "converted_to_draft", "edited"):
             first = context(action, run="10")
