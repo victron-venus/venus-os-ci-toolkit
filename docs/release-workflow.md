@@ -244,6 +244,9 @@ artifacts by exact name; their importers and workflow must be reviewed together.
 Such revisions need a separately reviewed producer upgrade; changing only the
 collector would leave it without a matching input. The pinned producer is checked
 from its exact local Git object, with replacement objects and lazy fetching disabled.
+This requires Git with the global `--no-lazy-fetch` option; an unsupported option
+or missing local object stops before writes, without falling back to a fetch.
+Workflow files and policy text are read and written as UTF-8 on every platform.
 
 Every ordinary release artifact name now ends in
 `-run-<run_id>-attempt-<run_attempt>`. A full same-run retry can retain previous

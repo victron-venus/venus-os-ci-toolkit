@@ -110,15 +110,17 @@ def pinned_fuzz_workflow(toolkit: Path, reference: str, loader: type) -> dict:
     try:
         # Fixed argv and a validated commit SHA; no commands come from the workflow.
         result = subprocess.run(  # nosec B603
-            [str(Path(executable).resolve()), "--no-replace-objects", "-C", str(toolkit), "show",
+            [str(Path(executable).resolve()), "--no-replace-objects", "--no-lazy-fetch", "-C", str(toolkit), "show",
              reference + ":.github/workflows/fuzz.yml"],
             env={"LC_ALL": "C", "LANG": "C", "GIT_NO_LAZY_FETCH": "1",
                  "GIT_NO_REPLACE_OBJECTS": "1", "GIT_CONFIG_NOSYSTEM": "1",
                  "GIT_CONFIG_GLOBAL": os.devnull},
-            capture_output=True, text=True, timeout=10, check=False,
+            capture_output=True, text=True, encoding="utf-8", timeout=10, check=False,
         )
     except (OSError, subprocess.TimeoutExpired) as error:
         raise ValueError("Cannot inspect the pinned shared producer locally") from error
+    if result.returncode and "unknown option: --no-lazy-fetch" in (result.stderr or ""):
+        raise ValueError("Git must support global --no-lazy-fetch for local producer inspection")
     if result.returncode or len(result.stdout) > 262144:
         raise ValueError("Use a toolkit Git checkout containing producer revision " + reference)
     workflow = load_workflow(result.stdout, loader)
@@ -223,7 +225,7 @@ def exclusive_adapters(directory: Path, workflows: dict, loader: type, pattern: 
         if path.suffix not in {".yml", ".yaml"} or relative in {PIPELINE, *workflows}:
             continue
         regular_workflow(directory, relative)
-        other = load_workflow(path.read_text(), loader)
+        other = load_workflow(path.read_text(encoding="utf-8"), loader)
         if not isinstance(other, dict):
             continue
         for job in other.get("jobs", {}).values():
@@ -258,6 +260,9 @@ artifacts by exact name; their importers and workflow must be reviewed together.
 Such revisions need a separately reviewed producer upgrade; changing only the
 collector would leave it without a matching input. The pinned producer is checked
 from its exact local Git object, with replacement objects and lazy fetching disabled.
+This requires Git with the global `--no-lazy-fetch` option; an unsupported option
+or missing local object stops before writes, without falling back to a fetch.
+Workflow files and policy text are read and written as UTF-8 on every platform.
 
 Every ordinary release artifact name now ends in
 `-run-<run_id>-attempt-<run_attempt>`. A full same-run retry can retain previous

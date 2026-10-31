@@ -1,6 +1,7 @@
 """Narrow artifact migration preserves consumer-owned release behavior."""
 
 import copy
+import io
 import json
 import os
 from pathlib import Path
@@ -211,6 +212,9 @@ class ReleaseAttemptMigrationTests(unittest.TestCase):
             self.assertEqual(migration.pinned_fuzz_workflow(self.root, REF, installer.WorkflowLoader), PRODUCER)
         argv = run.call_args.args[0]
         self.assertIn("--no-replace-objects", argv)
+        self.assertIn("--no-lazy-fetch", argv)
+        self.assertLess(argv.index("--no-lazy-fetch"), argv.index("show"))
+        self.assertEqual(run.call_args.kwargs["encoding"], "utf-8")
         self.assertEqual(argv[-1], REF + ":.github/workflows/fuzz.yml")
         self.assertEqual(run.call_args.kwargs["env"]["GIT_NO_LAZY_FETCH"], "1")
         self.assertEqual(run.call_args.kwargs["env"]["GIT_NO_REPLACE_OBJECTS"], "1")
@@ -220,6 +224,52 @@ class ReleaseAttemptMigrationTests(unittest.TestCase):
         with patch.object(migration.subprocess, "run", return_value=subprocess.CompletedProcess([], 128, stdout="")):
             with self.assertRaisesRegex(ValueError, "containing producer revision"):
                 migration.pinned_fuzz_workflow(self.root, REF, installer.WorkflowLoader)
+
+
+    def test_unsupported_git_stops_before_writes_without_retry(self):
+        before = self.snapshot()
+        unsupported = subprocess.CompletedProcess(
+            [], 129, stdout="", stderr="unknown option: --no-lazy-fetch")
+        with patch.object(migration.subprocess, "run", return_value=unsupported) as run, \
+                patch.object(sys, "argv", ["install_release.py", str(self.root), "--release-attempts-only"]), \
+                patch("sys.stderr") as stderr:
+            self.assertEqual(installer.main(), 1)
+        self.assertEqual(run.call_count, 1, "unsupported Git must not retry without the guard")
+        self.assertIn("Git must support global --no-lazy-fetch", "".join(
+            call.args[0] for call in stderr.write.call_args_list))
+        self.assertEqual(self.snapshot(), before)
+
+    def test_cli_preserves_utf8_when_locale_default_is_ascii(self):
+        self.policy.pop("fuzzing")
+        self.policy["notes"] = ["Révision 日本語"]
+        self.pipeline["jobs"].pop("fuzz")
+        self.write()
+        policy_path = self.root / ".release-policy.json"
+        policy_path.write_text(json.dumps(self.policy, ensure_ascii=False), encoding="utf-8")
+        paths = (migration.PIPELINE, migration.BUILD.removeprefix("./"), ".github/workflows/ordinary.yml")
+        for name in paths:
+            path = self.root / name
+            source = path.read_text(encoding="utf-8") if path.exists() else "jobs: {}\n"
+            path.write_text(source + "# Révision 日本語\n", encoding="utf-8")
+        before = self.snapshot()
+        command = ["install_release.py", str(self.root), "--release-attempts-only"]
+        # Emulate a non-UTF-8 platform default at the text-I/O boundary.
+        with patch.object(io, "text_encoding", side_effect=lambda encoding, *args: encoding or "ascii"), \
+                patch.object(sys, "argv", command + ["--check"]), \
+                patch("sys.stderr", new_callable=io.StringIO) as stderr:
+            self.assertEqual(installer.main(), 1)
+            self.assertIn("Generated files drifted", stderr.getvalue())
+        self.assertEqual(self.snapshot(), before)
+        with patch.object(io, "text_encoding", side_effect=lambda encoding, *args: encoding or "ascii"), \
+                patch.object(sys, "argv", command):
+            self.assertEqual(installer.main(), 0)
+        for name in paths:
+            self.assertIn("# Révision 日本語\n", (self.root / name).read_text(encoding="utf-8"))
+        self.assertEqual(policy_path.read_bytes(), before[".release-policy.json"])
+        self.assertEqual((self.root / paths[-1]).read_bytes(), before[paths[-1]])
+        with patch.object(io, "text_encoding", side_effect=lambda encoding, *args: encoding or "ascii"), \
+                patch.object(sys, "argv", command + ["--check"]):
+            self.assertEqual(installer.main(), 0)
 
 
 if __name__ == "__main__":
