@@ -160,6 +160,57 @@ cluster. Resume the pool for real CI and verify its runtime cleanup afterward.
 Rollback follows the same drain-first process; never change the expected tuple
 while a worker with the other tuple still exists.
 
+### Experimental 25m CPU share for selected exclusive workers
+
+`opportunistic_cpu_targets` is an explicit, optional list of scope/profile pairs
+in the complete private NUC plan. It defaults to empty. For example:
+
+```json
+"opportunistic_cpu_targets": [
+  {"scope": "example-owner/application", "profile": "ci"},
+  {"scope": "example-owner/application", "profile": "automation"}
+]
+```
+
+Every pair must already appear in `targets` and in the private inventory, with
+the resource/storage requirements above. Only CI and automation are supported;
+release, LAN and ARM profiles are rejected. Selecting one role never selects
+the other. Duplicate pairs and any same-scope overlap with `light_ci_scopes`
+are rejected. Remove a CI scope from `low_share_ci_scopes` when selecting its
+CI pair here: 100m and 25m cannot both describe the same worker. A separate
+automation pair may coexist with its scope's 100m CI selection.
+
+This changes only the selected runner container's CPU request to **25m**. CI
+retains its 2 CPU limit and automation retains its 1 CPU limit. Memory, storage,
+images, credentials, guard endpoints, job deadlines, `maxRunners: 1` and required
+cross-namespace anti-affinity stay unchanged. Full-memory CI and bounded-heavy
+CI retain their independently selected memory, image and storage contracts.
+Admission binds the complete resource tuple to the exact selected role and
+scope; other workers cannot request 25m through this option.
+
+The RuntimeClass still requires **100m CPU and 128 MiB memory** overhead: each
+selected worker therefore reserves **125m CPU**, plus its unchanged memory and
+storage budgets. Include all other Pods and admitted Pending workers in fresh
+node and quota calculations. This is a smaller scheduling reservation and a
+lower relative CPU share under contention; it creates no physical CPU capacity
+and guarantees no throughput. It neither moves listeners nor pauses services.
+
+The profile is experimental until actual **CI and automation jobs are each
+accepted for their selected scope, image and resource contract**. Earlier
+standard or 100m low-share qualification does not prove 25m acceptance, and
+rendering or an offline admission test does not qualify it. Preserve the
+existing application timeouts. Observe job completion, CPU pressure, memory,
+cleanup and co-located service health under representative load; revert this
+selection if the jobs or services cannot meet their existing requirements.
+The existing qualification canary's standard/low-share settings are unchanged
+and are not evidence for this profile.
+
+Use the same complete-plan comparison, drain, exact policy/template update,
+live positive/negative admission checks, and drain-first rollback described
+above. Keep unselected pools untouched. Recheck capacity after any listener
+relocation; the reduced CPU request alone does not authorize enabling a pool
+or establish that a Pending job can run safely.
+
 Before qualification, read all ResourceQuota and LimitRange objects in each
 affected namespace, including quota `spec.hard`, `status.hard`, `status.used`,
 and any scopes. The admission evaluator uses `status.hard`; wait for it to
