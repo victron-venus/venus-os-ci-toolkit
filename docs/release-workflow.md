@@ -224,3 +224,37 @@ References: [GitHub schedules](https://docs.github.com/en/actions/reference/work
 Run `python3 scripts/release.py prepare-version --pr` from the clean default-branch HEAD. The command refreshes tags and opens a PR with synchronized owned version fields. An existing unreleased base is retained; use `--bump minor`, `--bump major`, or `--version X.Y.Z` for explicit intent. See [version plans](VERSIONING.md) for build overlays, the dedicated allocation ledger and recovery.
 
 A local candidate package also needs the saved `.release-plan.json` at its exact source commit. Restore the `version_plan` object from the published `release-manifest.json` as `.release-plan.json` in a disposable checkout. Apply the recorded version fields with `python3 scripts/version_plan.py sync --root . --plan .release-plan.json` before `release.py package`; do not invent a tag or native counter locally. Ordinary development builds can use the project's native build command and explicitly local version identity.
+
+### Migrate package receipt identity without replacing the release engine
+
+For an existing public hosted versioned release, the toolkit can migrate reviewed
+receipt, publisher and signing-preparation code without replacing action pins,
+workflow adapters, package policy, or unrelated release APIs:
+
+```sh
+python3 scripts/install_release.py /path/to/consumer --release-receipts-only --check
+python3 scripts/install_release.py /path/to/consumer --release-receipts-only
+```
+
+`--check` reports pending changes without writing. The migration recognizes
+reviewed complete source shapes only. Unknown customizations, partly updated
+functions or mixed old/new receipt, publisher and signer files require explicit
+review; the renderer refuses the complete update before writing anything.
+The generated header and detached-provenance requirement are preserved.
+
+After migration, run a fresh, complete build of all required package producers in
+one workflow attempt. The publisher verifies the independently supplied repository,
+run ID, attempt and source SHA against every package receipt. Pre-migration receipts
+without producer identity cannot qualify fresh package publication through this
+migrated publisher. Existing historical promotion and retained-evidence validation
+remain separate and unchanged. A failed-job-only retry cannot
+fill missing current-attempt packages from an earlier attempt; regenerate the full
+coherent package set instead. Existing release approval and acceptance policies
+still apply.
+
+Offline creation and inspection remain supported without an Actions identity, but
+an offline receipt cannot qualify fresh publication through the migrated publisher.
+Receipt coverage proves that
+the staged files have matching receipts; package-set completeness is a separate
+check for targets explicitly listed in `versioning.artifacts`. It does not infer
+all intended platforms from workflow names. No release is dispatched by this mode.

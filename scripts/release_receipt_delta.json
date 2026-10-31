@@ -1,0 +1,80 @@
+{
+  "schema": 1,
+  "source_commit": "e209548e66577e456f116f4486113932e1598b1a",
+  "files": {
+    "scripts/version_receipt.py": {
+      "hunks": [
+        {
+          "before": "\nDETACHED_PROVENANCE_REQUIRED = False\nMAX_RECEIPT_BYTES = 2_000_000\n\n\ndef sha256(data: bytes) -> str:\n",
+          "after": "\nDETACHED_PROVENANCE_REQUIRED = False\nMAX_RECEIPT_BYTES = 2_000_000\n\n\ndef producer_identity(\n    repository: str, run_id: int, run_attempt: int, source_sha: str\n) -> dict[str, object]:\n    \"\"\"Validate the independently supplied workflow identity of a package.\"\"\"\n    if (\n        not isinstance(repository, str)\n        or not re.fullmatch(r\"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\", repository)\n        or any(part in {\".\", \"..\"} for part in repository.split(\"/\"))\n        or type(run_id) is not int or run_id <= 0\n        or type(run_attempt) is not int or run_attempt <= 0\n        or not isinstance(source_sha, str)\n        or not re.fullmatch(r\"[0-9a-f]{40}\", source_sha)\n    ):\n        raise ValueError(\"Invalid package producer identity\")\n    return {\n        \"repository\": repository, \"run_id\": run_id,\n        \"run_attempt\": run_attempt, \"source_sha\": source_sha,\n    }\n\n\ndef current_producer(source_sha: str) -> dict[str, object] | None:\n    \"\"\"Capture Actions identity; local package inspection remains offline.\"\"\"\n    if os.environ.get(\"GITHUB_ACTIONS\") != \"true\":\n        return None\n    values = [os.environ.get(name, \"\") for name in (\"GITHUB_RUN_ID\", \"GITHUB_RUN_ATTEMPT\")]\n    if any(not re.fullmatch(r\"[1-9][0-9]*\", value) for value in values):\n        raise ValueError(\"Missing or invalid Actions package producer identity\")\n    return producer_identity(\n        os.environ.get(\"GITHUB_REPOSITORY\", \"\"), int(values[0]), int(values[1]), source_sha\n    )\n\n\ndef verify_producer_identity(\n    receipt: dict[str, object], expected: dict[str, object]\n) -> None:\n    \"\"\"Reject missing, malformed or mismatched package execution identity.\"\"\"\n    producer = receipt.get(\"producer\")\n    if not isinstance(producer, dict) or set(producer) != set(expected):\n        raise ValueError(\"Receipt lacks current package producer identity\")\n    checked = producer_identity(\n        producer[\"repository\"], producer[\"run_id\"],\n        producer[\"run_attempt\"], producer[\"source_sha\"],\n    )\n    if checked != expected:\n        raise ValueError(\"Receipt belongs to a different package producer attempt\")\n\n\ndef sha256(data: bytes) -> str:\n"
+        },
+        {
+          "before": "        \"artifacts\": packages,\n        \"toolchain\": capture_toolchain(),\n    }\n    verify_current_inputs(\n        plan_path.parent, cast(list[dict[str, object]], evidence[\"files\"])\n    )\n",
+          "after": "        \"artifacts\": packages,\n        \"toolchain\": capture_toolchain(),\n    }\n    producer = current_producer(cast(str, plan[\"source_sha\"]))\n    if producer is not None:\n        result[\"producer\"] = producer\n    verify_current_inputs(\n        plan_path.parent, cast(list[dict[str, object]], evidence[\"files\"])\n    )\n"
+        },
+        {
+          "before": "    plan: dict[str, object],\n    name: str,\n    policy: dict[str, object] | None,\n) -> None:\n    \"\"\"Validate a receipt's source, toolchain and frozen version projections.\"\"\"\n    if receipt.get(\"plan_sha256\") != version_plan.plan_digest(plan):\n        raise ValueError(f\"Build used a different release plan: {name}\")\n    if receipt.get(\"source_sha\") != plan[\"source_sha\"] or not receipt.get(\"files\"):\n        raise ValueError(\"Receipt lacks source-bound version input evidence\")\n    if not isinstance(receipt.get(\"toolchain\"), dict) or not cast(\n        dict[str, object], receipt[\"toolchain\"]\n    ).get(\"python\"):\n",
+          "after": "    plan: dict[str, object],\n    name: str,\n    policy: dict[str, object] | None,\n    expected_producer: dict[str, object] | None = None,\n) -> None:\n    \"\"\"Validate a receipt's source, toolchain and frozen version projections.\"\"\"\n    if receipt.get(\"plan_sha256\") != version_plan.plan_digest(plan):\n        raise ValueError(f\"Build used a different release plan: {name}\")\n    if receipt.get(\"source_sha\") != plan[\"source_sha\"] or not receipt.get(\"files\"):\n        raise ValueError(\"Receipt lacks source-bound version input evidence\")\n    if expected_producer is not None:\n        verify_producer_identity(receipt, expected_producer)\n    if not isinstance(receipt.get(\"toolchain\"), dict) or not cast(\n        dict[str, object], receipt[\"toolchain\"]\n    ).get(\"python\"):\n"
+        },
+        {
+          "before": "    plan: dict[str, object],\n    payloads: list[dict[str, object]],\n    policy: dict[str, object] | None = None,\n) -> list[dict[str, object]]:\n    \"\"\"Require exactly one plan-bound build receipt for every staged payload.\"\"\"\n    expected = {cast(str, entry[\"name\"]): entry for entry in payloads}\n",
+          "after": "    plan: dict[str, object],\n    payloads: list[dict[str, object]],\n    policy: dict[str, object] | None = None,\n    expected_producer: dict[str, object] | None = None,\n) -> list[dict[str, object]]:\n    \"\"\"Require exactly one plan-bound build receipt for every staged payload.\"\"\"\n    expected = {cast(str, entry[\"name\"]): entry for entry in payloads}\n"
+        },
+        {
+          "before": "        if len(raw) > MAX_RECEIPT_BYTES:\n            raise ValueError(\"Oversized build receipt\")\n        receipt = cast(dict[str, object], json.loads(raw))\n        verify_receipt_evidence(receipt, plan, name, policy)\n        cover_receipt_artifacts(receipt, expected, receipts, covered)\n        results.append({\"name\": name, \"sha256\": sha256(raw), \"inputs\": receipt})\n    if covered != set(expected) - receipts:\n",
+          "after": "        if len(raw) > MAX_RECEIPT_BYTES:\n            raise ValueError(\"Oversized build receipt\")\n        receipt = cast(dict[str, object], json.loads(raw))\n        verify_receipt_evidence(receipt, plan, name, policy, expected_producer)\n        cover_receipt_artifacts(receipt, expected, receipts, covered)\n        results.append({\"name\": name, \"sha256\": sha256(raw), \"inputs\": receipt})\n    if covered != set(expected) - receipts:\n"
+        }
+      ],
+      "original_to_current": {
+        "cbc93a0de3a460c84c20b0c014e27e53d7671159c819addabb1e242fb0941f4a": "4f273af2376ffe0de1ec1b064365badbbebf5b2718233817d12ead988d941e81"
+      },
+      "current": [
+        "4f273af2376ffe0de1ec1b064365badbbebf5b2718233817d12ead988d941e81"
+      ]
+    },
+    "scripts/release_versioned.py": {
+      "hunks": [
+        {
+          "before": "        reserve_plan,\n        verify_reservation,\n    )\n    from .version_receipt import verify_declared_artifacts, verify_receipts\nelse:\n    import release as client\n    import release_control as rc\n",
+          "after": "        reserve_plan,\n        verify_reservation,\n    )\n    from .version_receipt import producer_identity, verify_declared_artifacts, verify_receipts\nelse:\n    import release as client\n    import release_control as rc\n"
+        },
+        {
+          "before": "        reserve_plan,\n        verify_reservation,\n    )\n    from version_receipt import verify_declared_artifacts, verify_receipts\n\nPLAN = Path(\".release-plan.json\")\nMAX_TOOLCHAIN_DIAGNOSTICS = 100\n",
+          "after": "        reserve_plan,\n        verify_reservation,\n    )\n    from version_receipt import producer_identity, verify_declared_artifacts, verify_receipts\n\nPLAN = Path(\".release-plan.json\")\nMAX_TOOLCHAIN_DIAGNOSTICS = 100\n"
+        },
+        {
+          "before": "        stage = Path(temp)\n        assets = rc.stage_assets(Path(args.assets), stage)\n        verify_candidate_fuzz_report(stage, policy, plan, run, gh.repo)\n        receipts = verify_receipts(stage, plan, assets, policy)\n        receipts, validation_receipts = candidate_fuzz_receipts(policy, channel, receipts)\n        rc.verify_required_signatures(stage, gh.repo, cast(str, plan[\"source_sha\"]))\n        if parent:\n",
+          "after": "        stage = Path(temp)\n        assets = rc.stage_assets(Path(args.assets), stage)\n        verify_candidate_fuzz_report(stage, policy, plan, run, gh.repo)\n        receipts = verify_receipts(stage, plan, assets, policy, producer_identity(\n            gh.repo, cast(int, run[\"id\"]), cast(int, run[\"run_attempt\"]),\n            cast(str, run[\"head_sha\"]),\n        ))\n        receipts, validation_receipts = candidate_fuzz_receipts(policy, channel, receipts)\n        rc.verify_required_signatures(stage, gh.repo, cast(str, plan[\"source_sha\"]))\n        if parent:\n"
+        }
+      ],
+      "original_to_current": {
+        "79779e1bae39e38e22209fcc6aa3a30b00c362f656d55dc295169988098bfccb": "582934efab17ec029d68a3efc61a3a81c6ac11944f955273cd9529689ca3c3fe",
+        "06de00cf0a9b43adffd79e825a68aee8b86d4b7d343c14ca10383d08d235e458": "e27e76d2a6080bb257ce60420cf9ead4a4a86f1b4a86f568225aa6ee9706875e",
+        "a74cec08d8d2b09ead7949f5483d9923d2c5eed528e88c1510b53e43bf251d2a": "71a672054bd6171158685aa243b9d9fb5c9158ccfe3dee4414a472f331195577"
+      },
+      "current": [
+        "582934efab17ec029d68a3efc61a3a81c6ac11944f955273cd9529689ca3c3fe",
+        "71a672054bd6171158685aa243b9d9fb5c9158ccfe3dee4414a472f331195577",
+        "e27e76d2a6080bb257ce60420cf9ead4a4a86f1b4a86f568225aa6ee9706875e"
+      ]
+    },
+    "scripts/release_signing.py": {
+      "hunks": [
+        {
+          "before": "    # Imports use the reviewed checkout containing this tool, not downloaded assets.\n    if __package__:\n        from .version_plan import validate_plan  # pylint: disable=import-outside-toplevel\n        from .version_receipt import verify_receipts  # pylint: disable=import-outside-toplevel\n    else:\n        from version_plan import validate_plan  # pylint: disable=import-outside-toplevel\n        from version_receipt import verify_receipts  # pylint: disable=import-outside-toplevel\n\n    policy = read_json(root / \".release-policy.json\")\n    repository, ref, _ = trust(policy, source_sha)\n",
+          "after": "    # Imports use the reviewed checkout containing this tool, not downloaded assets.\n    if __package__:\n        from .version_plan import validate_plan  # pylint: disable=import-outside-toplevel\n        from .version_receipt import current_producer, verify_receipts  # pylint: disable=import-outside-toplevel\n    else:\n        from version_plan import validate_plan  # pylint: disable=import-outside-toplevel\n        from version_receipt import current_producer, verify_receipts  # pylint: disable=import-outside-toplevel\n\n    policy = read_json(root / \".release-policy.json\")\n    repository, ref, _ = trust(policy, source_sha)\n"
+        },
+        {
+          "before": "    entries = files(directory)\n    if not entries or set(entries) & UNSIGNED_METADATA:\n        raise ValueError(\"Expected only original, nonempty build assets\")\n    verify_receipts(directory, plan, [digest(p) for p in entries.values()], policy)\n    actual_sha = subprocess.check_output(  # nosec B603, B607\n        [\"git\", \"rev-parse\", \"HEAD\"], cwd=root, text=True\n    ).strip()\n",
+          "after": "    entries = files(directory)\n    if not entries or set(entries) & UNSIGNED_METADATA:\n        raise ValueError(\"Expected only original, nonempty build assets\")\n    verify_receipts(directory, plan, [digest(p) for p in entries.values()], policy,\n                    current_producer(source_sha))\n    actual_sha = subprocess.check_output(  # nosec B603, B607\n        [\"git\", \"rev-parse\", \"HEAD\"], cwd=root, text=True\n    ).strip()\n"
+        }
+      ],
+      "original_to_current": {
+        "4f84a5238e9c51822752a71f42968bc5061c4a20e3956f5c1670d359d2e09e52": "b7e49f5053a327ca39cb70a8320ad00bf8bdcc4c3e2bb5b2bb3528d3eb491dbe"
+      },
+      "current": [
+        "b7e49f5053a327ca39cb70a8320ad00bf8bdcc4c3e2bb5b2bb3528d3eb491dbe"
+      ]
+    }
+  }
+}
