@@ -9,7 +9,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import ANY, patch
 import venv
 
 import yaml
@@ -57,9 +57,11 @@ class FuzzContracts(unittest.TestCase):
                                            package, package / "release-inputs-fuzz.json")
             for name in (fuzz.REPORT, "release-inputs-fuzz.json"):
                 (assets / name).write_bytes((package / name).read_bytes())
-        with patch.object(lifecycle, "verify_candidate_fuzz_report") as verify_report:
+        with patch.object(fuzz, "verify_report") as verify_report:
             result = lifecycle.publish_versioned(fixture.args)
-        verify_report.assert_called_once()
+        verify_report.assert_called_once_with(
+            ANY, fixture.root.resolve(), fixtures.REPO, fixtures.SHA, 100, 1
+        )
         self.assertEqual(result["status"], "published")
         manifest = json.loads(fixtures.rc.EVIDENCE.read_bytes())
         self.assertEqual([item["name"] for item in manifest["build_receipts"]],
