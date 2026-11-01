@@ -115,9 +115,11 @@ jobs:
             trap 'sudo rm -rf -- "$apt_root"' EXIT
             mkdir "$apt_root/lists"
             chmod 755 "$apt_root" "$apt_root/lists"
+            # Canonical archive/security hostnames may share one failing backend.
+            # Kernel.org supplies an independently operated, signed HTTPS fallback.
             printf '%s\t%s\n' \
               'https://archive.ubuntu.com/ubuntu/' 'priority:1' \
-              'https://security.ubuntu.com/ubuntu/' 'priority:2' > "$apt_root/mirrors.txt"
+              'https://mirrors.kernel.org/ubuntu/' 'priority:2' > "$apt_root/mirrors.txt"
             cat > "$apt_root/ubuntu.sources" <<SOURCES
           Types: deb
           URIs: mirror+file:$apt_root/mirrors.txt

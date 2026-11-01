@@ -97,10 +97,29 @@ the Python adapter requires its existing apt/sudo and DBus build dependencies.
 An offline or missing pool will leave jobs queued. Keep GitHub mode until this
 admission is complete; do not change group visibility as an automatic fallback.
 
-The Python workflow keeps the runner's APT sources and mirror priorities intact,
-on hosted and self-hosted Linux. It does not force an Ubuntu mirror: the
-previous forced fallback could itself stall and consume the full CI job.
-APT retains its normal mirror selection and signature/authentication checks.
+The Python workflow uses fixed Ubuntu 24.04 on GitHub-hosted Linux. It creates a
+temporary Noble/amd64 APT source list and fresh package indexes under `/tmp`,
+whose parent is traversable by APT's unprivileged `_apt` process. Runner-owned
+`RUNNER_TEMP` paths may have private ancestors. The temporary directory is removed
+on success or failure; the runner's `/etc/apt` configuration is not changed.
+Self-hosted runners retain their operator-provisioned sources and mirror priorities.
+
+The hosted list prefers `https://archive.ubuntu.com/ubuntu/` and falls back to
+`https://mirrors.kernel.org/ubuntu/`. The Canonical archive and security hostnames
+can resolve to the same server, so a second hostname alone did not provide an
+independent fallback. Kernel.org operates the second service independently;
+its current HTTPS endpoint is documented by the
+[Linux Kernel Archives](https://mirrors.kernel.org/) and its archive service is
+listed in [Ubuntu's mirror registry](https://launchpad.net/ubuntu/+mirror/mirrors.us.kernel.org-archive).
+The registry's legacy hostname is not used for HTTPS because its certificate
+does not cover that name. Both configured mirrors serve the Noble release,
+updates, backports and security suites. APT must authenticate all metadata and
+packages through the existing Ubuntu archive keyring; no mirror-specific key,
+TLS exception or signature bypass is permitted. When changing a mirror, recheck
+its operator, registry entry, HTTPS certificate and suite availability, then
+run the actual hosted consumer qualification. Local reachability is not proof
+that a GitHub runner can reach it.
+
 The system dependency step now uses these fixed budgets:
 
 - HTTP/HTTPS connection and idle timeout: 20 seconds; two retries per failed file.

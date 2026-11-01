@@ -136,7 +136,7 @@ class PythonSystemDependencyTests(unittest.TestCase):
         record = records[0]
         self.assertEqual(record["mirrors"].splitlines(), [
             "https://archive.ubuntu.com/ubuntu/\tpriority:1",
-            "https://security.ubuntu.com/ubuntu/\tpriority:2",
+            "https://mirrors.kernel.org/ubuntu/\tpriority:2",
         ])
         self.assertEqual(record["sources"].splitlines(), [
             "Types: deb", "URIs: mirror+file:" + str(Path(record["source"]).parent / "mirrors.txt"),
@@ -254,6 +254,11 @@ class PythonSystemDependencyTests(unittest.TestCase):
         self.assertEqual(self.calls("ldconfig"), [])
         self.assertEqual(self.calls("pkg-config"), [])
         self.assertIn("APT update failed with exit 100", result.stderr)
+        records = [row for row in map(json.loads, self.log.read_text().splitlines())
+                   if row["command"] == "configuration"]
+        self.assertEqual(len(records), 1)
+        for record in records:
+            self.assertFalse(Path(record["source"]).parent.exists())
 
     def test_failed_install_stops_before_library_and_test_checks(self):
         result = self.execute(INSTALL_MODE="fail")
@@ -262,6 +267,11 @@ class PythonSystemDependencyTests(unittest.TestCase):
         self.assertEqual(self.calls("ldconfig"), [])
         self.assertEqual(self.calls("pkg-config"), [])
         self.assertIn("APT install failed with exit 100", result.stderr)
+        records = [row for row in map(json.loads, self.log.read_text().splitlines())
+                   if row["command"] == "configuration"]
+        self.assertEqual(len(records), 2)
+        for record in records:
+            self.assertFalse(Path(record["source"]).parent.exists())
 
     def test_hosted_image_matches_noble_guard_without_changing_self_hosted_routing(self):
         """Pin the hosted fallback while retaining trusted self-hosted routing."""
