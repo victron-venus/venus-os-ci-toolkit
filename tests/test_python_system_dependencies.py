@@ -46,7 +46,7 @@ if name == "sudo":
     os.execvp(args[0], args)
 if name == "timeout":
     assert args[:2] == ["--signal=TERM", "--kill-after=15s"], args
-    assert args[2] in {"180s", "360s"}, args
+    assert args[2].endswith("s") and 0 < int(args[2][:-1]) <= 360, args
     os.execvp(args[3], args[3:])
 if name == "dpkg":
     print(os.environ.get("HOST_ARCH", "amd64"))
@@ -57,14 +57,25 @@ if name == "apt-get":
         with open(os.environ["COMMAND_LOG"], "a") as log:
             log.write(json.dumps({"command": "configuration", "args": [],
                                   "source": str(source), "sources": source.read_text(),
-                                  "mirrors": (source.parent / "mirrors.txt").read_text(),
                                   "lists": str(lists), "listed": sorted(x.name for x in lists.iterdir()),
                                   "directory_mode": source.parent.stat().st_mode & 0o777,
                                   "lists_mode": lists.stat().st_mode & 0o777,
                                   "source_mode": source.stat().st_mode & 0o777,
-                                  "mirror_mode": (source.parent / "mirrors.txt").stat().st_mode & 0o777}) + "\n")
+                                  "root_mode": source.parent.parent.stat().st_mode & 0o777}) + "\n")
     operation = "update" if "update" in args else "install"
     mode = os.environ.get(operation.upper() + "_MODE", "success")
+    if mode == "partial-primary":
+        if "archive.ubuntu.com" in source.read_text():
+            (lists / "InRelease").write_text("primary signed metadata fixture")
+            (lists / "Packages.partial").write_text("incomplete primary indexes")
+            time.sleep(float(os.environ.get("PRIMARY_DELAY", "0")))
+            sys.exit(100)
+        assert list(lists.iterdir()) == [], "partial primary lists leaked into fallback"
+        (lists / "InRelease").write_text("fallback signed metadata fixture")
+        (lists / "Packages.complete").write_text("complete fallback indexes")
+    if operation == "install" and os.environ.get("UPDATE_MODE") == "partial-primary":
+        assert "mirrors.kernel.org" in source.read_text()
+        assert sorted(x.name for x in lists.iterdir()) == ["InRelease", "Packages.complete"]
     if mode == "fail":
         print("simulated APT error", file=sys.stderr)
         sys.exit(100)
@@ -134,12 +145,8 @@ class PythonSystemDependencyTests(unittest.TestCase):
         self.assertEqual(len(records), 2)
         self.assertEqual(records[0], records[1])
         record = records[0]
-        self.assertEqual(record["mirrors"].splitlines(), [
-            "https://archive.ubuntu.com/ubuntu/\tpriority:1",
-            "https://mirrors.kernel.org/ubuntu/\tpriority:2",
-        ])
         self.assertEqual(record["sources"].splitlines(), [
-            "Types: deb", "URIs: mirror+file:" + str(Path(record["source"]).parent / "mirrors.txt"),
+            "Types: deb", "URIs: https://archive.ubuntu.com/ubuntu/",
             "Suites: noble noble-updates noble-backports noble-security",
             "Components: main restricted universe multiverse", "Architectures: amd64",
             "Signed-By: " + str(self.keyring),
@@ -148,7 +155,7 @@ class PythonSystemDependencyTests(unittest.TestCase):
         self.assertEqual(record["directory_mode"], 0o755)
         self.assertEqual(record["lists_mode"], 0o755)
         self.assertEqual(record["source_mode"], 0o644)
-        self.assertEqual(record["mirror_mode"], 0o644)
+        self.assertEqual(record["root_mode"], 0o755)
         self.assertEqual(Path(record["lists"]).parent, Path(record["source"]).parent)
         self.assertFalse(Path(record["source"]).parent.exists())
         self.assertEqual(self.keyring.read_bytes(), b"fixture keyring must remain unchanged")
@@ -167,10 +174,10 @@ class PythonSystemDependencyTests(unittest.TestCase):
         self.assertEqual(len(records), 2)
         for record in records:
             parent = Path(record["source"]).parent
-            self.assertEqual(parent.parent.resolve(), Path("/tmp").resolve())
+            self.assertEqual(parent.parent.parent.resolve(), Path("/tmp").resolve())
             self.assertFalse(parent.is_relative_to(private))
             self.assertEqual(record["directory_mode"], 0o755)
-            self.assertEqual(record["mirror_mode"], 0o644)
+            self.assertEqual(record["root_mode"], 0o755)
             self.assertFalse(parent.exists())
         self.assertEqual(private.stat().st_mode & 0o777, 0o700)
         self.assertEqual(list(private.iterdir()), [])
@@ -238,7 +245,7 @@ class PythonSystemDependencyTests(unittest.TestCase):
             self.options() + ["install", "-y"] + PACKAGES,
         ])
         self.assertEqual(self.calls("timeout"), [
-            ["--signal=TERM", "--kill-after=15s", "180s", "apt-get"] + self.options() + ["update", "--error-on=any"],
+            ["--signal=TERM", "--kill-after=15s", "60s", "apt-get"] + self.options() + ["update", "--error-on=any"],
             ["--signal=TERM", "--kill-after=15s", "360s", "apt-get"] + self.options() + ["install", "-y"] + PACKAGES,
         ])
         self.assertEqual(self.calls("ldconfig"), [[]])
@@ -250,13 +257,14 @@ class PythonSystemDependencyTests(unittest.TestCase):
     def test_failed_or_partial_index_refresh_stops_before_install(self):
         result = self.execute(UPDATE_MODE="fail")
         self.assertEqual(result.returncode, 100, result.stderr)
-        self.assertEqual(self.calls("apt-get"), [self.options() + ["update", "--error-on=any"]])
+        self.assertEqual(len(self.calls("apt-get")), 2)
+        self.assertTrue(all(args[-2:] == ["update", "--error-on=any"] for args in self.calls("apt-get")))
         self.assertEqual(self.calls("ldconfig"), [])
         self.assertEqual(self.calls("pkg-config"), [])
         self.assertIn("APT update failed with exit 100", result.stderr)
         records = [row for row in map(json.loads, self.log.read_text().splitlines())
                    if row["command"] == "configuration"]
-        self.assertEqual(len(records), 1)
+        self.assertEqual(len(records), 2)
         for record in records:
             self.assertFalse(Path(record["source"]).parent.exists())
 
@@ -272,6 +280,48 @@ class PythonSystemDependencyTests(unittest.TestCase):
         self.assertEqual(len(records), 2)
         for record in records:
             self.assertFalse(Path(record["source"]).parent.exists())
+
+    def test_partial_primary_then_complete_fallback_never_combines_indexes(self):
+        """InRelease success followed by Packages failure must use a new list tree."""
+        result = self.execute(UPDATE_MODE="partial-primary")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        records = [row for row in map(json.loads, self.log.read_text().splitlines())
+                   if row["command"] == "configuration"]
+        self.assertEqual(len(records), 3)
+        primary, fallback, install = records
+        self.assertIn("URIs: https://archive.ubuntu.com/ubuntu/", primary["sources"])
+        self.assertIn("URIs: https://mirrors.kernel.org/ubuntu/", fallback["sources"])
+        self.assertNotEqual(primary["lists"], fallback["lists"])
+        self.assertEqual(fallback["listed"], [])
+        self.assertEqual(install["lists"], fallback["lists"])
+        self.assertEqual(install["listed"], ["InRelease", "Packages.complete"])
+        self.assertNotIn("mirror+file:", STEP["run"])
+        for record in records:
+            self.assertFalse(Path(record["source"]).parent.exists())
+        self.assertEqual(len(self.calls("ldconfig")), 1)
+
+    def test_elapsed_primary_time_and_kill_grace_reduce_fallback_budget(self):
+        """The fallback cannot reset the absolute 180 second update allocation."""
+        result = self.execute(UPDATE_MODE="partial-primary", PRIMARY_DELAY="1.1")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        calls = self.calls("timeout")
+        self.assertEqual(calls[0][2], "60s")
+        self.assertLessEqual(int(calls[1][2][:-1]), 164)
+        self.assertGreater(int(calls[1][2][:-1]), 0)
+        self.assertEqual(calls[2][2], "360s")
+        self.assertIn("remaining=$((apt_deadline - SECONDS - 15))", STEP["run"])
+
+    def test_expired_shared_deadline_never_starts_fallback_or_install(self):
+        """Even a successful command cannot authorize work after the deadline."""
+        script = STEP["run"].replace("apt_deadline=$((SECONDS + 180))", "apt_deadline=$((SECONDS - 1))")
+        for mode in ("success", "partial-primary"):
+            with self.subTest(mode=mode):
+                self.log.unlink(missing_ok=True)
+                result = self.execute(script, UPDATE_MODE=mode)
+                self.assertEqual(result.returncode, 124, result.stderr)
+                self.assertEqual(len(self.calls("apt-get")), 1)
+                self.assertEqual(self.calls("ldconfig"), [])
+                self.assertIn("shared 180s deadline", result.stderr)
 
     def test_hosted_image_matches_noble_guard_without_changing_self_hosted_routing(self):
         """Pin the hosted fallback while retaining trusted self-hosted routing."""
@@ -302,7 +352,7 @@ class PythonSystemDependencyTests(unittest.TestCase):
                 with self.subTest(operation=operation, mode=mode):
                     self.log.unlink(missing_ok=True)
                     started = time.monotonic()
-                    result = self.execute(script, **{operation.upper() + "_MODE": mode})
+                    result = self.execute(script, RUNNER_ENVIRONMENT="self-hosted", **{operation.upper() + "_MODE": mode})
                     self.assertEqual(result.returncode, status, result.stderr)
                     self.assertLess(time.monotonic() - started, 4)
                     self.assertIn(f"APT {operation} {diagnostic}", result.stderr)

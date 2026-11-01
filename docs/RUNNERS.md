@@ -104,8 +104,13 @@ whose parent is traversable by APT's unprivileged `_apt` process. Runner-owned
 on success or failure; the runner's `/etc/apt` configuration is not changed.
 Self-hosted runners retain their operator-provisioned sources and mirror priorities.
 
-The hosted list prefers `https://archive.ubuntu.com/ubuntu/` and falls back to
-`https://mirrors.kernel.org/ubuntu/`. The Canonical archive and security hostnames
+The hosted update first uses only `https://archive.ubuntu.com/ubuntu/`. If that
+complete update fails, it tries only `https://mirrors.kernel.org/ubuntu/` in a
+separate, empty index directory. This is transaction-level failover: a successful
+`InRelease` download cannot send later package-index requests back to a failed
+host through a mirror list. Partial primary indexes are never combined with the
+fallback indexes. Installation uses the source and complete indexes from the
+successful update attempt. The Canonical archive and security hostnames
 can resolve to the same server, so a second hostname alone did not provide an
 independent fallback. Kernel.org operates the second service independently;
 its current HTTPS endpoint is documented by the
@@ -124,8 +129,13 @@ The system dependency step now uses these fixed budgets:
 
 - HTTP/HTTPS connection and idle timeout: 20 seconds; two retries per failed file.
 - Package lock wait: at most 60 seconds, included in the command deadline.
-- Index refresh: 180 seconds; any index error fails the step rather than allowing
-  installation from a partial or stale refresh (`apt-get update --error-on=any`).
+- Hosted index refresh: one shared 180-second budget, including termination grace.
+  The primary attempt gets at most 60 seconds before TERM. The fallback gets only
+  the remaining budget, reserving its 15-second KILL grace; time is never reset.
+  Each attempt requires a complete refresh (`apt-get update --error-on=any`).
+  Both failed attempts, or an exhausted budget, stop before installation.
+- Self-hosted index refresh retains its single 180-second command deadline and
+  operator-provisioned sources; no automatic source replacement occurs.
 - Package installation: 360 seconds. Each command sends TERM at its deadline,
   with 15 seconds before KILL if necessary; the complete step has a 10-minute limit.
 
