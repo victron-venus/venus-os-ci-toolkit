@@ -156,6 +156,26 @@ class PythonSystemDependencyTests(unittest.TestCase):
             self.assertNotIn(forbidden, STEP["run"])
 
 
+    def test_private_runner_temp_does_not_hide_mirror_from_apt(self):
+        """Use a traversable system parent without changing runner-owned permissions."""
+        private = self.root / "private-runner-temp"
+        private.mkdir(mode=0o700)
+        result = self.execute("umask 077\n" + STEP["run"], RUNNER_TEMP=str(private))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        records = [row for row in map(json.loads, self.log.read_text().splitlines())
+                   if row["command"] == "configuration"]
+        self.assertEqual(len(records), 2)
+        for record in records:
+            parent = Path(record["source"]).parent
+            self.assertEqual(parent.parent.resolve(), Path("/tmp").resolve())
+            self.assertFalse(parent.is_relative_to(private))
+            self.assertEqual(record["directory_mode"], 0o755)
+            self.assertEqual(record["mirror_mode"], 0o644)
+            self.assertFalse(parent.exists())
+        self.assertEqual(private.stat().st_mode & 0o777, 0o700)
+        self.assertEqual(list(private.iterdir()), [])
+        self.assertNotIn("${RUNNER_TEMP", STEP["run"])
+
     def test_self_hosted_runner_retains_operator_sources(self):
         self.os_release.write_text("ID=debian\nVERSION_CODENAME=trixie\n")
         self.keyring.unlink()

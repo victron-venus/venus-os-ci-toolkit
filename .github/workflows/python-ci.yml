@@ -110,7 +110,8 @@ jobs:
             test "$ID:$VERSION_CODENAME" = 'ubuntu:noble'
             test "$(dpkg --print-architecture)" = 'amd64'
             test -r /usr/share/keyrings/ubuntu-archive-keyring.gpg
-            apt_root=$(mktemp -d "${RUNNER_TEMP:?}/host-apt.XXXXXX")
+            # /tmp is traversable by _apt; RUNNER_TEMP may have private ancestors.
+            apt_root=$(mktemp -d /tmp/host-apt.XXXXXX)
             trap 'sudo rm -rf -- "$apt_root"' EXIT
             mkdir "$apt_root/lists"
             chmod 755 "$apt_root" "$apt_root/lists"
