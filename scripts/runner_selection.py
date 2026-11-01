@@ -199,6 +199,9 @@ def render_shared_workflow(filename, profile):
     explicit = "runner-labels" if filename in {"auto-merge.yml", "auto-approve-reusable.yml"} else None
     budget = filename == "typescript-ci.yml"
     selected = runner_labels(profile, explicit_input=explicit, hosted_budget=budget)
+    if filename == "python-ci.yml":
+        # Its APT source suite and development packages target Ubuntu 24.04.
+        selected = selected.replace('["ubuntu-latest"]', '["ubuntu-24.04"]')
     for name, job in workflow["jobs"].items():
         expected = runner_labels(browser_matrix=True, hosted_budget=True) if filename == "typescript-ci.yml" and name == "browser" else selected
         if "runs-on" in job and job["runs-on"] != expected:

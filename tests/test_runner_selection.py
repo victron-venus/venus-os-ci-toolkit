@@ -73,6 +73,18 @@ console.log(JSON.stringify(evaluate(p.github, p.vars, JSON.parse, JSON.stringify
         self.assertEqual(classifier["jobs"]["scope"]["runs-on"], runner_labels(explicit_input="runner", scalar=True, hosted_budget=True))
         self.assertNotIn("deploy", ACTIVE_WORKFLOWS)
 
+    def test_python_hosted_pin_survives_canonical_rendering(self):
+        """Keep the Python APT suite pinned without changing other CI defaults."""
+        rendered = render_workflows()
+        python = ROOT / ".github/workflows/python-ci.yml"
+        self.assertEqual(rendered[python], python.read_text())
+        workflow = yaml.load(rendered[python], Loader=yaml.BaseLoader)
+        self.assertEqual(workflow["jobs"]["ci"]["runs-on"],
+                         runner_labels("ci").replace('["ubuntu-latest"]', '["ubuntu-24.04"]'))
+        go = ROOT / ".github/workflows/go-ci.yml"
+        go_workflow = yaml.load(rendered[go], Loader=yaml.BaseLoader)
+        self.assertEqual(go_workflow["jobs"]["ci"]["runs-on"], runner_labels("ci"))
+
     def test_no_checkout_in_metadata_jobs(self):
         for name in ("auto-merge.yml", "auto-approve-reusable.yml", "coderabbit-review-reusable.yml", "coderabbit-autofix-reusable.yml"):
             workflow = yaml.load((ROOT / ".github/workflows" / name).read_text(), Loader=yaml.BaseLoader)
