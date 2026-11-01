@@ -349,6 +349,32 @@ class RequiredBuildReceiptsTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Duplicate authenticated"):
             version_receipt.verify_required_build_receipts(receipts + receipts[:1], policy)
 
+    def test_policy_rejects_exact_and_case_colliding_receipt_names(self):
+        """Reject impossible inventories before case-insensitive asset staging."""
+        for names in (["release-inputs-linux.json"] * 2,
+                      ["release-inputs-linux.json", "release-inputs-Linux.json"],
+                      ["release-inputs-WINDOWS.json", "release-inputs-windows.json"]):
+            policy = {"versioning": {"schema": 1, "promotion": "final-build",
+                      "files": [{"path": "VERSION", "format": "text", "value": "package"}],
+                      "required_build_receipts": names}}
+            with self.subTest(names=names), self.assertRaisesRegex(
+                version_plan.VersionError, "duplicate"
+            ):
+                version_plan.validate_policy(policy)
+
+    def test_noncolliding_policy_retains_exact_receipt_spelling(self):
+        """Casefold detects collisions without normalizing legitimate names."""
+        names = ["release-inputs-Linux.json", "release-inputs-Windows.json"]
+        policy = {"versioning": {"schema": 1, "promotion": "final-build",
+                  "files": [{"path": "VERSION", "format": "text", "value": "package"}],
+                  "required_build_receipts": names}}
+        self.assertEqual(version_plan.validate_policy(policy)["required_build_receipts"], names)
+        version_receipt.verify_required_build_receipts(
+            [{"name": name} for name in reversed(names)], policy)
+        with self.assertRaisesRegex(ValueError, "inventory differs"):
+            version_receipt.verify_required_build_receipts(
+                [{"name": name.lower()} for name in names], policy)
+
     def test_malformed_or_ambiguous_policy_names_are_rejected(self):
         invalid = (None, True, 1, "release-inputs-linux.json", {}, [],
                    [None], [True], [123], ["release-inputs-linux.json"] * 2,

@@ -35,6 +35,42 @@ def config():
 
 
 class FuzzContracts(unittest.TestCase):
+    def test_opted_in_rc_publication_separates_authenticated_fuzz_receipt(self):
+        """Publish a complete RC while keeping validation outside build inventory."""
+        import test_versioned_release as fixtures
+
+        fixture = fixtures.LifecycleTests()
+        self.addCleanup(fixture.doCleanups)
+        fixture.setUp()
+        fixture.policy["fuzzing"] = {"toolkit_ref": "a" * 40}
+        fixture.require_build_receipts(["release-inputs-linux.json"])
+        fixture.start_run("rc", 100)
+        fixture.gh.jobs.append({"id": 200, "name": fuzz.JOB, "head_sha": fixtures.SHA,
+                                "status": "completed", "conclusion": "success"})
+        lifecycle.prepare(fixture.args)
+        fixture.build_current()
+        assets = Path(fixture.args.assets)
+        with tempfile.TemporaryDirectory(dir=fixture.root) as temporary:
+            package = Path(temporary)
+            (package / fuzz.REPORT).write_text("synthetic report verified by the separate report contracts")
+            version_receipt.create_receipt(lifecycle.PLAN, fixture.root / ".release-inputs.json",
+                                           package, package / "release-inputs-fuzz.json")
+            for name in (fuzz.REPORT, "release-inputs-fuzz.json"):
+                (assets / name).write_bytes((package / name).read_bytes())
+        with patch.object(lifecycle, "verify_candidate_fuzz_report") as verify_report:
+            result = lifecycle.publish_versioned(fixture.args)
+        verify_report.assert_called_once()
+        self.assertEqual(result["status"], "published")
+        manifest = json.loads(fixtures.rc.EVIDENCE.read_bytes())
+        self.assertEqual([item["name"] for item in manifest["build_receipts"]],
+                         ["release-inputs-linux.json"])
+        self.assertEqual([item["name"] for item in manifest["validation_receipts"]],
+                         ["release-inputs-fuzz.json"])
+        self.assertEqual({item["name"] for item in manifest["assets"]},
+                         {"app.json", "release-inputs-linux.json", fuzz.REPORT,
+                          "release-inputs-fuzz.json"})
+        self.assertTrue(fixture.gh.writes)
+
     def test_rc_validation_receipt_is_separate_from_required_builds(self):
         policy = {"fuzzing": {}, "versioning": {"required_build_receipts": ["release-inputs-linux.json"]}}
         records = [{"name": "release-inputs-linux.json"},
