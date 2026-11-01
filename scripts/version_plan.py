@@ -216,7 +216,10 @@ def required_build_receipts(config: dict[str, object]) -> set[str] | None:
                or name == "release-inputs-fuzz.json" for name in names)
     ):
         raise VersionError("required_build_receipts must be nonempty ASCII package receipt filenames")
-    require(len(set(names)) == len(names), "required_build_receipts contains duplicate filenames")
+    require(
+        len({name.casefold() for name in names}) == len(names),
+        "required_build_receipts contains duplicate or case-colliding filenames",
+    )
     return set(names)
 
 

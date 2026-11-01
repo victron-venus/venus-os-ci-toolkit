@@ -42,6 +42,17 @@ class InventoryMigrationTests(unittest.TestCase):
                 "original_to_current": {receipts.digest("#!/usr/bin/env python3\n" + before): receipts.digest("#!/usr/bin/env python3\n" + after)},
                 "current": [receipts.digest("#!/usr/bin/env python3\n" + after)],
             }
+        inventory_plan = self.expected[migration.PLAN]
+        casefold_plan = inventory_plan.replace("'inventory'", "'casefold'")
+        casefold = {
+            "hunks": [{"before": "return 'inventory'", "after": "return 'casefold'"}],
+            "original_to_current": {
+                receipts.digest(inventory_plan.replace(receipts.HEADER, "", 1)):
+                receipts.digest(casefold_plan.replace(receipts.HEADER, "", 1))},
+            "current": [receipts.digest(casefold_plan.replace(receipts.HEADER, "", 1))],
+        }
+        self.expected[migration.PLAN] = casefold_plan
+        self.enterContext(patch.object(migration, "CASEFOLD", casefold))
         (self.consumer / ".gitignore").write_text("keep-private-data\n")
         self.delta = self.root / "delta.json"
         self.delta.write_text(json.dumps({"files": specs}))
@@ -140,9 +151,83 @@ class InventoryOracleTests(unittest.TestCase):
                 self.assertEqual(hashlib.sha256(old.encode()).hexdigest(), expected)
                 state, result = receipts.transform(old.replace("#!/usr/bin/env python3\n", PREFIX, 1), name, specifications[name])
                 self.assertEqual(state, "original")
-                self.assertEqual(result, current.replace("#!/usr/bin/env python3\n", PREFIX, 1))
+                inventory_v1 = migration._before_casefold(current) if name == migration.PLAN else current
+                self.assertEqual(result, inventory_v1.replace("#!/usr/bin/env python3\n", PREFIX, 1))
                 with self.assertRaisesRegex(ValueError, "Unknown current"):
                     migration.previous_canonical_source(current + "# unknown\n", name)
+
+
+class CasefoldCompatibilityTests(unittest.TestCase):
+    def setUp(self):
+        """Freeze real canonical states, including the literal accepted v1 plan hash."""
+        self.current = {name: (ROOT / name).read_text() for name in migration.FILES}
+        self.v1 = dict(self.current)
+        self.v1[migration.PLAN] = migration._before_casefold(self.current[migration.PLAN])
+        self.assertEqual(receipts.digest(self.v1[migration.PLAN]),
+                         "fbc56a9d494678f6b5d9180be02d587897c2b5276cf46e9102ac61089c91dde2")
+        self.original = {name: migration.previous_canonical_source(source, name)
+                         for name, source in self.current.items()}
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        (self.root / "scripts").mkdir()
+        (self.root / ".release-policy.json").write_text(json.dumps({"mode": "release",
+            "versioning": {"schema": 1,
+                "required_build_receipts": ["release-inputs-package.json"]}}))
+
+    def write_state(self, state):
+        for name, source in state.items():
+            (self.root / name).write_text(source.replace("#!/usr/bin/env python3\n", PREFIX, 1))
+
+    def snapshot(self):
+        return {name: (self.root / name).read_bytes() for name in migration.FILES}
+
+    def expected(self, names):
+        return {name: self.current[name].replace("#!/usr/bin/env python3\n", PREFIX, 1)
+                for name in names}
+
+    def test_pre_inventory_source_upgrades_to_casefold_current(self):
+        self.write_state(self.original)
+        before = self.snapshot()
+        self.assertEqual(migration.render(self.root), self.expected(migration.FILES))
+        self.assertEqual(self.snapshot(), before)
+
+    def test_complete_inventory_v1_changes_only_the_plan_validator(self):
+        self.write_state(self.v1)
+        before = self.snapshot()
+        changes = migration.render(self.root)
+        self.assertEqual(changes, self.expected([migration.PLAN]))
+        self.assertEqual(self.snapshot(), before)
+        for name, text in changes.items():
+            (self.root / name).write_text(text)
+        self.assertEqual(migration.render(self.root), {})
+
+    def test_current_casefold_inventory_is_idempotent(self):
+        self.write_state(self.current)
+        self.assertEqual(migration.render(self.root), {})
+
+    def test_partial_inventory_is_still_rejected_for_both_plan_versions(self):
+        for plan in (self.v1[migration.PLAN], self.current[migration.PLAN]):
+            self.write_state({**self.original, migration.PLAN: plan})
+            before = self.snapshot()
+            with self.assertRaisesRegex(ValueError, "Partially migrated"):
+                migration.render(self.root)
+            self.assertEqual(self.snapshot(), before)
+
+    def test_unrecognized_source_does_not_produce_partial_edits(self):
+        for name in migration.FILES:
+            self.write_state(self.current)
+            path = self.root / name
+            path.write_text(path.read_text() + "# unreviewed customization\n")
+            before = self.snapshot()
+            with self.assertRaisesRegex(ValueError, "Unknown or partially migrated"):
+                migration.render(self.root)
+            self.assertEqual(self.snapshot(), before)
+
+    def test_both_plan_versions_reverse_to_the_unchanged_original_oracle(self):
+        for source in (self.v1[migration.PLAN], self.current[migration.PLAN]):
+            self.assertEqual(receipts.digest(migration.previous_canonical_source(source, migration.PLAN)),
+                             "e29350ddaa08667bd9ecca2d5a18c6b1e188826fd69c4e77027372aad0cd2d1e")
 
 
 if __name__ == "__main__":

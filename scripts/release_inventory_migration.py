@@ -11,6 +11,39 @@ PLAN = "scripts/version_plan.py"
 FILES = (PLAN, receipts.RECEIPT, receipts.PUBLISHER)
 DELTA = Path(__file__).with_name("release_inventory_delta.json")
 
+# Keep the accepted inventory-v1 delta and reversal oracle immutable.
+CASEFOLD = {
+    "hunks": [
+        {
+            "before": "    require(len(set(names)) == len(names), \"required_build_receipts contains duplicate filenames\")",
+            "after": "    require(\n        len({name.casefold() for name in names}) == len(names),\n        \"required_build_receipts contains duplicate or case-colliding filenames\",\n    )"
+        }
+    ],
+    "original_to_current": {
+        "fbc56a9d494678f6b5d9180be02d587897c2b5276cf46e9102ac61089c91dde2": "212ad31b8fa380b0ef556b82fd4ed6f2d49cd59ee4516956e98bb8a9120483e9"
+    },
+    "current": [
+        "212ad31b8fa380b0ef556b82fd4ed6f2d49cd59ee4516956e98bb8a9120483e9"
+    ]
+}
+
+
+def _before_casefold(source: str) -> str:
+    """Reverse only the exact accepted casefold layer, preserving a vendor header."""
+    prefix = "#!/usr/bin/env python3\n" + receipts.HEADER
+    vendored = source.startswith(prefix)
+    body = source.replace(receipts.HEADER, "", 1) if vendored else source
+    current = receipts.digest(body)
+    if current not in CASEFOLD["current"]:
+        return source
+    for hunk in reversed(CASEFOLD["hunks"]):
+        if body.count(hunk["after"]) != 1:
+            raise ValueError("Casefold reverse context changed")
+        body = body.replace(hunk["after"], hunk["before"], 1)
+    if CASEFOLD["original_to_current"].get(receipts.digest(body)) != current:
+        raise ValueError("Casefold reverse result changed")
+    return body.replace("#!/usr/bin/env python3\n", prefix, 1) if vendored else body
+
 
 def render(directory: Path) -> dict[str, str]:
     """Require an explicit inventory, then validate all files before returning edits."""
@@ -32,7 +65,10 @@ def render(directory: Path) -> dict[str, str]:
     states = set()
     for name in FILES:
         source = receipts.read_local(directory, name)
-        state, result = receipts.transform(source, name, specification[name])
+        prior = _before_casefold(source) if name == PLAN else source
+        state, result = receipts.transform(prior, name, specification[name])
+        if name == PLAN:
+            _, result = receipts.transform(result, name, CASEFOLD)
         states.add(state)
         if result != source:
             changes[name] = result
@@ -45,6 +81,8 @@ def previous_canonical_source(source: str, name: str) -> str:
     """Reverse only a known inventory delta for the immutable earlier migration oracle."""
     if name == receipts.SIGNER:
         return source
+    if name == PLAN:
+        source = _before_casefold(source)
     if name not in FILES:
         raise ValueError("Unknown inventory source")
     specification = json.loads(DELTA.read_text(encoding="utf-8"))["files"][name]
