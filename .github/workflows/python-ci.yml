@@ -113,30 +113,31 @@ jobs:
             # /tmp is traversable by _apt; RUNNER_TEMP may have private ancestors.
             apt_root=$(mktemp -d /tmp/host-apt.XXXXXX)
             trap 'sudo rm -rf -- "$apt_root"' EXIT
-            mkdir "$apt_root/lists"
-            chmod 755 "$apt_root" "$apt_root/lists"
-            printf '%s\t%s\n' \
-              'https://archive.ubuntu.com/ubuntu/' 'priority:1' \
-              'https://security.ubuntu.com/ubuntu/' 'priority:2' > "$apt_root/mirrors.txt"
-            cat > "$apt_root/ubuntu.sources" <<SOURCES
+            chmod 755 "$apt_root"
+          fi
+          select_apt_source() {
+            local mirror="$1" attempt="$2"
+            local source_root="$apt_root/$attempt"
+            mkdir "$source_root" "$source_root/lists"
+            chmod 755 "$source_root" "$source_root/lists"
+            cat > "$source_root/ubuntu.sources" <<SOURCES
           Types: deb
-          URIs: mirror+file:$apt_root/mirrors.txt
+          URIs: $mirror
           Suites: noble noble-updates noble-backports noble-security
           Components: main restricted universe multiverse
           Architectures: amd64
           Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
           SOURCES
-            chmod 644 "$apt_root/mirrors.txt" "$apt_root/ubuntu.sources"
+            chmod 644 "$source_root/ubuntu.sources"
             apt_source_options=(
-              -o "Dir::Etc::sourcelist=$apt_root/ubuntu.sources"
+              -o "Dir::Etc::sourcelist=$source_root/ubuntu.sources"
               -o Dir::Etc::sourceparts=-
-              -o "Dir::State::lists=$apt_root/lists"
+              -o "Dir::State::lists=$source_root/lists"
             )
-          fi
+          }
           # Transport timeouts bound idle connections; the outer deadline also
           # bounds slow but continuously active downloads and package operations.
           apt_options=(
-            "${apt_source_options[@]}"
             -o Acquire::Retries=2
             -o Acquire::http::Timeout=20
             -o Acquire::https::Timeout=20
@@ -147,7 +148,7 @@ jobs:
             shift
             local operation="$1"
             local status
-            if sudo timeout --signal=TERM --kill-after=15s "$duration" apt-get "${apt_options[@]}" "$@"; then
+            if sudo timeout --signal=TERM --kill-after=15s "$duration" apt-get "${apt_source_options[@]}" "${apt_options[@]}" "$@"; then
               return 0
             else
               status=$?
@@ -160,7 +161,32 @@ jobs:
             return "$status"
           }
           # Reject partial index updates instead of silently using stale indexes.
-          run_apt 180s update --error-on=any
+          if [[ "${RUNNER_ENVIRONMENT:?}" == 'github-hosted' ]]; then
+            # A mirror list can retry the failed first host for every index.
+            # Each attempt uses one URI and its own fresh list directory instead.
+            apt_deadline=$((SECONDS + 180))
+            select_apt_source https://archive.ubuntu.com/ubuntu/ primary
+            if sudo timeout --signal=TERM --kill-after=15s 60s apt-get "${apt_source_options[@]}" "${apt_options[@]}" update --error-on=any; then
+              :
+            else
+              primary_status=$?
+              echo "Primary APT update incomplete (exit $primary_status); trying an independent source with fresh indexes."
+              select_apt_source https://mirrors.kernel.org/ubuntu/ fallback
+              # Reserve the final kill grace within the shared update deadline.
+              remaining=$((apt_deadline - SECONDS - 15))
+              if (( remaining <= 0 )); then
+                echo "::error::APT update exhausted its shared 180s deadline." >&2
+                exit 124
+              fi
+              run_apt "${remaining}s" update --error-on=any
+            fi
+            if (( SECONDS >= apt_deadline )); then
+              echo "::error::APT update exhausted its shared 180s deadline." >&2
+              exit 124
+            fi
+          else
+            run_apt 180s update --error-on=any
+          fi
           # Install dbus, glib, cairo and gobject-introspection development packages needed for dbus-python and PyGObject compilation
           run_apt 360s install -y libdbus-1-dev libglib2.0-dev libcairo2-dev libgirepository-2.0-dev libgirepository1.0-dev
           # Update library cache and pkgconfig path

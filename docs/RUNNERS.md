@@ -97,16 +97,45 @@ the Python adapter requires its existing apt/sudo and DBus build dependencies.
 An offline or missing pool will leave jobs queued. Keep GitHub mode until this
 admission is complete; do not change group visibility as an automatic fallback.
 
-The Python workflow keeps the runner's APT sources and mirror priorities intact,
-on hosted and self-hosted Linux. It does not force an Ubuntu mirror: the
-previous forced fallback could itself stall and consume the full CI job.
-APT retains its normal mirror selection and signature/authentication checks.
+The Python workflow uses fixed Ubuntu 24.04 on GitHub-hosted Linux. It creates a
+temporary Noble/amd64 APT source list and fresh package indexes under `/tmp`,
+whose parent is traversable by APT's unprivileged `_apt` process. Runner-owned
+`RUNNER_TEMP` paths may have private ancestors. The temporary directory is removed
+on success or failure; the runner's `/etc/apt` configuration is not changed.
+Self-hosted runners retain their operator-provisioned sources and mirror priorities.
+
+The hosted update first uses only `https://archive.ubuntu.com/ubuntu/`. If that
+complete update fails, it tries only `https://mirrors.kernel.org/ubuntu/` in a
+separate, empty index directory. This is transaction-level failover: a successful
+`InRelease` download cannot send later package-index requests back to a failed
+host through a mirror list. Partial primary indexes are never combined with the
+fallback indexes. Installation uses the source and complete indexes from the
+successful update attempt. The Canonical archive and security hostnames
+can resolve to the same server, so a second hostname alone did not provide an
+independent fallback. Kernel.org operates the second service independently;
+its current HTTPS endpoint is documented by the
+[Linux Kernel Archives](https://mirrors.kernel.org/) and its archive service is
+listed in [Ubuntu's mirror registry](https://launchpad.net/ubuntu/+mirror/mirrors.us.kernel.org-archive).
+The registry's legacy hostname is not used for HTTPS because its certificate
+does not cover that name. Both configured mirrors serve the Noble release,
+updates, backports and security suites. APT must authenticate all metadata and
+packages through the existing Ubuntu archive keyring; no mirror-specific key,
+TLS exception or signature bypass is permitted. When changing a mirror, recheck
+its operator, registry entry, HTTPS certificate and suite availability, then
+run the actual hosted consumer qualification. Local reachability is not proof
+that a GitHub runner can reach it.
+
 The system dependency step now uses these fixed budgets:
 
 - HTTP/HTTPS connection and idle timeout: 20 seconds; two retries per failed file.
 - Package lock wait: at most 60 seconds, included in the command deadline.
-- Index refresh: 180 seconds; any index error fails the step rather than allowing
-  installation from a partial or stale refresh (`apt-get update --error-on=any`).
+- Hosted index refresh: one shared 180-second budget, including termination grace.
+  The primary attempt gets at most 60 seconds before TERM. The fallback gets only
+  the remaining budget, reserving its 15-second KILL grace; time is never reset.
+  Each attempt requires a complete refresh (`apt-get update --error-on=any`).
+  Both failed attempts, or an exhausted budget, stop before installation.
+- Self-hosted index refresh retains its single 180-second command deadline and
+  operator-provisioned sources; no automatic source replacement occurs.
 - Package installation: 360 seconds. Each command sends TERM at its deadline,
   with 15 seconds before KILL if necessary; the complete step has a 10-minute limit.
 
