@@ -37,6 +37,7 @@ class ProvenanceGeneratorTests(unittest.TestCase):
                 path = root / name
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text(content)
+            self.assertNotIn("scripts/release_fuzz.py", files)
             self.assertIn("REQUIRED_PAIRS = ({", files["scripts/release_provenance.py"])
             for name in ("version_receipt", "stage_release_assets"):
                 self.assertIn("DETACHED_PROVENANCE_REQUIRED = True", files[f"scripts/{name}.py"])

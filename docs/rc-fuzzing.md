@@ -277,8 +277,12 @@ their separate final-build acceptance rules; fuzzing does not waive those rules.
 
 On failure, download diagnostics, reproduce the smallest input against the same
 source, fix the production bug and commit a regression seed/test. Publish a new
-RC from the fixed source. If retrying an infrastructure failure, rerun all jobs
-so the report and release evidence refer to one coherent attempt.
+RC from the fixed source. Before publication starts, an infrastructure retry may
+use **Re-run all jobs** only when the allocator and release policy permit reuse of
+that reservation. Recreate the report and all required packages in one attempt.
+After publication starts, or its result is partial or uncertain, inspect existing
+tags, releases and assets before a policy-authorized new run. Never reset the
+ledger or overwrite published assets. See the [publication-phase retry rules](VERSIONING.md#package-identity-across-reruns).
 
 Successful generated corpora are retained for inspection, not automatically
 restored into later RCs. Review and minimize useful inputs offline with the
@@ -296,3 +300,46 @@ README badges should state the actual scope, for example:
 This is a capability badge, not a passing-status badge. Link the repository's
 documentation to its real release runs and reports. Never use an "OSS-Fuzz
 integrated" or passing badge without corresponding enrollment or test evidence.
+
+### Require the complete package receipt set before publication
+
+Current-attempt naming and a valid receipt for every downloaded file do not prove
+that every intended platform was downloaded. A failed-job-only retry can produce
+one valid current-attempt package while other platforms exist only in an older
+attempt. The source-bound release policy can require the exact package receipt
+inventory:
+
+```json
+{
+  "versioning": {
+    "required_build_receipts": [
+      "release-inputs-linux.json",
+      "release-inputs-windows.json",
+      "release-inputs-signature.json"
+    ]
+  }
+}
+```
+
+Set this list from the repository's actual producers. Include the signature-stage
+receipt only when that producer is part of the release. Names must be unique,
+nonempty ASCII `release-inputs-*.json` basenames. The list is exact: missing,
+unexpected and duplicate authenticated package receipts stop fresh publication
+before its signature validation, manifest, reservation consumption or public
+writes. RC `release-inputs-fuzz.json` is separate validation evidence and must not
+appear in this list.
+
+Receipt identity and content checks still run first. The complete receipt-name
+set does not excuse stale attempts or prove that a producer packaged every file
+it should: declared artifact metadata and producer-specific checks still apply.
+The low-level receipt verifier remains suitable for pre-signing preparation,
+where the signature receipt does not exist yet. Historical RC byte promotion
+keeps the accepted source policy and existing validation; this option governs
+fresh publication. Policies without this optional field retain their existing
+behavior. The toolkit's own policy requires its sole package receipt.
+
+Configure this field together with the matching policy parser and publisher
+update. An older parser may reject the new field, and a publisher without the
+inventory guard must not be presented as enforcing it. No release is dispatched
+by adding the contract. Use a complete attempt only as permitted by the
+[allocator and publication-phase retry rules](VERSIONING.md#package-identity-across-reruns).

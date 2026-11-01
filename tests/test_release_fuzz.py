@@ -35,6 +35,16 @@ def config():
 
 
 class FuzzContracts(unittest.TestCase):
+    def test_rc_validation_receipt_is_separate_from_required_builds(self):
+        policy = {"fuzzing": {}, "versioning": {"required_build_receipts": ["release-inputs-linux.json"]}}
+        records = [{"name": "release-inputs-linux.json"},
+                   {"name": "release-inputs-fuzz.json", "inputs": {"artifacts": [{"name": "fuzz-report.json"}]}}]
+        packages, validation = lifecycle.candidate_fuzz_receipts(policy, "rc", records)
+        version_receipt.verify_required_build_receipts(packages, policy)
+        self.assertEqual([x["name"] for x in validation], ["release-inputs-fuzz.json"])
+        with self.assertRaisesRegex(ValueError, "unexpected=.*release-inputs-fuzz"):
+            version_receipt.verify_required_build_receipts(records, policy)
+
     def test_evidence_modes_keep_candidate_checks_out_of_release_qualification(self):
         fuzz.evidence_contract("release", "release-plan-1")
         fuzz.evidence_contract("candidate", "")

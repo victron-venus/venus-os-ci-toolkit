@@ -266,18 +266,23 @@ Workflow files and policy text are read and written as UTF-8 on every platform.
 
 Every ordinary release artifact name now ends in
 `-run-<run_id>-attempt-<run_attempt>`. A full same-run retry can retain previous
-attempts without mixing their payloads. After a partial release failure, use
-**Re-run all jobs**, so every required producer creates inputs for the same new
-attempt. Re-running only a failed job can leave no current inputs, or an incomplete
-set; older packages must not fill those gaps. Duplicate payload names within the
-current attempt remain errors, even when their bytes match.
+attempts without mixing their payloads. Before publication starts, use
+**Re-run all jobs** only if the allocator and release policy permit reuse of that
+reservation, so every required producer creates inputs for the same new attempt.
+Re-running only a failed job can leave no current inputs, or an incomplete set;
+older packages must not fill those gaps. Once publication starts, or its result
+is partial or uncertain, inspect existing tags, releases and assets before a
+policy-authorized new run. Never reset the ledger or overwrite published assets.
+See [publication-phase retry rules](VERSIONING.md#package-identity-across-reruns).
+Duplicate payload names remain errors, even when their bytes match.
 
 Name selection does not add receipt verification. This mode leaves vendored
 runtimes unchanged. Before qualifying releases, confirm that the consumer's
 publisher verifies source, repository, run and attempt; older receipt/publisher
-code needs a separately reviewed runtime update. Platform completeness depends
-on the project's explicit artifact declarations: a valid receipt for one platform
-does not establish that all required platforms were built. The regression suite
+code needs a separately reviewed runtime update. Platform completeness requires
+a source-declared set of required producer receipts plus package-specific checks:
+a valid receipt for one platform does not establish that all required platforms
+were built. The regression suite
 uses synthetic packages with the toolkit's actual selector, collector and receipt
 verifiers; it does not certify an older consumer runtime, a live release retry or
 device acceptance.

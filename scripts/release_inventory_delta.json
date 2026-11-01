@@ -1,0 +1,68 @@
+{
+  "schema": 1,
+  "source_before": "9c1031ef160a696354e65b31c966de61b10775a3",
+  "files": {
+    "scripts/version_plan.py": {
+      "hunks": [
+        {
+          "before": "        require(\"package\" not in item, f\"{kind} does not accept package\")\n\n\ndef validate_policy(policy: object) -> dict[str, object]:\n    \"\"\"Validate only this extension; the release engine owns the outer policy.\"\"\"\n    require(isinstance(policy, dict), \"Policy must be an object\")\n",
+          "after": "        require(\"package\" not in item, f\"{kind} does not accept package\")\n\n\ndef required_build_receipts(config: dict[str, object]) -> set[str] | None:\n    \"\"\"Validate the optional exact package/signature receipt inventory.\"\"\"\n    if \"required_build_receipts\" not in config:\n        return None\n    names = config[\"required_build_receipts\"]\n    if (\n        not isinstance(names, list) or not names\n        or any(not isinstance(name, str)\n               or not re.fullmatch(r\"release-inputs-[A-Za-z0-9._-]+\\.json\", name, re.ASCII)\n               or name == \"release-inputs-fuzz.json\" for name in names)\n    ):\n        raise VersionError(\"required_build_receipts must be nonempty ASCII package receipt filenames\")\n    require(len(set(names)) == len(names), \"required_build_receipts contains duplicate filenames\")\n    return set(names)\n\n\ndef validate_policy(policy: object) -> dict[str, object]:\n    \"\"\"Validate only this extension; the release engine owns the outer policy.\"\"\"\n    require(isinstance(policy, dict), \"Policy must be an object\")\n"
+        },
+        {
+          "before": "        \"promotion\",\n        \"files\",\n        \"artifacts\",\n        \"build_number_floor\",\n        \"toolkit_revision\",\n    }\n",
+          "after": "        \"promotion\",\n        \"files\",\n        \"artifacts\",\n        \"required_build_receipts\",\n        \"build_number_floor\",\n        \"toolkit_revision\",\n    }\n"
+        },
+        {
+          "before": "        isinstance(config.get(\"files\"), list) and config[\"files\"],\n        \"Policy requires explicit version files\",\n    )\n    selectors = set()\n    for item in config[\"files\"]:\n        _declaration(item)\n",
+          "after": "        isinstance(config.get(\"files\"), list) and config[\"files\"],\n        \"Policy requires explicit version files\",\n    )\n    required_build_receipts(config)\n    selectors = set()\n    for item in config[\"files\"]:\n        _declaration(item)\n"
+        }
+      ],
+      "original_to_current": {
+        "e29350ddaa08667bd9ecca2d5a18c6b1e188826fd69c4e77027372aad0cd2d1e": "fbc56a9d494678f6b5d9180be02d587897c2b5276cf46e9102ac61089c91dde2"
+      },
+      "current": [
+        "fbc56a9d494678f6b5d9180be02d587897c2b5276cf46e9102ac61089c91dde2"
+      ]
+    },
+    "scripts/version_receipt.py": {
+      "hunks": [
+        {
+          "before": "    return results\n\n\ndef validate_input_fields(\n    files: list[dict[str, object]], policy: dict[str, object], plan: dict[str, object]\n) -> None:\n",
+          "after": "    return results\n\n\ndef verify_required_build_receipts(\n    receipts: list[dict[str, object]], policy: dict[str, object],\n) -> None:\n    \"\"\"Require the source-declared package/signature set after RC evidence is split.\"\"\"\n    required = version_plan.required_build_receipts(cast(dict[str, object], policy[\"versioning\"]))\n    if required is None:\n        return\n    names = [cast(str, item[\"name\"]) for item in receipts]\n    if len(set(names)) != len(names):\n        raise ValueError(\"Duplicate authenticated build receipts\")\n    if set(names) != set(required):\n        raise ValueError(\n            \"Build receipt inventory differs from source policy: \"\n            f\"missing={sorted(set(required) - set(names))}, \"\n            f\"unexpected={sorted(set(names) - set(required))}\"\n        )\n\n\ndef validate_input_fields(\n    files: list[dict[str, object]], policy: dict[str, object], plan: dict[str, object]\n) -> None:\n"
+        }
+      ],
+      "original_to_current": {
+        "4f273af2376ffe0de1ec1b064365badbbebf5b2718233817d12ead988d941e81": "72a3fcd5621024a0d7d0954cc9c2897f24277944a33fa69524bb23af020585c0"
+      },
+      "current": [
+        "72a3fcd5621024a0d7d0954cc9c2897f24277944a33fa69524bb23af020585c0"
+      ]
+    },
+    "scripts/release_versioned.py": {
+      "hunks": [
+        {
+          "before": "        reserve_plan,\n        verify_reservation,\n    )\n    from .version_receipt import producer_identity, verify_declared_artifacts, verify_receipts\nelse:\n    import release as client\n    import release_control as rc\n",
+          "after": "        reserve_plan,\n        verify_reservation,\n    )\n    from .version_receipt import producer_identity, verify_declared_artifacts, verify_receipts, verify_required_build_receipts\nelse:\n    import release as client\n    import release_control as rc\n"
+        },
+        {
+          "before": "        reserve_plan,\n        verify_reservation,\n    )\n    from version_receipt import producer_identity, verify_declared_artifacts, verify_receipts\n\nPLAN = Path(\".release-plan.json\")\nMAX_TOOLCHAIN_DIAGNOSTICS = 100\n",
+          "after": "        reserve_plan,\n        verify_reservation,\n    )\n    from version_receipt import producer_identity, verify_declared_artifacts, verify_receipts, verify_required_build_receipts\n\nPLAN = Path(\".release-plan.json\")\nMAX_TOOLCHAIN_DIAGNOSTICS = 100\n"
+        },
+        {
+          "before": "            cast(str, run[\"head_sha\"]),\n        ))\n        receipts, validation_receipts = candidate_fuzz_receipts(policy, channel, receipts)\n        rc.verify_required_signatures(stage, gh.repo, cast(str, plan[\"source_sha\"]))\n        if parent:\n            verify_final_toolchains(gh, candidate, receipts)\n",
+          "after": "            cast(str, run[\"head_sha\"]),\n        ))\n        receipts, validation_receipts = candidate_fuzz_receipts(policy, channel, receipts)\n        verify_required_build_receipts(receipts, policy)\n        rc.verify_required_signatures(stage, gh.repo, cast(str, plan[\"source_sha\"]))\n        if parent:\n            verify_final_toolchains(gh, candidate, receipts)\n"
+        }
+      ],
+      "original_to_current": {
+        "582934efab17ec029d68a3efc61a3a81c6ac11944f955273cd9529689ca3c3fe": "91ce53cb7a9db48e203a36350f8a5db1da18a9171e227d79b9eb0b3132826b91",
+        "71a672054bd6171158685aa243b9d9fb5c9158ccfe3dee4414a472f331195577": "9427d169503d4f687742d601a28c180971aa5739555896c7d55f8b49a2c6f884",
+        "e27e76d2a6080bb257ce60420cf9ead4a4a86f1b4a86f568225aa6ee9706875e": "179a6fe589801c59bccfea0c9a0c2e1b5d0be1915e87e1b4ec9313f32380aa7a"
+      },
+      "current": [
+        "179a6fe589801c59bccfea0c9a0c2e1b5d0be1915e87e1b4ec9313f32380aa7a",
+        "91ce53cb7a9db48e203a36350f8a5db1da18a9171e227d79b9eb0b3132826b91",
+        "9427d169503d4f687742d601a28c180971aa5739555896c7d55f8b49a2c6f884"
+      ]
+    }
+  }
+}
