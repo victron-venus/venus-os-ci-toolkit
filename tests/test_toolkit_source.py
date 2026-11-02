@@ -29,7 +29,11 @@ class ToolkitReleaseNotesTests(unittest.TestCase):
             "deploy/arc-private/capacity_preflight.py",
             "tools/secret_control/requirements-github-lock.txt",
         })
-        self.assertFalse(required - declared, f"Unshipped Python source: {sorted(required - declared)}")
+        required.update(
+            str(path.relative_to(root))
+            for path in (root / "docs").glob("RUNNER_ADVISORY_REVIEW_*.json")
+        )
+        self.assertFalse(required - declared, f"Unshipped source or acceptance input: {sorted(required - declared)}")
 
     def test_checkout_changelog_supports_beta_and_rc(self):
         root = Path(__file__).resolve().parents[1]
