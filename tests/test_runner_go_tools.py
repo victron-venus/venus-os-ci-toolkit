@@ -9,6 +9,7 @@ from pathlib import Path
 import tarfile
 import tempfile
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -205,6 +206,36 @@ class RunnerGoToolTests(unittest.TestCase):
             with self.subTest(packages=packages), self.assertRaisesRegex(ValueError, 'dependency graph'):
                 TOOLS.retained_utility_notices(source, self.root / 'notices', spec, packages)
 
+    def test_manifest_client_guard_is_specific_and_requires_evidence(self):
+        safe = {'github.com/docker/distribution',
+                'github.com/docker/distribution/registry/client/auth',
+                'github.com/docker/distribution/registry/client/transport',
+                'github.com/distribution/distribution/v3/registry/client'}
+        TOOLS.verify_manifest_client_absent(safe)
+        for package in (TOOLS.LEGACY_MANIFEST_CLIENT,
+                        TOOLS.LEGACY_MANIFEST_CLIENT + ' [example/main.test]'):
+            with self.subTest(package=package), \
+                    self.assertRaisesRegex(ValueError, 'GHSA-685w-q87j-wqw3'):
+                TOOLS.verify_manifest_client_absent(safe | {package})
+        with self.assertRaisesRegex(ValueError, 'empty dependency graph'):
+            TOOLS.verify_manifest_client_absent(set())
+
+    def test_vulnerable_production_or_unit_graph_cannot_publish_provenance(self):
+        safe = {'example/main'}
+        unsafe = safe | {TOOLS.LEGACY_MANIFEST_CLIENT}
+        for name in ('buildx', 'compose'):
+            for production, units in ((unsafe, safe), (safe, unsafe), (safe, set())):
+                with self.subTest(name=name, production=production, units=units):
+                    destination = self.root / (name + str(len(list(self.root.iterdir()))))
+                    result = SimpleNamespace(stdout='\n'.join(
+                        json.dumps({'ImportPath': package}) for package in production))
+                    with patch.object(TOOLS, 'run', return_value=result), \
+                            self.assertRaises(ValueError):
+                        TOOLS.preserve_notices(self.root, destination, name, {},
+                                               [['go', 'build', './cmd']], 'amd64',
+                                               ['go', 'test', './...'], self.root, units)
+                    self.assertFalse((destination / 'provenance.json').exists())
+
     def test_changed_retained_source_binding_is_rejected(self):
         spec = copy.deepcopy(self.manifest['components']['buildx'])
         spec['retained_namesgenerator']['import_before_sha256'] = '0' * 64
@@ -316,6 +347,15 @@ class RunnerGoToolTests(unittest.TestCase):
         self.assertEqual(TOOLS.test_packages('containerd', packages), ['example/pkg', 'example/pkg/e2e'])
         self.assertEqual(TOOLS.test_packages('compose', packages), ['example/pkg', 'example/integration/client'])
         self.assertEqual(TOOLS.test_packages('buildx', packages), packages)
+
+    def test_empty_unit_selection_cannot_fall_back_to_implicit_package(self):
+        cases = [('buildx', []), ('compose', []), ('containerd', []),
+                 ('compose', ['example/e2e']),
+                 ('containerd', ['example/integration/client'])]
+        for name, packages in cases:
+            with self.subTest(name=name, packages=packages), \
+                    self.assertRaisesRegex(ValueError, 'No upstream unit packages selected'):
+                TOOLS.test_packages(name, packages)
 
     def test_nonroot_build_keeps_packages_with_privileged_test_cases(self):
         module = 'github.com/containerd/containerd/v2'
