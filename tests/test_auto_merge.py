@@ -487,6 +487,21 @@ class WithdrawalTests(unittest.TestCase):
 class CallerWithdrawalTests(unittest.TestCase):
     """Evaluate the real caller guard against bounded event fixtures."""
 
+    def test_callers_limit_token_writes_to_pull_request_jobs(self):
+        """Match the called workflow without granting repository-content writes."""
+        root = WORKFLOW.parents[2]
+        reusable = yaml.safe_load(WORKFLOW.read_text())
+        required = reusable["jobs"]["auto-merge"]["permissions"]
+        self.assertEqual(required, {"contents": "read", "pull-requests": "write"})
+        for name in ("docs/examples/auto-merge.yml", ".github/workflows/auto-merge-prs.yml"):
+            caller = yaml.safe_load((root / name).read_text())
+            with self.subTest(caller=name):
+                self.assertEqual(caller["permissions"], {"contents": "read"})
+                self.assertTrue(caller["jobs"])
+                for job in caller["jobs"].values():
+                    self.assertEqual(job["permissions"], required)
+                    self.assertEqual(job["secrets"]["BOT_PAT"], "${{ secrets.BOT_PAT }}")
+
     def reachable(self, job="auto-merge", **changes):
         """Translate only this trusted expression's booleans and fixed metadata keys."""
         path = WORKFLOW.parents[2] / "docs/examples/auto-merge.yml"
