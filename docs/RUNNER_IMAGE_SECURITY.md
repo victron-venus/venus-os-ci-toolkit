@@ -55,6 +55,35 @@ the original utility notices. Production and unit-test dependency graphs are
 checked with readonly locks, and the normal upstream tests still run. This
 reduces an unnecessary dependency without adding a scanner exception.
 
+### Legacy Distribution manifest-client advisory
+
+[GHSA-685w-q87j-wqw3](https://github.com/advisories/GHSA-685w-q87j-wqw3)
+affects `github.com/docker/distribution/registry/client.(*manifests).Get`:
+the client accepts a manifest body without verifying the requested digest.
+The Buildx and Compose locks retain Distribution 2.8.3 because `go mod tidy`
+also accounts for tests of their Docker CLI dependency. For Buildx, `go mod why`
+leads through `cli/command/formatter.test`; for Compose, through
+`cli/command/container.test`. Both continue through `cli/internal/test` and
+`cli/internal/registryclient`. These dependency tests are not the upstream
+root-module tests that this recipe executes. Removing the lock entry would
+misrepresent the complete module graph.
+
+The pinned Buildx 0.38.1 and Compose 5.6.1 production graphs contain no
+Distribution packages on Linux amd64 or arm64. Their selected root-module unit
+test graphs also exclude them. Native amd64 build provenance independently
+records the production packages and output binary hashes. This is a scoped
+not-affected assessment of these builds, not a claim that Distribution 2.8.3
+is fixed or that every binary from Docker CLI is unaffected.
+
+The builder now rejects the vulnerable package if it enters either the actual
+production graph or selected unit-test graph, and records the successful checks
+in `provenance.json`. Empty graphs cannot support that assessment. The guard
+targets the affected legacy client package; it does not suppress the whole
+module, scanner findings or unrelated advisories. A future source or dependency
+change that imports the client requires renewed review or a verified upstream
+fix before publication. Final-image scans and deployment acceptance remain
+separate requirements.
+
 `scripts/build_runner_go_tools.py` verifies the source before extraction and
 allows only the manifest's exact internal symlinks. It checks the original and
 fixed locks, uses the public Go checksum service without inherited private-module

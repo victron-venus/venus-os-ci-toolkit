@@ -26,6 +26,7 @@ BUILD_ROOT = Path("/opt/victron-go-tools-build")
 OUTPUT = Path("/opt/victron-go-tools")
 MAX_ARCHIVE = 100 * 1024 * 1024
 MAX_SOURCE = 700 * 1024 * 1024
+LEGACY_MANIFEST_CLIENT = "github.com/docker/distribution/registry/client"
 
 
 def digest(path):
@@ -206,6 +207,16 @@ def check_retained_graph(packages):
             "Legacy Docker module remains in the dependency graph")
 
 
+def verify_manifest_client_absent(packages):
+    """Keep GHSA-685w-q87j-wqw3 out of the executed package graph."""
+    require(bool(packages), "Cannot assess an empty dependency graph")
+    require(not any(package == LEGACY_MANIFEST_CLIENT
+                    or package.startswith(LEGACY_MANIFEST_CLIENT + " [")
+                    for package in packages),
+            "Vulnerable legacy manifest client entered the dependency graph; "
+            "reassess GHSA-685w-q87j-wqw3 before publishing")
+
+
 def retained_utility_notices(source, destination, spec, packages):
     retained = spec.get("retained_namesgenerator")
     if retained is None:
@@ -268,9 +279,10 @@ def build_commands(name, spec, output):
 def test_packages(name, packages):
     # Match the upstream unit-test scope; daemon/root integration is a later gate.
     if name == "containerd":
-        return [p for p in packages if "/integration" not in p]
-    if name == "compose":
-        return [p for p in packages if "/e2e" not in p]
+        packages = [p for p in packages if "/integration" not in p]
+    elif name == "compose":
+        packages = [p for p in packages if "/e2e" not in p]
+    require(packages, "No upstream unit packages selected")
     return packages
 
 
@@ -297,6 +309,14 @@ def preserve_notices(source, destination, name, spec, commands, architecture, te
             module = package.get("Module")
             if module:
                 modules[module["Path"]] = module
+    security_checks = {}
+    if name in ("buildx", "compose"):
+        verify_manifest_client_absent(packages)
+        verify_manifest_client_absent(unit_dependencies)
+        security_checks["GHSA-685w-q87j-wqw3"] = {
+            "excluded_package": LEGACY_MANIFEST_CLIENT,
+            "production_and_executed_unit_graphs": "absent",
+        }
     retained_utility_notices(source, destination, spec, packages)
     inventory = []
     for index, module in enumerate(sorted(modules.values(), key=lambda m: m["Path"])):
@@ -322,6 +342,7 @@ def preserve_notices(source, destination, name, spec, commands, architecture, te
         "component": name, "source": spec, "modules": inventory,
         "packages": sorted(packages), "test_command": test_command,
         "verified_unit_dependency_packages": sorted(unit_dependencies),
+        "security_checks": security_checks,
         "build_commands": commands, "target_architecture": architecture,
         "binaries": {str(Path(c[c.index("-o") + 1]).relative_to(output)):
                      digest(Path(c[c.index("-o") + 1])) for c in commands},
@@ -359,15 +380,18 @@ def build(name, manifest, build_root=BUILD_ROOT, output=OUTPUT):
     tag_arguments = ["-tags", tags] if tags else []
     packages = test_packages(name, run(["go", "list", *tag_arguments, "./..."], source, capture=True).stdout.splitlines())
     unit_dependencies = set()
-    if spec.get("retained_namesgenerator"):
-        result = run(["go", "list", "-deps", "-test", "-json", *packages], source, capture=True)
+    if spec.get("retained_namesgenerator") or name in ("buildx", "compose"):
+        result = run(["go", "list", "-deps", "-test", "-json", *tag_arguments, *packages],
+                     source, capture=True)
         unit_dependencies = {p["ImportPath"] for p in json_stream(result.stdout)}
+    if name in ("buildx", "compose"):
+        verify_manifest_client_absent(unit_dependencies)
+    if spec.get("retained_namesgenerator"):
         check_retained_graph(unit_dependencies)
     # Preserve actual test/skip outcomes and do not substitute Go's result cache
     # for a fresh execution when this build step runs.
     test_command = ["go", "test", "-count=1", "-v", "-p", "2", "-timeout", "10m",
                     *tag_arguments, *packages]
-    require(packages, "No upstream unit packages selected")
     # Buildx's own unit-test target deliberately excludes external daemon integration.
     prior = os.environ.get("SKIP_INTEGRATION_TESTS")
     if name == "buildx":
