@@ -45,6 +45,11 @@ on:
         description: JSON array of the permitted destination filenames
         required: true
         type: string
+      skip-receipt-only:
+        description: Preserve a valid existing receipt when all bundle payloads are unchanged
+        required: false
+        default: false
+        type: boolean
       committer-name:
         required: true
         type: string
@@ -221,6 +226,7 @@ jobs:
           TARGET_REPOSITORY: ${{ inputs.target-repository }}
           DESTINATION_PREFIX: ${{ inputs.destination-prefix }}
           COPY_FILES: ${{ inputs.copy-files }}
+          SKIP_RECEIPT_ONLY: ${{ inputs.skip-receipt-only }}
           SIGNING_FINGERPRINT: ${{ steps.signing.outputs.fingerprint }}
         run: |
           python3 -I - <<'PY'
@@ -244,6 +250,11 @@ jobs:
                   raise SystemExit(variable + ' must be a nonempty string array')
               for value in values:
                   command.extend(['--' + argument, value])
+          skip_receipt_only = os.environ['SKIP_RECEIPT_ONLY']
+          if skip_receipt_only not in ('true', 'false'):
+              raise SystemExit('SKIP_RECEIPT_ONLY must be true or false')
+          if skip_receipt_only == 'true':
+              command.append('--skip-receipt-only')
           subprocess.run(command, check=True)
           PY
       - name: Remove the temporary signing material

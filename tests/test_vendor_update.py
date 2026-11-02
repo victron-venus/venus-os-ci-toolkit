@@ -61,6 +61,7 @@ def arguments(**changes):
         qualifying_job=["portable", "browser-client", "wire-contracts"],
         signing_fingerprint="unused",
         stage_only=False,
+        skip_receipt_only=False,
     )
     for key, value in changes.items():
         setattr(result, key, value)
@@ -282,8 +283,7 @@ class QualificationTests(unittest.TestCase):
         )
         self.assertEqual(vu.qualify(source, args)["conclusion"], "success")
 
-    @patch.object(vu.time, "sleep")
-    def test_run_state_diagnostics_preserve_the_qualification_truth_table(self, _sleep):
+    def test_run_state_diagnostics_preserve_the_qualification_truth_table(self):
         statuses = (
             "queued",
             "in_progress",
@@ -313,6 +313,7 @@ class QualificationTests(unittest.TestCase):
                         status=status, conclusion=conclusion
                     )
                     if (status, conclusion) in {
+                        ("queued", None),
                         ("in_progress", None),
                         ("completed", "success"),
                     }:
@@ -342,49 +343,46 @@ class QualificationTests(unittest.TestCase):
         source.request = request
         return source, args
 
-    @patch.object(vu.time, "sleep")
-    def test_queued_snapshot_must_advance_then_pass_all_exact_job_checks(self, sleep):
-        source, args = self.queued_sequence(
-            [{"status": "queued"}, {"status": "queued"}, {}]
-        )
-        self.assertEqual(vu.qualify(source, args)["status"], "in_progress")
-        self.assertEqual(sleep.call_args_list, [((5,),), ((5,),)])
+    def test_persistent_queued_snapshot_needs_successful_exact_attempt_jobs(self):
+        source, args = self.queued_sequence([{"status": "queued"}] * 2)
+        self.assertEqual(vu.qualify(source, args)["status"], "queued")
         self.assertEqual(source.writes, [])
-        source, args = self.queued_sequence([{"status": "queued"}, {}])
-        source.values[f"actions/runs/{args.run_id}/attempts/{args.run_attempt}/jobs"][
-            "jobs"
-        ][0]["conclusion"] = "skipped"
-        with self.assertRaisesRegex(vu.ReleaseError, "Required job did not succeed"):
-            vu.qualify(source, args)
+        mutations = [
+            lambda jobs: jobs.pop(),
+            lambda jobs: jobs.append(deepcopy(jobs[0])),
+            lambda jobs: jobs[0].update(status="queued", conclusion=None),
+            lambda jobs: jobs[0].update(status="in_progress", conclusion=None),
+            lambda jobs: jobs[0].update(conclusion="skipped"),
+            lambda jobs: jobs[0].update(conclusion="failure"),
+            lambda jobs: jobs[0].update(run_id=18),
+            lambda jobs: jobs[0].update(run_attempt=1),
+        ]
+        for mutation in mutations:
+            with self.subTest(mutation=mutation):
+                source, args = self.queued_sequence([{"status": "queued"}])
+                mutation(source.values[f"actions/runs/{args.run_id}/attempts/{args.run_attempt}/jobs"]["jobs"])
+                with self.assertRaisesRegex(vu.ReleaseError, "Required job did not succeed"):
+                    vu.qualify(source, args)
+                self.assertEqual(source.writes, [])
 
-    @patch.object(vu.time, "sleep")
-    def test_queued_snapshot_retry_is_bounded_and_never_accepted(self, sleep):
-        source, args = self.queued_sequence([{"status": "queued"}] * 7)
-        with self.assertRaisesRegex(vu.ReleaseError, "status=queued"):
-            vu.qualify(source, args)
-        self.assertEqual(sleep.call_count, 6)
-        self.assertEqual(source.writes, [])
-
-    @patch.object(vu.time, "sleep")
-    def test_retry_rejects_identity_changes_and_terminal_failure(self, sleep):
+    def test_run_identity_and_terminal_state_are_rechecked_after_job_reads(self):
         for changed in (
             {"run_attempt": 3},
+            {"workflow_id": 32},
             {"head_sha": "b" * 40},
             {"event": "pull_request"},
             {"status": "completed", "conclusion": "failure"},
+            {"status": "completed", "conclusion": "cancelled"},
+            {"status": "completed", "conclusion": "timed_out"},
         ):
             with self.subTest(changed=changed):
-                sleep.reset_mock()
                 source, args = self.queued_sequence([{"status": "queued"}, changed])
                 with self.assertRaises(vu.ReleaseError):
                     vu.qualify(source, args)
-                self.assertEqual(sleep.call_count, 1)
                 self.assertEqual(source.writes, [])
         source, args = self.queued_sequence([{"status": "queued", "run_attempt": 3}])
-        sleep.reset_mock()
         with self.assertRaisesRegex(vu.ReleaseError, "Run identity mismatch"):
             vu.qualify(source, args)
-        sleep.assert_not_called()
 
     def test_run_state_diagnostic_never_echoes_untrusted_values(self):
         for value in ("secret-fixture\n::error::injected", "x" * 10000, 0, True):
@@ -419,8 +417,7 @@ class QualificationTests(unittest.TestCase):
                     vu.run_state_label(value, vu.RUN_STATUS_LABELS), "unrecognized"
                 )
 
-    @patch.object(vu.time, "sleep")
-    def test_wrong_run_identity_and_untrusted_event(self, _sleep):
+    def test_wrong_run_identity_and_untrusted_event(self):
         for key, value in [
             ("id", 18),
             ("run_attempt", 1),
@@ -430,7 +427,7 @@ class QualificationTests(unittest.TestCase):
             ("event", "pull_request"),
             ("event", "workflow_run"),
             ("head_repository", {"full_name": "foreign/core"}),
-            ("status", "queued"),
+            ("status", "waiting"),
             ("conclusion", "failure"),
         ]:
             args = arguments()
@@ -627,6 +624,32 @@ class TransportTests(unittest.TestCase):
         parsed = vu.parse_args(argv)
         self.assertEqual(parsed.source_dir, Path.cwd() / "producer")
         self.assertEqual(parsed.target_dir, Path.cwd() / "consumer")
+        self.assertFalse(parsed.skip_receipt_only)
+        self.assertTrue(vu.parse_args(argv + ["--skip-receipt-only"]).skip_receipt_only)
+
+    def test_jobs_pagination_requires_complete_consistent_inventory(self):
+        github = vu.GitHub("example/core", "source-secret")
+        jobs = [{"name": str(index)} for index in range(101)]
+        path = "actions/runs/17/attempts/2/jobs"
+        with patch.object(github, "request", side_effect=[
+            {"total_count": 101, "jobs": jobs[:100]},
+            {"total_count": 101, "jobs": jobs[100:]},
+        ]) as request:
+            self.assertEqual(github.pages(path, "jobs"), jobs)
+            self.assertEqual(request.call_args_list[-1].args[0], path + "?per_page=100&page=2")
+        invalid = [
+            [{"total_count": 101, "jobs": jobs[:3]}],
+            [{"jobs": jobs[:3]}],
+            [{"total_count": True, "jobs": []}],
+            [{"total_count": 0, "jobs": jobs[:1]}],
+            [{"total_count": 101, "jobs": jobs[:100]}, {"total_count": 102, "jobs": jobs[100:]}],
+            [{"total_count": 101, "jobs": jobs[:100]}, {"total_count": 101, "jobs": []}],
+            [{"total_count": 101, "jobs": jobs[:100]}, vu.GitHubError("unavailable")],
+        ]
+        for responses in invalid:
+            with self.subTest(responses=responses), patch.object(github, "request", side_effect=responses):
+                with self.assertRaises(vu.ReleaseError):
+                    github.pages(path, "jobs")
 
     def test_api_rejects_arbitrary_routes_methods_and_non_draft_mutations(self):
         github = vu.GitHub("example/core", "source-secret")
@@ -820,6 +843,111 @@ class GitDeliveryTests(unittest.TestCase):
             return original(directory, *args, **kwargs)
 
         return invoke
+
+    def install_previous_bundle(self, *, mutate=None, missing=None):
+        """Install a truthful older receipt without claiming new source provenance."""
+        previous = deepcopy(self.manifest)
+        previous["version"] = "0.0.9"
+        previous["source"]["files"]["src/Core.kt"] = vu.digest(b"older source")
+        previous["source"]["sha256"] = vu.digest(json.dumps(
+            previous["source"]["files"], separators=(",", ":")
+        ).encode())
+        files = self.files | {self.args.manifest: vu.json_bytes(previous)}
+        if mutate:
+            mutate(files, previous)
+        for name, path in vu.target_paths(self.args).items():
+            destination = self.args.target_dir / path
+            if name == missing:
+                destination.unlink(missing_ok=True)
+            else:
+                destination.write_bytes(files[name])
+        fixture_git(self.args.target_dir, "add", "vendor")
+        fixture_git(self.args.target_dir, "commit", "-m", "previous bundle", "--no-gpg-sign")
+        self.base = vu.git_text(self.args.target_dir, "rev-parse", "HEAD")
+        self.target.values[vu.MAIN_REF]["object"]["sha"] = self.base
+        self.args.stage_only = True
+        return files
+
+    def test_receipt_only_opt_in_preserves_original_provenance_and_checkout(self):
+        previous = self.install_previous_bundle()
+        self.args.skip_receipt_only = True
+        with patch.object(vu, "prepare_commit", side_effect=AssertionError("unexpected write")):
+            result = vu.deliver(self.source, self.target, self.args, self.files, self.manifest)
+        self.assertEqual(result, {
+            "status": "noop", "reason": "receipt-only", "target_sha": self.base,
+            "manifest_sha256": vu.digest(previous[self.args.manifest]),
+            "qualified_manifest_sha256": self.manifest_hash,
+        })
+        self.assertEqual((self.args.target_dir / "vendor" / self.args.manifest).read_bytes(),
+                         previous[self.args.manifest])
+        self.assertEqual(vu.git_text(self.args.target_dir, "rev-parse", "HEAD"), self.base)
+        self.assertEqual(vu.git_text(self.args.target_dir, "status", "--porcelain", "--untracked-files=all"), "")
+        self.assertEqual(self.target.writes, [])
+
+    def test_receipt_only_default_still_proposes_metadata_update(self):
+        self.install_previous_bundle()
+        result = vu.deliver(self.source, self.target, self.args, self.files, self.manifest)
+        self.assertEqual(result["status"], "staged")
+        vu.signature(self.args.target_dir, result["commit"], self.fingerprint)
+
+    def test_changed_copied_payload_and_uncopied_bundle_artifact_are_not_skipped(self):
+        self.install_previous_bundle()
+        self.args.skip_receipt_only = True
+        for name in ["core.js", "core.jar"]:
+            with self.subTest(name=name):
+                files = self.files | {name: b"new payload"}
+                manifest = deepcopy(self.manifest)
+                manifest["artifacts"][name] = {"bytes": len(files[name]), "sha256": vu.digest(files[name])}
+                files[self.args.manifest] = vu.json_bytes(manifest)
+                vu.validate_manifest(files, self.args)
+                result = vu.deliver(self.source, self.target, self.args, files, manifest)
+                self.assertEqual(result["status"], "staged")
+
+    def test_changed_license_is_not_skipped(self):
+        self.args.copy_file.append("LICENSE")
+        self.args.artifact_file.append("LICENSE")
+        self.files["LICENSE"] = b"original license"
+        self.manifest["artifacts"]["LICENSE"] = {
+            "bytes": len(self.files["LICENSE"]), "sha256": vu.digest(self.files["LICENSE"])
+        }
+        self.files[self.args.manifest] = vu.json_bytes(self.manifest)
+        self.install_previous_bundle()
+        self.args.skip_receipt_only = True
+        self.files["LICENSE"] = b"updated license"
+        self.manifest["artifacts"]["LICENSE"] = {
+            "bytes": len(self.files["LICENSE"]), "sha256": vu.digest(self.files["LICENSE"])
+        }
+        self.files[self.args.manifest] = vu.json_bytes(self.manifest)
+        vu.validate_manifest(self.files, self.args)
+        result = vu.deliver(self.source, self.target, self.args, self.files, self.manifest)
+        self.assertEqual(result["status"], "staged")
+
+    def test_invalid_previous_receipts_are_repaired_instead_of_skipped(self):
+        def corrupt(files, manifest):
+            if corruption == "json":
+                files[self.args.manifest] = b"invalid"
+                return
+            if corruption == "source":
+                manifest["source"]["sha256"] = "0" * 64
+            elif corruption == "hash":
+                manifest["artifacts"]["core.js"]["sha256"] = "0" * 64
+            else:
+                manifest["artifacts"]["core.js"]["bytes"] += 1
+            files[self.args.manifest] = vu.json_bytes(manifest)
+        for corruption in ["json", "source", "hash", "size"]:
+            with self.subTest(corruption=corruption):
+                self.install_previous_bundle(mutate=corrupt)
+                self.args.skip_receipt_only = True
+                result = vu.deliver(self.source, self.target, self.args, self.files, self.manifest)
+                self.assertEqual(result["status"], "staged")
+
+    def test_missing_payload_or_receipt_is_repaired(self):
+        for missing in ["core.js", self.args.manifest]:
+            with self.subTest(missing=missing):
+                self.install_previous_bundle(missing=missing)
+                self.args.skip_receipt_only = True
+                result = vu.deliver(self.source, self.target, self.args, self.files, self.manifest)
+                self.assertEqual(result["status"], "staged")
 
     def test_source_receipt_and_stale_tree(self):
         vu.verify_source(self.source, self.args, self.manifest)

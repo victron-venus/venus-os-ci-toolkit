@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 import yaml
 
@@ -112,3 +113,29 @@ class DeliverySigningTests(unittest.TestCase):
                 validate(invalid, metadata)
         with self.assertRaises(SystemExit):
             validate(public, 'invalid metadata')
+
+
+class ReceiptOnlyInputTests(unittest.TestCase):
+    """Exercise the real workflow-to-CLI bridge without starting a subprocess."""
+
+    def test_boolean_input_is_opt_in_and_never_truthy_by_accident(self):
+        workflow = yaml.safe_load((ROOT / '.github/workflows/vendor-update.yml').read_text())
+        inputs = workflow[True]['workflow_call']['inputs']
+        self.assertEqual(inputs['skip-receipt-only']['type'], 'boolean')
+        self.assertIs(inputs['skip-receipt-only']['default'], False)
+        step = next(item for item in workflow['jobs']['update']['steps']
+                    if item['name'] == 'Verify the qualified artifact and propose its vendor update')
+        script = '\n'.join(step['run'].splitlines()[1:-1])
+        environment = dict.fromkeys(step['env'], 'fixture')
+        for variable in ['ARTIFACT_FILES', 'COPY_FILES', 'QUALIFYING_JOBS']:
+            environment[variable] = '["fixture"]'
+        for value in ['false', 'true', 'False', '', 'yes']:
+            with self.subTest(value=value), patch.dict(os.environ, environment | {'SKIP_RECEIPT_ONLY': value}, clear=True), patch('subprocess.run') as run:
+                if value not in ('false', 'true'):
+                    with self.assertRaisesRegex(SystemExit, 'must be true or false'):
+                        exec(compile(script, '<delivery-input>', 'exec'), {})
+                    run.assert_not_called()
+                else:
+                    exec(compile(script, '<delivery-input>', 'exec'), {})
+                    run.assert_called_once()
+                    self.assertEqual('--skip-receipt-only' in run.call_args.args[0], value == 'true')
