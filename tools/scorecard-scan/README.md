@@ -48,6 +48,18 @@ explicitly resolved to rc.3 because Scorecard's actionlint parser needs its rich
 error API; the newer YAML API used by OSV's unrelated command test helper is
 incompatible. No vulnerability exclusions are added.
 
+The OSV client is supplied through Scorecard's public `WithVulnerabilitiesClient`
+interface. It preserves the default online advisory lookup, recursive manifest
+extraction, finding deduplication and upstream Go-stdlib treatment. For OSV 2.6,
+the Python dependency enricher is disabled by its current registered name,
+`transitivedependency/requirements`, while `python/requirements` extraction stays
+enabled. Scorecard 5.5.0 used an obsolete plugin name, allowing a fresh online
+dependency resolution to report versions that were not selected by the checked-in
+lock. This follows the [upstream correction](https://github.com/ossf/scorecard/blob/2ef237f4e967d18e600e71aa36ab3be640314650/clients/osv.go).
+Advisories affecting versions actually declared in requirements files are still
+reported; scanner errors and panics still fail the analysis. The evaluator,
+reporting thresholds and official SARIF formatter are unchanged.
+
 ```sh
 go test -mod=readonly ./...
 go vet -mod=readonly ./...
