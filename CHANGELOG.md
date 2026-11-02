@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.1.9] - 2026-11-02
+
+### Fixed
+
+- Reassess 211 changed upstream advisory records against their previous canonical contents and the retained runner-image source evidence. Update only reviewed advisory identities; keep the existing source, component, prerequisite and complete-scan acceptance checks.
+- Retain explicit evidence of severity, CVSS, title, date and reference changes, including materially revised CVSS vectors. A changed description or affected source path still requires a new review.
+
+### Upgrade
+
+Adopt a reviewed immutable toolkit revision explicitly when building runner images. This source package does not update existing consumer pins, register runners or deploy images. Its release qualification and each image producer run have separate exact-source identities; a source package release does not substitute for image or site/runtime acceptance.
+
+### Security
+
+This release updates reviewed applicability metadata, not upstream dependency versions. Existing component/source proofs must continue to establish non-applicability for every retained finding. New or unexplained advisory changes remain blocked by the full scan gate; no module-wide or rule-wide suppression is added.
+
 ## [0.1.8] - 2026-10-27
 
 ### Changed
