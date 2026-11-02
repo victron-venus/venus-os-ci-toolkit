@@ -42,7 +42,12 @@ qualifying job before reading the archive. It verifies the immutable archive
 digest, exact file inventory, manifest hashes and receipt files against the
 producer Git objects. ZIP traversal, symlinks, duplicate files, extra files and
 oversized entries are rejected. The source subtree must still equal current
-`main`; qualification is checked again before publication.
+`main`; qualification is checked again before publication. GitHub may report a
+whole run as `queued` while its completed build and qualification jobs are already
+available. A queued or running snapshot is accepted only when every named
+qualifier is uniquely present and successful for that exact run attempt. The run
+identity and state are re-read after checking jobs; terminal failure, cancellation,
+timeout or an attempt change still refuses delivery.
 
 Consumer checkouts use the current default-branch commit, including when producer
 and consumer are the same repository. Only explicitly allowlisted vendor paths
@@ -56,6 +61,17 @@ and PR. Foreign or modified branches, unexpected parents/paths, closed PRs and
 changed consumer bases fail with no force push. A newer source subtree refuses
 an old run; dispatch a new producer run instead. If the consumer base advances
 during publication, retry with a fresh checkout.
+
+Producers can opt into `skip-receipt-only: true` (CLI: `--skip-receipt-only`)
+to avoid a draft when only release/source metadata changed. The default remains
+`false`. Every copied payload, including any license file, must match exactly;
+the existing receipt must validate the hashes and sizes of the entire qualified
+bundle, including artifacts that this consumer does not copy. Missing files or
+invalid/stale receipts take the normal update path. Unsafe destination types
+still fail. A successful skip preserves the existing receipt and its original
+source provenance; the JSON result records both its hash and the newly qualified
+manifest hash. It does not claim that an old receipt came from the newer source.
+Source qualification, archive validation and source-object verification still run.
 
 PRs are **drafts**, with the source commit, run URL, artifact ID/digest and receipt
 hash in their description. They are not approved or merged by this workflow.

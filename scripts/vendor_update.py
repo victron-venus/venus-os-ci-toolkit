@@ -16,7 +16,6 @@ import stat
 import subprocess
 import sys
 import tempfile
-import time
 import zipfile
 from datetime import datetime
 from pathlib import Path
@@ -194,14 +193,27 @@ class GitHub:
     def pages(self, path, field=None):
         """Bound pagination and reject malformed API inventories."""
         records = []
+        total = None
         for page in range(1, 101):
             value = self.request(
                 path + ("&" if "?" in path else "?") + f"per_page=100&page={page}"
             )
+            if field:
+                require(isinstance(value, dict), "Invalid paginated response")
+                count = value.get("total_count")
+                require(type(count) is int and 0 <= count <= 10_000,
+                        "Invalid pagination total")
+                require(total is None or total == count, "Pagination total changed")
+                total = count
             items = value.get(field) if field else value
-            require(isinstance(items, list), "Invalid paginated response")
+            require(isinstance(items, list) and len(items) <= 100,
+                    "Invalid paginated response")
             records.extend(items)
+            if total is not None:
+                require(len(records) <= total, "Pagination exceeds total")
             if len(items) < 100:
+                require(total is None or len(records) == total,
+                        "Incomplete paginated response")
                 return records
         raise ReleaseError("API pagination limit exceeded")
 
@@ -344,11 +356,11 @@ def validate_run_identity(run, repository, args):
 
 
 def validate_run(run, repository, args):
-    """Keep the accepted run-state pairs independent from transient polling."""
+    """Reject terminal failures; active runs still require exact successful jobs."""
     validate_run_identity(run, repository, args)
     require(
         (run.get("status"), run.get("conclusion"))
-        in {("in_progress", None), ("completed", "success")},
+        in {("queued", None), ("in_progress", None), ("completed", "success")},
         "Run is not qualified "
         f"(status={run_state_label(run.get('status'), RUN_STATUS_LABELS)}, "
         f"conclusion={run_state_label(run.get('conclusion'), RUN_CONCLUSION_LABELS)})",
@@ -356,25 +368,10 @@ def validate_run(run, repository, args):
 
 
 def qualified_run(source, args):
-    """Re-read a same-identity queued snapshot with at most 30 seconds of delay.
-
-    A running dependent job can briefly observe its own workflow as queued.
-    Queued is never accepted; every read revalidates the entire trusted identity.
-    Failure, cancellation, other states and exhausted retries fail immediately.
-    """
-    for attempt in range(7):
-        run = source.request(f"actions/runs/{args.run_id}")
-        repository = source.request("")
-        validate_run_identity(run, repository, args)
-        if (run.get("status"), run.get("conclusion")) == (
-            "queued",
-            None,
-        ) and attempt < 6:
-            time.sleep(5)
-            continue
-        validate_run(run, repository, args)
-        return run
-    raise AssertionError("Unreachable retry state")
+    """Validate one fresh run snapshot; queued alone does not authorize delivery."""
+    run = source.request(f"actions/runs/{args.run_id}")
+    validate_run(run, source.request(""), args)
+    return run
 
 
 def qualify(source, args):
@@ -401,7 +398,10 @@ def qualify(source, args):
             and matching[0].get("run_attempt") == args.run_attempt,
             f"Required job did not succeed: {name}",
         )
-    return run
+    # Reject cancellation, failure or a new attempt observed during job reads.
+    fresh = qualified_run(source, args)
+    require(fresh.get("workflow_id") == workflow.get("id"), "Workflow identity changed")
+    return fresh
 
 
 def validate_artifact(artifact, run, args):
@@ -472,6 +472,11 @@ def validate_bundle(archive, args):
         raise
     except (zipfile.BadZipFile, RuntimeError) as error:
         raise ReleaseError("Invalid artifact ZIP") from error
+    return files, validate_manifest(files, args)
+
+
+def validate_manifest(files, args):
+    """Validate every artifact hash/size and the self-consistency of its receipt."""
     require(len(files[args.manifest]) <= 1_000_000, "Oversized manifest")
     manifest = parse_json(files[args.manifest], "vendor manifest")
     require(
@@ -515,7 +520,7 @@ def validate_bundle(archive, args):
             isinstance(checksum, str) and HEX.fullmatch(checksum),
             "Invalid source file hash",
         )
-    return files, manifest
+    return manifest
 
 
 def verify_source(source, args, manifest):
@@ -679,6 +684,26 @@ def target_matches(args, base, files):
     return all(matches)
 
 
+def receipt_only_match(args, base, files):
+    """Preserve a valid old receipt only when its entire bundle is byte-identical."""
+    current = {}
+    for name, path in target_paths(args).items():
+        item = git_text(args.target_dir, "ls-tree", base, "--", path)
+        if not item:
+            return None
+        require(item.startswith("100644 blob "), "Vendor destination is not a regular file")
+        current[name] = git(args.target_dir, "show", f"{base}:{path}")
+        if name != args.manifest and current[name] != files[name]:
+            return None
+    try:
+        # Check even non-copied artifacts against the qualified incoming bundle.
+        # The old source receipt is preserved, never relabelled as the new source.
+        validate_manifest(files | current, args)
+    except ReleaseError:
+        return None  # Invalid or stale receipts need the normal repair PR.
+    return digest(current[args.manifest])
+
+
 # Keep signing, freshness checks and the single non-forcing push visibly ordered.
 # pylint: disable-next=too-many-locals
 def deliver(source, target, args, files, manifest):
@@ -694,6 +719,16 @@ def deliver(source, target, args, files, manifest):
     manifest_hash = digest(files[args.manifest])
     if target_matches(args, base, files):
         return {"status": "noop", "manifest_sha256": manifest_hash, "target_sha": base}
+    if args.skip_receipt_only:
+        previous_hash = receipt_only_match(args, base, files)
+        if previous_hash is not None:
+            return {
+                "status": "noop",
+                "reason": "receipt-only",
+                "manifest_sha256": previous_hash,
+                "qualified_manifest_sha256": manifest_hash,
+                "target_sha": base,
+            }
     branch = "codex/vendor-" + manifest_hash
     ref = target.optional("git/ref/heads/" + branch)
     if ref:
@@ -811,6 +846,7 @@ def parse_args(argv=None):
         )
     parser.add_argument("--source-tree", default="shared-core")
     parser.add_argument("--stage-only", action="store_true")
+    parser.add_argument("--skip-receipt-only", action="store_true")
     args = parser.parse_args(argv)
     require(
         REPOSITORY.fullmatch(args.source_repo)
