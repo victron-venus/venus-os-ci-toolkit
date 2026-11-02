@@ -11,6 +11,7 @@
 
 ### Fixed
 
+- Use OSV's current Python enricher identifier so vulnerability scans inspect declared requirements without inventing a separate resolved dependency graph. Preserve actual findings, errors and the existing Scorecard reporting policy.
 - Reject incomplete current-attempt package sets when `versioning.required_build_receipts` declares the expected producers. The dedicated `--release-inventory-only` migration adds this check to known runtimes while preserving earlier receipt-identity checks and historical promotion policy.
 - Bind release package receipts and Actions artifact selection to the exact producer run attempt, including native assembly inputs. A partial rerun cannot publish earlier-attempt packages; complete reruns retain source, version, signature and payload checks.
 - Use the provisioned Ubuntu fallback package mirror for hosted browser workers while preserving the existing planning/browser budgets and required compatibility checks.
@@ -28,7 +29,7 @@ Refresh release producers, collectors and shared fuzz workflow pins together wit
 
 ### Security
 
-Update the containerd build overlay to cilium/ebpf 0.22.0 with matching dependency and source hashes. Runner tooling builds use an unprivileged account and bind acceptance to the actual image payload. The separately tracked legacy Docker Distribution dependency remains outside this fix; source publication is not a claim that every runner dependency finding is resolved.
+Update the containerd build overlay to cilium/ebpf 0.22.0 with matching dependency and source hashes. Runner tooling builds use an unprivileged account and bind acceptance to the actual image payload. Remove the unused legacy Docker Distribution client. Update the locked scanner's x/net dependency to 0.62.0 and its required companion modules for the HTML parser fixes. Other runner dependency upgrades and image acceptance remain separately tracked; source publication is not a claim that every runner dependency finding is resolved.
 
 Consumers must retain least-privilege permissions, reviewed immutable workflow pins and trusted runner isolation. Publishing this source package does not rotate credentials or authorize changes to running services.
 

@@ -160,7 +160,8 @@ func main() {
 		_, names := reportingPolicy()
 		// GitHub branch/release metadata checks only support HEAD upstream.
 		// scanAndWrite rejects HEAD if it moved beyond the workflow commit.
-		return scorecard.Run(ctx, repo, scorecard.WithChecks(names), scorecard.WithFileModeGit())
+		return scorecard.Run(ctx, repo, scorecard.WithChecks(names), scorecard.WithFileModeGit(),
+			scorecard.WithVulnerabilitiesClient(requirementsOSVClient{}))
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
