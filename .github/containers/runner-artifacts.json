@@ -190,8 +190,8 @@
           "mode": "100644"
         },
         "scripts/build_runner_go_tools.py": {
-          "sha256": "d53f8b75fe9e06fa4caadadeaeec8b55d4d067807697266f30fcd4bd0cbd983c",
-          "bytes": 21771,
+          "sha256": "34518ae843f370566860abdd1b271363a0732f97914a70fa19ac7be1a768073a",
+          "bytes": 22956,
           "mode": "100644"
         },
         "scripts/build_runner_gstreamer.py": {
