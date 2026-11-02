@@ -1687,6 +1687,8 @@ class RunnerArtifactsTests(unittest.TestCase):
             build.ROOT / 'docs/RUNNER_ADVISORY_REVIEW_2026_10_29.json')['records']}
         amazon = {row['id']: row for row in build.document(
             build.ROOT / 'docs/RUNNER_ADVISORY_REVIEW_2026_10_29_AMAZON.json')['records']}
+        november = {row['id']: row for row in build.document(
+            build.ROOT / 'docs/RUNNER_ADVISORY_REVIEW_2026_11_02.json')['records']}
         self.assertEqual(len(records), 51)
         self.assertEqual(len({record['id'] for record in records}), len(records))
         self.assertEqual(sum(len(record['packages']) for record in records), 52)
@@ -1698,7 +1700,7 @@ class RunnerArtifactsTests(unittest.TestCase):
                 self.assertTrue(record['changes'])
                 self.assertTrue(record['unchanged_applicability_basis'])
                 current_hash = record['current_advisory_sha256']
-                for later in (latest, amazon):
+                for later in (latest, amazon, november):
                     if record['id'] in later:
                         next_record = later[record['id']]
                         self.assertEqual(next_record['previous_advisory_sha256'], current_hash)
@@ -1725,6 +1727,8 @@ class RunnerArtifactsTests(unittest.TestCase):
         self.assertEqual(amazon['previous_review'],
                          {'document': path.name, 'sha256': oci.digest_file(path)})
         following = {row['id']: row for row in amazon['records']}
+        november = {row['id']: row for row in build.document(
+            build.ROOT / 'docs/RUNNER_ADVISORY_REVIEW_2026_11_02.json')['records']}
         records = review['records']
         self.assertEqual(len(records), 36)
         self.assertEqual(len({r['id'] for r in records}), 36)
@@ -1743,6 +1747,10 @@ class RunnerArtifactsTests(unittest.TestCase):
                     next_record = following[record['id']]
                     self.assertEqual(next_record['previous_advisory_sha256'], current_hash)
                     current_hash = next_record['current_advisory_sha256']
+                if record['id'] in november:
+                    next_record = november[record['id']]
+                    self.assertEqual(next_record['previous_advisory_sha256'], current_hash)
+                    current_hash = next_record['current_advisory_sha256']
                 if record['component'] == 'gstreamer':
                     self.assertEqual(current_hash, build.SCAN_POLICY['gstreamer']['advisory_sha256'])
                 else:
@@ -1754,8 +1762,13 @@ class RunnerArtifactsTests(unittest.TestCase):
         path = build.ROOT / 'docs/RUNNER_ADVISORY_REVIEW_2026_10_29_AMAZON.json'
         review = build.document(path)
         applicability = build.document(build.ROOT / 'docs/RUNNER_SCAN_APPLICABILITY.json')
-        self.assertEqual(applicability['latest_advisory_reassessment'],
+        november_path = build.ROOT / 'docs/RUNNER_ADVISORY_REVIEW_2026_11_02.json'
+        november_review = build.document(november_path)
+        self.assertEqual(november_review['previous_review'],
                          {'document': path.name, 'sha256': oci.digest_file(path)})
+        self.assertEqual(applicability['latest_advisory_reassessment'],
+                         {'document': november_path.name, 'sha256': oci.digest_file(november_path)})
+        november = {row['id']: row for row in november_review['records']}
         records = review['records']
         self.assertEqual(len(records), 31)
         self.assertEqual(len({record['id'] for record in records}), 31)
@@ -1776,8 +1789,45 @@ class RunnerArtifactsTests(unittest.TestCase):
                 self.assertTrue(record['all_other_advisory_fields_typed_equal'])
                 self.assertEqual(record['current_cna_sha256'], record['prior_cna_sha256'])
                 self.assertNotEqual(record['previous_advisory_sha256'], record['current_advisory_sha256'])
-                self.assertEqual([record['component'], record['current_advisory_sha256'], record['rule_id']],
+                current_hash = record['current_advisory_sha256']
+                if record['id'] in november:
+                    next_record = november[record['id']]
+                    self.assertEqual(next_record['previous_advisory_sha256'], current_hash)
+                    current_hash = next_record['current_advisory_sha256']
+                self.assertEqual([record['component'], current_hash, record['rule_id']],
                                  build.SCAN_POLICY['advisories'][record['id']])
+        self.assertNotIn('/Users/', path.read_text())
+        self.assertNotIn('/home/', path.read_text())
+
+    def test_november_reassessment_keeps_exact_advisory_and_component_scope(self):
+        path = build.ROOT / 'docs/RUNNER_ADVISORY_REVIEW_2026_11_02.json'
+        review = build.document(path)
+        rows = review['records']
+        self.assertEqual(len(rows), 211)
+        self.assertEqual(len({row['id'] for row in rows}), 211)
+        self.assertEqual(sum(len(row['packages']) for row in rows), 212)
+        self.assertEqual(review['original_workflow_result'],
+                         'failure at final applicability gate; preserved unchanged')
+        self.assertEqual(sum('cvss_review' in row for row in rows), 28)
+        self.assertEqual(sum('title_review' in row for row in rows), 5)
+        for row in rows:
+            with self.subTest(advisory=row['id']):
+                self.assertNotEqual(row['previous_advisory_sha256'], row['current_advisory_sha256'])
+                self.assertTrue(row['all_other_advisory_fields_typed_equal'])
+                self.assertTrue(row['unchanged_applicability_basis'])
+                self.assertTrue(row['source_documents'])
+                if row['component'] == 'gstreamer':
+                    self.assertEqual(row['current_advisory_sha256'], build.SCAN_POLICY['gstreamer']['advisory_sha256'])
+                else:
+                    self.assertEqual([row['component'], row['current_advisory_sha256'], row['rule_id']],
+                                     build.SCAN_POLICY['advisories'][row['id']])
+                if row['component'] == 'headers':
+                    self.assertTrue(row['program_files_unchanged'])
+                    self.assertTrue(row['description_matches_current_cna'])
+                    self.assertTrue(row['program_files'])
+                self.assertTrue(row['changes'])
+                self.assertLessEqual({change['path'].split('/')[1] for change in row['changes']},
+                                     {'References', 'LastModifiedDate', 'VendorSeverity', 'CVSS', 'Title'})
         self.assertNotIn('/Users/', path.read_text())
         self.assertNotIn('/home/', path.read_text())
 
