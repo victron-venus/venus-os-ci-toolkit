@@ -1099,6 +1099,7 @@ PY
         "concurrency": {
             "group": "release-${{ github.repository }}",
             "cancel-in-progress": False,
+            "queue": "max",
         },
         "jobs": jobs,
     }
