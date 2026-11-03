@@ -558,6 +558,15 @@ jobs:
         self.assertEqual(result["jobs"]["gate"]["name"], "CI gate")
         self.assertEqual(result["jobs"]["gate"]["if"], "${{ always() }}")
 
+    def test_toolkit_self_release_keeps_generated_queue(self):
+        """The checked-in publisher must retain the generated bounded queue."""
+        policy = json.loads((installer.ROOT / installer.POLICY_FILE).read_text())
+        workflow = installer.yaml.load(
+            (installer.ROOT / ".github/workflows/release-pipeline.yml").read_text(),
+            Loader=installer.WorkflowLoader,
+        )
+        self.assertEqual(workflow["concurrency"], installer.release(policy)["concurrency"])
+
     def test_toolkit_self_release_uses_original_tests_without_exported_copies(self):
         """Self qualification keeps full tests and dependencies without duplication."""
         files = installer.render(installer.ROOT)
