@@ -211,11 +211,14 @@ def required_build_receipts(config: dict[str, object]) -> set[str] | None:
     names = config["required_build_receipts"]
     if (
         not isinstance(names, list) or not names
-        or any(not isinstance(name, str)
+        or any(not isinstance(name, str) or len(name) > 200
                or not re.fullmatch(r"release-inputs-[A-Za-z0-9._-]+\.json", name, re.ASCII)
                or name == "release-inputs-fuzz.json" for name in names)
     ):
-        raise VersionError("required_build_receipts must be nonempty ASCII package receipt filenames")
+        raise VersionError(
+            "required_build_receipts must be nonempty ASCII package receipt filenames "
+            "of at most 200 characters"
+        )
     require(
         len({name.casefold() for name in names}) == len(names),
         "required_build_receipts contains duplicate or case-colliding filenames",
