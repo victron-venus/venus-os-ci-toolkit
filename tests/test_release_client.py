@@ -37,6 +37,63 @@ class GeneratorTest(unittest.TestCase):
             "validation_workflows": ["ci.yml", "codeql.yml"],
         }
 
+    def test_release_triggers_share_a_non_cancelling_queue(self):
+        """A scheduled release must not replace a waiting manual release."""
+        for promotion in (None, "final-build", "promote-bytes"):
+            with self.subTest(promotion=promotion):
+                policy = dict(self.policy)
+                if promotion is not None:
+                    policy["versioning"] = {
+                        "schema": 1,
+                        "promotion": promotion,
+                        "files": [{"path": "version", "format": "text"}],
+                    }
+                workflow = installer.release(policy)
+                self.assertEqual(
+                    set(workflow["on"]), {"push", "schedule", "workflow_dispatch"}
+                )
+                self.assertEqual(
+                    workflow["concurrency"],
+                    {
+                        "group": "release-${{ github.repository }}",
+                        "cancel-in-progress": False,
+                        "queue": "max",
+                    },
+                )
+
+    def test_rendered_release_queue_preserves_pr_cancellation(self):
+        """Consumer YAML queues releases without changing superseded PR handling."""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            workflows = root / ".github/workflows"
+            workflows.mkdir(parents=True)
+            for name in (*self.policy["validation_workflows"], "release-build.yml"):
+                (workflows / name).write_text("on: {workflow_call: {}}\njobs: {}\n")
+            for single_entry in (False, True):
+                with self.subTest(single_entry=single_entry):
+                    policy = dict(self.policy, single_entry_ci=single_entry)
+                    (root / installer.POLICY_FILE).write_text(json.dumps(policy))
+                    files = installer.render(root)
+                    release = installer.yaml.load(
+                        files[".github/workflows/release-pipeline.yml"],
+                        Loader=installer.WorkflowLoader,
+                    )
+                    quality = installer.yaml.load(
+                        files[".github/workflows/quality-gate.yml"],
+                        Loader=installer.WorkflowLoader,
+                    )
+                    self.assertEqual(release["concurrency"]["queue"], "max")
+                    self.assertIs(release["concurrency"]["cancel-in-progress"], False)
+                    self.assertEqual(
+                        release["concurrency"]["group"],
+                        "release-${{ github.repository }}",
+                    )
+                    self.assertEqual(
+                        quality["concurrency"]["cancel-in-progress"],
+                        "${{ github.event_name == 'pull_request' }}",
+                    )
+                    self.assertNotIn("queue", quality["concurrency"])
+
     def test_rendered_contract_jobs_install_shipped_hash_locked_dependencies(self):
         """Legacy and single-entry release jobs install dependencies before tests."""
         with tempfile.TemporaryDirectory() as temp:
