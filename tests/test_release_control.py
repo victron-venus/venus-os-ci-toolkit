@@ -1575,6 +1575,26 @@ class TransportTests(unittest.TestCase):
                 gh.api(path, method, body)
             command.assert_not_called()
 
+    def test_attempt_detail_route_rejects_invalid_ids_and_write_methods(self):
+        """The added metadata route grants no write, query or traversal surface."""
+        with patch.dict(os.environ, {"RELEASE_REQUIRE_WORKFLOW_SCOPE": ""}):
+            gh = rc.GitHub(REPO)
+        cases = [(path, "GET", None) for path in (
+            "actions/runs/0/attempts/2", "actions/runs/123/attempts/0",
+            "actions/runs/0123/attempts/2", "actions/runs/123/attempts/02",
+            "actions/runs/123/attempts/2/", "actions/runs/123/attempts/2?x=1",
+            "actions/runs/123/attempts/2/artifacts", "actions/runs/123/attempts/%32",
+            "actions/runs/١٢٣/attempts/2", "actions/runs/123/attempts/٢",
+            "actions/runs/1١/attempts/2", "actions/runs/123/attempts/2٢",
+        )]
+        cases += [("actions/runs/123/attempts/2", method, {})
+                  for method in ("POST", "PATCH", "PUT", "DELETE")]
+        for path, method, body in cases:
+            with self.subTest(path=path, method=method), patch.object(rc.subprocess, "run") as command:
+                with self.assertRaises(rc.ReleaseError):
+                    gh.request(path, method, body)
+                command.assert_not_called()
+
     def test_default_endpoint_and_json_body_have_fixed_argument_boundaries(self):
         """A hostile body remains stdin data, never command-line options."""
         gh = rc.GitHub(REPO)
@@ -2791,6 +2811,23 @@ class CurrentAttemptFreshnessTests(unittest.TestCase):
     def test_fresh_execution_and_old_run_creation_are_accepted(self):
         self.check()
         self.gh.api.assert_called_once_with('actions/runs/123/attempts/2')
+
+    def test_fresh_attempt_uses_the_real_allowlisted_transport(self):
+        """Exercise API shape validation as well as the execution-time guard."""
+        with (
+            patch.dict(os.environ, {"RELEASE_REQUIRE_WORKFLOW_SCOPE": ""}),
+            patch.object(rc.subprocess, "run", return_value=http_response(
+                0, rc.json_bytes(self.detail)
+            )) as command,
+        ):
+            gh = rc.GitHub(REPO)
+            rc.require_current_attempt_jobs(gh, 123, SHA, 2, [self.job])
+        command.assert_called_once()
+        self.assertEqual(command.call_args.args[0], [
+            "gh", "api", "--hostname", "github.com", "--include", "--method", "GET",
+            "--", f"repos/{REPO}/actions/runs/123/attempts/2",
+        ])
+        self.assertEqual(command.call_args.kwargs["timeout"], 30)
 
     def test_timezone_offsets_compare_as_instants(self):
         self.detail['run_started_at'] = '2026-11-02T18:00:00-08:00'

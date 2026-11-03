@@ -85,6 +85,7 @@ API_PATHS = {
         "releases/tags/" + TAG_RE.pattern,
         "git/ref/tags/" + TAG_RE.pattern,
         r"actions/runs/[1-9]\d*(?:/artifacts|/attempts/[1-9]\d*/jobs)?",
+        r"actions/runs/[1-9]\d*/attempts/[1-9]\d*",
         r"actions/artifacts/[1-9]\d*/zip",
         r"contents/\.release-policy\.json\?ref=[0-9a-f]{40}",
         r"contents/CHANGELOG\.md\?ref=[0-9a-f]{40}",
