@@ -68,5 +68,13 @@ prove every consumer configuration or grant approval to deploy software.
 Release reruns also verify successful job and step timestamps against the exact
 attempt start. GitHub can clone a prior successful job into a newer attempt with
 a new job ID and attempt number while keeping its original execution times.
-Those metadata fields alone do not prove a fresh validation; use complete reruns
-under the [publication-phase retry rules](VERSIONING.md#package-identity-across-reruns).
+Those metadata fields alone do not prove a fresh validation.
+
+After a terminal infrastructure failure, retain that attempt's diagnostics and
+inspect existing tags, releases and assets, and check for another active release
+run. If publication has not started and the allocator and release policy permit
+reuse, use **Re-run all jobs** at the unchanged source so package receipts and
+the RC fuzz report belong to one attempt. Follow the [publication-phase retry rules](VERSIONING.md#package-identity-across-reruns)
+when publication has started or its result is uncertain. Older evidence cannot
+fill gaps; [consumer browser qualification](BROWSER_COMPATIBILITY.md)
+also requires a complete current attempt.

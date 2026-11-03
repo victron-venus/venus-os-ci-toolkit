@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.1.10] - 2026-11-03
+
+### Fixed
+
+- Recover metadata, buffered release-asset and Actions ZIP reads from recognized transient transport failures and HTTP 500, 502, 503 or 504 responses. Retry only read-only GET requests, at most three times, with 30-second metadata and 120-second buffered-download attempt limits. Discard failed responses instead of appending partial bytes.
+- Reject copied successful validation jobs on release reruns. Check their source, attempt and execution intervals against the exact attempt start; a new job ID or attempt number cannot make earlier CI or browser verdicts fresh.
+- Preserve multiple pending manual and scheduled releases in generated workflows and the toolkit's own publisher, up to [GitHub's 100-run queue limit](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency#example-queueing-multiple-pending-runs). Running releases remain protected from cancellation.
+
+### Changed
+
+- Pin the optional ARC controller candidate to 0.15.1, retain scale-set charts at 0.15.0, and record controller chart, archive and image identities separately. Record the four bounded reconciliation settings explicitly.
+- Support the exact 0.15.0 and 0.15.1 controller user-agent values during the private-worker rollback window, while retaining duplicate, substitution and unexpected-variable rejection.
+- Document controller recovery using a durable record of the deployed Helm revision, owned Deployment and Kubernetes context. Keep controller readiness and a completed canary as separate rollout checks.
+- Refresh the locked Renovate runtime, GitHub Actions and reusable-workflow references.
+
+### Upgrade
+
+Adopt a reviewed immutable toolkit revision explicitly. Existing copied release clients and generated workflows need a reviewed installer refresh to receive the GET recovery, rerun validation and release queue changes. This source package does not update consumer pins, register runners or deploy the ARC controller. Qualify any controller rollout separately using the documented admission, capacity, canary and rollback checks.
+
+### Security
+
+Authentication, certificate, missing-resource and rate-limit failures are not retried. Writes remain single attempts; streamed downloads retain their existing time, size, disk-space and digest limits. Rerun validation fails closed on missing or inconsistent job and step timing; first-attempt behavior remains unchanged. Candidate source, provenance, version, complete asset inventory and payload checks remain required. The controller admission change allows only the two exact reviewed user-agent values and does not broaden worker permissions.
+
 ## [0.1.9] - 2026-11-02
 
 ### Fixed

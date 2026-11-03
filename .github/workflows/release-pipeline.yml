@@ -36,6 +36,7 @@ permissions:
 concurrency:
   group: release-${{ github.repository }}
   cancel-in-progress: false
+  queue: max
 jobs:
   scope:
     name: Change scope
