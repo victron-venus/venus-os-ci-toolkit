@@ -1575,6 +1575,26 @@ class TransportTests(unittest.TestCase):
                 gh.api(path, method, body)
             command.assert_not_called()
 
+    def test_attempt_detail_route_rejects_invalid_ids_and_write_methods(self):
+        """The added metadata route grants no write, query or traversal surface."""
+        with patch.dict(os.environ, {"RELEASE_REQUIRE_WORKFLOW_SCOPE": ""}):
+            gh = rc.GitHub(REPO)
+        cases = [(path, "GET", None) for path in (
+            "actions/runs/0/attempts/2", "actions/runs/123/attempts/0",
+            "actions/runs/0123/attempts/2", "actions/runs/123/attempts/02",
+            "actions/runs/123/attempts/2/", "actions/runs/123/attempts/2?x=1",
+            "actions/runs/123/attempts/2/artifacts", "actions/runs/123/attempts/%32",
+            "actions/runs/١٢٣/attempts/2", "actions/runs/123/attempts/٢",
+            "actions/runs/1١/attempts/2", "actions/runs/123/attempts/2٢",
+        )]
+        cases += [("actions/runs/123/attempts/2", method, {})
+                  for method in ("POST", "PATCH", "PUT", "DELETE")]
+        for path, method, body in cases:
+            with self.subTest(path=path, method=method), patch.object(rc.subprocess, "run") as command:
+                with self.assertRaises(rc.ReleaseError):
+                    gh.request(path, method, body)
+                command.assert_not_called()
+
     def test_default_endpoint_and_json_body_have_fixed_argument_boundaries(self):
         """A hostile body remains stdin data, never command-line options."""
         gh = rc.GitHub(REPO)
@@ -2770,6 +2790,113 @@ class AtomicOutputTests(unittest.TestCase):
         self.assertTrue(self.output.is_symlink())
         self.assertEqual(original.read_bytes(), self.before)
         self.assertEqual(list(self.root.glob(".release-output-*")), [])
+
+
+class CurrentAttemptFreshnessTests(unittest.TestCase):
+    def setUp(self):
+        self.detail = {'id': 123, 'run_attempt': 2, 'head_sha': SHA, 'path': rc.WORKFLOW,
+                       'run_started_at': '2026-11-03T02:00:00Z',
+                       'created_at': '2026-11-03T01:00:00Z'}
+        self.job = {'name': 'checks / CI gate', 'status': 'completed', 'conclusion': 'success',
+                    'head_sha': SHA, 'run_attempt': 2, 'started_at': '2026-11-03T02:01:00Z',
+                    'completed_at': '2026-11-03T02:05:00Z',
+                    'steps': [{'name': 'Check', 'status': 'completed', 'conclusion': 'success',
+                               'started_at': '2026-11-03T02:02:00Z', 'completed_at': '2026-11-03T02:04:00Z'}]}
+        self.gh = Mock()
+        self.gh.api.return_value = self.detail
+
+    def check(self, jobs=None):
+        rc.require_current_attempt_jobs(self.gh, 123, SHA, 2, [self.job] if jobs is None else jobs)
+
+    def test_fresh_execution_and_old_run_creation_are_accepted(self):
+        self.check()
+        self.gh.api.assert_called_once_with('actions/runs/123/attempts/2')
+
+    def test_fresh_attempt_uses_the_real_allowlisted_transport(self):
+        """Exercise API shape validation as well as the execution-time guard."""
+        with (
+            patch.dict(os.environ, {"RELEASE_REQUIRE_WORKFLOW_SCOPE": ""}),
+            patch.object(rc.subprocess, "run", return_value=http_response(
+                0, rc.json_bytes(self.detail)
+            )) as command,
+        ):
+            gh = rc.GitHub(REPO)
+            rc.require_current_attempt_jobs(gh, 123, SHA, 2, [self.job])
+        command.assert_called_once()
+        self.assertEqual(command.call_args.args[0], [
+            "gh", "api", "--hostname", "github.com", "--include", "--method", "GET",
+            "--", f"repos/{REPO}/actions/runs/123/attempts/2",
+        ])
+        self.assertEqual(command.call_args.kwargs["timeout"], 30)
+
+    def test_timezone_offsets_compare_as_instants(self):
+        self.detail['run_started_at'] = '2026-11-02T18:00:00-08:00'
+        self.check()
+
+    def test_first_attempt_preserves_historical_missing_clock_contract(self):
+        rc.require_current_attempt_jobs(self.gh, 123, SHA, 1, [{'conclusion': 'success'}])
+        self.gh.api.assert_not_called()
+
+    def test_cloned_success_rejected_even_with_new_attempt_number(self):
+        self.job.update(started_at='2026-11-03T01:01:00Z', completed_at='2026-11-03T01:05:00Z')
+        with self.assertRaisesRegex(rc.ReleaseError, 'predates'):
+            self.check()
+
+    def test_old_steps_cannot_hide_under_new_job_timestamps(self):
+        self.job['steps'][0].update(started_at='2026-11-03T01:01:00Z', completed_at='2026-11-03T01:05:00Z')
+        with self.assertRaisesRegex(rc.ReleaseError, 'outside'):
+            self.check()
+
+    def test_intentional_skips_and_unfinished_publisher_do_not_need_clocks(self):
+        self.job['steps'].append({'conclusion': 'skipped'})
+        self.job['steps'].append({'conclusion': 'failure', 'status': 'completed'})
+        self.check([self.job, {'status': 'completed', 'conclusion': 'skipped'},
+                    {'status': 'in_progress', 'conclusion': None}])
+
+    def test_wrong_attempt_metadata_is_rejected(self):
+        for key, value in [('id', 124), ('head_sha', 'b' * 40), ('run_attempt', 1), ('path', 'wrong.yml')]:
+            with self.subTest(key=key), self.assertRaisesRegex(rc.ReleaseError, 'identity'):
+                self.gh.api.return_value = self.detail | {key: value}
+                self.check()
+
+    def test_malformed_attempt_metadata_is_actionable(self):
+        for bad in [None, [], "invalid", 2, True]:
+            with self.subTest(value=bad), self.assertRaisesRegex(rc.ReleaseError, "Malformed release attempt metadata"):
+                self.gh.api.return_value = bad
+                self.check()
+
+    def test_successful_job_needs_executed_success_step(self):
+        self.job['steps'] = [{'status': 'completed', 'conclusion': 'skipped'}]
+        with self.assertRaisesRegex(rc.ReleaseError, "lacks successful execution steps"):
+            self.check()
+
+    def test_wrong_successful_job_identity_is_rejected(self):
+        for key, value in [('head_sha', 'b' * 40), ('run_attempt', 1), ('head_sha', None)]:
+            with self.subTest(key=key), self.assertRaisesRegex(rc.ReleaseError, 'differs'):
+                self.check([self.job | {key: value}])
+
+    def test_missing_naive_invalid_and_non_string_timestamps_are_rejected(self):
+        for bad in [None, '', 0, '2026-11-03T02:00:00', '2026-99-03T02:00:00Z', '2026-11-03T02:00:00+00:60', '2026-11-03T02:00:00+24:00', 'now']:
+            for target, key in [('detail', 'run_started_at'), ('job', 'started_at'), ('job', 'completed_at'),
+                                ('step', 'started_at'), ('step', 'completed_at')]:
+                with self.subTest(target=target, key=key, bad=bad), self.assertRaises(rc.ReleaseError):
+                    detail, job = deepcopy(self.detail), deepcopy(self.job)
+                    (detail if target == 'detail' else job if target == 'job' else job['steps'][0])[key] = bad
+                    self.gh.api.return_value = detail
+                    self.check([job])
+        self.gh.api.return_value = self.detail
+
+    def test_timestamp_shape_rejects_non_ascii_digits(self):
+        for value in ["٢٠٢٦-11-03T02:00:00Z", "2026-11-03T٠٢:00:00Z",
+                      "2026-11-03T02:00:00.٥Z", "2026-11-03T02:00:00+٠٠:00"]:
+            with self.subTest(value=value), self.assertRaises(rc.ReleaseError):
+                rc._execution_timestamp(value, "test timestamp")
+
+    def test_reversed_intervals_and_missing_steps_are_rejected(self):
+        for changes in [{'completed_at': '2026-11-03T02:00:00Z'}, {'steps': []}, {'steps': None},
+                        {'steps': [{'conclusion': 'success', 'status': 'queued'}]}, {'steps': [None]}]:
+            with self.subTest(changes=changes), self.assertRaises(rc.ReleaseError):
+                self.check([self.job | changes])
 
 
 if __name__ == "__main__":

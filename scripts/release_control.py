@@ -85,6 +85,7 @@ API_PATHS = {
         "releases/tags/" + TAG_RE.pattern,
         "git/ref/tags/" + TAG_RE.pattern,
         r"actions/runs/[1-9]\d*(?:/artifacts|/attempts/[1-9]\d*/jobs)?",
+        r"actions/runs/[1-9]\d*/attempts/[1-9]\d*",
         r"actions/artifacts/[1-9]\d*/zip",
         r"contents/\.release-policy\.json\?ref=[0-9a-f]{40}",
         r"contents/CHANGELOG\.md\?ref=[0-9a-f]{40}",
@@ -1295,6 +1296,64 @@ def validate_run_provenance(
     )
 
 
+def _execution_timestamp(value: object, label: str) -> datetime:
+    """Normalize timezone-explicit Actions timestamps before comparing intervals."""
+    require(isinstance(value, str), f"Missing or malformed {label}")
+    text = cast(str, value)
+    if text.endswith("Z"):
+        local_time = text[:-1]
+    else:
+        local_time, offset = text[:-6], text[-6:]
+        require(re.fullmatch(r"[+-](?:[01]\d|2[0-3]):[0-5]\d", offset, re.ASCII) is not None,
+                f"Missing or malformed {label}")
+    require(re.fullmatch(
+        r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?", local_time, re.ASCII
+    ) is not None, f"Missing or malformed {label}")
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00")).astimezone(timezone.utc)
+    except ValueError as error:
+        raise ReleaseError(f"Missing or malformed {label}") from error
+
+
+def _require_fresh_job_timing(job: JSONObject, boundary: datetime) -> None:
+    """A cloned success is not proof that its job or steps executed this attempt."""
+    start = _execution_timestamp(job.get("started_at"), "job start")
+    end = _execution_timestamp(job.get("completed_at"), "job completion")
+    require(boundary <= start <= end, "Successful job predates the current release attempt")
+    steps = job.get("steps")
+    require(isinstance(steps, list) and bool(steps), "Successful job lacks execution steps")
+    require(all(isinstance(step, dict) for step in steps), "Malformed job execution step")
+    successful_steps = [step for step in cast(list[JSONObject], steps) if step.get("conclusion") == "success"]
+    require(bool(successful_steps), "Successful job lacks successful execution steps")
+    for step in successful_steps:
+        require(step.get("status") == "completed", "Successful job has incomplete execution steps")
+        step_start = _execution_timestamp(step.get("started_at"), "step start")
+        step_end = _execution_timestamp(step.get("completed_at"), "step completion")
+        require(start <= step_start <= step_end <= end,
+                "Executed step lies outside the current job interval")
+
+
+def require_current_attempt_jobs(
+    gh: GitHub, run_id: int, sha: str, attempt: int, jobs: list[JSONObject]
+) -> None:
+    """Keep first-attempt compatibility; reruns need fresh successful executions."""
+    if attempt == 1:
+        return
+    raw_detail = gh.api(f"actions/runs/{run_id}/attempts/{attempt}")
+    require(isinstance(raw_detail, dict), "Malformed release attempt metadata")
+    detail = cast(JSONObject, raw_detail)
+    require(detail.get("id") == run_id and detail.get("run_attempt") == attempt
+            and detail.get("head_sha") == sha and detail.get("path") == WORKFLOW,
+            "Release attempt metadata identity mismatch")
+    boundary = _execution_timestamp(detail.get("run_started_at"), "release attempt start")
+    for job in jobs:
+        if job.get("status") != "completed" or job.get("conclusion") != "success":
+            continue
+        require(job.get("head_sha") == sha and job.get("run_attempt") == attempt,
+                "Successful job differs from the current release attempt")
+        _require_fresh_job_timing(job, boundary)
+
+
 def release_gate_ready(
     gh: GitHub, run_id: int, sha: str, attempt: int, *, allow_pending: bool = False
 ) -> bool:
@@ -1320,6 +1379,7 @@ def release_gate_ready(
         gate.get("status") == "completed" and gate.get("conclusion") == "success",
         failure,
     )
+    require_current_attempt_jobs(gh, run_id, sha, attempt, jobs)
     return True
 
 
