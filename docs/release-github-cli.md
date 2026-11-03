@@ -49,6 +49,23 @@ strong chain and rejects 1024-bit RSA at the leaf, intermediate and root before
 HTTP. The test uses only temporary trust and synthetic tokens. It neither changes
 the OS trust store nor connects to a real authenticated service.
 
+## Read recovery
+
+The release client retries complete GET responses at most three times for
+recognized connection loss, timeouts and HTTP 500/502/503/504. Each metadata
+attempt is limited to 30 seconds; buffered release-asset and Actions ZIP reads
+are limited to 120 seconds. Existing jitter adds at most six seconds overall.
+A failed response is discarded before retrying. Authentication, authorization,
+certificate errors, missing resources, rate limits and malformed successful
+responses fail closed. HTTP status remains authoritative for resource absence;
+error prose cannot authorize publication.
+
+POST, PATCH, PUT and uploads are never replayed. Large streamed downloads retain
+their separate 900-second limit, expected size/hash, cumulative byte budget and
+free-space floor. They remain single attempts: restarting them requires an
+explicit budget for transferred-and-discarded bytes. Recovery does not relax
+source, manifest, signature, provenance or payload validation.
+
 ## Scoped dependency assessment — 2026-10-22
 
 This covers `gh api`, `gh repo view`, `gh workflow run`, `gh run list` and

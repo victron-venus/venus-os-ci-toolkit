@@ -246,14 +246,12 @@ class MetadataReadRetryTests(unittest.TestCase):
             run.assert_called_once()
             sleep.assert_not_called()
 
-    def test_writes_and_binary_transfers_are_not_replayed(self):
+    def test_writes_are_not_replayed(self):
         gh = rc.GitHub(REPO)
         cases = [
             ("releases", "POST", {"tag_name": RC_TAG}, "json"),
             ("releases/42", "PATCH", {"draft": False}, "json"),
             ("contents/release-version-state.json", "PUT", {"branch": "release-version-state"}, "json"),
-            ("releases/assets/42", "GET", None, "asset"),
-            ("actions/artifacts/42/zip", "GET", None, "json"),
         ]
         for (path, method, body, mode), error_format in product(cases, self.ERROR_FORMATS):
             with (
@@ -268,6 +266,101 @@ class MetadataReadRetryTests(unittest.TestCase):
             run.assert_called_once()
             sleep.assert_not_called()
             self.assertNotIn("timeout", run.call_args.kwargs)
+
+
+class WholeReadRecoveryTests(unittest.TestCase):
+    def setUp(self):
+        self.gh = rc.GitHub(REPO)
+
+    @staticmethod
+    def failed(stderr=b"unexpected EOF", stdout=b"", code=1):
+        return subprocess.CompletedProcess([], code, stdout, stderr)
+
+    def test_known_transport_losses_retry_whole_metadata_response(self):
+        for message in (b"unexpected EOF", b"EOF", b"connection reset by peer", b"i/o timeout",
+                        b"TLS handshake timeout", b"context deadline exceeded", b"Client.Timeout exceeded",
+                        b"server closed idle connection", b"use of closed network connection"):
+            with self.subTest(message=message), patch.object(rc.subprocess, "run", side_effect=[
+                    self.failed(message), http_response(stdout=b'{"id":7}')]) as run, patch.object(rc.time, "sleep"):
+                self.assertEqual(self.gh.api("releases/7"), {"id": 7})
+                self.assertEqual(run.call_count, 2)
+                self.assertTrue(all(x.kwargs["timeout"] == 30 for x in run.call_args_list))
+
+    def test_whole_asset_and_zip_retry_discard_failed_binary_prefix(self):
+        partial = self.failed(stdout=http_response(stdout=b"PARTIAL").stdout)
+        payload = bytes(range(256)) + b"HTTP/2.0 404 body data"
+        for path in ("releases/assets/7", "actions/artifacts/7/zip"):
+            with self.subTest(path=path), patch.object(rc.subprocess, "run", side_effect=[
+                    partial, http_response(stdout=payload)]) as run, patch.object(rc.time, "sleep"):
+                self.assertEqual(self.gh.binary(path), payload)
+                self.assertEqual(run.call_count, 2)
+                self.assertTrue(all(x.kwargs["timeout"] == 120 for x in run.call_args_list))
+                self.assertEqual(run.call_args_list[0], run.call_args_list[1])
+                self.assertEqual("Accept: application/octet-stream" in run.call_args.args[0], path.startswith("releases/"))
+
+    def test_repeated_asset_timeouts_are_bounded(self):
+        with patch.object(rc.subprocess, "run", side_effect=subprocess.TimeoutExpired(
+                ["gh"], 120, output=b"partial")) as run, patch.object(rc.time, "sleep") as sleep:
+            with self.assertRaises(rc.GitHubError):
+                self.gh.binary("releases/assets/7")
+        self.assertEqual(run.call_count, 3)
+        self.assertEqual(sleep.call_count, 2)
+        self.assertTrue(all(x.kwargs["timeout"] == 120 for x in run.call_args_list))
+
+    def test_binary_5xx_retries_but_other_statuses_never_do(self):
+        for status in (500, 502, 503, 504):
+            with self.subTest(status=status), patch.object(rc.subprocess, "run", side_effect=[
+                    http_response(status), http_response(stdout=b"good")]) as run, patch.object(rc.time, "sleep"):
+                self.assertEqual(self.gh.binary("releases/assets/7"), b"good")
+                self.assertEqual(run.call_count, 2)
+        for status in (400, 401, 403, 404, 409, 422, 429, 501):
+            with self.subTest(status=status), patch.object(rc.subprocess, "run", return_value=http_response(status)) as run:
+                with self.assertRaises(rc.GitHubError):
+                    self.gh.binary("releases/assets/7")
+                run.assert_called_once()
+
+    def test_auth_certificate_and_partial_denials_veto_transport_retry(self):
+        for message in (b"requires authentication; unexpected EOF", b"bad credentials; i/o timeout",
+                        b"x509 certificate error; unexpected EOF", b"permission denied; EOF", b"rate limit; EOF"):
+            for result in (self.failed(message), subprocess.TimeoutExpired(["gh"], 30, stderr=message)):
+                with self.subTest(message=message, result=type(result).__name__), patch.object(rc.subprocess, "run", side_effect=[result]) as run:
+                    with self.assertRaises(rc.GitHubError):
+                        self.gh.api("releases")
+                    run.assert_called_once()
+        for status in (401, 403, 404, 429):
+            result = self.failed(stdout=f"HTTP/2.0 {status} Denied\r\n".encode())
+            with self.subTest(status=status), patch.object(rc.subprocess, "run", return_value=result) as run:
+                with self.assertRaises(rc.GitHubError) as error:
+                    self.gh.optional("releases/7")
+                self.assertFalse(error.exception.not_found)
+                run.assert_called_once()
+
+    def test_successful_exit_with_malformed_content_never_retries(self):
+        for result in (self.failed(code=0), http_response(stdout=b"{broken")):
+            with self.subTest(result=result), patch.object(rc.subprocess, "run", return_value=result) as run:
+                with self.assertRaises(rc.ReleaseError):
+                    self.gh.api("releases")
+                run.assert_called_once()
+        malformed = http_response(stdout=b'[]\nHTTP/2.0 200 OK\r\n\r\n{broken')
+        with patch.object(rc.subprocess, "run", return_value=malformed) as run:
+            with self.assertRaises(rc.GitHubError):
+                self.gh.pages("releases")
+            run.assert_called_once()
+
+    def test_unknown_cli_failures_and_success_code_5xx_never_retry(self):
+        for result in (self.failed(b"unknown CLI failure"), self.failed(b"unexpected EOF", code=2),
+                       self.failed(stdout=http_response(503).stdout, code=0)):
+            with self.subTest(result=result), patch.object(rc.subprocess, "run", return_value=result) as run:
+                with self.assertRaises(rc.GitHubError):
+                    self.gh.api("releases")
+                run.assert_called_once()
+
+    def test_transport_retry_discards_all_paginated_prefixes(self):
+        partial = self.failed(stdout=http_response(stdout=b'[{"id":1}]\nHTTP/2.0 200 OK\r\n').stdout)
+        with patch.object(rc.subprocess, "run", side_effect=[partial, http_response(stdout=b'[{"id":2}]')]) as run, patch.object(rc.time, "sleep"):
+            self.assertEqual(self.gh.pages("releases"), [{"id": 2}])
+            self.assertEqual(run.call_count, 2)
+
 
 
 class JobPaginationTests(unittest.TestCase):
