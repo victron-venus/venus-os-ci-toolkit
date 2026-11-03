@@ -107,6 +107,7 @@ ASSET_CHUNK_SIZE = 1024 * 1024
 ASSET_DOWNLOAD_TIMEOUT = 900
 ASSET_UPLOAD_TIMEOUT = 900
 API_READ_TIMEOUT = 30
+API_BINARY_READ_TIMEOUT = 120
 API_READ_ATTEMPTS = 3
 EXECUTING_RUN_WAIT_SECONDS = 300
 
@@ -590,9 +591,11 @@ class GitHub:
             *(["--input", "-"] if body is not None else []),
             "--", endpoint,
         ]
-        # Metadata is small and replayable. Binary transfers retain their own
-        # timeout/cleanup policy; publication writes must never be replayed.
-        if method == "GET" and mode != "asset" and not path.endswith("/zip"):
+        # Retry whole GET responses only. Streamed payloads retain their separate
+        # cumulative byte/disk budget; publication writes are never replayed.
+        if method == "GET":
+            if mode == "asset" or path.endswith("/zip"):
+                return self._read_get(command, endpoint, timeout=API_BINARY_READ_TIMEOUT)
             return self._metadata_read(command, endpoint, mode == "pages")
         # Developer/CI toolchain selected by the invoking operator via PATH.
         result = subprocess.run(  # nosec B603
@@ -603,35 +606,80 @@ class GitHub:
         )
         return self.response(result, f"{method} {endpoint}", github_http_response(result.stdout))
 
-    def _metadata_read(self, command: list[str], endpoint: str, paginated: bool = False) -> bytes:
-        """Retry transient GET failures for at most three 30-second attempts.
+    @staticmethod
+    def _denied_read_diagnostic(stderr: bytes, *, include_status: bool = True) -> bool:
+        """Diagnostics may veto recovery, never establish missing resources."""
+        pattern = rb"authentication|authenticate|credentials|forbidden|permission denied|access denied|rate limit|not found|x509|certificate"
+        if include_status:
+            pattern += rb"|http[ /:]*(?:401|403|404|429)(?:\D|$)"
+        return bool(re.search(pattern, stderr.lower()))
 
-        Jitter adds at most six seconds total. Authentication, authorization,
-        rate limits and missing resources keep their original fail-closed result.
-        A failed paginated response is discarded before replaying the whole read.
-        """
+    @classmethod
+    def _transient_read_failure(cls, result: subprocess.CompletedProcess[bytes]) -> bool:
+        """Recognize transport loss only for a failed GET process."""
+        stderr = result.stderr or b""
+        return result.returncode == 1 and not cls._denied_read_diagnostic(stderr) and bool(
+            re.search(rb"\b(?:unexpected )?eof(?:\s|$)|connection reset by peer|i/o timeout|"
+                      rb"tls handshake timeout|context deadline exceeded|client\.timeout exceeded|"
+                      rb"server closed idle connection|use of closed network connection", stderr.lower())
+        )
+
+    @classmethod
+    def _denied_partial_read(cls, stdout: bytes, stderr: bytes) -> bool:
+        """A partial denial blocks retries without proving an optional absence."""
+        return cls._denied_read_diagnostic(stderr) or bool(re.search(
+            rb"(?:^|\n)HTTP/(?:1\.[01]|2(?:\.0)?) (?:401|403|404|429)(?:\s|$)", stdout))
+
+    def _metadata_read(self, command: list[str], endpoint: str, paginated: bool = False) -> bytes:
+        """Preserve the metadata adapter and its thirty-second attempt limit."""
+        return self._read_get(command, endpoint, paginated, timeout=API_READ_TIMEOUT)
+
+    def _completed_read(self, result: subprocess.CompletedProcess[bytes], endpoint: str,
+                        paginated: bool, final_attempt: bool) -> bytes | None:
+        """Return complete bytes, or None only when another attempt is allowed."""
+        transport = self._transient_read_failure(result)
+        try:
+            http = github_http_response(result.stdout or b"", paginated)
+        except GitHubError:
+            if (not transport or self._denied_partial_read(result.stdout or b"", result.stderr or b"")
+                    or final_attempt):
+                raise
+            return None
+        transient = result.returncode == 1 and (
+            (http[0] in {500, 502, 503, 504}
+             and not self._denied_read_diagnostic(result.stderr or b"", include_status=False))
+            or (200 <= http[0] < 300 and transport)
+        )
+        if transient and not final_attempt:
+            return None
+        return self.response(result, f"GET {endpoint}", http)
+
+    def _read_get(self, command: list[str], endpoint: str, paginated: bool = False,
+                  *, timeout: int) -> bytes:
+        """Retry at most three whole reads; discard every failed response."""
+        require(command[:2] == ["gh", "api"] and command.count("--method") == 1
+                and command[command.index("--method") + 1] == "GET"
+                and "--input" not in command, "Retries require a read-only GET")
         for attempt in range(API_READ_ATTEMPTS):
+            final_attempt = attempt == API_READ_ATTEMPTS - 1
             try:
                 result = subprocess.run(  # nosec B603
-                    command, input=None, capture_output=True, check=False,
-                    timeout=API_READ_TIMEOUT,
+                    command, input=None, capture_output=True, check=False, timeout=timeout,
                 )
             except subprocess.TimeoutExpired as error:
-                if attempt == API_READ_ATTEMPTS - 1:
+                if (self._denied_partial_read(error.stdout or b"", error.stderr or b"")
+                        or final_attempt):
                     raise GitHubError(
-                        f"GET {endpoint}: metadata read timed out after "
-                        f"{API_READ_ATTEMPTS} attempts"
+                        f"GET {endpoint}: read timed out after {attempt + 1} attempts"
                     ) from error
             else:
-                http = github_http_response(result.stdout, paginated)
-                transient = (
-                    result.returncode and http[0] in {500, 502, 503, 504}
-                )
-                if not result.returncode or not transient or attempt == API_READ_ATTEMPTS - 1:
-                    return self.response(result, f"GET {endpoint}", http)
-            # Scheduling jitter is not used for security decisions.
+                content = self._completed_read(result, endpoint, paginated, final_attempt)
+                if content is not None:
+                    return content
+            # The complete previous stdout is discarded, including paginated
+            # prefixes and binary fragments. Jitter adds at most six seconds.
             time.sleep(random.uniform(1, 2 ** (attempt + 1)))  # nosec B311
-        raise AssertionError("Metadata retry loop must return or raise")
+        raise AssertionError("GET retry loop must return or raise")
 
     def api(
         self, path: str, method: str = "GET", body: JSONObject | None = None
