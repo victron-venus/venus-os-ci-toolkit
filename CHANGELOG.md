@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.1.11] - 2026-11-03
+
+### Fixed
+
+- Reject required build-receipt filenames longer than 200 ASCII characters during policy validation, matching final asset staging and identifying invalid inventories before builds begin.
+- Keep inventory-only migrations compatible with the filename check through a separately hashed validation layer. Preserve accepted historical source states, exact reversal, idempotence, and rejection of unknown or partially migrated files.
+
+### Upgrade
+
+Use a reviewed toolkit refresh or the inventory-only migration for recognized source states to receive this validation change in copied consumers. Existing valid receipt inventories retain their names and publication requirements.
+
 ## [0.1.10] - 2026-11-03
 
 ### Fixed
