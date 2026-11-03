@@ -64,3 +64,9 @@ the bounded campaign report bound to that exact source, workflow run and attempt
 The release manifest records source and artifact identities, version receipts
 and asset hashes. These checks qualify the named source candidate; they do not
 prove every consumer configuration or grant approval to deploy software.
+
+Release reruns also verify successful job and step timestamps against the exact
+attempt start. GitHub can clone a prior successful job into a newer attempt with
+a new job ID and attempt number while keeping its original execution times.
+Those metadata fields alone do not prove a fresh validation; use complete reruns
+under the [publication-phase retry rules](VERSIONING.md#package-identity-across-reruns).
