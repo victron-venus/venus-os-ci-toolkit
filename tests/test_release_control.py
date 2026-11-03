@@ -298,6 +298,14 @@ class WholeReadRecoveryTests(unittest.TestCase):
                 self.assertEqual(run.call_args_list[0], run.call_args_list[1])
                 self.assertEqual("Accept: application/octet-stream" in run.call_args.args[0], path.startswith("releases/"))
 
+    def test_empty_successful_binary_is_not_a_retry_signal(self):
+        for replies, expected_calls in (([http_response(stdout=b"")], 1),
+                                        ([self.failed(), http_response(stdout=b"")], 2)):
+            with self.subTest(expected_calls=expected_calls), patch.object(
+                    rc.subprocess, "run", side_effect=replies) as run, patch.object(rc.time, "sleep"):
+                self.assertEqual(self.gh.binary("releases/assets/7"), b"")
+                self.assertEqual(run.call_count, expected_calls)
+
     def test_repeated_asset_timeouts_are_bounded(self):
         with patch.object(rc.subprocess, "run", side_effect=subprocess.TimeoutExpired(
                 ["gh"], 120, output=b"partial")) as run, patch.object(rc.time, "sleep") as sleep:
