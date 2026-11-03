@@ -1,9 +1,11 @@
 {
   "arc": {
-    "version": "0.15.0",
-    "controller_digest": "sha256:20a369215b8c2ed981c4c0c75e56e6009564d51fffcbbd314d5da0ef82de253a",
-    "scale_set_digest": "sha256:bdfdad17cf8e45ae064c73ed6764f0c75d4bf71a6e2912e6363a43d6dfc787de",
-    "controller_image_digest": "sha256:162dfb5bfbda9e7e49fbed67d428994c9ced55b41a37a18b75b46dab0aa98d37"
+    "controller_version": "0.15.1",
+    "controller_chart_digest": "sha256:c2497a6dedaaa723322abfe9ea2f5a81b9b8fbb90b38e45d7835b6c7629a3aae",
+    "controller_chart_archive_sha256": "sha256:248807b8ff55fd1a5cc7bb5250558092a162637cfb875ba041eddeeaa51cd747",
+    "controller_image_digest": "sha256:4b51a20db717b194e2f3fa96cfe2ddcb21602811f79053c75fd1a383517b9f90",
+    "scale_set_version": "0.15.0",
+    "scale_set_chart_digest": "sha256:bdfdad17cf8e45ae064c73ed6764f0c75d4bf71a6e2912e6363a43d6dfc787de"
   },
   "gvisor": {
     "version": "release-20260928.0",
