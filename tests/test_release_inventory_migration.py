@@ -51,8 +51,17 @@ class InventoryMigrationTests(unittest.TestCase):
                 receipts.digest(casefold_plan.replace(receipts.HEADER, "", 1))},
             "current": [receipts.digest(casefold_plan.replace(receipts.HEADER, "", 1))],
         }
-        self.expected[migration.PLAN] = casefold_plan
+        limited_plan = casefold_plan.replace("'casefold'", "'limited'")
+        name_limit = {
+            "hunks": [{"before": "return 'casefold'", "after": "return 'limited'"}],
+            "original_to_current": {
+                receipts.digest(casefold_plan.replace(receipts.HEADER, "", 1)):
+                receipts.digest(limited_plan.replace(receipts.HEADER, "", 1))},
+            "current": [receipts.digest(limited_plan.replace(receipts.HEADER, "", 1))],
+        }
+        self.expected[migration.PLAN] = limited_plan
         self.enterContext(patch.object(migration, "CASEFOLD", casefold))
+        self.enterContext(patch.object(migration, "NAME_LIMIT", name_limit))
         (self.consumer / ".gitignore").write_text("keep-private-data\n")
         self.delta = self.root / "delta.json"
         self.delta.write_text(json.dumps({"files": specs}))
@@ -90,7 +99,7 @@ class InventoryMigrationTests(unittest.TestCase):
             migration.render(self.consumer)
 
     def test_required_inventory_must_be_explicit_and_valid(self):
-        for value in (None, [], "release-inputs-package.json", ["../package.json"], ["release-inputs-fuzz.json"], ["release-inputs-package.json"] * 2):
+        for value in (None, [], "release-inputs-package.json", ["../package.json"], ["release-inputs-fuzz.json"], ["release-inputs-package.json"] * 2, ["release-inputs-" + "x" * 181 + ".json"]):
             with self.subTest(value=value):
                 self.policy["versioning"]["required_build_receipts"] = value
                 self.write_policy()
@@ -157,10 +166,14 @@ class InventoryOracleTests(unittest.TestCase):
                     migration.previous_canonical_source(current + "# unknown\n", name)
 
 
-class CasefoldCompatibilityTests(unittest.TestCase):
+class PlanLayerCompatibilityTests(unittest.TestCase):
     def setUp(self):
         """Freeze real canonical states, including the literal accepted v1 plan hash."""
         self.current = {name: (ROOT / name).read_text() for name in migration.FILES}
+        self.casefold = dict(self.current)
+        self.casefold[migration.PLAN] = migration._before_name_limit(self.current[migration.PLAN])
+        self.assertEqual(receipts.digest(self.casefold[migration.PLAN]),
+                         "212ad31b8fa380b0ef556b82fd4ed6f2d49cd59ee4516956e98bb8a9120483e9")
         self.v1 = dict(self.current)
         self.v1[migration.PLAN] = migration._before_casefold(self.current[migration.PLAN])
         self.assertEqual(receipts.digest(self.v1[migration.PLAN]),
@@ -186,7 +199,7 @@ class CasefoldCompatibilityTests(unittest.TestCase):
         return {name: self.current[name].replace("#!/usr/bin/env python3\n", PREFIX, 1)
                 for name in names}
 
-    def test_pre_inventory_source_upgrades_to_casefold_current(self):
+    def test_pre_inventory_source_upgrades_to_current(self):
         self.write_state(self.original)
         before = self.snapshot()
         self.assertEqual(migration.render(self.root), self.expected(migration.FILES))
@@ -202,12 +215,22 @@ class CasefoldCompatibilityTests(unittest.TestCase):
             (self.root / name).write_text(text)
         self.assertEqual(migration.render(self.root), {})
 
-    def test_current_casefold_inventory_is_idempotent(self):
+    def test_casefold_inventory_adds_only_the_length_guard(self):
+        self.write_state(self.casefold)
+        before = self.snapshot()
+        changes = migration.render(self.root)
+        self.assertEqual(changes, self.expected([migration.PLAN]))
+        self.assertEqual(self.snapshot(), before)
+        for name, text in changes.items():
+            (self.root / name).write_text(text)
+        self.assertEqual(migration.render(self.root), {})
+
+    def test_current_inventory_is_idempotent(self):
         self.write_state(self.current)
         self.assertEqual(migration.render(self.root), {})
 
-    def test_partial_inventory_is_still_rejected_for_both_plan_versions(self):
-        for plan in (self.v1[migration.PLAN], self.current[migration.PLAN]):
+    def test_partial_inventory_is_still_rejected_for_all_plan_versions(self):
+        for plan in (self.v1[migration.PLAN], self.casefold[migration.PLAN], self.current[migration.PLAN]):
             self.write_state({**self.original, migration.PLAN: plan})
             before = self.snapshot()
             with self.assertRaisesRegex(ValueError, "Partially migrated"):
@@ -224,8 +247,8 @@ class CasefoldCompatibilityTests(unittest.TestCase):
                 migration.render(self.root)
             self.assertEqual(self.snapshot(), before)
 
-    def test_both_plan_versions_reverse_to_the_unchanged_original_oracle(self):
-        for source in (self.v1[migration.PLAN], self.current[migration.PLAN]):
+    def test_all_plan_versions_reverse_to_the_unchanged_original_oracle(self):
+        for source in (self.v1[migration.PLAN], self.casefold[migration.PLAN], self.current[migration.PLAN]):
             self.assertEqual(receipts.digest(migration.previous_canonical_source(source, migration.PLAN)),
                              "e29350ddaa08667bd9ecca2d5a18c6b1e188826fd69c4e77027372aad0cd2d1e")
 

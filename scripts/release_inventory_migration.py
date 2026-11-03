@@ -28,21 +28,52 @@ CASEFOLD = {
 }
 
 
-def _before_casefold(source: str) -> str:
-    """Reverse only the exact accepted casefold layer, preserving a vendor header."""
+# Keep the accepted casefold delta immutable; length validation is a separate layer.
+NAME_LIMIT = {
+    "hunks": [
+        {
+            "before": "or any(not isinstance(name, str)\n",
+            "after": "or any(not isinstance(name, str) or len(name) > 200\n"
+        },
+        {
+            "before": "raise VersionError(\"required_build_receipts must be nonempty ASCII package receipt filenames\")",
+            "after": "raise VersionError(\n            \"required_build_receipts must be nonempty ASCII package receipt filenames \"\n            \"of at most 200 characters\"\n        )"
+        }
+    ],
+    "original_to_current": {
+        "212ad31b8fa380b0ef556b82fd4ed6f2d49cd59ee4516956e98bb8a9120483e9": "039cd5827ab5c56c6e9453b46a86ce10a3b2e2552f8e9a653bdfb915a0a2139a"
+    },
+    "current": [
+        "039cd5827ab5c56c6e9453b46a86ce10a3b2e2552f8e9a653bdfb915a0a2139a"
+    ]
+}
+
+
+def _before_layer(source: str, layer: dict, label: str) -> str:
+    """Reverse one exact accepted layer, preserving a vendor header."""
     prefix = "#!/usr/bin/env python3\n" + receipts.HEADER
     vendored = source.startswith(prefix)
     body = source.replace(receipts.HEADER, "", 1) if vendored else source
     current = receipts.digest(body)
-    if current not in CASEFOLD["current"]:
+    if current not in layer["current"]:
         return source
-    for hunk in reversed(CASEFOLD["hunks"]):
+    for hunk in reversed(layer["hunks"]):
         if body.count(hunk["after"]) != 1:
-            raise ValueError("Casefold reverse context changed")
+            raise ValueError(f"{label} reverse context changed")
         body = body.replace(hunk["after"], hunk["before"], 1)
-    if CASEFOLD["original_to_current"].get(receipts.digest(body)) != current:
-        raise ValueError("Casefold reverse result changed")
+    if layer["original_to_current"].get(receipts.digest(body)) != current:
+        raise ValueError(f"{label} reverse result changed")
     return body.replace("#!/usr/bin/env python3\n", prefix, 1) if vendored else body
+
+
+def _before_name_limit(source: str) -> str:
+    """Return the exact accepted pre-length-limit source when recognized."""
+    return _before_layer(source, NAME_LIMIT, "Receipt name limit")
+
+
+def _before_casefold(source: str) -> str:
+    """Reverse accepted plan layers to the immutable inventory-v1 source."""
+    return _before_layer(_before_name_limit(source), CASEFOLD, "Casefold")
 
 
 def render(directory: Path) -> dict[str, str]:
@@ -69,6 +100,7 @@ def render(directory: Path) -> dict[str, str]:
         state, result = receipts.transform(prior, name, specification[name])
         if name == PLAN:
             _, result = receipts.transform(result, name, CASEFOLD)
+            _, result = receipts.transform(result, name, NAME_LIMIT)
         states.add(state)
         if result != source:
             changes[name] = result
@@ -105,6 +137,8 @@ def operator_guide() -> str:
 
 Declare `versioning.required_build_receipts` as a nonempty list of exact receipt
 filenames after reviewing every release-build matrix and conditional producer.
+Each complete filename must be at most 200 ASCII characters, matching the release
+asset staging limit; longer names are rejected during policy validation.
 Include the final signature receipt when the publisher consumes one. For example,
 an ordinary package and a later signing job require:
 
