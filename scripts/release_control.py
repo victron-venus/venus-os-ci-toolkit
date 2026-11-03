@@ -1297,11 +1297,19 @@ def validate_run_provenance(
 
 def _execution_timestamp(value: object, label: str) -> datetime:
     """Normalize timezone-explicit Actions timestamps before comparing intervals."""
-    require(isinstance(value, str) and re.fullmatch(
-        r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,6})?(?:Z|[+-](?:[01][0-9]|2[0-3]):[0-5][0-9])", value
+    require(isinstance(value, str), f"Missing or malformed {label}")
+    text = cast(str, value)
+    if text.endswith("Z"):
+        local_time = text[:-1]
+    else:
+        local_time, offset = text[:-6], text[-6:]
+        require(re.fullmatch(r"[+-](?:[01]\d|2[0-3]):[0-5]\d", offset, re.ASCII) is not None,
+                f"Missing or malformed {label}")
+    require(re.fullmatch(
+        r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?", local_time, re.ASCII
     ) is not None, f"Missing or malformed {label}")
     try:
-        return datetime.fromisoformat(cast(str, value).replace("Z", "+00:00")).astimezone(timezone.utc)
+        return datetime.fromisoformat(text.replace("Z", "+00:00")).astimezone(timezone.utc)
     except ValueError as error:
         raise ReleaseError(f"Missing or malformed {label}") from error
 

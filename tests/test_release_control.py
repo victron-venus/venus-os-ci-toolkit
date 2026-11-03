@@ -2849,6 +2849,12 @@ class CurrentAttemptFreshnessTests(unittest.TestCase):
                     self.check([job])
         self.gh.api.return_value = self.detail
 
+    def test_timestamp_shape_rejects_non_ascii_digits(self):
+        for value in ["٢٠٢٦-11-03T02:00:00Z", "2026-11-03T٠٢:00:00Z",
+                      "2026-11-03T02:00:00.٥Z", "2026-11-03T02:00:00+٠٠:00"]:
+            with self.subTest(value=value), self.assertRaises(rc.ReleaseError):
+                rc._execution_timestamp(value, "test timestamp")
+
     def test_reversed_intervals_and_missing_steps_are_rejected(self):
         for changes in [{'completed_at': '2026-11-03T02:00:00Z'}, {'steps': []}, {'steps': None},
                         {'steps': [{'conclusion': 'success', 'status': 'queued'}]}, {'steps': [None]}]:
