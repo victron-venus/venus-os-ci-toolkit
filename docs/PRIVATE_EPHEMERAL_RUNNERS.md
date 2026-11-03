@@ -111,11 +111,18 @@ through explicit artifacts or caches, not a shared workspace/PVC. Each pool has
 queue when node capacity is exhausted. A four-hour pod deadline bounds stranded
 workers; workflows should also set suitable job timeouts.
 
-ARC 0.15 handles an API `exceeded quota:` response by retrying pod creation
+ARC 0.15.0 handles an API `exceeded quota:` response by retrying pod creation
 after 30 seconds, without counting it as a failed worker. After ten minutes it
 recreates the waiting ephemeral registration before its JIT configuration
 expires. This is separate from its retry limit for workers that actually crash.
-See the [versioned controller implementation](https://github.com/actions/actions-runner-controller/blob/gha-runner-scale-set-0.15.0/controllers/actions.github.com/ephemeralrunner_controller.go).
+The controller-only 0.15.1 candidate disables client-side retries for
+controller service calls, requeues throttled calls using `Retry-After` (or a
+bounded fallback), and caps ordinary error backoff. This includes the JIT
+configuration request path; it is a focused recovery candidate, not proof that
+every stuck registration is caused by rate limiting. See the official
+[0.15.1 controller implementation](https://github.com/actions/actions-runner-controller/blob/gha-runner-scale-set-0.15.1/controllers/actions.github.com/ephemeralrunner_controller.go),
+[rate-limit issue](https://github.com/actions/actions-runner-controller/issues/4699)
+and [fix](https://github.com/actions/actions-runner-controller/pull/4726).
 Install and qualify one pool first, then expand in bounded batches: a fleet-wide
 burst can otherwise create many waiting registrations, and quota protection
 does not guarantee a particular queue order or waiting time. Include a real
@@ -349,6 +356,88 @@ pods. When moving it, check destination capacity and existing workloads, apply
 the same placement to the Helm release, and verify controller availability and
 runner cleanup. A direct Deployment patch alone does not persist the Helm
 configuration; do not change pool limits or worker placement as part of this move.
+
+### Bounded controller-only update to ARC 0.15.1
+
+The reviewed candidate updates only the shared controller from chart/image
+0.15.0 to 0.15.1. The `gha-runner-scale-set` chart remains at 0.15.0; do not
+change runner pools, their placement or limits, CRDs, the controller service
+account, or worker images in the same maintenance. The official 0.15.1 chart
+changelog says this patch release does not require replacing the existing
+0.15.0 CRDs. The candidate `controller-values.yaml` records the upstream chart
+defaults for reconciliation concurrency, together with placement, security
+context, resources and log settings. These are desired candidate values, not
+a readback of the live release.
+`versions.json` separately pins controller and scale-set chart versions and
+digests, the controller chart archive checksum and the multi-platform
+controller image digest.
+
+The admission guard for private NUC workers accepts only the generated ARC
+user-agent values for 0.15.0 and 0.15.1 during the rollback window. It still
+rejects duplicates, `valueFrom` substitutions, arbitrary versions and
+additional environment variables. Regenerate the site-specific guard from its
+protected inventory, review it, and apply the updated policy and binding before
+upgrading the controller; otherwise ARC 0.15.1-created worker Pods will be
+rejected. The checked-in source change does not update a live admission policy.
+
+Before the maintenance, confirm that no jobs are actively running across any
+pool served by this shared controller, capture the current Helm revision and
+values, and confirm the NUC is the only intended canary worker. Compare all four
+concurrency values with the candidate; stop for review if they differ. Keep
+`syn` out of placement and qualification.
+Use the pinned local chart archive so the upgrade consumes the reviewed OCI
+artifact:
+
+```sh
+rollback_revision="$(helm status victron-reserve-controller \
+  --namespace runner-reserve-system --output json | \
+  python3 -c 'import json, sys; print(json.load(sys.stdin)["version"])')" || exit 1
+test "$rollback_revision" -gt 0 || exit 1
+chart_dir="$(mktemp -d)" || exit 1
+helm pull \
+  oci://ghcr.io/actions/actions-runner-controller-charts/gha-runner-scale-set-controller \
+  --version 0.15.1 --destination "$chart_dir" || exit 1
+printf '%s  %s\n' \
+  '248807b8ff55fd1a5cc7bb5250558092a162637cfb875ba041eddeeaa51cd747' \
+  "$chart_dir/gha-runner-scale-set-controller-0.15.1.tgz" | shasum -a 256 -c - || exit 1
+helm upgrade victron-reserve-controller \
+  "$chart_dir/gha-runner-scale-set-controller-0.15.1.tgz" \
+  --namespace runner-reserve-system \
+  --reuse-values \
+  --values deploy/runner-reserve/controller-values.yaml || exit 1
+kubectl rollout status deployment/victron-reserve-controller \
+  --namespace runner-reserve-system --timeout=180s || exit 1
+```
+
+The pinned archive should report OCI digest
+`sha256:c2497a6dedaaa723322abfe9ea2f5a81b9b8fbb90b38e45d7835b6c7629a3aae`
+when pulled. `--reuse-values` preserves release-only values; the checked-in
+file explicitly carries the four candidate concurrency defaults. The pre-upgrade
+comparison prevents these defaults from silently changing existing limits. Check
+the ready controller image and its selected `linux/amd64` digest on `h5`, then inspect controller events and logs for JIT configuration
+requeue/progress. Run one NUC-only canary and confirm its ephemeral runner gets
+a JIT Secret, starts, completes the job and is cleaned up. Do not infer recovery
+from a successful rollout alone.
+
+If the controller does not become ready or the canary regresses, roll back to
+the revision captured immediately before this upgrade. Keep `rollback_revision`
+in the same shell session or restore its verified value from the operation record;
+do not substitute a historical revision:
+
+```sh
+helm rollback victron-reserve-controller \
+  "${rollback_revision:?Restore the captured pre-upgrade Helm revision}" \
+  --namespace runner-reserve-system || exit 1
+kubectl rollout status deployment/victron-reserve-controller \
+  --namespace runner-reserve-system --timeout=180s || exit 1
+```
+
+The dual-version admission guard supports this rollback. Keep both allowed
+user-agent values until the new controller has passed the canary and the
+rollback window is deliberately closed. Remove the private temporary chart
+directory after recording the deployment result. Do not delete a pending
+EphemeralRunner or restart the shared controller as a substitute for checking
+JIT request behavior.
 
 Install foundations first, then Helm `gha-runner-scale-set` 0.15.0 with the existing
 `runner-reserve-system/victron-reserve-controller` service account. Install the

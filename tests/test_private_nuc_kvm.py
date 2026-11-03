@@ -247,20 +247,40 @@ class NucKvmTests(unittest.TestCase):
         def allowed(env):
             return identity_expression(expression, {'object': {'spec': {'containers': [{'env': env}]}}})
 
-        # Pinned ARC 0.15.0 resourcebuilder appends these three fields; its only
-        # optional caller inputs are proxy envs, absent in this candidate.
+        # ARC 0.15.0 is the rollback version and 0.15.1 is the controller
+        # upgrade candidate. Both resourcebuilders append the same JIT and
+        # metadata fields; arbitrary user-agent versions remain rejected.
         metadata = [
-            {'name': 'GITHUB_ACTIONS_RUNNER_EXTRA_USER_AGENT', 'value': 'actions-runner-controller/0.15.0'},
             {'name': 'ACTIONS_RUNNER_RETURN_VERSION_DEPRECATED_EXIT_CODE', 'value': '1'},
         ]
         jit = {'name': 'ACTIONS_RUNNER_INPUT_JITCONFIG', 'valueFrom': {
             'secretKeyRef': {'name': 'fixture-runner', 'key': 'jitToken'}}}
-        generated = copy.deepcopy(authored) + [jit] + metadata
-        for env in generated:
-            if 'fieldRef' in env.get('valueFrom', {}):
-                env['valueFrom']['fieldRef']['apiVersion'] = 'v1'
         self.assertTrue(allowed(authored))
-        self.assertTrue(allowed(generated))
+        user_agent_name = 'GITHUB_ACTIONS_RUNNER_EXTRA_USER_AGENT'
+        user_agent_values = [
+            'actions-runner-controller/0.15.0',
+            'actions-runner-controller/0.15.1',
+        ]
+        for user_agent in user_agent_values:
+            generated = copy.deepcopy(authored) + [jit] + [
+                {'name': user_agent_name, 'value': user_agent}, *metadata]
+            for env in generated:
+                if 'fieldRef' in env.get('valueFrom', {}):
+                    env['valueFrom']['fieldRef']['apiVersion'] = 'v1'
+            with self.subTest(user_agent=user_agent):
+                self.assertTrue(allowed(generated))
+
+        generated = copy.deepcopy(authored) + [jit] + [
+            {'name': user_agent_name, 'value': 'actions-runner-controller/0.15.1'}, *metadata]
+        self.assertFalse(allowed([
+            dict(item, value='actions-runner-controller/0.15.2')
+            if item['name'] == user_agent_name else item
+            for item in generated]))
+        self.assertFalse(allowed(generated + [
+            {'name': user_agent_name, 'value': 'actions-runner-controller/0.15.1'}]))
+        self.assertFalse(allowed([
+            {'name': user_agent_name,
+             'valueFrom': {'fieldRef': {'fieldPath': 'metadata.name'}}}, *generated]))
         for item in metadata:
             for replacement in [dict(item, value='unexpected'),
                                 {'name': item['name'], 'valueFrom': {'fieldRef': {'fieldPath': 'metadata.name'}}},

@@ -753,18 +753,26 @@ def nuc_environment_validation(expected):
                      "dyn(e.valueFrom.resourceFieldRef).divisor == '1'")
         clauses.append(f"size(c.env.filter(e, e.name == {key})) == 1 && "
                        f"c.env.all(e, e.name != {key} || ({check}))")
-    # ARC 0.15.0 resourcebuilder.go appends these literal metadata fields with
-    # the JIT reference. They are optional for authored Pod dry-runs, but cannot
-    # be duplicated, redirected through valueFrom or repurposed by a caller.
+    # ARC 0.15.0 and 0.15.1 resourcebuilder.go append these literal metadata
+    # fields with the JIT reference. Keep the exact current and rollback
+    # user-agent values during the controller-only upgrade window. They are
+    # optional for authored Pod dry-runs, but cannot be duplicated, redirected
+    # through valueFrom or repurposed by a caller.
     metadata = {
-        'GITHUB_ACTIONS_RUNNER_EXTRA_USER_AGENT': 'actions-runner-controller/0.15.0',
+        'GITHUB_ACTIONS_RUNNER_EXTRA_USER_AGENT': (
+            'actions-runner-controller/0.15.0',
+            'actions-runner-controller/0.15.1',
+        ),
         'ACTIONS_RUNNER_RETURN_VERSION_DEPRECATED_EXIT_CODE': '1',
     }
     for name, value in metadata.items():
         key = json.dumps(name)
+        allowed_values = value if isinstance(value, tuple) else (value,)
+        value_check = ' || '.join(
+            'e.value == ' + json.dumps(allowed) for allowed in allowed_values)
         clauses.append(f"size(c.env.filter(e, e.name == {key})) <= 1 && "
                        f"c.env.all(e, e.name != {key} || "
-                       f"(has(e.value) && !has(e.valueFrom) && e.value == {json.dumps(value)}))")
+                       f"(has(e.value) && !has(e.valueFrom) && ({value_check})))")
     names = [e['name'] for e in expected] + ['ACTIONS_RUNNER_INPUT_JITCONFIG'] + list(metadata)
     return ('object.spec.containers.all(c, has(c.env) && c.env.all(e, e.name in '
             + json.dumps(names) + ') && ' + ' && '.join('(' + x + ')' for x in clauses) + ')')
