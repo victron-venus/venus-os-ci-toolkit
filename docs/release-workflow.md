@@ -322,6 +322,8 @@ as described below. No release is dispatched by this mode.
 
 Declare `versioning.required_build_receipts` as a nonempty list of exact receipt
 filenames after reviewing every release-build matrix and conditional producer.
+Each complete filename must be at most 200 ASCII characters, matching the release
+asset staging limit; longer names are rejected during policy validation.
 Include the final signature receipt when the publisher consumes one. For example,
 an ordinary package and a later signing job require:
 
