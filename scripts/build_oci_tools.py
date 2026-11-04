@@ -250,6 +250,7 @@ def install_native(stage, arch, manifest):
         cc_files[str(path)] = digest(path)
     write_json(evidence / "native-files.json", cc_files)
     owned = run(["dpkg-query", "-L", "linux-libc-dev"]).splitlines()
+    write_json(evidence / "installed-header-metadata.json", header_review.installed_metadata(Path("/"), owned))
     verified = header_review.verify_installed(Path("/"), files, owned, header_archive["data_directories"])
     write_json(evidence / "header-archive-verification.json", header_archive)
     write_json(evidence / "installed-header-verification.json", {

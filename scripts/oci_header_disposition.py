@@ -212,7 +212,9 @@ def verify_installed(root, files, owned_paths, directories):
             directory = expected_dirs[path]
             need(metadata.st_uid == directory["uid"] and metadata.st_gid == directory["gid"]
                  and stat.S_IMODE(metadata.st_mode) == directory["mode"],
-                 "Installed header directory ownership or mode changed")
+                 f"Installed header directory ownership or mode changed: {path}; "
+                 f"actual={metadata.st_uid}:{metadata.st_gid}:{stat.S_IMODE(metadata.st_mode):04o}; "
+                 f"expected={directory['uid']}:{directory['gid']}:{directory['mode']:04o}")
             continue
         need(stat.S_ISREG(metadata.st_mode) and path in expected, "Unexpected installed header payload")
         observed.add(path)
@@ -225,7 +227,8 @@ def verify_installed(root, files, owned_paths, directories):
             need(stat.S_ISREG(metadata.st_mode) and stat.S_IMODE(metadata.st_mode) == item["mode"]
                  and metadata.st_size == item["size"], "Header file type, mode or size changed")
             need(metadata.st_uid == item["uid"] and metadata.st_gid == item["gid"],
-                 "Installed header file ownership changed")
+                 f"Installed header file ownership changed: {item['path']}; "
+                 f"actual={metadata.st_uid}:{metadata.st_gid}; expected={item['uid']}:{item['gid']}")
             data = stream.read(item["size"] + 1)
             need(len(data) == item["size"] and hashlib.sha256(data).hexdigest() == item["sha256"],
                  "Installed header bytes differ from reviewed archive")
@@ -236,6 +239,19 @@ def verify_installed(root, files, owned_paths, directories):
     return {"verified": True, "file_count": len(files), "bytes": sum(f["size"] for f in files),
             "exported_conntrack": conntrack, "ownership_verified": True,
             "directory_count": len(expected_dirs)}
+
+
+def installed_metadata(root, owned_paths):
+    """Capture metadata before enforcing the guard, so failures stay diagnosable."""
+    observed = []
+    for raw in owned_paths:
+        path = raw.removeprefix("/")
+        normal_path(path, root=True)
+        metadata = (root / path).lstat()
+        observed.append({"path": path, "uid": metadata.st_uid, "gid": metadata.st_gid,
+                         "mode": stat.S_IMODE(metadata.st_mode),
+                         "type": stat.S_IFMT(metadata.st_mode), "size": metadata.st_size})
+    return observed
 
 
 def matches_header_package(package, binding):
