@@ -236,8 +236,8 @@
           "mode": "100644"
         },
         "deploy/arc-private/Dockerfile": {
-          "sha256": "117cdf5839906d99e9c38fcf78b7437f1404702f44398bc822fa86fe16bfdf8f",
-          "bytes": 2445,
+          "sha256": "da91338e7349dc42baaef4b11081ccc883492f52e9e30ca7bc00320acdebc437",
+          "bytes": 3230,
           "mode": "100644"
         },
         "deploy/arc-private/Dockerfile.dockerignore": {
