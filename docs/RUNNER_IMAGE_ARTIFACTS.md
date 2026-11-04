@@ -210,6 +210,15 @@ listener qualification), instead of retaining a populated snapshot for each
 small COPY. Source/fixture tests establish operation and payload equivalence;
 only a new full image build and scan can establish disk fit and runtime acceptance.
 
+The private child follows the same pattern: its six existing payload files are
+prepared in a scratch stage, and a read-only mount supplies a single assembly RUN
+after the unchanged package installation. The inherited public CA, browser probes
+and runtime metadata stay in place. The reviewed base wrapper is copied and
+renamed before the private wrapper replaces it, and the original chmod and
+bootstrap checks remain. This removes another repeated-copy path; a private
+out-of-space failure was not observed because earlier attempts stopped in the
+public stage. Both stages still require the full build-and-scan qualification.
+
 The Go helper emits numeric `go-storage` observations before and after each
 component, or after a failure, for its fixed source/output/module/build-cache
 directories. Each `du` call has a 15-second deadline and a 4-KiB output cap.

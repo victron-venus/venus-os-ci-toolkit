@@ -9,6 +9,7 @@
 - Reduce native runner snapshot boundaries by grouping the existing allowlisted Go/browser inputs and compiling all three Go tools in one unprivileged RUN. Clean module/build caches before committing that layer, retaining the existing tests, output binaries and notices.
 - Record bounded builder and Go-directory storage observations and exact cleanup steps. Preserve the original build failure when diagnostics, final disk checks or import cleanup also fail; unresolved cleanup remains a failure.
 - Assemble the final runner through read-only pinned stage mounts in one RUN, retaining payload paths, modes, override order and installation checks while avoiding repeated copies of the browser-equipped root filesystem. Keep the final listener qualification unprivileged.
+- Apply the same snapshot reduction to the private child image: stage its existing six input files separately and combine installation and wrapper replacement, preserving the inherited CA and runtime configuration.
 
 ### Upgrade
 
