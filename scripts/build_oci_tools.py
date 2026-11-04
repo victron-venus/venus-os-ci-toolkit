@@ -342,7 +342,7 @@ def build_component(name, spec, stage, arch, manifest):
     require(tree_digest(source / "vendor") == spec["vendor_sha256"], "Vendor bytes differ from reviewed resolution")
     if name == "buildkit":
         run(["go", "mod", "why", "-m", "golang.org/x/crypto/openpgp"], cwd=source,
-            env=dict(env, GOFLAGS="-mod=vendor"), log=evidence / "openpgp-module-why.txt")
+            env=env, log=evidence / "openpgp-module-why.txt")
         shutil.copytree(ROOT / "tests/oci_fixtures/archive", source / "qualification/archive")
         shutil.copytree(ROOT / "tests/oci_fixtures/probe", source / "qualification/probe")
     tests = UNIT_PACKAGES[name]
