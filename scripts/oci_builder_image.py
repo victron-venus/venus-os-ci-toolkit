@@ -107,10 +107,21 @@ def verify_docker_export(path, oci_proof, tag):
         REQUIRE(config["rootfs"]["diff_ids"] == oci_proof["diff_ids"], "Docker and OCI rootfs differ")
         layers = manifest[0]["Layers"]
         REQUIRE(len(layers) == len(oci_proof["diff_ids"]), "Docker export layer count differs")
-        for name, expected in zip(layers, oci_proof["diff_ids"], strict=True):
+        for index, (name, expected) in enumerate(zip(layers, oci_proof["diff_ids"], strict=True)):
             REQUIRE(name in files and files[name].isfile(), "Missing Docker layer")
             with archive.extractfile(files[name]) as stream:
-                REQUIRE("sha256:" + oci.digest_stream(stream) == expected, "Docker layer bytes differ")
+                actual = "sha256:" + oci.digest_stream(stream)
+            if actual != expected:
+                # Modern Docker layouts reference the original content blobs,
+                # including compressed layers. The OCI verifier already bound
+                # each blob's digest/size to the uncompressed diff ID in order.
+                verified = oci_proof.get("layers", [])
+                REQUIRE(len(verified) == len(layers), "Verified OCI layer inventory differs")
+                descriptor = verified[index]
+                REQUIRE(descriptor.get("mediaType") in {oci.LAYER, oci.LAYER + "+gzip"}
+                        and actual == descriptor.get("digest")
+                        and type(descriptor.get("size")) is int and files[name].size == descriptor["size"],
+                        "Docker layer bytes differ")
     return {"archive_sha256": oci.digest_file(path), "archive_bytes": path.stat().st_size,
             "config": oci_proof["config"], "diff_ids": oci_proof["diff_ids"], "same_solve": True}
 
