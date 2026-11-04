@@ -93,7 +93,7 @@ class AutoMergeTests(unittest.TestCase):
                 self.code,
                 {
                     "snapshot": unittest.mock.Mock(side_effect=snapshots),
-                    "gh": unittest.mock.Mock(return_value="main"),
+                    "gh": unittest.mock.Mock(side_effect=lambda *args: "true" if args[-1] == ".allow_auto_merge" else "main"),
                 },
             ),
         ):
@@ -152,7 +152,7 @@ class AutoMergeTests(unittest.TestCase):
     def test_label_removed_before_mutation_stops_merge(self):
         """Removing authorization before the final read prevents merge."""
         changed = pr() | {"labels": []}
-        self.assertEqual(len(self.run_workflow([pr(), pr(), changed, changed])), 1)
+        self.assertFalse(any(call.args[:2] == ("pr", "merge") for call in self.run_workflow([pr(), pr(), changed, changed])))
 
     def test_missing_token_is_actionable(self):
         """An absent BOT_PAT raises a configuration error before API access."""
@@ -204,7 +204,7 @@ class AutoMergeTests(unittest.TestCase):
             patch.dict(
                 self.code,
                 {
-                    "gh": unittest.mock.Mock(return_value="main"),
+                    "gh": unittest.mock.Mock(side_effect=lambda *args: "true" if args[-1] == ".allow_auto_merge" else "main"),
                 },
             ),
             patch("time.monotonic", side_effect=[0, 7201]),
@@ -848,7 +848,7 @@ class NativeAutoMergeTests(AutoMergeTests):
 
         transport = unittest.mock.Mock(
             side_effect=lambda *args: (
-                json.dumps(rules) if "/rules/branches/" in args[1] else "main"
+                json.dumps(rules) if "/rules/branches/" in args[1] else "true" if args[-1] == ".allow_auto_merge" else "main"
             )
         )
         with (
@@ -1583,3 +1583,247 @@ class OfficialActionsReviewTests(unittest.TestCase):
                 self.assertRaisesRegex(RuntimeError, "require reviewed"),
             ):
                 AutoMergeTests.run_workflow(self, [], {flag: "true"})
+
+
+class DisabledNativeCapabilityTests(unittest.TestCase):
+    """Execute the checked fallback without relaxing protected merge requirements."""
+
+    setUp = AutoMergeTests.setUp
+
+    def run_capability(
+        self, snapshots, capability="false", environment=None, merge_error=None
+    ):
+        """Keep real main/check/review code and replace only API transport and time."""
+        env = self.environment | (environment or {})
+
+        def transport(*args):
+            if args == ("api", "repos/example/repo", "--jq", ".allow_auto_merge"):
+                if isinstance(capability, Exception):
+                    raise capability
+                return capability
+            if args[:2] == ("pr", "merge") and merge_error:
+                raise merge_error
+            return "main"
+
+        self.transport = unittest.mock.Mock(side_effect=transport)
+        self.snapshots = unittest.mock.Mock(side_effect=snapshots)
+        with (
+            patch.dict(os.environ, env),
+            patch.dict(self.code, {"gh": self.transport, "snapshot": self.snapshots}),
+            patch("time.sleep"),
+            patch("time.monotonic", return_value=0),
+        ):
+            self.code["main"]()
+        return self.transport.call_args_list
+
+    def merge_calls(self):
+        """Return only mutations, independent of how many metadata reads occur."""
+        return [
+            call
+            for call in self.transport.call_args_list
+            if call.args[:2] == ("pr", "merge")
+        ]
+
+    def test_enabled_capability_keeps_native_request(self):
+        """The default enabled path still submits one exact-head native request."""
+        self.run_capability([pr(), pr(), pr()], capability="true")
+        self.assertEqual(len(self.merge_calls()), 1)
+        self.assertIn("--auto", self.merge_calls()[0].args)
+        self.assertNotIn("--admin", self.merge_calls()[0].args)
+        self.assertEqual(
+            self.merge_calls()[0].args[-2:], ("--match-head-commit", "abc")
+        )
+
+    def test_disabled_capability_requires_new_reviewed_observations(self):
+        """Three fresh reviewed snapshots follow the discarded initial read."""
+        ready = ReviewedMergeTests.reviewed()
+        self.run_capability([pr(), ready, ready, ready])
+        self.assertEqual(len(self.merge_calls()), 1)
+        args = self.merge_calls()[0].args
+        self.assertEqual(args[-2:], ("--match-head-commit", "abc"))
+        self.assertNotIn("--auto", args)
+        self.assertNotIn("--admin", args)
+        self.assertEqual(self.snapshots.call_args_list[0].kwargs, {})
+        self.assertTrue(
+            all(
+                call.kwargs == {"reviewed": True}
+                for call in self.snapshots.call_args_list[1:]
+            )
+        )
+
+    def test_unusable_capability_never_authorizes_fallback(self):
+        """Missing, malformed, non-boolean and denied metadata never mutates."""
+        for capability in (
+            "null",
+            "0",
+            "1",
+            '"false"',
+            "{}",
+            "[]",
+            "",
+            "false trailing",
+            RuntimeError("Forbidden"),
+        ):
+            with (
+                self.subTest(capability=capability),
+                self.assertRaises((RuntimeError, ValueError)),
+            ):
+                self.run_capability([pr()], capability=capability)
+            self.assertEqual(self.merge_calls(), [])
+
+    def test_ineligible_pr_does_not_read_capability_or_mutate(self):
+        """Closed, draft, wrong author/target and unlabeled PRs remain ineligible."""
+        for changes in (
+            {"state": "CLOSED"},
+            {"isDraft": True},
+            {"author": {"login": "stranger"}},
+            {"baseRefName": "other"},
+            {"labels": []},
+        ):
+            with self.subTest(changes=changes):
+                self.run_capability(
+                    [pr() | changes], capability=RuntimeError("must not query")
+                )
+                self.assertEqual(self.merge_calls(), [])
+                self.assertEqual(len(self.transport.call_args_list), 1)
+
+    def test_absent_stale_or_retracted_review_never_merges(self):
+        """The fallback does not inherit old-head, self, dismissed or blocked approval."""
+        ready = ReviewedMergeTests.reviewed()
+        review = ready["reviewHistory"][0]
+        histories = [
+            [],
+            [review | {"commit_id": "old"}],
+            [review | {"user": {"login": "4alvit"}}],
+            [review | {"state": "DISMISSED"}],
+            [
+                review,
+                review
+                | {"id": 2, "state": "CHANGES_REQUESTED", "user": {"login": "other"}},
+            ],
+        ]
+        for history in histories:
+            with self.subTest(history=history):
+                self.run_capability(
+                    [
+                        pr(),
+                        ready | {"reviewHistory": history},
+                        ready | {"state": "CLOSED"},
+                    ]
+                )
+                self.assertEqual(self.merge_calls(), [])
+
+    def test_pending_empty_and_nonpassing_named_checks_never_merge(self):
+        """An approved PR still requires actual success and every configured gate."""
+        ready = ReviewedMergeTests.reviewed()
+        for changes, required in (
+            ({"statusCheckRollup": []}, ""),
+            ({"statusCheckRollup": [own_check()]}, ""),
+            ({}, "Missing"),
+            (
+                {
+                    "statusCheckRollup": [
+                        {"name": "CI", "status": "IN_PROGRESS"},
+                        own_check(),
+                    ]
+                },
+                "",
+            ),
+            (
+                {
+                    "statusCheckRollup": [
+                        {"name": "CI", "status": "COMPLETED", "conclusion": "SKIPPED"},
+                        own_check(),
+                    ]
+                },
+                "",
+            ),
+            (
+                {
+                    "statusCheckRollup": [
+                        {"name": "CI", "status": "COMPLETED", "conclusion": "NEUTRAL"},
+                        own_check(),
+                    ]
+                },
+                "CI",
+            ),
+        ):
+            with self.subTest(changes=changes, required=required):
+                self.run_capability(
+                    [pr(), ready | changes, ready | {"state": "CLOSED"}],
+                    environment={"REQUIRED_CHECKS": required},
+                )
+                self.assertEqual(self.merge_calls(), [])
+
+    def test_failed_or_cancelled_check_stops_fallback(self):
+        """Failure cannot be hidden by the independently approved review."""
+        for state in ("FAILURE", "CANCELLED", "TIMED_OUT", "ERROR"):
+            with (
+                self.subTest(state=state),
+                self.assertRaisesRegex(RuntimeError, "check failed"),
+            ):
+                self.run_capability([pr(), ReviewedMergeTests.reviewed(state=state)])
+            self.assertEqual(self.merge_calls(), [])
+
+    def test_fork_and_unknown_identity_stop_fallback(self):
+        """Only same-repository PRs have a direct-merge fallback."""
+        for cross in (True, None):
+            with self.subTest(cross=cross):
+                self.run_capability(
+                    [pr(), ReviewedMergeTests.reviewed() | {"isCrossRepository": cross}]
+                )
+                self.assertEqual(self.merge_calls(), [])
+
+    def test_missing_base_identity_fails_closed(self):
+        """A missing base cannot qualify as a stable base across observations."""
+        with self.assertRaisesRegex(RuntimeError, "current base"):
+            self.run_capability(
+                [pr(), ReviewedMergeTests.reviewed() | {"baseRefOid": None}]
+            )
+        self.assertEqual(self.merge_calls(), [])
+
+    def test_changed_base_or_head_requires_new_stable_observations(self):
+        """A final refresh race invalidates the old green fingerprint."""
+        ready = ReviewedMergeTests.reviewed()
+        for changed in (
+            ready | {"baseRefOid": "new-base"},
+            ReviewedMergeTests.reviewed(head="new-head"),
+        ):
+            with self.subTest(changed=changed):
+                self.run_capability(
+                    [pr(), ready, ready, changed, changed, changed, changed]
+                )
+                self.assertEqual(self.snapshots.call_count, 7)
+                self.assertEqual(len(self.merge_calls()), 1)
+                self.assertEqual(self.merge_calls()[0].args[-1], changed["headRefOid"])
+
+    def test_withdrawn_final_snapshot_never_merges(self):
+        """Final loss of label, draft eligibility or review stops the mutation."""
+        ready = ReviewedMergeTests.reviewed()
+        for changes in (
+            {"labels": []},
+            {"isDraft": True},
+            {"reviewHistory": []},
+            {"baseRefName": "other"},
+        ):
+            with self.subTest(changes=changes):
+                self.run_capability(
+                    [pr(), ready, ready, ready | changes, ready | {"state": "CLOSED"}]
+                )
+                self.assertEqual(self.merge_calls(), [])
+
+    def test_explicit_native_mode_rejects_disabled_capability(self):
+        """Explicit native callers receive a diagnostic, never a silent mode switch."""
+        with self.assertRaisesRegex(RuntimeError, "Native auto-merge is disabled"):
+            self.run_capability([pr()], environment={"NATIVE_AUTO_MERGE": "true"})
+        self.assertEqual(self.merge_calls(), [])
+
+    def test_ambiguous_merge_error_is_not_replayed(self):
+        """A mutation response error propagates after exactly one protected attempt."""
+        ready = ReviewedMergeTests.reviewed()
+        with self.assertRaisesRegex(RuntimeError, "ambiguous response"):
+            self.run_capability(
+                [pr(), ready, ready, ready],
+                merge_error=RuntimeError("ambiguous response"),
+            )
+        self.assertEqual(len(self.merge_calls()), 1)
