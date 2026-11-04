@@ -5,6 +5,7 @@ import hashlib
 import io
 import json
 from pathlib import Path
+import shlex
 import sys
 import subprocess
 import tarfile
@@ -190,6 +191,45 @@ class BuilderTests(unittest.TestCase):
             self.assertTrue(builder.scan_image(supervisor, "/scanner", self.root, report, proof["config"])["passed"])
         load.assert_not_called()
         supervisor.run.assert_called_once()
+
+    def test_cache_proof_executes_both_phases_and_requires_persisted_marker(self):
+        real_run = subprocess.run
+        for lose_cache in (False, True):
+            with self.subTest(lose_cache=lose_cache), tempfile.TemporaryDirectory() as temporary:
+                work = Path(temporary)
+                marker, proof_file = work / "marker", work / "proof"
+                observed = {"Id": "owned", "State": {"Pid": 123}}
+                phases = []
+                def execute(command, **kwargs):
+                    previous = command[command.index("--build-arg") + 1].split("=", 1)[1]
+                    phases.append(previous)
+                    if "--no-cache" in command or (lose_cache and previous == "1"):
+                        marker.unlink(missing_ok=True)
+                    recipe = (Path(command[-1]) / "Dockerfile").read_text()
+                    run_line = next(line for line in recipe.splitlines() if line.startswith("RUN "))
+                    shell = run_line.split(" ", 2)[2]
+                    shell = shell.replace("/cache/marker", shlex.quote(str(marker)))
+                    shell = shell.replace("/proof", shlex.quote(str(proof_file)))
+                    real_run(["/bin/sh", "-c", shell], env={"EXPECT_PREVIOUS": previous, "PATH": "/usr/bin:/bin"},
+                             check=True, capture_output=True, timeout=5)
+                    self.assertEqual(proof_file.read_bytes(), b"OCI_BUILDER_OK\n")
+                supervisor = Mock()
+                supervisor.run.side_effect = execute
+                result = subprocess.CompletedProcess([], 2, b"", b"arguments are not accepted\n")
+                with patch.object(builder.runner, "inspect_builder", return_value=observed), \
+                     patch.object(builder.runner.cgroup, "sample"), \
+                     patch.object(builder.subprocess, "run", return_value=result), \
+                     patch.object(builder, "verify_oci", return_value={"verified": True}):
+                    args = (supervisor, "owned", "image", "amd64", observed, work,
+                            "FROM docker.io/library/ubuntu@sha256:" + "a" * 64, {"cgroup_proof": {}})
+                    if lose_cache:
+                        with self.assertRaises(subprocess.CalledProcessError):
+                            builder.exercise_builder(*args)
+                    else:
+                        tested = builder.exercise_builder(*args)
+                        self.assertTrue(tested["cache_persisted"])
+                        self.assertEqual(len(tested["oci_exports"]), 2)
+                self.assertEqual(phases, ["0", "1"])
 
     def test_tool_scan_preserves_executable_bytes_and_rejects_missing_inventory(self):
         for targets in ((), ("docker-buildx",), ("oci-cgroup-reader",)):

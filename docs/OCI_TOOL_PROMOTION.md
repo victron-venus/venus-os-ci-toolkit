@@ -131,6 +131,12 @@ limits, verifies native platform selection, pulls the pinned test base over
 registry TLS, and exercises multi-stage builds, persistent cache mounts and
 OCI export. It removes only the identified builder container, state volume,
 assembly service and imported image reference. Failures retain evidence.
+The two cache checks change `EXPECT_PREVIOUS` from `0` to `1`, forcing the RUN
+instruction to execute again. Do not add `--no-cache`: BuildKit intentionally
+prunes the referenced cache mounts with that option. Attempt 41785948130 passed
+the image scans and resource checks but exposed this contradictory test flag.
+The second invocation must read the marker written by the first; a missing
+marker still fails qualification.
 The final image includes upstream, Go, native-package and project notices
 from the original accepted archive and reviewed source.
 

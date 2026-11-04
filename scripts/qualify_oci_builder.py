@@ -188,10 +188,12 @@ def exercise_builder(sup, name, image, arch, observed, work, recipe, record):
         "printf verified > /cache/marker && printf 'OCI_BUILDER_OK\\n' > /proof\n"
         "FROM scratch\nCOPY --from=proof /proof /proof\n")
     exports = []
+    # Changing the consumed ARG forces RUN again without --no-cache, which
+    # explicitly prunes cache mounts before a BuildKit solve.
     for previous in (0, 1):
         target = work / ("cache-proof-" + str(previous) + ".oci.tar")
         sup.run(["docker", "buildx", "build", "--builder", name, "--platform", "linux/" + arch,
-                 "--progress", "plain", "--no-cache", "--provenance=false",
+                 "--progress", "plain", "--provenance=false",
                  "--build-arg", "EXPECT_PREVIOUS=" + str(previous),
                  "--output", "type=oci,dest=" + str(target), str(context)], seconds=180, inspect=check)
         check()
