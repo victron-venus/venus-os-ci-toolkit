@@ -27,6 +27,7 @@ OUTPUT = Path("/opt/victron-go-tools")
 MAX_ARCHIVE = 100 * 1024 * 1024
 MAX_SOURCE = 700 * 1024 * 1024
 LEGACY_MANIFEST_CLIENT = "github.com/docker/distribution/registry/client"
+LEGACY_OPENPGP = "golang.org/x/crypto/openpgp"
 
 
 def digest(path):
@@ -217,6 +218,14 @@ def verify_manifest_client_absent(packages):
             "reassess GHSA-685w-q87j-wqw3 before publishing")
 
 
+def verify_openpgp_absent(packages):
+    """Reject deprecated OpenPGP in the executable's actual package closure."""
+    require(bool(packages), "Cannot assess an empty production package graph")
+    require(not any(package == LEGACY_OPENPGP or package.startswith(LEGACY_OPENPGP + "/")
+                    for package in packages),
+            "Deprecated OpenPGP entered the production package graph (GO-2026-5932)")
+
+
 def retained_utility_notices(source, destination, spec, packages):
     retained = spec.get("retained_namesgenerator")
     if retained is None:
@@ -310,6 +319,12 @@ def preserve_notices(source, destination, name, spec, commands, architecture, te
             if module:
                 modules[module["Path"]] = module
     security_checks = {}
+    if name == "buildx":
+        verify_openpgp_absent(packages)
+        security_checks["GO-2026-5932"] = {
+            "excluded_package": LEGACY_OPENPGP,
+            "production_package_graph": "absent",
+        }
     if name in ("buildx", "compose"):
         verify_manifest_client_absent(packages)
         verify_manifest_client_absent(unit_dependencies)

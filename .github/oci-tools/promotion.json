@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "reviewed": true,
+  "reviewed": false,
   "repository": "victron-venus/venus-os-ci-toolkit",
   "source": "9ebd756e38e6d946004f1b781e7577cba85a5dbd",
   "sources_sha256": "cf0bc9b38660960b7e938be816e21f0dd4680a8335a29ba7aa3ec6aa5b4f8234",
@@ -43,5 +43,5 @@
       }
     }
   },
-  "status": "Exact source and runtime artifacts independently accepted for staging only; image qualification and publication remain separate."
+  "status": "Historical acceptance retained; current BuildKit 0.34.2 and Buildx 0.38.2 require new native source, runtime and image evidence before reactivation."
 }
