@@ -167,6 +167,30 @@ class BuilderTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 builder.check_scan(value, image, {"buildkitd"})
 
+    def test_image_scanner_receives_verified_docker_archive_before_import(self):
+        oci, docker, expected = exports(self.root)
+        proof = builder.verify_oci(oci, "amd64", expected, lambda: None)
+        builder.verify_docker_export(docker, proof, "local/proof:test")
+        oci.rename(self.root / "builder.oci.tar")
+        docker.rename(self.root / "builder.docker.tar")
+        report = self.root / "scan.json"
+        def scan(command, **kwargs):
+            self.assertEqual(command[:3], ["/scanner", "image", "--input"])
+            with tarfile.open(command[3], "r:") as archive:
+                manifest = json.load(archive.extractfile("manifest.json"))
+                config = archive.extractfile(manifest[0]["Config"]).read()
+            report.write_text(json.dumps({"ArtifactType": "container_image",
+                "Metadata": {"ImageID": "sha256:" + sha(config)},
+                "Results": [{"Class": "os-pkgs", "Packages": [{"Name": "base"}]}] + [
+                    {"Type": "gobinary", "Target": name, "Packages": [{"Name": "stdlib"}]}
+                    for name in ("buildkitd", "buildctl", "buildkit-runc", "oci-cgroup-reader")]}))
+        supervisor = Mock()
+        supervisor.run.side_effect = scan
+        with patch.object(builder, "begin_import") as load:
+            self.assertTrue(builder.scan_image(supervisor, "/scanner", self.root, report, proof["config"])["passed"])
+        load.assert_not_called()
+        supervisor.run.assert_called_once()
+
     def test_tool_scan_preserves_executable_bytes_and_rejects_missing_inventory(self):
         for targets in ((), ("docker-buildx",), ("oci-cgroup-reader",)):
             with self.subTest(targets=targets), tempfile.TemporaryDirectory() as temporary:

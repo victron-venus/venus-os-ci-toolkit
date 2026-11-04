@@ -68,6 +68,17 @@ def check_scan(report, expected_id, required_binaries):
     return {"passed": True, "binaries": sorted(covered), "blocking_findings": len(blockers)}
 
 
+def scan_image(supervisor, scanner, work, report_path, expected_id):
+    # Trivy accepts Docker tar archives or OCI layout directories, not OCI tar archives.
+    # The caller has already verified this same-solve export against the OCI bytes.
+    supervisor.run([str(scanner), "image", "--input", str(work / "builder.docker.tar"), "--scanners", "vuln",
+                    "--list-all-pkgs", "--format", "json", "--output", str(report_path),
+                    "--cache-dir", str(work / "scanner-cache"), "--ignorefile", "/dev/null",
+                    "--timeout", "10m"], seconds=660)
+    return check_scan(json.loads(report_path.read_text()), expected_id,
+                      {"buildkitd", "buildctl", "buildkit-runc", "oci-cgroup-reader"})
+
+
 def verify_oci(path, arch, expected_files, check):
     """Bind every blob and final selected file without extracting the filesystem."""
     REQUIRE(0 < path.stat().st_size <= MAX_ROOTFS, "Oversized qualification OCI archive")
@@ -321,12 +332,7 @@ def main():
         manifest = json.loads((ROOT / ".github/oci-tools/sources.json").read_text())
         scanner = source.install_scanner(work, arch, manifest)
         scan_path = output / "image-trivy.json"
-        sup.run([str(scanner), "image", "--input", str(work / "builder.oci.tar"), "--scanners", "vuln",
-                 "--list-all-pkgs", "--format", "json", "--output", str(scan_path),
-                 "--cache-dir", str(work / "scanner-cache"), "--ignorefile", "/dev/null",
-                 "--timeout", "10m"], seconds=660)
-        record["scan"] = check_scan(json.loads(scan_path.read_text()), image,
-                                    {"buildkitd", "buildctl", "buildkit-runc", "oci-cgroup-reader"})
+        record["scan"] = scan_image(sup, scanner, work, scan_path, image)
         record["scan_sha256"] = runner.oci.digest_file(scan_path)
         begin_import(sup, tag, work / "builder.docker.tar", record)
         info = inspect_image(sup, tag)
