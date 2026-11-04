@@ -70,33 +70,39 @@ class PromotionTests(unittest.TestCase):
         cases = [lambda e: e.update({"output/bin/runc": b"modified"}),
                  lambda e: e.update({"output/evidence/security/gate.json": b'{"passed": false}'})]
         for mutate in cases:
+            data = self.candidate(mutate)
             with self.assertRaises(ValueError):
-                promotion.verify_candidate(self.candidate(mutate), self.lock, "amd64")
+                promotion.verify_candidate(data, self.lock, "amd64")
+        data = self.candidate()
         with self.assertRaises(ValueError):
-            promotion.verify_candidate(self.candidate(), self.lock, "arm64")
+            promotion.verify_candidate(data, self.lock, "arm64")
         changed = copy.deepcopy(self.lock)
         changed["source"] = "f" * 40
         with self.assertRaises(ValueError):
-            promotion.verify_candidate(self.candidate(), changed, "amd64")
+            promotion.verify_candidate(data, changed, "amd64")
 
     def test_links_paths_aliases_duplicates_and_special_modes_are_rejected(self):
         for name in ("output/../escape", "/outside", "output/bin//runc", "output/bin/runc",
                      "output/bin/runc/", "output/candidate.json/", "output/new-file/"):
+            data = self.candidate(extra=tarfile.TarInfo(name))
             with self.subTest(name=name), self.assertRaises(ValueError):
-                promotion.verify_candidate(self.candidate(extra=tarfile.TarInfo(name)), self.lock, "amd64")
+                promotion.verify_candidate(data, self.lock, "amd64")
         directory = tarfile.TarInfo("output/bin/runc/")
         directory.type = tarfile.DIRTYPE
+        data = self.candidate(extra=directory)
         with self.assertRaises(ValueError):
-            promotion.verify_candidate(self.candidate(extra=directory), self.lock, "amd64")
+            promotion.verify_candidate(data, self.lock, "amd64")
         for kind in (tarfile.SYMTYPE, tarfile.LNKTYPE, tarfile.CHRTYPE):
             entry = tarfile.TarInfo("output/link")
             entry.type, entry.linkname = kind, "/outside"
+            data = self.candidate(extra=entry)
             with self.assertRaises(ValueError):
-                promotion.verify_candidate(self.candidate(extra=entry), self.lock, "amd64")
+                promotion.verify_candidate(data, self.lock, "amd64")
         entry = tarfile.TarInfo("output/setuid")
         entry.mode = 0o4755
+        data = self.candidate(extra=entry)
         with self.assertRaises(ValueError):
-            promotion.verify_candidate(self.candidate(extra=entry), self.lock, "amd64")
+            promotion.verify_candidate(data, self.lock, "amd64")
 
     def test_runtime_requires_both_container_modes_positive_build_and_confinement(self):
         result = {"commit": self.lock["source"], "architecture": "amd64", "passed": True,
@@ -110,12 +116,14 @@ class PromotionTests(unittest.TestCase):
         promotion.verify_runtime(evidence(), self.lock["source"], "amd64")
         for field in ("outside_write", "timed_out"):
             observed[field] = True
+            data = evidence()
             with self.assertRaises(ValueError):
-                promotion.verify_runtime(evidence(), self.lock["source"], "amd64")
+                promotion.verify_runtime(data, self.lock["source"], "amd64")
             observed[field] = False
         result["checks"] = ["baseline", "restricted"]
+        data = evidence()
         with self.assertRaises(ValueError):
-            promotion.verify_runtime(evidence(), self.lock["source"], "amd64")
+            promotion.verify_runtime(data, self.lock["source"], "amd64")
 
     def test_artifact_binds_id_digest_bytes_source_and_run(self):
         data = b"fixed archive bytes"
@@ -134,11 +142,10 @@ class PromotionTests(unittest.TestCase):
         for mutation in mutations:
             with self.subTest(mutation=mutation), \
                     patch.object(promotion, "api", return_value=dict(info, **mutation)), \
-                    patch.object(promotion, "gh") as download, self.assertRaises(ValueError):
-                try:
+                    patch.object(promotion, "gh") as download:
+                with self.assertRaises(ValueError):
                     promotion.artifact(self.lock, "amd64", "candidate")
-                finally:
-                    download.assert_not_called()
+                download.assert_not_called()
         with patch.object(promotion, "api", return_value=info), \
                 patch.object(promotion, "gh", return_value=b"changed"), self.assertRaises(ValueError):
             promotion.artifact(self.lock, "amd64", "candidate")
@@ -157,11 +164,10 @@ class PromotionTests(unittest.TestCase):
                         patch.object(promotion, "hosted_arch"), \
                         patch.object(promotion.os, "geteuid", return_value=1001), \
                         patch.object(promotion, "api", return_value=dict(run, **mutation)), \
-                        patch.object(promotion, "artifact") as download, self.assertRaises(ValueError):
-                    try:
+                        patch.object(promotion, "artifact") as download:
+                    with self.assertRaises(ValueError):
                         promotion.main()
-                    finally:
-                        download.assert_not_called()
+                    download.assert_not_called()
 
 
 if __name__ == "__main__":

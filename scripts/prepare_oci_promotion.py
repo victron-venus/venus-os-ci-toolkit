@@ -21,6 +21,8 @@ REPO = "victron-venus/venus-os-ci-toolkit"
 TOOLS = {"buildctl", "buildkitd", "runc", "oci-probe"}
 MAX_ARCHIVE = 96 * 1024 * 1024
 MAX_EXPANDED = 512 * 1024 * 1024
+SHA256_PATTERN = r"[0-9a-f]{64}"
+BIN_PREFIX = "output/bin/"
 
 
 def sha(data):
@@ -63,18 +65,18 @@ def validate_lock(lock):
             "Promotion inputs require independent review")
     require(lock.get("repository") == REPO, "Unexpected candidate repository")
     require(re.fullmatch(r"[0-9a-f]{40}", lock.get("source") or ""), "Full source SHA required")
-    require(re.fullmatch(r"[0-9a-f]{64}", lock.get("sources_sha256") or ""), "Input digest required")
+    require(re.fullmatch(SHA256_PATTERN, lock.get("sources_sha256") or ""), "Input digest required")
     require(type(lock.get("qualification_run")) is int and lock["qualification_run"] > 0,
             "Exact qualification run required")
     require(set(lock.get("architectures", {})) == {"amd64", "arm64"}, "Both native architectures required")
     for arch, value in lock["architectures"].items():
         require(set(value["binaries"]) == TOOLS, "Incomplete binary inventory: " + arch)
-        require(all(re.fullmatch(r"[0-9a-f]{64}", v) for v in value["binaries"].values()),
+        require(all(re.fullmatch(SHA256_PATTERN, v) for v in value["binaries"].values()),
                 "Invalid binary digest")
         for kind in ("candidate", "runtime"):
             artifact = value[kind]
             require(type(artifact["id"]) is int and artifact["id"] > 0, "Artifact ID required")
-            require(re.fullmatch(r"[0-9a-f]{64}", artifact["sha256"]), "Artifact digest required")
+            require(re.fullmatch(SHA256_PATTERN, artifact["sha256"]), "Artifact digest required")
             require(type(artifact["bytes"]) is int and 0 < artifact["bytes"] <= MAX_ARCHIVE,
                     "Invalid artifact size")
 
@@ -121,7 +123,7 @@ def verify_candidate(data, lock, arch):
     payload = zipped["candidate.tar.gz"]
     selected = {}
     wanted = {"output/candidate.json", "output/evidence/security/gate.json"}
-    wanted.update("output/bin/" + name for name in TOOLS)
+    wanted.update(BIN_PREFIX + name for name in TOOLS)
     with tarfile.open(fileobj=io.BytesIO(payload), mode="r:gz") as archive:
         names, total = set(), 0
         for entry in archive:
@@ -139,7 +141,7 @@ def verify_candidate(data, lock, arch):
                     and total <= MAX_EXPANDED, "Oversized candidate")
             if entry.name in wanted:
                 require(entry.isfile(), "Selected input must be regular")
-                require(entry.name.startswith("output/bin/") or entry.size <= 1024 * 1024,
+                require(entry.name.startswith(BIN_PREFIX) or entry.size <= 1024 * 1024,
                         "Oversized candidate metadata")
                 selected[entry.name] = archive.extractfile(entry).read()
     require(set(selected) == wanted, "Missing candidate evidence or binary")
@@ -151,7 +153,7 @@ def verify_candidate(data, lock, arch):
     require(candidate["binaries"] == expected, "Candidate inventory changed")
     require(json.loads(selected["output/evidence/security/gate.json"])["passed"] is True,
             "Candidate security gate failed")
-    binaries = {name: selected["output/bin/" + name] for name in TOOLS}
+    binaries = {name: selected[BIN_PREFIX + name] for name in TOOLS}
     require({name: sha(value) for name, value in binaries.items()} == expected, "Binary bytes changed")
     return payload, binaries
 
