@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.1.14] - 2026-11-04
+
+### Fixed
+
+- Validate the complete release-note body, including the exact candidate or final-build provenance, before reserving a sequence or build number. Notes that exceed the UTF-8 byte limit now fail before creating a plan; bodies exactly at the limit remain publishable.
+
+### Upgrade
+
+Adopt a reviewed immutable toolkit revision or refresh the copied versioned release client to receive this fix. Existing valid release notes and publication text remain unchanged. Publishing this source release does not update consumer pins or deployed services.
+
+### Security
+
+The existing 125,000-byte limit, source-bound changelog checks and release authorization remain enforced. This change moves oversized-note rejection before persistent allocation and adds no permissions, credential access or publication bypass.
+
 ## [0.1.13] - 2026-11-04
 
 ### Fixed
