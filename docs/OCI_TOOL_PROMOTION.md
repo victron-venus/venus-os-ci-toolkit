@@ -119,6 +119,11 @@ so their bytes can be compared directly with OCI DiffIDs. The verifier checks ev
 binary and notice before scanning the image. It checks that the Docker
 archive has the same configuration and uncompressed layers before importing
 it; importer support for arbitrary OCI tar files is not assumed.
+Trivy receives this verified Docker archive before import. Its archive reader
+accepts Docker tar files and OCI layout directories, but not the OCI tar export.
+Attempt 41783797057 reached this boundary and failed before any image scan
+verdict; switching formats preserves the already verified configuration and
+layer bytes, without extracting or rebuilding them.
 
 Only then does the workflow start the image with Buildx's `docker-container`
 driver. It proves the real RUN process inherits the existing CPU/memory

@@ -19,6 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
 REQUIRE = promotion.require
 MAX_ROOTFS = 512 * 1024 * 1024
 INDEX_FILENAME = "index.json"
+DOCKER_ARCHIVE = "builder.docker.tar"
 ENTRYPOINT = ["/usr/bin/buildkitd", "--oci-worker=true", "--containerd-worker=false",
               "--oci-worker-snapshotter=native", "--oci-worker-net=host",
               "--oci-worker-binary=/usr/bin/buildkit-runc"]
@@ -66,6 +67,17 @@ def check_scan(report, expected_id, required_binaries):
                 if v.get("Severity") in {"HIGH", "CRITICAL"}]
     REQUIRE(not blockers, "Final image has blocking vulnerabilities")
     return {"passed": True, "binaries": sorted(covered), "blocking_findings": len(blockers)}
+
+
+def scan_image(supervisor, scanner, work, report_path, expected_id):
+    # Trivy accepts Docker tar archives or OCI layout directories, not OCI tar archives.
+    # The caller has already verified this same-solve export against the OCI bytes.
+    supervisor.run([str(scanner), "image", "--input", str(work / DOCKER_ARCHIVE), "--scanners", "vuln",
+                    "--list-all-pkgs", "--format", "json", "--output", str(report_path),
+                    "--cache-dir", str(work / "scanner-cache"), "--ignorefile", "/dev/null",
+                    "--timeout", "10m"], seconds=660)
+    return check_scan(json.loads(report_path.read_text()), expected_id,
+                      {"buildkitd", "buildctl", "buildkit-runc", "oci-cgroup-reader"})
 
 
 def verify_oci(path, arch, expected_files, check):
@@ -316,19 +328,14 @@ def main():
         assembly.assemble(sup, context / "bin", context, work, tag, arch, observe, record,
                           source_epoch=source_epoch)
         record["oci"] = verify_oci(work / "builder.oci.tar", arch, expected, sup.check)
-        record["docker_export"] = verify_docker_export(work / "builder.docker.tar", record["oci"], tag)
+        record["docker_export"] = verify_docker_export(work / DOCKER_ARCHIVE, record["oci"], tag)
         image = record["oci"]["config"]
         manifest = json.loads((ROOT / ".github/oci-tools/sources.json").read_text())
         scanner = source.install_scanner(work, arch, manifest)
         scan_path = output / "image-trivy.json"
-        sup.run([str(scanner), "image", "--input", str(work / "builder.oci.tar"), "--scanners", "vuln",
-                 "--list-all-pkgs", "--format", "json", "--output", str(scan_path),
-                 "--cache-dir", str(work / "scanner-cache"), "--ignorefile", "/dev/null",
-                 "--timeout", "10m"], seconds=660)
-        record["scan"] = check_scan(json.loads(scan_path.read_text()), image,
-                                    {"buildkitd", "buildctl", "buildkit-runc", "oci-cgroup-reader"})
+        record["scan"] = scan_image(sup, scanner, work, scan_path, image)
         record["scan_sha256"] = runner.oci.digest_file(scan_path)
-        begin_import(sup, tag, work / "builder.docker.tar", record)
+        begin_import(sup, tag, work / DOCKER_ARCHIVE, record)
         info = inspect_image(sup, tag)
         validate_image(info, arch, image)
         REQUIRE(info["RootFS"]["Layers"] == record["oci"]["diff_ids"], "Loaded rootfs differs from verified OCI")
