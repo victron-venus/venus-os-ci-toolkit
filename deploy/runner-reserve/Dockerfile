@@ -82,10 +82,26 @@ RUN umask 022 && python3 scripts/build_runner_go_tools.py containerd \
 FROM docker.io/library/docker@sha256:9e79b879b177fbd72c34376a3dd3d91747da5db49e1f560f76aea59561471977 AS docker
 FROM docker.io/library/node@sha256:55fb5f5a527ea2c5c4a95f963e48ef90aa38c7b346054fdc8ee9957a2b55d205 AS node
 FROM ghcr.io/actions/actions-runner@sha256:e275409999c37162649aa050ca573f03eab2eabcb3a1e7fcc47548de6b4f9690 AS runner
+# Stage only the existing allowlisted local inputs on an empty filesystem.
+# Keeping these COPY operations off the populated runner avoids native snapshots
+# of the browser installation for each small input file.
+FROM scratch AS runner-inputs
+COPY .github/containers/runner-browsers.json /opt/victron-image-build/browsers/.github/containers/runner-browsers.json
+COPY scripts/install_runner_browsers.py scripts/browser-toolchains.json /opt/victron-image-build/browsers/scripts/
+COPY .github/containers/runner-browsers/ /opt/victron-image-build/browsers/.github/containers/runner-browsers/
+COPY .github/gh/release.json /tmp/reserve-gh/.github/gh/release.json
+COPY scripts/install_release_gh.py /tmp/reserve-gh/scripts/install_release_gh.py
+COPY .github/containers/runner-npm.json /opt/victron-image-build/npm/.github/containers/runner-npm.json
+COPY scripts/install_runner_npm.py /opt/victron-image-build/npm/scripts/install_runner_npm.py
+COPY deploy/runner-reserve/qualify-npm.cjs /opt/victron-image-build/npm/qualify-npm.cjs
+COPY scripts/prune_runner_npm.py /tmp/prune_runner_npm.py
+COPY deploy/runner-reserve/start-runner.sh deploy/runner-reserve/sandbox-docker.sh \
+    deploy/runner-reserve/qualify.sh deploy/runner-reserve/qualify-npm.cjs \
+    deploy/runner-reserve/qualify-browsers.cjs \
+    deploy/runner-reserve/guard-ca.crt /opt/victron-ci-reserve/
 FROM docker.io/library/ubuntu@sha256:68ee22004a9109b44973313b02ff7b1de250f1de0f5ecb628d73f579aaff33ac
 SHELL ["/bin/bash", "-eo", "pipefail", "-c"]
 ENV DEBIAN_FRONTEND=noninteractive
-# This disposable build layer is exported only after package installation succeeds.
 RUN apt-get update && apt-get -o Dpkg::Options::=--force-unsafe-io install -y --no-install-recommends \
     bash \
     build-essential \
@@ -128,33 +144,55 @@ RUN apt-get update && apt-get -o Dpkg::Options::=--force-unsafe-io install -y --
     chmod 0440 /etc/sudoers.d/runner && \
     mkdir -p /opt/hostedtoolcache && \
     chown runner:runner /opt/hostedtoolcache
-# Browser apt work must precede the final exact patched-libbpf installation.
-COPY .github/containers/runner-browsers.json /opt/victron-image-build/browsers/.github/containers/runner-browsers.json
-COPY scripts/install_runner_browsers.py scripts/browser-toolchains.json /opt/victron-image-build/browsers/scripts/
-COPY .github/containers/runner-browsers/ /opt/victron-image-build/browsers/.github/containers/runner-browsers/
-RUN python3 /opt/victron-image-build/browsers/scripts/install_runner_browsers.py \
-    && rm -rf /var/lib/apt/lists/*
-# Install the rebuilt distro package, retaining dpkg version and copyright metadata.
-COPY --from=patched-libbpf /opt/victron-libbpf/libbpf1.deb /opt/victron-libbpf/installed.sha256 /tmp/victron-libbpf/
-COPY --from=patched-libbpf /opt/victron-libbpf/notices/ /usr/local/share/victron-libbpf/
-RUN dpkg -i /tmp/victron-libbpf/libbpf1.deb \
+# Assemble the populated root filesystem in one step. All sources are read-only
+# pinned stages; no writable cache or host directory is mounted. Preserve the
+# existing install/verification order and replace files without following links.
+# Directory content copies retain the destination root mode/owner, copy nested
+# metadata, and set its timestamp from the source, matching the COPY contract.
+RUN --mount=type=bind,from=runner-inputs,target=/tmp/runner-inputs,ro \
+    --mount=type=bind,from=patched-libbpf,source=/opt/victron-libbpf,target=/tmp/runner-libbpf,ro \
+    --mount=type=bind,from=patched-gstreamer,source=/opt/victron-gstreamer,target=/tmp/runner-gstreamer,ro \
+    --mount=type=bind,from=docker,source=/usr/local,target=/tmp/runner-docker,ro \
+    --mount=type=bind,from=patched-go-tools,source=/opt/victron-go-tools,target=/tmp/runner-go-tools,ro \
+    --mount=type=bind,from=accepted-tools,source=/,target=/tmp/runner-accepted-tools,ro \
+    --mount=type=bind,from=node,source=/usr/local/bin/node,target=/tmp/runner-node,ro \
+    --mount=type=bind,from=runner,source=/home/runner,target=/tmp/runner-home,ro \
+    copy_contents() ( \
+        local source="$1" destination="$2"; \
+        test -d "$source" && test ! -L "$source" \
+            && test -d "$destination" && test ! -L "$destination" || return 1; \
+        shopt -s dotglob nullglob; \
+        local entries=("$source"/*); \
+        if (( ${#entries[@]} )); then \
+            cp -a --remove-destination -- "${entries[@]}" "$destination/" || return; \
+        fi; \
+        touch -r "$source" "$destination"; \
+    ) \
+    && cp -a --remove-destination /tmp/runner-inputs/opt/victron-image-build /opt/ \
+    && cp -a --remove-destination /tmp/runner-inputs/tmp/reserve-gh /tmp/ \
+    && cp -a --remove-destination /tmp/runner-inputs/tmp/prune_runner_npm.py /tmp/ \
+    && cp -a --remove-destination /tmp/runner-inputs/opt/victron-ci-reserve /opt/ \
+    && python3 /opt/victron-image-build/browsers/scripts/install_runner_browsers.py \
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /tmp/victron-libbpf/ \
+    && cp -a --remove-destination /tmp/runner-libbpf/libbpf1.deb /tmp/runner-libbpf/installed.sha256 /tmp/victron-libbpf/ \
+    && mkdir -p /usr/local/share/victron-libbpf/ \
+    && copy_contents /tmp/runner-libbpf/notices /usr/local/share/victron-libbpf/ \
+    && dpkg -i /tmp/victron-libbpf/libbpf1.deb \
     && test "$(dpkg-query -W -f='${Version}' libbpf1)" = '1:1.3.0-2build2+victron1' \
     && sha256sum --check /tmp/victron-libbpf/installed.sha256 \
-    && rm -rf /tmp/victron-libbpf
-# The plugin package's exact library dependency is updated together with the library.
-COPY --from=patched-gstreamer /opt/victron-gstreamer/libgstreamer-plugins-bad1.0-0.deb /opt/victron-gstreamer/gstreamer1.0-plugins-bad.deb /opt/victron-gstreamer/installed.sha256 /tmp/victron-gstreamer/
-COPY --from=patched-gstreamer /opt/victron-gstreamer/notices/ /usr/local/share/victron-gstreamer/
-RUN dpkg --path-include='/usr/share/locale/*/LC_MESSAGES/gst-plugins-bad-1.0.mo' \
+    && rm -rf /tmp/victron-libbpf \
+    && mkdir -p /tmp/victron-gstreamer/ \
+    && cp -a --remove-destination /tmp/runner-gstreamer/libgstreamer-plugins-bad1.0-0.deb /tmp/runner-gstreamer/gstreamer1.0-plugins-bad.deb /tmp/runner-gstreamer/installed.sha256 /tmp/victron-gstreamer/ \
+    && mkdir -p /usr/local/share/victron-gstreamer/ \
+    && copy_contents /tmp/runner-gstreamer/notices /usr/local/share/victron-gstreamer/ \
+    && dpkg --path-include='/usr/share/locale/*/LC_MESSAGES/gst-plugins-bad-1.0.mo' \
         -i /tmp/victron-gstreamer/libgstreamer-plugins-bad1.0-0.deb /tmp/victron-gstreamer/gstreamer1.0-plugins-bad.deb \
     && test "$(dpkg-query -W -f='${Version}' libgstreamer-plugins-bad1.0-0)" = '1.24.2-1ubuntu4+victron1' \
     && test "$(dpkg-query -W -f='${Version}' gstreamer1.0-plugins-bad)" = '1.24.2-1ubuntu4+victron1' \
     && sha256sum --check /tmp/victron-gstreamer/installed.sha256 \
-    && rm -rf /tmp/victron-gstreamer
-# Shared automation requires gh api --slurp, absent from Ubuntu's gh 2.45.
-# Verify the existing release manifest's archive, binary and version pins.
-COPY .github/gh/release.json /tmp/reserve-gh/.github/gh/release.json
-COPY scripts/install_release_gh.py /tmp/reserve-gh/scripts/install_release_gh.py
-RUN arch="$(dpkg --print-architecture)" \
+    && rm -rf /tmp/victron-gstreamer \
+    && arch="$(dpkg --print-architecture)" \
     && case "$arch" in amd64|arm64) ;; *) exit 1 ;; esac \
     && curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
         --connect-timeout 15 --max-time 180 --max-filesize 33554432 \
@@ -165,23 +203,24 @@ RUN arch="$(dpkg --print-architecture)" \
     && test "$(command -v gh)" = /usr/local/bin/gh \
     && gh api --paginate --slurp --help >/dev/null \
     && gh api --help | grep -F -- '--slurp' >/dev/null \
-    && rm -rf /tmp/reserve-gh
-COPY --from=docker /usr/local/bin/ /usr/local/bin/
-COPY --from=docker /usr/local/libexec/docker/cli-plugins/ /usr/local/libexec/docker/cli-plugins/
-# Replace the affected executables, including the separately supervised daemon.
-# runc and its notices come only from the verified immutable OCI build context.
-COPY --from=patched-go-tools /opt/victron-go-tools/bin/ /usr/local/bin/
-COPY --from=patched-go-tools /opt/victron-go-tools/cli-plugins/ /usr/local/libexec/docker/cli-plugins/
-COPY --from=patched-go-tools /opt/victron-go-tools/notices/ /usr/local/share/licenses/victron-go-tools/
-COPY --from=accepted-tools /usr/bin/buildkit-runc /usr/local/bin/runc
-COPY --from=accepted-tools /usr/share/licenses/oci-tools/ /usr/local/share/licenses/accepted-oci-tools/
-COPY --from=node /usr/local/bin/node /usr/local/bin/node
-# Keep npm 11's CLI contract; replace only its two selected bundled dependencies with the
-# reviewed upstream security release. No lifecycle hooks or package resolution.
-COPY .github/containers/runner-npm.json /opt/victron-image-build/npm/.github/containers/runner-npm.json
-COPY scripts/install_runner_npm.py /opt/victron-image-build/npm/scripts/install_runner_npm.py
-COPY deploy/runner-reserve/qualify-npm.cjs /opt/victron-image-build/npm/qualify-npm.cjs
-RUN mkdir -p /usr/local/lib/node_modules \
+    && rm -rf /tmp/reserve-gh \
+    && mkdir -p /usr/local/bin/ \
+    && copy_contents /tmp/runner-docker/bin /usr/local/bin/ \
+    && mkdir -p /usr/local/libexec/docker/cli-plugins/ \
+    && copy_contents /tmp/runner-docker/libexec/docker/cli-plugins /usr/local/libexec/docker/cli-plugins/ \
+    && mkdir -p /usr/local/bin/ \
+    && copy_contents /tmp/runner-go-tools/bin /usr/local/bin/ \
+    && mkdir -p /usr/local/libexec/docker/cli-plugins/ \
+    && copy_contents /tmp/runner-go-tools/cli-plugins /usr/local/libexec/docker/cli-plugins/ \
+    && mkdir -p /usr/local/share/licenses/victron-go-tools/ \
+    && copy_contents /tmp/runner-go-tools/notices /usr/local/share/licenses/victron-go-tools/ \
+    && mkdir -p /usr/local/bin \
+    && cp -a --remove-destination /tmp/runner-accepted-tools/usr/bin/buildkit-runc /usr/local/bin/runc \
+    && mkdir -p /usr/local/share/licenses/accepted-oci-tools/ \
+    && copy_contents /tmp/runner-accepted-tools/usr/share/licenses/oci-tools /usr/local/share/licenses/accepted-oci-tools/ \
+    && mkdir -p /usr/local/bin \
+    && cp -a --remove-destination /tmp/runner-node /usr/local/bin/node \
+    && mkdir -p /usr/local/lib/node_modules \
     && curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
         --connect-timeout 15 --max-time 180 --max-filesize 20971520 \
         https://registry.npmjs.org/npm/-/npm-11.21.1.tgz --output /opt/victron-image-build/npm/npm.tgz \
@@ -195,28 +234,23 @@ RUN mkdir -p /usr/local/lib/node_modules \
     && ln -s /usr/local/lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
     && ln -s /usr/local/lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx \
     && node /opt/victron-image-build/npm/qualify-npm.cjs \
-    && rm -rf /opt/victron-image-build/npm
-COPY --from=runner --chown=1001:1001 /home/runner/ /home/runner/
-COPY scripts/prune_runner_npm.py /tmp/prune_runner_npm.py
-RUN python3 /tmp/prune_runner_npm.py /home/runner \
+    && rm -rf /opt/victron-image-build/npm \
+    && mkdir -p /home/runner/ \
+    && copy_contents /tmp/runner-home /home/runner/ \
+    && chown -hR 1001:1001 /home/runner/ \
+    && python3 /tmp/prune_runner_npm.py /home/runner \
     && rm /tmp/prune_runner_npm.py \
     && /home/runner/externals/node20/bin/node \
         -e 'require("node:crypto"); require("node:fs"); console.log(process.version)' \
     && /home/runner/externals/node24/bin/node \
-        -e 'require("node:crypto"); require("node:fs"); console.log(process.version)'
-COPY deploy/runner-reserve/start-runner.sh deploy/runner-reserve/sandbox-docker.sh \
-    deploy/runner-reserve/qualify.sh deploy/runner-reserve/qualify-npm.cjs \
-    deploy/runner-reserve/qualify-browsers.cjs \
-    deploy/runner-reserve/guard-ca.crt /opt/victron-ci-reserve/
-RUN python3 /opt/victron-image-build/browsers/scripts/install_runner_browsers.py --qualify \
-    && rm -rf /opt/victron-image-build/browsers
-RUN chmod 0755 /opt/victron-ci-reserve/*.sh && \
+        -e 'require("node:crypto"); require("node:fs"); console.log(process.version)' \
+    && python3 /opt/victron-image-build/browsers/scripts/install_runner_browsers.py --qualify \
+    && rm -rf /opt/victron-image-build/browsers \
+    && chmod 0755 /opt/victron-ci-reserve/*.sh && \
     node --version && docker --version
 ENV HOME=/home/runner RUNNER_TOOL_CACHE=/opt/hostedtoolcache AGENT_TOOLSDIRECTORY=/opt/hostedtoolcache ImageOS=ubuntu24
 WORKDIR /home/runner
 USER 1001:1001
-# Listener creates _diag even for --version; qualify it as the runtime user so
-# the build cannot leave root-owned diagnostics that prevent later startup.
 RUN test "$(id -u)" = 1001 && test "$(id -u -r)" = 1001 \
     && test "$(id -g)" = 1001 && test "$(id -g -r)" = 1001 \
     && ./bin/Runner.Listener --version \

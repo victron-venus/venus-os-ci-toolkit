@@ -178,15 +178,37 @@ its downloaded tar is removed only after complete validation and materialization
 If a particular hosted image cannot fit, the run stops and retains evidence.
 It does not delete preinstalled SDKs, unrelated images or other jobs' caches.
 
-The accepted builder uses the native snapshotter. To reduce copies of populated
-parent snapshots, Go and browser inputs each use three COPY instructions instead
-of eleven. The sparse context allowlist, file destinations and default root
-ownership are unchanged. All three Go components run sequentially in one RUN as
-UID/GID 10001 with the same environment, tests and build flags. A successful final
-component is followed by `go clean -modcache -cache` in that RUN, so those caches
-are not committed into the resulting layer. Binaries and license notices remain
-in their existing output directories. No cache mounts or shared host pruning are
-used; a failure stops the sequence and is retained for diagnosis.
+The accepted builder uses the native snapshotter, which copies populated parent
+filesystems at snapshot boundaries. Go inputs use three COPY instructions, and
+all three Go components run sequentially in one RUN as UID/GID 10001 with the
+same environment, tests and build flags. A successful final component is followed
+by `go clean -modcache -cache` before committing that layer. Binaries and notices
+remain in their existing output directories.
+
+The final runner stages its existing local inputs in a small `FROM scratch`
+stage. After the unchanged base package installation, one assembly RUN reads
+that stage and the immutable component stages through read-only bind mounts.
+It copies only the former COPY payloads, in the same override order, and executes
+the existing installation, hash/version checks, npm pruning and browser probes.
+Files retain their source modes and link targets. Directory content copies keep
+the existing destination root mode and owner, while copying nested metadata and
+source timestamps. Empty directories, hidden entries and hard links are covered
+by the fixture. Copies retain the source UID/GID, including UID/GID 10001 on rebuilt Go tools;
+the runner home is explicitly assigned UID/GID 1001. Local inputs are root-owned
+in their scratch stage. The separate
+final RUN still checks `Runner.Listener` and writable diagnostics as that user.
+The context allowlist, package pins, runtime command and resource limits do not
+change. Build inputs and downloaded package archives are removed before the
+assembly layer is committed; mount contents are not exported. No writable cache
+mounts or shared host pruning are used.
+
+This addresses the observed second qualification failure: all three Go tools
+completed, but repeated 3.99–4.37 GB final-stage snapshots exhausted disk during
+COPY 19/35. BuildKit reported 87.77 GB total with only 87.65 MB reclaimable.
+The final assembly now has three RUN steps (base packages, assembly, unprivileged
+listener qualification), instead of retaining a populated snapshot for each
+small COPY. Source/fixture tests establish operation and payload equivalence;
+only a new full image build and scan can establish disk fit and runtime acceptance.
 
 The Go helper emits numeric `go-storage` observations before and after each
 component, or after a failure, for its fixed source/output/module/build-cache

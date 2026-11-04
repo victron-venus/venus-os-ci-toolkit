@@ -26,6 +26,21 @@ def executable(path, source):
     path.chmod(0o700)
 
 
+def final_assembly():
+    source = (RESERVE / 'Dockerfile').read_text().replace('\\\n', ' ')
+    line = next(line for line in source.splitlines() if line.startswith('RUN --mount='))
+    match = re.fullmatch(r'RUN ((?:--mount=\S+\s+)+)(.*)', line)
+    return [dict(option.split('=', 1) if '=' in option else (option, True)
+                 for option in spec.removeprefix('--mount=').split(','))
+            for spec in match[1].split()], match[2]
+
+
+def assembly_copy_function():
+    _, command = final_assembly()
+    match = re.fullmatch(r'(copy_contents\(\) \(.*?)\s*&&\s*(cp -a .*?)', command)
+    return match[1].strip(), match[2]
+
+
 class PublicRunnerImageTests(unittest.TestCase):
     def test_root_context_allows_only_exact_required_files(self):
         lines = [line for line in (RESERVE / 'Dockerfile.dockerignore').read_text().splitlines()
@@ -186,6 +201,171 @@ class PublicRunnerImageTests(unittest.TestCase):
             self.assertEqual(mapping[path], '/opt/victron-image-build/browsers/' + path)
         for name in ('install_runner_browsers.py', 'browser-toolchains.json'):
             self.assertEqual(mapping['scripts/' + name], '/opt/victron-image-build/browsers/scripts/' + name)
+
+    def test_final_assembly_keeps_readonly_sources_and_separate_runtime_identity(self):
+        mounts, command = final_assembly()
+        sources = {mount['from']: mount.get('source', '/') for mount in mounts}
+        self.assertEqual(sources, {
+            'runner-inputs': '/', 'patched-libbpf': '/opt/victron-libbpf',
+            'patched-gstreamer': '/opt/victron-gstreamer', 'docker': '/usr/local',
+            'patched-go-tools': '/opt/victron-go-tools', 'accepted-tools': '/',
+            'node': '/usr/local/bin/node', 'runner': '/home/runner'})
+        for mount in mounts:
+            self.assertEqual(mount['type'], 'bind')
+            self.assertIs(mount['ro'], True)
+            self.assertEqual(set(mount) - {'source'}, {'type', 'from', 'target', 'ro'})
+            self.assertTrue(mount['target'].startswith('/tmp/runner-'))
+        source = (RESERVE / 'Dockerfile').read_text().replace('\\\n', ' ')
+        final = source.rsplit('\nFROM ', 1)[1]
+        self.assertEqual(sum(line.startswith('RUN ') for line in final.splitlines()), 3)
+        self.assertNotRegex(final, r'(?m)^(COPY|ADD) ')
+        self.assertIn('USER 1001:1001\nRUN test "$(id -u)" = 1001', final)
+        self.assertIn('test "$(stat -c \'%u:%g\' _diag)" = 1001:1001', final)
+        # Build inputs remain disposable even though their preparation moved.
+        for path in ('/opt/victron-image-build/npm', '/opt/victron-image-build/browsers',
+                     '/tmp/reserve-gh', '/tmp/victron-libbpf', '/tmp/victron-gstreamer'):
+            self.assertIn('rm -rf ' + path, command)
+        self.assertIn('rm /tmp/prune_runner_npm.py', command)
+        self.assertIn('chown -hR 1001:1001 /home/runner/', command)
+        self.assertNotIn('--no-preserve=ownership', command)
+        # COPY --from keeps the source IDs, including the Go builder's 10001.
+        # Only the original explicit runner-home chown is allowed.
+        self.assertEqual(command.count('chown '), 1)
+        for path in ('npm', 'browsers'):
+            self.assertLess(command.index('python3 /opt/victron-image-build/' + path + '/'),
+                            command.index('rm -rf /opt/victron-image-build/' + path))
+
+    def test_actual_assembly_copies_preserve_payload_modes_links_and_override_order(self):
+        cp = shutil.which('gcp') or shutil.which('cp')
+        if 'GNU coreutils' not in subprocess.run([cp, '--version'], capture_output=True,
+                                                 text=True, check=False).stdout:
+            self.skipTest('GNU cp is required for the Linux image copy semantics')
+        copy_function, command = assembly_copy_function()
+        # Exercise the actual filesystem operations against a tiny fake root.
+        # This never executes an installer, network request, daemon or root command.
+        operations = [shlex.split(part.strip()) for part in command.split('&&')
+                      if part.strip().startswith(('cp ', 'copy_contents ', 'mkdir -p ', 'chown -hR '))]
+        payloads = {
+            '/tmp/runner-inputs/opt/victron-image-build/browsers/scripts/install_runner_browsers.py': 'browser-input',
+            '/tmp/runner-inputs/tmp/reserve-gh/scripts/install_release_gh.py': 'gh-input',
+            '/tmp/runner-inputs/tmp/prune_runner_npm.py': 'prune-input',
+            '/tmp/runner-inputs/opt/victron-ci-reserve/qualify-npm.cjs': 'retained-probe',
+            '/tmp/runner-libbpf/libbpf1.deb': 'libbpf-deb',
+            '/tmp/runner-libbpf/installed.sha256': 'libbpf-hash',
+            '/tmp/runner-libbpf/notices/copyright': 'libbpf-notice',
+            '/tmp/runner-gstreamer/libgstreamer-plugins-bad1.0-0.deb': 'gstreamer-library',
+            '/tmp/runner-gstreamer/gstreamer1.0-plugins-bad.deb': 'gstreamer-plugin',
+            '/tmp/runner-gstreamer/installed.sha256': 'gstreamer-hash',
+            '/tmp/runner-gstreamer/notices/copyright': 'gstreamer-notice',
+            '/tmp/runner-docker/bin/docker': 'docker-cli',
+            '/tmp/runner-docker/bin/containerd': 'old-containerd',
+            '/tmp/runner-docker/libexec/docker/cli-plugins/docker-buildx': 'old-buildx',
+            '/tmp/runner-go-tools/bin/containerd': 'patched-containerd',
+            '/tmp/runner-go-tools/cli-plugins/docker-buildx': 'patched-buildx',
+            '/tmp/runner-go-tools/notices/LICENSE': 'go-notice',
+            '/tmp/runner-accepted-tools/usr/bin/buildkit-runc': 'accepted-runc',
+            '/tmp/runner-accepted-tools/usr/share/licenses/oci-tools/LICENSE': 'accepted-notice',
+            '/tmp/runner-node': 'node-runtime',
+            '/tmp/runner-home/.hidden': 'hidden-runner-file',
+            '/tmp/runner-home/bin/Runner.Listener': 'listener',
+        }
+        expected = {
+            '/usr/local/bin/docker': 'docker-cli',
+            '/usr/local/bin/containerd': 'patched-containerd',
+            '/usr/local/libexec/docker/cli-plugins/docker-buildx': 'patched-buildx',
+            '/usr/local/bin/runc': 'accepted-runc', '/usr/local/bin/node': 'node-runtime',
+            '/usr/local/share/victron-libbpf/copyright': 'libbpf-notice',
+            '/usr/local/share/victron-gstreamer/copyright': 'gstreamer-notice',
+            '/usr/local/share/licenses/victron-go-tools/LICENSE': 'go-notice',
+            '/usr/local/share/licenses/accepted-oci-tools/LICENSE': 'accepted-notice',
+            '/tmp/victron-libbpf/libbpf1.deb': 'libbpf-deb',
+            '/tmp/victron-libbpf/installed.sha256': 'libbpf-hash',
+            '/tmp/victron-gstreamer/libgstreamer-plugins-bad1.0-0.deb': 'gstreamer-library',
+            '/tmp/victron-gstreamer/gstreamer1.0-plugins-bad.deb': 'gstreamer-plugin',
+            '/tmp/victron-gstreamer/installed.sha256': 'gstreamer-hash',
+            '/home/runner/.hidden': 'hidden-runner-file',
+            '/home/runner/bin/Runner.Listener': 'listener',
+            '/opt/victron-ci-reserve/qualify-npm.cjs': 'retained-probe',
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            def mapped(path):
+                return root / path.lstrip('/')
+            for name, content in payloads.items():
+                path = mapped(name)
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(content)
+                path.chmod(0o751)
+            mapped('/opt').mkdir()
+            mapped('/tmp').chmod(0o1777)
+            # A stale executable link must be replaced, never followed and overwritten.
+            untouched = mapped('/untouched')
+            untouched.write_text('unrelated')
+            mapped('/usr/local/bin').mkdir(parents=True)
+            mapped('/usr/local/bin').chmod(0o700)
+            mapped('/usr/local/bin/containerd').symlink_to(untouched)
+            mapped('/tmp/runner-home/bin/listener-link').symlink_to('Runner.Listener')
+            for operation in operations:
+                actual = [cp if operation[0] == 'cp' else operation[0]]
+                for arg in operation[1:]:
+                    if arg == '1001:1001':
+                        arg = f'{os.getuid()}:{os.getgid()}'
+                    actual.append(str(mapped(arg)) + ('/.' if arg.endswith('/.') else '/')
+                                  if arg.startswith('/') and arg.endswith(('/', '/.'))
+                                  else str(mapped(arg)) if arg.startswith('/') else arg)
+                if operation[0] == 'copy_contents':
+                    executable_function = copy_function.replace('cp -a ', shlex.quote(cp) + ' -a ')
+                    subprocess.run(['bash', '-ec', executable_function + '; copy_contents "$1" "$2"',
+                                    'copy-fixture', *actual[1:]],
+                                   check=True, capture_output=True, timeout=5)
+                else:
+                    subprocess.run(actual, check=True, capture_output=True, timeout=5)
+            for name, content in expected.items():
+                path = mapped(name)
+                self.assertEqual(path.read_text(), content, name)
+                self.assertEqual(path.stat().st_mode & 0o777, 0o751, name)
+                self.assertEqual(path.stat().st_uid, os.getuid(), name)
+            self.assertEqual(untouched.read_text(), 'unrelated')
+            self.assertFalse(mapped('/usr/local/bin/containerd').is_symlink())
+            self.assertEqual(os.readlink(mapped('/home/runner/bin/listener-link')), 'Runner.Listener')
+            self.assertEqual(mapped('/tmp').stat().st_mode & 0o7777, 0o1777)
+            self.assertEqual(mapped('/usr/local/bin').stat().st_mode & 0o7777, 0o700)
+
+    def test_copy_contents_preserves_root_metadata_and_copies_nested_metadata(self):
+        cp = shutil.which('gcp') or shutil.which('cp')
+        if 'GNU coreutils' not in subprocess.run([cp, '--version'], capture_output=True,
+                                                 text=True, check=False).stdout:
+            self.skipTest('GNU cp is required for the Linux image copy semantics')
+        function, _ = assembly_copy_function()
+        function = function.replace('cp -a ', shlex.quote(cp) + ' -a ')
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source, target = root / 'source', root / 'target'
+            source.mkdir(mode=0o755)
+            target.mkdir(mode=0o700)
+            os.utime(source, (1000000000, 1000000000))
+            owner = (target.stat().st_uid, target.stat().st_gid)
+            def copy():
+                return subprocess.run(['bash', '-ec', function + '; copy_contents "$1" "$2"',
+                                       'copy-fixture', str(source), str(target)],
+                                      check=False, capture_output=True, timeout=5)
+            self.assertEqual(copy().returncode, 0, 'Empty sources must be supported')
+            self.assertEqual(target.stat().st_mode & 0o7777, 0o700)
+            self.assertEqual(int(target.stat().st_mtime), 1000000000)
+            (source / 'nested').mkdir(mode=0o711)
+            (target / 'nested').mkdir(mode=0o700)
+            (source / '.hidden').write_text('hidden')
+            (source / 'nested/file').write_text('nested')
+            os.link(source / '.hidden', source / 'hardlink')
+            self.assertEqual(copy().returncode, 0)
+            self.assertEqual(target.stat().st_mode & 0o7777, 0o700)
+            self.assertEqual((target.stat().st_uid, target.stat().st_gid), owner)
+            self.assertEqual((target / 'nested').stat().st_mode & 0o7777, 0o711)
+            self.assertEqual((target / 'nested/file').read_text(), 'nested')
+            self.assertEqual((target / '.hidden').read_text(), 'hidden')
+            self.assertEqual((target / '.hidden').stat().st_ino, (target / 'hardlink').stat().st_ino)
+            shutil.rmtree(source)
+            self.assertNotEqual(copy().returncode, 0, 'Missing sources must fail')
 
     def test_go_stage_stops_on_failure_and_cleans_only_after_all_components(self):
         source = (RESERVE / 'Dockerfile').read_text().replace('\\\n', ' ')
