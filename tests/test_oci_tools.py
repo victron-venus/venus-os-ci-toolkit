@@ -1,6 +1,7 @@
 """Local adversarial tests; no network, Go compilation, root or daemons."""
 
 import copy
+import hashlib
 import io
 import json
 import os
@@ -13,6 +14,7 @@ import sys
 import tarfile
 import tempfile
 import unittest
+import urllib.error
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -21,6 +23,273 @@ import build_oci_tools as build  # noqa: E402
 import qualify_oci_tools as runtime  # noqa: E402
 import oci_vulnerability as vulnerability  # noqa: E402
 import oci_header_disposition as headers  # noqa: E402
+
+
+class DownloadTests(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        self.target = self.root / "artifact"
+        self.payload = b"exact reviewed bytes"
+        self.sha = hashlib.sha256(self.payload).hexdigest()
+        self.url = "https://example.invalid/locked-package.deb"
+
+    def http_error(self, code):
+        return urllib.error.HTTPError(self.url, code, "fixture", {}, io.BytesIO(b"error"))
+
+    def test_transient_http_recovers_without_partial_target(self):
+        errors = [self.http_error(502), self.http_error(503)]
+        def response(*args, **kwargs):
+            self.assertFalse(self.target.exists())
+            if errors:
+                raise errors.pop(0)
+            return io.BytesIO(self.payload)
+        with patch.object(build.urllib.request, "urlopen", side_effect=response) as fetch, \
+                patch.object(build.time, "sleep") as sleep:
+            build.download(self.url, self.target, self.sha, len(self.payload))
+        self.assertEqual(fetch.call_count, 3)
+        self.assertEqual([call.args[0] for call in sleep.call_args_list], [2, 4])
+        self.assertEqual(self.target.read_bytes(), self.payload)
+        self.assertEqual(list(self.root.iterdir()), [self.target])
+
+    def test_transient_http_exhausts_exactly_five_attempts(self):
+        with patch.object(build.urllib.request, "urlopen", \
+                          side_effect=[self.http_error(503) for _ in range(5)]) as fetch, \
+                patch.object(build.time, "sleep") as sleep:
+            with self.assertRaises(urllib.error.HTTPError):
+                build.download(self.url, self.target, self.sha, len(self.payload))
+        self.assertEqual(fetch.call_count, 5)
+        self.assertEqual([call.args[0] for call in sleep.call_args_list], [2, 4, 8, 16])
+        self.assertEqual(list(self.root.iterdir()), [])
+
+    def test_permanent_http_and_transport_errors_are_not_retried(self):
+        for error in [self.http_error(code) for code in (400, 401, 403, 404, 429)] + [
+                urllib.error.URLError("certificate verify failed")]:
+            with self.subTest(error=error), \
+                    patch.object(build.urllib.request, "urlopen", side_effect=error) as fetch, \
+                    patch.object(build.time, "sleep") as sleep:
+                with self.assertRaises(urllib.error.URLError):
+                    build.download(self.url, self.target, self.sha, len(self.payload))
+                fetch.assert_called_once()
+                sleep.assert_not_called()
+                self.assertEqual(list(self.root.iterdir()), [])
+
+    def test_untrusted_bytes_never_publish_or_retry(self):
+        cases = [(b"wrong", len(self.payload)), (self.payload + b"x", len(self.payload)),
+                 (self.payload[:-1] + b"!", len(self.payload)),
+                 (self.payload, len(self.payload) + 1)]
+        for payload, size in cases:
+            with self.subTest(payload=payload, size=size), \
+                    patch.object(build.urllib.request, "urlopen", return_value=io.BytesIO(payload)) as fetch, \
+                    patch.object(build.time, "sleep") as sleep:
+                with self.assertRaisesRegex(ValueError, "Download (identity mismatch|exceeds bound)"):
+                    build.download(self.url, self.target, self.sha, size)
+                fetch.assert_called_once()
+                sleep.assert_not_called()
+                self.assertEqual(list(self.root.iterdir()), [])
+
+    def test_existing_destination_is_never_overwritten(self):
+        self.target.write_bytes(b"preserved")
+        with patch.object(build.urllib.request, "urlopen", return_value=io.BytesIO(self.payload)), \
+                patch.object(build.time, "sleep") as sleep:
+            with self.assertRaises(FileExistsError):
+                build.download(self.url, self.target, self.sha, len(self.payload))
+        self.assertEqual(self.target.read_bytes(), b"preserved")
+        self.assertEqual(list(self.root.iterdir()), [self.target])
+        sleep.assert_not_called()
+
+    def test_partial_stream_error_removes_temporary_bytes(self):
+        class Interrupted(io.BytesIO):
+            def read(inner, size=-1):
+                if inner.tell():
+                    raise urllib.error.URLError("connection reset")
+                return super().read(3)
+        with patch.object(build.urllib.request, "urlopen", return_value=Interrupted(self.payload)), \
+                patch.object(build.time, "sleep") as sleep:
+            with self.assertRaises(urllib.error.URLError):
+                build.download(self.url, self.target, self.sha, len(self.payload))
+        self.assertEqual(list(self.root.iterdir()), [])
+        sleep.assert_not_called()
+
+    def test_non_https_refused_before_network(self):
+        with patch.object(build.urllib.request, "urlopen") as fetch:
+            with self.assertRaisesRegex(ValueError, "HTTPS"):
+                build.download("http://example.invalid/package", self.target, self.sha)
+        fetch.assert_not_called()
+
+
+class NativePackageDownloadTests(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+
+    def inputs(self, arch="amd64"):
+        spec = json.loads((build.INPUTS / f"native-{arch}.json").read_text())
+        item = spec["packages"][0]
+        return spec, item, self.root / Path(item["filename"]).name
+
+    def failure(self, code):
+        return urllib.error.HTTPError("https://snapshot.ubuntu.com/", code,
+                                      "fixture", {}, io.BytesIO(b"error"))
+
+    def test_each_architecture_falls_back_with_exact_locked_identity(self):
+        for arch, archive in (("amd64", "https://archive.ubuntu.com/ubuntu/"),
+                              ("arm64", "https://ports.ubuntu.com/ubuntu-ports/")):
+            for status in (500, 502, 503, 504):
+                with self.subTest(arch=arch, status=status):
+                    spec, item, target = self.inputs(arch)
+                    with patch.object(build, "download", side_effect=[self.failure(status), None]) as fetch:
+                        self.assertTrue(build.download_native_package(spec, item, target))
+                    self.assertTrue(callable(fetch.call_args_list[0].kwargs["opener"]))
+                    self.assertEqual(fetch.call_args_list[0].kwargs, fetch.call_args_list[1].kwargs)
+                    self.assertEqual([call.args for call in fetch.call_args_list], [
+                        (spec["base_url"] + item["filename"], target, item["sha256"], item["size"]),
+                        (archive + item["filename"], target, item["sha256"], item["size"]),
+                    ])
+
+    def test_available_snapshot_needs_no_archive(self):
+        spec, item, target = self.inputs()
+        with patch.object(build, "download") as fetch:
+            self.assertFalse(build.download_native_package(spec, item, target))
+        fetch.assert_called_once()
+        self.assertEqual(fetch.call_args.args, (spec["base_url"] + item["filename"], target,
+                                               item["sha256"], item["size"]))
+        self.assertTrue(callable(fetch.call_args.kwargs["opener"]))
+
+    def test_security_identity_and_permanent_errors_never_switch_origins(self):
+        errors = [self.failure(code) for code in (401, 403, 404, 429)] + [
+            urllib.error.URLError("certificate verify failed"),
+            ValueError("Download identity mismatch"), ValueError("Download exceeds bound"),
+            OSError("cannot write"),
+        ]
+        spec, item, target = self.inputs()
+        for error in errors:
+            with self.subTest(error=error), patch.object(build, "download", side_effect=error) as fetch:
+                with self.assertRaises(type(error)):
+                    build.download_native_package(spec, item, target)
+                fetch.assert_called_once()
+
+    def test_invalid_origins_and_metadata_are_rejected_before_network(self):
+        spec, item, target = self.inputs()
+        cases = [dict(spec, base_url="https://example.invalid/ubuntu/"),
+                 dict(spec, base_url=spec["base_url"].replace("://", "://user:password@")),
+                 dict(spec, base_url=spec["base_url"].replace(".com/", ".com:443/")),
+                 dict(spec, snapshot="different-snapshot"), dict(spec, architecture="s390x"),
+                 dict(spec, distribution="ubuntu:25.10")]
+        for value in cases:
+            with self.subTest(spec=value), patch.object(build, "download") as fetch:
+                with self.assertRaisesRegex(ValueError, "origin"):
+                    build.download_native_package(value, item, target)
+                fetch.assert_not_called()
+
+    def test_invalid_paths_are_rejected_before_network(self):
+        spec, item, target = self.inputs()
+        for path in ("https://other.invalid/pkg.deb", "pool/../pkg.deb", "pool//pkg.deb",
+                     "pool/pkg.deb?query", "pool/pkg.deb#fragment", "pool/%2e%2e/pkg.deb"):
+            with self.subTest(path=path), patch.object(build, "download") as fetch:
+                with self.assertRaisesRegex(ValueError, "path"):
+                    build.download_native_package(spec, dict(item, filename=path), target)
+                fetch.assert_not_called()
+
+    def test_archive_failure_is_final(self):
+        spec, item, target = self.inputs()
+        for error in (self.failure(503), ValueError("Download identity mismatch")):
+            with self.subTest(error=error), \
+                    patch.object(build, "download", side_effect=[self.failure(502), error]) as fetch:
+                with self.assertRaises(type(error)):
+                    build.download_native_package(spec, item, target)
+                self.assertEqual(fetch.call_count, 2)
+
+    def test_diagnostics_include_basename_without_urls(self):
+        spec, item, target = self.inputs()
+        with patch.object(build, "download", side_effect=[self.failure(503), None]), \
+                patch("builtins.print") as output:
+            build.download_native_package(spec, item, target)
+        messages = [call.args[0] for call in output.call_args_list]
+        self.assertTrue(all(target.name in message for message in messages))
+        self.assertTrue(all("https://" not in message and str(self.root) not in message
+                            for message in messages))
+
+    def test_native_download_uses_strict_redirect_handler(self):
+        spec, item, target = self.inputs()
+        with patch.object(build.urllib.request, "build_opener") as factory, \
+                patch.object(build, "download") as fetch:
+            build.download_native_package(spec, item, target)
+        factory.assert_called_once()
+        self.assertIsInstance(factory.call_args.args[0], build.NativeArchiveRedirect)
+        self.assertEqual(fetch.call_args.kwargs["opener"], factory.return_value.open)
+
+    def test_native_redirect_allows_same_origin_https(self):
+        url = "https://archive.ubuntu.com/ubuntu/pool/old.deb"
+        target = "https://archive.ubuntu.com/ubuntu/pool/new.deb"
+        request = build.NativeArchiveRedirect().redirect_request(
+            build.urllib.request.Request(url), None, 302, "Found", {}, target)
+        self.assertEqual(request.full_url, target)
+
+    def test_native_redirect_rejects_downgrade_and_origin_changes(self):
+        request = build.urllib.request.Request("https://archive.ubuntu.com/ubuntu/pool/package.deb")
+        for target in ("http://archive.ubuntu.com/ubuntu/pool/package.deb",
+                       "https://other.invalid/package.deb",
+                       "https://archive.ubuntu.com:8443/package.deb",
+                       "https://user:password@archive.ubuntu.com/package.deb"):
+            with self.subTest(target=target), self.assertRaisesRegex(ValueError, "HTTPS origin"):
+                build.NativeArchiveRedirect().redirect_request(request, None, 302, "Found", {}, target)
+
+    def test_verified_fallback_is_reused_for_remaining_packages(self):
+        spec, _, _ = self.inputs()
+        selected = False
+        with patch.object(build, "download", side_effect=[self.failure(503), None, None, None]) as fetch:
+            for item in spec["packages"][:3]:
+                target = self.root / Path(item["filename"]).name
+                selected = build.download_native_package(spec, item, target, archive_selected=selected)
+                self.assertTrue(selected)
+        first, second, third = spec["packages"][:3]
+        self.assertEqual([call.args[0] for call in fetch.call_args_list], [
+            spec["base_url"] + first["filename"],
+            "https://archive.ubuntu.com/ubuntu/" + first["filename"],
+            "https://archive.ubuntu.com/ubuntu/" + second["filename"],
+            "https://archive.ubuntu.com/ubuntu/" + third["filename"],
+        ])
+
+    def test_failed_fallback_does_not_persist_a_preference(self):
+        spec, item, target = self.inputs()
+        with patch.object(build, "download", side_effect=[self.failure(502), ValueError("bad hash")]):
+            with self.assertRaisesRegex(ValueError, "bad hash"):
+                build.download_native_package(spec, item, target)
+        with patch.object(build, "download") as fetch:
+            self.assertFalse(build.download_native_package(spec, item, target))
+        self.assertEqual(fetch.call_args.args[0], spec["base_url"] + item["filename"])
+
+    def test_selected_archive_failure_never_switches_back(self):
+        spec, item, target = self.inputs()
+        with patch.object(build, "download", side_effect=self.failure(503)) as fetch:
+            with self.assertRaises(urllib.error.HTTPError):
+                build.download_native_package(spec, item, target, archive_selected=True)
+        fetch.assert_called_once()
+        self.assertEqual(fetch.call_args.args[0],
+                         "https://archive.ubuntu.com/ubuntu/" + item["filename"])
+
+    def test_fresh_native_install_resets_the_preference(self):
+        original_read = Path.read_text
+        def read_text(path, *args, **kwargs):
+            if str(path) == "/etc/os-release":
+                return 'ID=ubuntu\nVERSION_ID="24.04"\n'
+            return original_read(path, *args, **kwargs)
+        manifest = json.loads(build.MANIFEST.read_text())
+        for number in range(2):
+            stage = self.root / str(number)
+            stage.mkdir()
+            with patch.object(Path, "read_text", autospec=True, side_effect=read_text), \
+                    patch.object(build, "download_native_package", return_value=True) as fetch, \
+                    patch.object(headers, "verify_archive", return_value={}), \
+                    patch.object(build, "run", side_effect=RuntimeError("stop before apt")):
+                with self.assertRaisesRegex(RuntimeError, "stop before apt"):
+                    build.install_native(stage, "amd64", manifest)
+            selected = [call.kwargs["archive_selected"] for call in fetch.call_args_list]
+            self.assertEqual(selected, [False] + [True] * (len(selected) - 1))
+            self.assertGreater(len(selected), 1)
 
 
 class QualificationTests(unittest.TestCase):

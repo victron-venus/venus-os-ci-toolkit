@@ -12,10 +12,15 @@ import json
 import os
 from pathlib import Path
 import platform
+import re
 import shutil
 import subprocess
 import sys
 import tarfile
+import tempfile
+import time
+import urllib.error
+import urllib.parse
 import urllib.request
 
 from build_runner_go_tools import digest, json_stream, require, unpack, verify_openpgp_absent
@@ -36,6 +41,11 @@ UNIT_PACKAGES = {
              "./libcontainer/capabilities"],
 }
 OPENPGP = "golang.org/x/crypto/openpgp"
+TRANSIENT_HTTP_ERRORS = (500, 502, 503, 504)
+NATIVE_PACKAGE_ARCHIVES = {
+    "amd64": "https://archive.ubuntu.com/ubuntu/",
+    "arm64": "https://ports.ubuntu.com/ubuntu-ports/",
+}
 
 
 def write_json(path, value):
@@ -111,16 +121,71 @@ def run(args, *, cwd=None, env=None, log=None, timeout=1200, allowed=(0,)):
     return result.stdout
 
 
-def download(url, target, sha256, size=None):
+def download(url, target, sha256, size=None, *, opener=None):
+    """Retry transient HTTP responses; publish only complete, verified bytes."""
     require(url.startswith("https://"), "HTTPS download required")
-    with urllib.request.urlopen(url, timeout=90) as response, target.open("xb") as out:
-        total = 0
-        while block := response.read(1024 * 1024):
-            total += len(block)
-            require(total <= (size or 150 * 1024 * 1024), "Download exceeds bound")
-            out.write(block)
-    require((size is None or total == size) and digest(target) == sha256,
-            "Download identity mismatch")
+    opener = urllib.request.urlopen if opener is None else opener
+    for attempt, delay in enumerate((2, 4, 8, 16, None), start=1):
+        try:
+            # Keep a failed transfer separate from the final name. Linking the
+            # verified file preserves exclusive creation even across a race.
+            with tempfile.TemporaryDirectory(dir=target.parent, prefix=".oci-download-") as temp:
+                pending = Path(temp) / "payload"
+                with opener(url, timeout=90) as response, pending.open("xb") as out:
+                    total = 0
+                    while block := response.read(1024 * 1024):
+                        total += len(block)
+                        require(total <= (size or 150 * 1024 * 1024), "Download exceeds bound")
+                        out.write(block)
+                require((size is None or total == size) and digest(pending) == sha256,
+                        "Download identity mismatch")
+                os.link(pending, target)
+            return
+        except urllib.error.HTTPError as error:
+            error.close()
+            if error.code not in TRANSIENT_HTTP_ERRORS or delay is None:
+                raise
+            print(f"Transient HTTP {error.code}; download retry {attempt + 1}/5 in {delay}s",
+                  flush=True)
+            time.sleep(delay)
+
+
+class NativeArchiveRedirect(urllib.request.HTTPRedirectHandler):
+    """Keep each native package request on its reviewed HTTPS origin."""
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        original = urllib.parse.urlsplit(req.full_url)
+        target = urllib.parse.urlsplit(newurl)
+        require(target.scheme == "https" and target.netloc == original.netloc,
+                "Native package redirect changed its HTTPS origin")
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def download_native_package(spec, item, target, *, archive_selected=False):
+    """Return an install-local preference only after verified archive success."""
+    arch = spec["architecture"]
+    archive = NATIVE_PACKAGE_ARCHIVES.get(arch)
+    snapshot = spec["snapshot"]
+    expected = f"https://snapshot.ubuntu.com/ubuntu/{snapshot}/"
+    require(type(archive_selected) is bool and archive is not None
+            and spec["distribution"] == "ubuntu:24.04"
+            and isinstance(snapshot, str) and re.fullmatch(r"[0-9]{8}T[0-9]{6}Z", snapshot)
+            and spec["base_url"] == expected, "Unreviewed native package origin")
+    filename = item["filename"]
+    require(isinstance(filename, str) and re.fullmatch(r"pool/[A-Za-z0-9_+~./-]+[.]deb", filename)
+            and all(part not in ("", ".", "..") for part in filename.split("/"))
+            and item["architecture"] in (arch, "all"), "Invalid native package path")
+    print(f"Fetching locked native package {target.name}", flush=True)
+    open_native = urllib.request.build_opener(NativeArchiveRedirect()).open
+    origin = archive if archive_selected else expected
+    try:
+        download(origin + filename, target, item["sha256"], item["size"], opener=open_native)
+        return archive_selected
+    except urllib.error.HTTPError as error:
+        if archive_selected or error.code not in TRANSIENT_HTTP_ERRORS:
+            raise
+        print(f"Snapshot retries exhausted; official archive fallback for {target.name}", flush=True)
+        download(archive + filename, target, item["sha256"], item["size"], opener=open_native)
+        return True
 
 
 def validate_locks(manifest):
@@ -202,6 +267,7 @@ def install_native(stage, arch, manifest):
     debs = stage / "debs"
     debs.mkdir(exist_ok=False)
     packages = []
+    archive_selected = False
     for item in spec["packages"]:
         require(item["architecture"] in (arch, "all") and item["filename"].startswith("pool/")
                 and ".." not in Path(item["filename"]).parts, "Invalid package input")
@@ -210,7 +276,8 @@ def install_native(stage, arch, manifest):
         # that flag disables. apt's cache name preserves and quotes the epoch.
         version = item["version"].replace(":", "%3a")
         target = debs / f"{item['name']}_{version}_{item['architecture']}.deb"
-        download(spec["base_url"] + item["filename"], target, item["sha256"], item["size"])
+        archive_selected = download_native_package(
+            spec, item, target, archive_selected=archive_selected)
         if item["name"] == "linux-libc-dev":
             header_archive = header_review.verify_archive(target, binding, files, INPUTS)
         packages.append(target)
