@@ -178,6 +178,29 @@ its downloaded tar is removed only after complete validation and materialization
 If a particular hosted image cannot fit, the run stops and retains evidence.
 It does not delete preinstalled SDKs, unrelated images or other jobs' caches.
 
+The accepted builder uses the native snapshotter. To reduce copies of populated
+parent snapshots, Go and browser inputs each use three COPY instructions instead
+of eleven. The sparse context allowlist, file destinations and default root
+ownership are unchanged. All three Go components run sequentially in one RUN as
+UID/GID 10001 with the same environment, tests and build flags. A successful final
+component is followed by `go clean -modcache -cache` in that RUN, so those caches
+are not committed into the resulting layer. Binaries and license notices remain
+in their existing output directories. No cache mounts or shared host pruning are
+used; a failure stops the sequence and is retained for diagnosis.
+
+The Go helper emits numeric `go-storage` observations before and after each
+component, or after a failure, for its fixed source/output/module/build-cache
+directories. Each `du` call has a 15-second deadline and a 4-KiB output cap.
+The executor records `builder_storage_observations` before the main build and
+on failure: `buildctl du -v` runs in the already verified, exact builder container,
+with a 15-second deadline and 64-KiB output cap. Identity checks retain their
+existing separate timeout. Diagnostics execute only on Linux with `waitid` /
+`WNOWAIT` and the default child handler. The owned process group is terminated
+before reaping its leader, including after a successful leader exit. Missing
+platform support or a diagnostic error is recorded as unavailable and
+never changes the build verdict. These observations measure a new attempt;
+neither reduced instruction counts nor a successful source test proves disk fit.
+
 Each owned BuildKit container has two CPUs, 4 GiB RAM, no swap allowance beyond
 RAM, no restart policy and one parallel build vertex. The workflow verifies the
 actual cgroup v2 limits and private cgroup namespace. It correlates the stable
@@ -211,6 +234,13 @@ The BuildKit state volume is checked absent before creation and bound to the
 owned container's `/var/lib/buildkit` mount. Its removal is independently
 verified even if Buildx leaves an inactive instance's cache behind. Volume
 removal is not forced, so another container's reference prevents deletion.
+`builder_cleanup_steps` records each operation's identity, start/end and outcome.
+After a cleanup failure, bounded readbacks inspect the exact container, private
+Buildx instance metadata and state volume. Unknown state is not absence, and
+later absence does not turn a timed-out removal into a successful cleanup.
+Removal deadlines remain 60 seconds and Docker readbacks remain 30 seconds.
+The original failure stays primary when a final disk check or accepted-image
+cleanup also fails; the separate cleanup error is retained in the build receipt.
 
 ## After artifact production
 

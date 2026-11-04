@@ -20,10 +20,12 @@ import time
 import uuid
 
 if __package__:
+    from .build_runner_go_tools import bounded_readonly_command
     from . import prepare_accepted_builder as accepted
     from . import runner_image_cgroup as cgroup
     from . import runner_image_oci as oci
 else:
+    from build_runner_go_tools import bounded_readonly_command
     import prepare_accepted_builder as accepted
     import runner_image_cgroup as cgroup
     import runner_image_oci as oci
@@ -1551,6 +1553,7 @@ class Supervisor:
 
     def run(self, command, seconds=60, capture=False, inspect=None):
         self.check(force_record=True)
+        failed = False
         try:
             if capture:
                 result = subprocess.run(command, env=self.env, capture_output=True, timeout=seconds, check=True)
@@ -1576,8 +1579,15 @@ class Supervisor:
                         except subprocess.TimeoutExpired:
                             os.killpg(process.pid, signal.SIGKILL)
                             process.wait(timeout=5)
+        except BaseException:
+            failed = True
+            raise
         finally:
-            self.check(force_record=True)
+            try:
+                self.check(force_record=True)
+            except BaseException:
+                if not failed:
+                    raise
 
 
 def builder_identity(item, name, owner, image):
@@ -1682,8 +1692,55 @@ def probe_volume(sup, name):
     return items[0]
 
 
-def remove_builder(sup, name, owner, image, *, volume_absent_before=False):
-    item = probe_builder(sup, name, owner, image)
+def cleanup_step(observations, step, identity, operation):
+    entry = {'step': step, 'identity': identity, 'started_at': now()}
+    observations.append(entry)
+    try:
+        result = operation()
+        entry['status'] = 'completed'
+        return result
+    except BaseException as error:
+        entry.update(status='failed', error_type=type(error).__name__)
+        raise
+    finally:
+        entry['finished_at'] = now()
+
+
+def probe_instance(sup, name):
+    path = Path(sup.env['DOCKER_CONFIG']) / 'buildx/instances' / name
+    require(not path.is_symlink(), 'Unsafe owned builder metadata')
+    if not path.exists():
+        return None
+    require(path.is_file(), 'Unsafe owned builder metadata')
+    return {'name': name}
+
+
+def cleanup_absence(observations, step, identity, probe, message):
+    def verify():
+        require(probe() is None, message)
+    cleanup_step(observations, step, identity, verify)
+
+
+def remove_builder(sup, name, owner, image, *, volume_absent_before=False, observations=None):
+    observations = observations if observations is not None else []
+    try:
+        return remove_builder_resources(sup, name, owner, image, volume_absent_before, observations)
+    except BaseException:
+        for step, identity, operation in (
+                ('readback-container', name, lambda: probe_builder(sup, name, owner, image)),
+                ('readback-instance', name, lambda: probe_instance(sup, name)),
+                ('readback-volume', state_volume(name), lambda: probe_volume(sup, state_volume(name)))):
+            try:
+                present = cleanup_step(observations, step, identity, operation) is not None
+                observations[-1]['present'] = present
+            except Exception:
+                # Preserve the original cleanup failure; an inconclusive read is not absence.
+                observations[-1]['status'] = 'unknown'
+        raise
+
+
+def remove_builder_resources(sup, name, owner, image, volume_absent_before, observations):
+    item = cleanup_step(observations, 'probe-container', name, lambda: probe_builder(sup, name, owner, image))
     volume = state_volume(name)
     associated = False
     if item is not None:
@@ -1692,23 +1749,46 @@ def remove_builder(sup, name, owner, image, *, volume_absent_before=False):
                 mounts[0].get('RW') is True, 'Owned BuildKit state volume association differs')
         associated = True
         # Remove by immutable container ID, including an unhealthy owned instance.
-        subprocess.run(['docker', 'rm', '--force', item['Id']], env=sup.env, check=True, timeout=60)
-    metadata = Path(sup.env['DOCKER_CONFIG']) / 'buildx/instances' / name
-    if metadata.exists():
-        require(metadata.is_file() and not metadata.is_symlink(), 'Unsafe owned builder metadata')
+        cleanup_step(observations, 'remove-container', item['Id'], lambda:
+            subprocess.run(['docker', 'rm', '--force', item['Id']], env=sup.env, check=True, timeout=60))
+    if probe_instance(sup, name) is not None:
         # This private DOCKER_CONFIG was exclusively created by this invocation.
         # Remove only that instance's metadata. An inactive Buildx instance may
         # retain its volume, so cache removal is independently verified below.
-        require(probe_builder(sup, name, owner, image) is None, 'Builder name reappeared during cleanup')
-        subprocess.run(['docker', 'buildx', 'rm', '--force', name], env=sup.env, check=True, timeout=60)
-    require(probe_builder(sup, name, owner, image) is None, 'Owned builder removal not confirmed')
-    if probe_volume(sup, volume) is not None:
+        cleanup_absence(observations, 'probe-instance-container', name,
+                        lambda: probe_builder(sup, name, owner, image),
+                        'Builder name reappeared during cleanup')
+        cleanup_step(observations, 'remove-instance', name, lambda:
+            subprocess.run(['docker', 'buildx', 'rm', '--force', name], env=sup.env, check=True, timeout=60))
+    cleanup_absence(observations, 'verify-instance-absent', name,
+                    lambda: probe_instance(sup, name), 'Owned instance removal not confirmed')
+    cleanup_absence(observations, 'verify-container-absent', name,
+                    lambda: probe_builder(sup, name, owner, image), 'Owned builder removal not confirmed')
+    if cleanup_step(observations, 'probe-volume', volume, lambda: probe_volume(sup, volume)) is not None:
         require(associated or volume_absent_before, 'State volume ownership is not established')
         # No force: Docker refuses removal if another container references it.
-        subprocess.run(['docker', 'volume', 'rm', volume], env=sup.env, check=True, timeout=60)
-    require(probe_volume(sup, volume) is None, 'Owned state volume removal not confirmed')
+        cleanup_step(observations, 'remove-volume', volume, lambda:
+            subprocess.run(['docker', 'volume', 'rm', volume], env=sup.env, check=True, timeout=60))
+    cleanup_absence(observations, 'verify-volume-absent', volume,
+                    lambda: probe_volume(sup, volume), 'Owned state volume removal not confirmed')
     result = {key: item['State'].get(key) for key in ('OOMKilled', 'ExitCode', 'Error')} if item else {'absent': True}
     return {**result, 'state_volume': volume, 'state_volume_removed': True}
+
+
+def observe_builder_storage(sup, name, owner, image, record, phase):
+    entry = {'phase': phase, 'started_at': now()}
+    record.setdefault('builder_storage_observations', []).append(entry)
+    try:
+        item = inspect_builder(sup, name, owner, image)
+        require(item['Id'] == record['builder_id'], 'Builder identity changed during storage diagnostic')
+        entry['container_id'] = item['Id']
+        raw = bounded_readonly_command(
+            ['docker', 'exec', item['Id'], '/usr/bin/buildctl', 'du', '-v'], env=sup.env)
+        entry.update(status='observed', bytes=len(raw), sha256=hashlib.sha256(raw).hexdigest(),
+                     output=raw.decode(errors='replace'))
+    except Exception as error:
+        entry.update(status='unavailable', error_type=type(error).__name__)
+    entry['finished_at'] = now()
 
 
 def build_command(stage, data, identity, builder, context, output, layout=None, base=None, *, tools_layout=None):
@@ -2371,6 +2451,7 @@ def execute(stage, parent=None):
             cgroup.sample(current['State']['Pid'], record['cgroup_proof'], observe=observe_cgroup)
         if stage == 'public':
             run_patch_preflights(sup, data, name, context, record, check_build)
+        observe_builder_storage(sup, name, owner, image, record, 'before-build')
         command = build_command(stage, data, identity, name, context, output / 'image.oci.tar', layout, base,
                                 tools_layout=builder_inputs / 'layout')
         record['command'] = command
@@ -2383,7 +2464,8 @@ def execute(stage, parent=None):
         record['archive_sha256'] = oci.digest_file(output / 'image.oci.tar')
         # Releasing only our builder's state reclaims compiled Go caches before scan.
         record['builder_cleanup_state'] = remove_builder(sup, name, owner, image,
-                                                        volume_absent_before=volume_absent_before)
+                                                        volume_absent_before=volume_absent_before,
+                                                        observations=record.setdefault('builder_cleanup_steps', []))
         created = False
         record['builder_removed'] = True
         proof = oci.verify(output / 'image.oci.tar', record['archive_sha256'], record['archive_bytes'],
@@ -2393,13 +2475,16 @@ def execute(stage, parent=None):
         run_scan(sup, data, work, output, owner, proof, record)
     except BaseException as exc:
         record['failure_type'] = type(exc).__name__
+        if record.get('builder_id'):
+            observe_builder_storage(sup, name, owner, image, record, 'failed')
         # Do not include arbitrary command stderr/environment in structured metadata.
         raise
     finally:
         if created:
             try:
                 record['builder_cleanup_state'] = remove_builder(sup, name, owner, image,
-                                                                volume_absent_before=volume_absent_before)
+                                                                volume_absent_before=volume_absent_before,
+                                                                observations=record.setdefault('builder_cleanup_steps', []))
                 record['builder_removed'] = True
             except BaseException as exc:
                 record['cleanup_failure_type'] = type(exc).__name__
@@ -2407,7 +2492,8 @@ def execute(stage, parent=None):
             accepted.cleanup(sup, builder_spec, record['accepted_builder'])
         except BaseException as exc:
             record['import_cleanup_failure_type'] = type(exc).__name__
-            raise
+            if 'failure_type' not in record:
+                raise
         finally:
             record['minimum_free_bytes'] = sup.minimum
             record['finished_at'] = now()

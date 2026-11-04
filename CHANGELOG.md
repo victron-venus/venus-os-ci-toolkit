@@ -6,10 +6,14 @@
 
 - Acquire accepted native builder archives from an explicitly pinned stable toolkit release without depending on expired Actions artifacts. Preserve the original image, filesystem and qualification checks; missing or changed assets fail without fallback.
 - Bind transport selection and its digest to one immutable input snapshot throughout acquisition, preparation and two-architecture publication. Reject changes before successful receipts, imports or publication commit.
+- Reduce native runner snapshot boundaries by grouping the existing allowlisted Go/browser inputs and compiling all three Go tools in one unprivileged RUN. Clean module/build caches before committing that layer, retaining the existing tests, output binaries and notices.
+- Record bounded builder and Go-directory storage observations and exact cleanup steps. Preserve the original build failure when diagnostics, final disk checks or import cleanup also fail; unresolved cleanup remains a failure.
 
 ### Upgrade
 
 Use the reviewed transport lock together with the unchanged original builder identity lock. The runner manifest and consumer receipt bind both separately. The retained release route requires exact release, tag, source and asset identities; it does not resolve the latest release or publish new image bytes. Final runner qualification and activation remain separate.
+
+The storage changes require a fresh artifact-only runner build and full scan. Source tests do not establish that the worker has enough disk space. The accepted native builder, two-CPU/4-GiB limits and 2-GiB free-space floor remain unchanged.
 
 ### Security
 

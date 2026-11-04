@@ -7,11 +7,15 @@ import json
 import os
 import posixpath
 import re
+import selectors
+import signal
 from pathlib import Path, PurePosixPath
 import shutil
 import subprocess
+import sys
 import tarfile
 import tempfile
+import time
 import urllib.request
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -28,6 +32,85 @@ MAX_ARCHIVE = 100 * 1024 * 1024
 MAX_SOURCE = 700 * 1024 * 1024
 LEGACY_MANIFEST_CLIENT = "github.com/docker/distribution/registry/client"
 LEGACY_OPENPGP = "golang.org/x/crypto/openpgp"
+
+
+def diagnostic_status(process):
+    """Retain the waitable leader while its PID protects the owned group identity."""
+    require(process.returncode is None, "Diagnostic child ownership lost")
+    try:
+        status = os.waitid(os.P_PID, process.pid, os.WEXITED | os.WNOHANG | os.WNOWAIT)
+    except ChildProcessError as error:
+        raise ValueError("Diagnostic child ownership lost") from error
+    require(status is None or status.si_pid == process.pid, "Diagnostic child identity changed")
+    return status
+
+
+def bounded_readonly_command(command, *, env=None, maximum=65536, seconds=15):
+    """Bound Linux image diagnostics and terminate their owned group before reaping."""
+    require(sys.platform == "linux" and all(hasattr(os, name) for name in
+            ("waitid", "P_PID", "WEXITED", "WNOHANG", "WNOWAIT", "CLD_EXITED")),
+            "Storage diagnostics require Linux waitid/WNOWAIT")
+    require(signal.getsignal(signal.SIGCHLD) == signal.SIG_DFL,
+            "Storage diagnostics require the default SIGCHLD handler and sole child reaper")
+    deadline = time.monotonic() + seconds
+    process = subprocess.Popen(command, env=env, stdout=subprocess.PIPE,
+                               stderr=subprocess.DEVNULL, start_new_session=True)
+    output = bytearray()
+    try:
+        with selectors.DefaultSelector() as selector:
+            selector.register(process.stdout, selectors.EVENT_READ)
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError("Storage diagnostic timed out")
+                if not selector.select(remaining):
+                    continue
+                block = os.read(process.stdout.fileno(), 65536)
+                if not block:
+                    break
+                if len(output) + len(block) > maximum:
+                    raise ValueError("Storage diagnostic output exceeds limit")
+                output.extend(block)
+        while True:
+            if time.monotonic() >= deadline:
+                raise TimeoutError("Storage diagnostic timed out")
+            status = diagnostic_status(process)
+            if status is not None:
+                require(status.si_code == os.CLD_EXITED and status.si_status == 0,
+                        "Storage diagnostic command failed")
+                break
+            time.sleep(min(0.01, max(0, deadline - time.monotonic())))
+        return bytes(output)
+    finally:
+        try:
+            # Even a successful leader may leave children that closed stdout.
+            # Never poll/wait/reap before signaling this exclusively owned group.
+            diagnostic_status(process)
+            try:
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+            finally:
+                process.wait(timeout=5)
+        finally:
+            process.stdout.close()
+
+
+def observe_image_storage(component, phase):
+    """Print fixed-directory numeric diagnostics without obscuring build failures."""
+    record = {"kind": "go-storage", "component": component, "phase": phase}
+    paths = [str(BUILD_ROOT), str(OUTPUT), "/home/go-builder/go/pkg/mod",
+             "/home/go-builder/.cache/go-build"]
+    try:
+        raw = bounded_readonly_command(["du", "-sk", "--", *paths], maximum=4096)
+        rows = [line.split("\t", 1) for line in raw.decode().splitlines()]
+        require(len(rows) == len(paths) and [row[1] for row in rows] == paths and
+                all(re.fullmatch(r"[0-9]+", row[0]) for row in rows), "Invalid directory-size output")
+        record.update(status="observed", kib={path: int(size) for size, path in rows})
+    except Exception as error:
+        record.update(status="unavailable", error_type=type(error).__name__)
+    print(json.dumps(record, sort_keys=True), flush=True)
 
 
 def digest(path):
@@ -478,7 +561,16 @@ def main():
     require(manifest["schema"] == 1 and set(manifest["components"]) == set(REPOSITORIES),
             "Unexpected tool manifest")
     directories = ci_directories(args.component) if args.ci else (BUILD_ROOT, OUTPUT)
-    build(args.component, manifest, *directories)
+    if args.ci:
+        build(args.component, manifest, *directories)
+        return
+    observe_image_storage(args.component, "before")
+    try:
+        build(args.component, manifest, *directories)
+    except BaseException:
+        observe_image_storage(args.component, "failed")
+        raise
+    observe_image_storage(args.component, "after")
 
 
 if __name__ == "__main__":
