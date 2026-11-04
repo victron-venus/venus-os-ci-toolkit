@@ -27,7 +27,7 @@ class AssemblyService:
                    "--property=LoadState,ActiveState,Description,FragmentPath,ControlGroup,MainPID"]
         result = subprocess.run(command, env=self.sup.env, text=True, capture_output=True, timeout=15)
         fields = [line.split("=", 1) for line in result.stdout.splitlines() if "=" in line]
-        data = {key: value for key, value in fields}
+        data = dict(fields)
         if data.get("LoadState") == "not-found" and result.returncode in (0, 1):
             return None
         require(result.returncode == 0, "Cannot determine assembly unit ownership")
