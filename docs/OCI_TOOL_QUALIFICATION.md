@@ -72,6 +72,10 @@ test pass.
 - JSON-mode `govulncheck` may exit successfully after reporting vulnerabilities.
   The gate parses its complete v1.0.0 stream, verifies the source/binary mode,
   symbol scan level and SBOM target, and assesses findings explicitly. Source
+  SBOM roots identify packages; binary SBOM roots identify the main module, as
+  defined by the pinned scanner. Exact binary paths, hashes and build information
+  are separately retained so that the two BuildKit commands remain distinguishable.
+  Source
   call traces and binary symbol presence fail as affected; module/package-only
   findings remain pending review. Missing inventory, malformed evidence and
   interrupted scans fail closed. A bare config message is not a clean scan.

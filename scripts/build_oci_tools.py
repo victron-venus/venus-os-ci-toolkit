@@ -415,8 +415,8 @@ def scan(stage, arch, manifest):
         if name == "buildkit":
             builds["oci-probe"] = ["./qualification/probe"]
         for tool, command in builds.items():
-            root = ("github.com/opencontainers/runc" if name == "runc" else
-                    "github.com/moby/buildkit/" + command[-1].removeprefix("./"))
+            module = "github.com/opencontainers/runc" if name == "runc" else "github.com/moby/buildkit"
+            source_root = module if name == "runc" else module + "/" + command[-1].removeprefix("./")
             for kind, args in (("source", ["-tags", TAGS[name], command[-1]]),
                                ("binary", ["-mode=binary", str(stage / "output/bin" / tool)])):
                 try:
@@ -424,7 +424,8 @@ def scan(stage, arch, manifest):
                                  env=dict(env, GOFLAGS="-mod=vendor"),
                                  log=evidence / f"{tool}-{kind}.jsonl")
                     assessed = evaluate_govulncheck(report, kind, completed=True,
-                                                   expected_root=root, expected_go=manifest["go_version"])
+                                                   expected_root=module if kind == "binary" else source_root,
+                                                   expected_go=manifest["go_version"])
                     write_json(evidence / f"{tool}-{kind}-assessment.json", assessed)
                     require(assessed["passed"], f"{tool} {kind}: vulnerability evidence requires action/review")
                 except ValueError as error:
