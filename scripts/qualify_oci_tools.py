@@ -98,7 +98,14 @@ def make_archive(path, entries):
             tf.addfile(member, io.BytesIO(data) if data else None)
 
 
-def require_confinement_failure(text):
+def require_confinement_failure(text, expected_entry=None):
+    # go-archive v0.3.0 rejects this exact fixture in its IsLocal guard.
+    # Only accept the terminal buildctl error naming our 64-parent entry;
+    # an echoed phrase or a different invalid filename does not prove confinement.
+    if expected_entry and expected_entry.startswith("../" * 64):
+        diagnostic = "error: failed to solve: invalid entry name " + json.dumps(expected_entry)
+        if text.rstrip().splitlines()[-1:] == [diagnostic]:
+            return
     # BuildKit echoes the Dockerfile (and escape.tar) on unrelated failures.
     # Require a confinement diagnostic, not a fixture name or generic error.
     require(re.search(
@@ -185,8 +192,9 @@ def build_fixture(root, binaries):
             # Exercise the daemon's real ADD path with a hostile parent traversal.
             sentinel = root / "host-sentinel"
             sentinel.write_bytes(b"unchanged")
+            traversal_entry = "../" * 64 + str(sentinel).lstrip("/")
             make_archive(context / "escape.tar", [
-                ("../" * 64 + str(sentinel).lstrip("/"), b"escaped", tarfile.REGTYPE, ""),
+                (traversal_entry, b"escaped", tarfile.REGTYPE, ""),
             ])
             (context / "Dockerfile").write_text('FROM scratch\nADD escape.tar /data/\n')
             result = escape_build([*common, "--output", "type=local,dest=" + str(root / "escape-export")],
@@ -195,7 +203,7 @@ def build_fixture(root, binaries):
             run([binaries / "buildctl", "--addr", endpoint, "debug", "workers"],
                 log=root / "post-traversal-workers.log", timeout=15)
             if result.returncode:
-                require_confinement_failure(result.stderr + result.stdout)
+                require_confinement_failure(result.stderr + result.stdout, traversal_entry)
         finally:
             daemon.terminate()
             try:

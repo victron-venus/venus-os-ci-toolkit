@@ -132,6 +132,17 @@ Results and exit codes are recorded honestly:
 safe confinement and rejection are distinguished, and no blanket claim about
 all upstream security tests is made.
 
+The pinned [go-archive locality guard](https://github.com/moby/go-archive/blob/v0.3.0/archive.go#L907-L916)
+rejects the traversal fixture with `invalid entry name`. Accept this wording only
+in the final `buildctl` error and only when it names the exact 64-parent archive
+entry created by the test. A different invalid filename, an echoed phrase or a
+later unrelated failure is insufficient. Runtime run
+[`41769103223`](https://github.com/victron-venus/venus-os-ci-toolkit/actions/runs/41769103223)
+passed both container modes and the positive build on both architectures; it
+rejected the traversal, preserved the sentinel and kept the daemon responsive,
+but failed because the original diagnostic matcher did not recognize this
+wording. Its workflow conclusion remains a failure.
+
 ## Running the lane
 
 ### Finite Linux header applicability
