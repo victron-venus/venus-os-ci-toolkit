@@ -188,3 +188,51 @@ Sonar's individual finding is accepted as an intentional risk, never marked
 fixed or false positive. Reassess this decision when execution scope changes.
 The original findings are retained in [PR 367](https://github.com/victron-venus/venus-os-ci-toolkit/pull/367)
 and its first full-source scan, run `41770467501`.
+
+## Preserve accepted builder images through the existing release adapter
+
+The toolkit release package includes the exact builder artifacts accepted in run
+`41787720088`, attempt 1, image source
+`d42d0f0e7976a34d99a6b85f5d424bb148ffc909`. This image source is independent of
+the toolkit release commit and version. `accepted-builder-provenance.json`
+records both identities, the checked-in lock hash, original Actions artifact
+IDs and digests, image manifests/configs, DiffIDs and every retained asset hash.
+
+For each of `amd64` and `arm64`, the package retains three original files:
+
+- `oci-builder-linux-<architecture>.oci.tar`
+- `oci-builder-linux-<architecture>.docker.tar`
+- `oci-builder-linux-<architecture>.evidence.zip`
+
+The adapter acquires architectures sequentially on a disposable hosted worker,
+rechecks successful qualification provenance, expiry, exact ZIP and inner
+archive bytes, image configuration, filesystem and evidence. It does not compile,
+import, run, relabel or merge images. It requires 4 GiB free initially, retains a
+2 GiB reserve and bounds acquisition/verification to 20 minutes. The existing
+45-minute release job timeout remains. Original source packaging and verification
+run first; the final `SHA256SUMS` and existing version-input receipt cover all
+payloads. Before checksum replacement, a failed staging attempt preserves the
+original source package and removes its own new files. Atomic checksum
+replacement commits the complete set. If later scratch cleanup fails, that
+error still fails the job, but the consistent payload/checksum set is retained;
+the failed job is never treated as successful publication.
+
+The existing protected RC-to-stable path promotes these bytes unchanged. Only
+the two OCI archives are mapped by `.release-policy.json` to
+`ghcr.io/victron-venus/oci-builder-amd64` and
+`ghcr.io/victron-venus/oci-builder-arm64`. After accepting the stable release,
+use the existing `publish_verified.py containers --tag v<version>` dry run,
+then the separately authorized `--execute` operation without `--latest`.
+It preflights both version tags and copies with `--all --preserve-digests`.
+Use a verified repository-plus-manifest digest in consumers. If publication
+partially succeeds or returns an ambiguous result, inspect both destinations
+before recovery; do not overwrite completed tags or blindly repeat publication.
+
+Retaining files does not automatically change the runner consumer transport.
+The Actions-only lock still rejects expired qualification artifacts. A subsequent
+reviewed transport lock must bind exact release ID, tag/source, asset IDs,
+sizes and hashes and revalidate the original accepted-image contract. Do not
+resolve `latest`, accept arbitrary URLs or silently fall back to another image.
+Complete original-byte retention before November 11, 2026 UTC and stable
+publication within the existing release-evidence authorization window. Registry
+publication does not authorize runner activation or household deployment.

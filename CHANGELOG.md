@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.1.12] - 2026-11-03
+
+### Added
+
+- Consume the accepted native BuildKit and runc artifacts in the existing runner image workflow, with exact source, archive, image, filesystem and qualification checks. Preserve bounded full proof reports separately from image archives.
+- Retain the original amd64 and arm64 OCI archives, Docker exports and qualification evidence in toolkit releases. Record image qualification separately from toolkit release provenance; include every payload in checksums and the existing version-input receipt.
+- Map the two immutable image archives to architecture-specific builder repositories through the existing verified stable publisher, without rebuilding, relabeling or creating a multiarch index.
+
+### Upgrade
+
+Use reviewed source and an explicitly accepted stable release. Original image and release identities are different and remain recorded separately. Retained release assets require a subsequent exact release-asset transport lock before expiry-bound Actions consumers can use them. Final runner image qualification and activation are separate steps.
+
+### Security
+
+Builder acquisition is bounded, rejects expired or changed inputs and preserves original licenses. Publication runs on a disposable hosted worker without executing the images; registry writes retain existing RC/stable provenance, destination and no-overwrite checks. No deployment or household access is added.
+
 ## [0.1.11] - 2026-11-03
 
 ### Fixed

@@ -53,14 +53,15 @@ class AcceptedBuilderTests(unittest.TestCase):
         return {**expected, 'expired': False, 'expires_at': '2099-01-01T00:00:00Z',
                 'workflow_run': {'id': self.lock['qualification_run'], 'head_sha': self.lock['source']}}
 
-    def fixture(self):
+    def fixture(self, arch="amd64"):
+        spec = self.lock["architectures"][arch]
         files = {name: b'fixed fixture bytes ' + name.encode() for name in (
             'usr/bin/buildkitd', 'usr/bin/buildctl', 'usr/bin/buildkit-runc',
             'usr/bin/oci-cgroup-reader', 'usr/share/licenses/oci-tools/runc/UPSTREAM-LICENSE')}
         layer = packed(files)
         runtime = {'Entrypoint': accepted.image.ENTRYPOINT, 'User': '0:0',
                    'Env': ['PATH=/usr/bin'], 'Volumes': {'/var/lib/buildkit': {}}}
-        config = json_bytes({'os': 'linux', 'architecture': 'amd64', 'config': runtime,
+        config = json_bytes({'os': 'linux', 'architecture': arch, 'config': runtime,
                              'rootfs': {'type': 'layers', 'diff_ids': ['sha256:' + sha(layer)]}})
         manifest = json_bytes({'schemaVersion': 2,
             'config': {'mediaType': accepted.oci.CONFIG, 'digest': 'sha256:' + sha(config), 'size': len(config)},
@@ -71,25 +72,25 @@ class AcceptedBuilderTests(unittest.TestCase):
             'blobs/sha256/' + sha(config): config, 'blobs/sha256/' + sha(manifest): manifest,
             'blobs/sha256/' + sha(layer): layer})
         docker = packed({'manifest.json': json_bytes([{'Config': 'config.json',
-            'RepoTags': [self.spec['embedded_import_tag']], 'Layers': ['layer.tar']}]),
+            'RepoTags': [spec['embedded_import_tag']], 'Layers': ['layer.tar']}]),
             'config.json': config, 'layer.tar': layer})
-        self.spec.update(config='sha256:' + sha(config), manifest='sha256:' + sha(manifest),
+        spec.update(config='sha256:' + sha(config), manifest='sha256:' + sha(manifest),
             oci={'archive_bytes': len(oci_raw), 'archive_sha256': sha(oci_raw),
                  'diff_ids': ['sha256:' + sha(layer)], 'files': {k: sha(v) for k, v in files.items()}},
             docker={'archive_bytes': len(docker), 'archive_sha256': sha(docker)})
-        evidence_name = 'oci-builder-amd64/evidence/acceptance.json'
-        evidence = json_bytes({'source': self.lock['source'], 'architecture': 'amd64',
+        evidence_name = f'oci-builder-{arch}/evidence/acceptance.json'
+        evidence = json_bytes({'source': self.lock['source'], 'architecture': arch,
             'qualified': True, 'runtime_passed': True,
-            'oci': {'config': self.spec['config'], 'manifest': self.spec['manifest']}})
-        self.spec['evidence_members'] = {evidence_name: sha(evidence)}
+            'oci': {'config': spec['config'], 'manifest': spec['manifest']}})
+        spec['evidence_members'] = {evidence_name: sha(evidence)}
         blobs = {'image': zipped({'builder.oci.tar': oci_raw, 'builder.docker.tar': docker}),
                  'evidence': zipped({evidence_name: evidence})}
         responses = {f"actions/runs/{self.lock['qualification_run']}": json_bytes(self.run_metadata())}
         for kind, blob in blobs.items():
-            spec = self.spec['artifacts'][kind]
-            spec.update(size_in_bytes=len(blob), digest='sha256:' + sha(blob))
-            path = f"actions/artifacts/{spec['id']}"
-            responses[path] = json_bytes(self.metadata(spec))
+            artifact = spec['artifacts'][kind]
+            artifact.update(size_in_bytes=len(blob), digest='sha256:' + sha(blob))
+            path = f"actions/artifacts/{artifact['id']}"
+            responses[path] = json_bytes(self.metadata(artifact))
             responses[path + '/zip'] = blob
         return responses
 
