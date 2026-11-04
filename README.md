@@ -122,6 +122,14 @@ systems, pinned browser generations and Chrome/Edge channels. It keeps a compact
 required subset and an explicit extended tier, records actual runtime versions,
 and preserves native Safari and real-device checks as separate coverage.
 
+The toolkit's own Python action and synthetic secret-recovery contracts retain
+five native macOS checks on the standard `macos-26-intel` runner: Python action
+3.10/3.14, the downloaded Python action, and secret recovery 3.12/3.14. These
+checks establish macOS x64 portability, not macOS ARM64 qualification. The
+explicit Intel label avoids relying on the architecture behind `macos-latest`;
+it does not guarantee runner availability. Linux and Windows checks, and the
+separate native Linux ARM64 source/security qualification, remain required.
+
 The reusable `python-ci.yml` accepts `use-uv-lock: true` to install the selected
 Python environment from `uv.lock` with `uv sync --locked --all-extras`. Missing
 or stale locks fail validation. Include enabled tools (`ruff`, `mypy`, `pytest`

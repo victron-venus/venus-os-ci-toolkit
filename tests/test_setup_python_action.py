@@ -105,5 +105,47 @@ class SetupPythonActionTests(unittest.TestCase):
                 if not succeeds:
                     self.assertIn("CVE-2025-71176", result.stderr)
 
+class NativePortabilityMatrixTests(unittest.TestCase):
+    def test_required_platform_and_python_coverage(self):
+        workflow = yaml.safe_load(
+            (ROOT / ".github/workflows/python-action-tests.yml").read_text()
+        )
+        expected = {
+            "secret-control-contracts": {
+                (os, version)
+                for os in ("ubuntu-latest", "macos-26-intel")
+                for version in ("3.12", "3.14")
+            },
+            "python-action-contracts": {
+                (os, version)
+                for os in ("ubuntu-latest", "macos-26-intel", "windows-latest")
+                for version in ("3.10", "3.14")
+            } | {("ubuntu-latest", version) for version in ("3.11", "3.12", "3.13")},
+            "python-remote-action": {
+                (os, None) for os in ("ubuntu-latest", "macos-26-intel", "windows-latest")
+            },
+        }
+        self.assertEqual(set(workflow["jobs"]), set(expected))
+        macos_targets = []
+        for name, wanted in expected.items():
+            with self.subTest(job=name):
+                job = workflow["jobs"][name]
+                self.assertEqual(job["runs-on"], "${{ matrix.os }}")
+                self.assertNotIn("if", job)
+                self.assertNotIn("continue-on-error", job)
+                self.assertFalse(job["strategy"]["fail-fast"])
+                matrix = job["strategy"]["matrix"]
+                self.assertNotIn("exclude", matrix)
+                actual = {
+                    (os, version)
+                    for os in matrix["os"]
+                    for version in matrix.get("python", [None])
+                }
+                actual.update((row["os"], row.get("python")) for row in matrix.get("include", []))
+                self.assertEqual(actual, wanted)
+                macos_targets.extend((name, version) for os, version in actual if os == "macos-26-intel")
+        self.assertEqual(len(macos_targets), 5)
+
+
 if __name__ == "__main__":
     unittest.main()

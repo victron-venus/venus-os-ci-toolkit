@@ -4,6 +4,7 @@
 
 ### Fixed
 
+- Pin the five native macOS Python and synthetic secret-recovery portability checks to the standard macOS 26 Intel runner after repeated ARM64 runner acquisition failures. Keep every Python version and assertion; this is macOS x64 coverage, not an ARM64 qualification.
 - Run source checks on the trusted default branch after release preparation fails, preserving prepared-channel precedence and keeping publication blocked by the failure.
 - Accept Docker export layers that exactly match the corresponding verified OCI blob, including gzip-compressed layers. Preserve layer order, content digests, exact sizes, configuration checks and archive limits; retain support for uncompressed layers.
 - Validate the complete release-note body, including the exact candidate or final-build provenance, before reserving a sequence or build number. Notes that exceed the UTF-8 byte limit now fail before creating a plan; bodies exactly at the limit remain publishable.
