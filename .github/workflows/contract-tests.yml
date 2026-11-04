@@ -5,6 +5,9 @@ permissions:
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 jobs:
+  oci-tool-qualification:
+    name: Source-bound OCI tools
+    uses: ./.github/workflows/oci-tool-qualification.yml
   go-consumer-contract:
     name: Locked Go consumer workflow
     uses: ./.github/workflows/go-ci.yml

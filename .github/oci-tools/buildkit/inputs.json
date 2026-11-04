@@ -1,25 +1,25 @@
 {
   "go_version": "go1.27.3",
   "source": {
-    "repository": "moby/buildkit",
-    "release_tag": "v0.34.1",
-    "commit": "f5b59a1f2fb25a0cb7072c398cab9aed7835da4e",
-    "archive_sha256": "6608d2ee63bedf99e1e3fecbfa19868c36f34a402c410a9605529986632816c3",
-    "root": "buildkit-f5b59a1f2fb25a0cb7072c398cab9aed7835da4e",
     "allowed_symlinks": {
       "examples/kube-consistent-hash": "kubernetes/consistenthash"
     },
+    "archive_sha256": "6608d2ee63bedf99e1e3fecbfa19868c36f34a402c410a9605529986632816c3",
+    "commit": "f5b59a1f2fb25a0cb7072c398cab9aed7835da4e",
     "compressed_bytes": 12143295,
     "downstream_version": "v0.34.1+victron.security.1",
+    "locked_files": {
+      "go.mod": "14ef933c1739c3ece969375618eba52c756a2d4e2a198c3b00d0ff9d40c06b6b",
+      "go.sum": "4b1b9f3437b09bc5f2fd5efbc10d29a5ffb2f97272b737ed015267c0eb922d21",
+      "modules.json": "ac3a31a6f0781350217a95396c2c8de0e0dcdf9833032e2520502a70b4f9190d"
+    },
     "original_locks": {
       "go.mod": "9114ace60db407b7b70eccc340cda6cc5ff3313400afbdd8e1f14849bc244fb3",
       "go.sum": "35904aa6f9ae03717b2ee03ed55e6f026de822f556e37491801d13cf13fb9e46"
     },
-    "locked_files": {
-      "go.mod": "14ef933c1739c3ece969375618eba52c756a2d4e2a198c3b00d0ff9d40c06b6b",
-      "go.sum": "4b1b9f3437b09bc5f2fd5efbc10d29a5ffb2f97272b737ed015267c0eb922d21",
-      "modules.json": "37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570"
-    },
-    "vendor_sha256": null
+    "release_tag": "v0.34.1",
+    "repository": "moby/buildkit",
+    "root": "buildkit-f5b59a1f2fb25a0cb7072c398cab9aed7835da4e",
+    "vendor_sha256": "299e40b1ee8ae3524fe9953e6f8be724ebd1d435a9e0e089902f50417663a6af"
   }
 }

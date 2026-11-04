@@ -1,15 +1,14 @@
 name: OCI tool source qualification
 
 on:
-  pull_request:
-    paths:
-      - .github/oci-tools/**
-      - .github/workflows/oci-tool-qualification.yml
-      - scripts/build_oci_tools.py
-      - scripts/qualify_oci_tools.py
-      - scripts/build_runner_go_tools.py
-      - tests/test_oci_tools.py
-      - tests/oci/**
+  workflow_call:
+    inputs:
+      qualify_runtime:
+        type: boolean
+        default: false
+      reviewed_commit:
+        type: string
+        default: ''
   workflow_dispatch:
     inputs:
       qualify_runtime:
@@ -38,24 +37,36 @@ jobs:
     timeout-minutes: 5
     outputs:
       reviewed: ${{ steps.state.outputs.reviewed }}
+      needed: ${{ steps.state.outputs.needed }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
       - id: state
+        env:
+          BASE_REVISION: ${{ github.event.pull_request.base.sha }}
         run: |
           python3 scripts/build_oci_tools.py validate
           python3 - <<'PY'
-          import json, os
+          import json, os, subprocess
           from pathlib import Path
           reviewed = json.loads(Path('.github/oci-tools/sources.json').read_text())['locks_reviewed']
+          base = os.environ.get('BASE_REVISION')
+          relevant = ('.github/oci-tools/', '.github/workflows/oci-tool-qualification.yml',
+                      'scripts/build_oci_tools.py', 'scripts/qualify_oci_tools.py',
+                      'scripts/oci_vulnerability.py',
+                      'scripts/build_runner_go_tools.py', 'tests/test_oci_tools.py', 'tests/oci/')
+          changed = subprocess.check_output(['git', 'diff', '--name-only', base, 'HEAD'], text=True).splitlines() if base else []
+          needed = not base or any(path.startswith(relevant) for path in changed)
           with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
               output.write(f'reviewed={str(reviewed).lower()}\n')
+              output.write(f'needed={str(needed).lower()}\n')
           PY
   prepare:
     name: Prepare source-bound locks for review
     needs: inputs
-    if: needs.inputs.outputs.reviewed == 'false'
+    if: needs.inputs.outputs.needed == 'true' && needs.inputs.outputs.reviewed == 'false'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
@@ -78,7 +89,7 @@ jobs:
   source:
     name: Native source and security (${{ matrix.arch }})
     needs: inputs
-    if: needs.inputs.outputs.reviewed == 'true'
+    if: needs.inputs.outputs.needed == 'true' && needs.inputs.outputs.reviewed == 'true'
     strategy:
       fail-fast: false
       matrix:

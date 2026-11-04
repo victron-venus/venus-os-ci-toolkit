@@ -66,6 +66,12 @@ test pass.
   four executable artifacts; an empty or partial scan cannot pass. Unfixed high
   and critical findings are still failures. Scanner identities and database
   metadata accompany the reports.
+- JSON-mode `govulncheck` may exit successfully after reporting vulnerabilities.
+  The gate parses its complete v1.0.0 stream, verifies the source/binary mode,
+  symbol scan level and SBOM target, and assesses findings explicitly. Source
+  call traces and binary symbol presence fail as affected; module/package-only
+  findings remain pending review. Missing inventory, malformed evidence and
+  interrupted scans fail closed. A bare config message is not a clean scan.
 - `GO-2026-5932` affects the old `golang.org/x/crypto/openpgp` package. The maintained
   ProtonMail package is distinct. Production/test package graphs and exact binary
   analysis distinguish these; module presence alone is not evidence that the old

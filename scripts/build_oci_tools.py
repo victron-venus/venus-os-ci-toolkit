@@ -18,6 +18,7 @@ import tarfile
 import urllib.request
 
 from build_runner_go_tools import digest, json_stream, require, unpack
+from oci_vulnerability import evaluate as evaluate_govulncheck
 
 ROOT = Path(__file__).resolve().parents[1]
 INPUTS = ROOT / ".github/oci-tools"
@@ -139,6 +140,8 @@ def validate_locks(manifest):
         binding = json.loads((INPUTS / name / "inputs.json").read_text())
         require(binding == {"go_version": manifest["go_version"], "source": spec},
                 "Locks must bind to the exact source and toolchain")
+        require(set(spec["locked_files"]) == {"go.mod", "go.sum", "modules.json"},
+                "Lock inventory must include exactly go.mod, go.sum and modules.json")
         for path, expected in spec["locked_files"].items():
             require(path in {"go.mod", "go.sum", "modules.json"}, "Unexpected lock path")
             require(digest(INPUTS / name / path) == expected, "Reviewed lock digest mismatch")
@@ -400,15 +403,22 @@ def scan(stage, arch, manifest):
     for name in manifest["components"]:
         source = stage / "source" / name
         env = environment(name, arch)
-        for tool, command in commands(name, manifest["components"][name], stage / "output/bin").items():
+        builds = commands(name, manifest["components"][name], stage / "output/bin")
+        if name == "buildkit":
+            builds["oci-probe"] = ["./qualification/probe"]
+        for tool, command in builds.items():
+            root = ("github.com/opencontainers/runc" if name == "runc" else
+                    "github.com/moby/buildkit/" + command[-1].removeprefix("./"))
             for kind, args in (("source", ["-tags", TAGS[name], command[-1]]),
                                ("binary", ["-mode=binary", str(stage / "output/bin" / tool)])):
                 try:
                     report = run(["govulncheck", "-json", *args], cwd=source,
                                  env=dict(env, GOFLAGS="-mod=vendor"),
                                  log=evidence / f"{tool}-{kind}.jsonl")
-                    messages = list(json_stream(report))
-                    require(any("config" in m for m in messages), "Missing govulncheck configuration")
+                    assessed = evaluate_govulncheck(report, kind, completed=True,
+                                                   expected_root=root, expected_go=manifest["go_version"])
+                    write_json(evidence / f"{tool}-{kind}-assessment.json", assessed)
+                    require(assessed["passed"], f"{tool} {kind}: vulnerability evidence requires action/review")
                 except ValueError as error:
                     failures.append(str(error))
     cache = stage / "trivy-cache"

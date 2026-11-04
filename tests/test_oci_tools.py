@@ -5,6 +5,8 @@ import io
 import json
 import os
 from pathlib import Path
+import re
+import shutil
 import sys
 import tarfile
 import tempfile
@@ -15,6 +17,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 import build_oci_tools as build  # noqa: E402
 import qualify_oci_tools as runtime  # noqa: E402
+import oci_vulnerability as vulnerability  # noqa: E402
 
 
 class QualificationTests(unittest.TestCase):
@@ -164,6 +167,74 @@ class QualificationTests(unittest.TestCase):
                 self.assertIn(package["architecture"], (arch, "all"))
                 self.assertRegex(package["sha256"], r"^[a-f0-9]{64}$")
                 self.assertGreater(package["size"], 0)
+
+    def test_omitted_or_extra_lock_key_cannot_bypass_verification(self):
+        target = self.root / "inputs"
+        shutil.copytree(build.INPUTS, target)
+        for key, add in (("go.sum", False), ("unchecked.txt", True)):
+            manifest = json.loads(build.MANIFEST.read_text())
+            spec = manifest["components"]["runc"]
+            if add:
+                spec["locked_files"][key] = "0" * 64
+            else:
+                del spec["locked_files"][key]
+            build.write_json(target / "runc/inputs.json", {"go_version": manifest["go_version"], "source": spec})
+            with patch.object(build, "INPUTS", target), self.assertRaisesRegex(ValueError, "Lock inventory"):
+                build.validate_locks(manifest)
+
+    def golden(self, filename, index=0):
+        """Extract one unmodified JSON scenario from the pinned upstream .ct file."""
+        content = (ROOT / "tests/oci/govulncheck" / filename).read_text()
+        block = re.split(r"(?m)^\$[^\n]*\n", content)[index + 1]
+        block = block[block.index("{"):]
+        records = []
+        decoder = json.JSONDecoder()
+        while block.lstrip().startswith("{"):
+            block = block.lstrip()
+            value, end = decoder.raw_decode(block)
+            records.append(value)
+            block = block[end:]
+        return records
+
+    def test_authentic_clean_binary_stream_passes_but_config_alone_does_not(self):
+        records = self.golden("binary_call_json.ct")
+        report = "\n".join(map(json.dumps, records))
+        self.assertTrue(vulnerability.evaluate(report, "binary", completed=True)["passed"])
+        with self.assertRaisesRegex(ValueError, "SBOM"):
+            vulnerability.evaluate(json.dumps(records[0]), "binary", completed=True)
+        with self.assertRaisesRegex(ValueError, "complete"):
+            vulnerability.evaluate(report, "binary", completed=False)
+
+    def test_authentic_json_findings_fail_even_with_successful_process_exit(self):
+        records = self.golden("binary_call_json.ct", 1)
+        summary = vulnerability.evaluate("\n".join(map(json.dumps, records)), "binary", completed=True)
+        self.assertFalse(summary["passed"])
+        self.assertTrue(any(f["level"] == "symbol_present" and f["status"] == "affected" for f in summary["findings"]))
+        self.assertTrue(any(f["status"] == "review_required" for f in summary["findings"]))
+        self.assertEqual(summary["suppressed_findings"], [])
+
+    def test_authentic_source_trace_is_reachable_but_not_a_binary_trace(self):
+        records = self.golden("source_call_json.ct")
+        findings = vulnerability.classify_findings(records, "source")
+        self.assertTrue(any(f["level"] == "reachable_call" and len(f["trace"]) > 1 for f in findings))
+        with self.assertRaisesRegex(ValueError, "binary trace"):
+            vulnerability.classify_findings(records, "binary")
+
+    def test_malformed_incomplete_and_wrong_target_scans_are_rejected(self):
+        clean = self.golden("binary_call_json.ct")
+        report = "\n".join(map(json.dumps, clean))
+        for bad in ("", report + "{", report + json.dumps(clean[0]),
+                    '{"config":{},"config":{}}'):
+            with self.subTest(bad=bad[:50]), self.assertRaises(ValueError):
+                vulnerability.evaluate(bad, "binary", completed=True)
+        with self.assertRaisesRegex(ValueError, "different root"):
+            vulnerability.evaluate(report, "binary", completed=True, expected_root="wrong")
+        with self.assertRaisesRegex(ValueError, "mode"):
+            vulnerability.evaluate(report, "source", completed=True)
+        vulnerable = self.golden("binary_call_json.ct", 1)
+        next(r["finding"] for r in vulnerable if "finding" in r)["trace"] = []
+        with self.assertRaisesRegex(ValueError, "trace"):
+            vulnerability.evaluate("\n".join(map(json.dumps, vulnerable)), "binary", completed=True)
 
 
 if __name__ == "__main__":
