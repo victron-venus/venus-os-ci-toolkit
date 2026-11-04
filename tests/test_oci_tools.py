@@ -1,6 +1,7 @@
 """Local adversarial tests; no network, Go compilation, root or daemons."""
 
 import copy
+import hashlib
 import io
 import json
 import os
@@ -13,6 +14,7 @@ import sys
 import tarfile
 import tempfile
 import unittest
+import urllib.error
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -21,6 +23,100 @@ import build_oci_tools as build  # noqa: E402
 import qualify_oci_tools as runtime  # noqa: E402
 import oci_vulnerability as vulnerability  # noqa: E402
 import oci_header_disposition as headers  # noqa: E402
+
+
+class DownloadTests(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        self.target = self.root / "artifact"
+        self.payload = b"exact reviewed bytes"
+        self.sha = hashlib.sha256(self.payload).hexdigest()
+        self.url = "https://example.invalid/locked-package.deb"
+
+    def http_error(self, code):
+        return urllib.error.HTTPError(self.url, code, "fixture", {}, io.BytesIO(b"error"))
+
+    def test_transient_http_recovers_without_partial_target(self):
+        errors = [self.http_error(502), self.http_error(503)]
+        def response(*args, **kwargs):
+            self.assertFalse(self.target.exists())
+            if errors:
+                raise errors.pop(0)
+            return io.BytesIO(self.payload)
+        with patch.object(build.urllib.request, "urlopen", side_effect=response) as fetch, \
+                patch.object(build.time, "sleep") as sleep:
+            build.download(self.url, self.target, self.sha, len(self.payload))
+        self.assertEqual(fetch.call_count, 3)
+        self.assertEqual([call.args[0] for call in sleep.call_args_list], [2, 4])
+        self.assertEqual(self.target.read_bytes(), self.payload)
+        self.assertEqual(list(self.root.iterdir()), [self.target])
+
+    def test_transient_http_exhausts_exactly_five_attempts(self):
+        with patch.object(build.urllib.request, "urlopen", \
+                          side_effect=[self.http_error(503) for _ in range(5)]) as fetch, \
+                patch.object(build.time, "sleep") as sleep:
+            with self.assertRaises(urllib.error.HTTPError):
+                build.download(self.url, self.target, self.sha, len(self.payload))
+        self.assertEqual(fetch.call_count, 5)
+        self.assertEqual([call.args[0] for call in sleep.call_args_list], [2, 4, 8, 16])
+        self.assertEqual(list(self.root.iterdir()), [])
+
+    def test_permanent_http_and_transport_errors_are_not_retried(self):
+        for error in [self.http_error(code) for code in (400, 401, 403, 404, 429)] + [
+                urllib.error.URLError("certificate verify failed")]:
+            with self.subTest(error=error), \
+                    patch.object(build.urllib.request, "urlopen", side_effect=error) as fetch, \
+                    patch.object(build.time, "sleep") as sleep:
+                with self.assertRaises(urllib.error.URLError):
+                    build.download(self.url, self.target, self.sha, len(self.payload))
+                fetch.assert_called_once()
+                sleep.assert_not_called()
+                self.assertEqual(list(self.root.iterdir()), [])
+
+    def test_untrusted_bytes_never_publish_or_retry(self):
+        cases = [(b"wrong", len(self.payload)), (self.payload + b"x", len(self.payload)),
+                 (self.payload[:-1] + b"!", len(self.payload)),
+                 (self.payload, len(self.payload) + 1)]
+        for payload, size in cases:
+            with self.subTest(payload=payload, size=size), \
+                    patch.object(build.urllib.request, "urlopen", return_value=io.BytesIO(payload)) as fetch, \
+                    patch.object(build.time, "sleep") as sleep:
+                with self.assertRaisesRegex(ValueError, "Download (identity mismatch|exceeds bound)"):
+                    build.download(self.url, self.target, self.sha, size)
+                fetch.assert_called_once()
+                sleep.assert_not_called()
+                self.assertEqual(list(self.root.iterdir()), [])
+
+    def test_existing_destination_is_never_overwritten(self):
+        self.target.write_bytes(b"preserved")
+        with patch.object(build.urllib.request, "urlopen", return_value=io.BytesIO(self.payload)), \
+                patch.object(build.time, "sleep") as sleep:
+            with self.assertRaises(FileExistsError):
+                build.download(self.url, self.target, self.sha, len(self.payload))
+        self.assertEqual(self.target.read_bytes(), b"preserved")
+        self.assertEqual(list(self.root.iterdir()), [self.target])
+        sleep.assert_not_called()
+
+    def test_partial_stream_error_removes_temporary_bytes(self):
+        class Interrupted(io.BytesIO):
+            def read(inner, size=-1):
+                if inner.tell():
+                    raise urllib.error.URLError("connection reset")
+                return super().read(3)
+        with patch.object(build.urllib.request, "urlopen", return_value=Interrupted(self.payload)), \
+                patch.object(build.time, "sleep") as sleep:
+            with self.assertRaises(urllib.error.URLError):
+                build.download(self.url, self.target, self.sha, len(self.payload))
+        self.assertEqual(list(self.root.iterdir()), [])
+        sleep.assert_not_called()
+
+    def test_non_https_refused_before_network(self):
+        with patch.object(build.urllib.request, "urlopen") as fetch:
+            with self.assertRaisesRegex(ValueError, "HTTPS"):
+                build.download("http://example.invalid/package", self.target, self.sha)
+        fetch.assert_not_called()
 
 
 class QualificationTests(unittest.TestCase):

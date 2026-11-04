@@ -16,6 +16,9 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import tempfile
+import time
+import urllib.error
 import urllib.request
 
 from build_runner_go_tools import digest, json_stream, require, unpack, verify_openpgp_absent
@@ -112,15 +115,31 @@ def run(args, *, cwd=None, env=None, log=None, timeout=1200, allowed=(0,)):
 
 
 def download(url, target, sha256, size=None):
+    """Retry transient HTTP responses; publish only complete, verified bytes."""
     require(url.startswith("https://"), "HTTPS download required")
-    with urllib.request.urlopen(url, timeout=90) as response, target.open("xb") as out:
-        total = 0
-        while block := response.read(1024 * 1024):
-            total += len(block)
-            require(total <= (size or 150 * 1024 * 1024), "Download exceeds bound")
-            out.write(block)
-    require((size is None or total == size) and digest(target) == sha256,
-            "Download identity mismatch")
+    for attempt, delay in enumerate((2, 4, 8, 16, None), start=1):
+        try:
+            # Keep a failed transfer separate from the final name. Linking the
+            # verified file preserves exclusive creation even across a race.
+            with tempfile.TemporaryDirectory(dir=target.parent, prefix=".oci-download-") as temp:
+                pending = Path(temp) / "payload"
+                with urllib.request.urlopen(url, timeout=90) as response, pending.open("xb") as out:
+                    total = 0
+                    while block := response.read(1024 * 1024):
+                        total += len(block)
+                        require(total <= (size or 150 * 1024 * 1024), "Download exceeds bound")
+                        out.write(block)
+                require((size is None or total == size) and digest(pending) == sha256,
+                        "Download identity mismatch")
+                os.link(pending, target)
+            return
+        except urllib.error.HTTPError as error:
+            error.close()
+            if error.code not in (500, 502, 503, 504) or delay is None:
+                raise
+            print(f"Transient HTTP {error.code}; download retry {attempt + 1}/5 in {delay}s",
+                  flush=True)
+            time.sleep(delay)
 
 
 def validate_locks(manifest):
