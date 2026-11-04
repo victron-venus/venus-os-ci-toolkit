@@ -1879,6 +1879,14 @@ class RunnerArtifactsTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'binding differs'):
             build.scan_acceptance(raw, proof, evidence, context)
 
+    def follow_nov4_reassessment(self, identifier, previous):
+        rows = {row['id']: row for row in build.document(
+            build.ROOT / 'docs/RUNNER_ADVISORY_REVIEW_2026_11_04.json')['records']}
+        if identifier not in rows:
+            return previous
+        self.assertEqual(rows[identifier]['previous_advisory_sha256'], previous)
+        return rows[identifier]['current_advisory_sha256']
+
     def test_policy_is_bound_to_public_rationales_and_backport_source(self):
         path = build.ROOT / 'docs/RUNNER_SCAN_APPLICABILITY.json'
         self.assertEqual(oci.digest_file(path), build.SCAN_POLICY['source_evidence']['public_rationale_document_sha256'])
@@ -1926,6 +1934,7 @@ class RunnerArtifactsTests(unittest.TestCase):
                         next_record = later[record['id']]
                         self.assertEqual(next_record['previous_advisory_sha256'], current_hash)
                         current_hash = next_record['current_advisory_sha256']
+                current_hash = self.follow_nov4_reassessment(record['id'], current_hash)
                 if record['component'] == 'gstreamer':
                     self.assertEqual(record['id'], build.SCAN_POLICY['gstreamer']['advisory'])
                     self.assertEqual(current_hash, build.SCAN_POLICY['gstreamer']['advisory_sha256'])
@@ -1977,6 +1986,7 @@ class RunnerArtifactsTests(unittest.TestCase):
                     next_record = november[record['id']]
                     self.assertEqual(next_record['previous_advisory_sha256'], current_hash)
                     current_hash = next_record['current_advisory_sha256']
+                current_hash = self.follow_nov4_reassessment(record['id'], current_hash)
                 if record['component'] == 'gstreamer':
                     self.assertEqual(current_hash, build.SCAN_POLICY['gstreamer']['advisory_sha256'])
                 elif record['component'] == 'runc':
@@ -1998,7 +2008,8 @@ class RunnerArtifactsTests(unittest.TestCase):
         self.assertEqual(november_review['previous_review'],
                          {'document': path.name, 'sha256': oci.digest_file(path)})
         self.assertEqual(applicability['latest_advisory_reassessment'],
-                         {'document': november_path.name, 'sha256': oci.digest_file(november_path)})
+                         {'document': 'RUNNER_ADVISORY_REVIEW_2026_11_04.json',
+                          'sha256': oci.digest_file(build.ROOT / 'docs/RUNNER_ADVISORY_REVIEW_2026_11_04.json')})
         november = {row['id']: row for row in november_review['records']}
         records = review['records']
         self.assertEqual(len(records), 31)
@@ -2025,6 +2036,7 @@ class RunnerArtifactsTests(unittest.TestCase):
                     next_record = november[record['id']]
                     self.assertEqual(next_record['previous_advisory_sha256'], current_hash)
                     current_hash = next_record['current_advisory_sha256']
+                current_hash = self.follow_nov4_reassessment(record['id'], current_hash)
                 self.assertEqual([record['component'], current_hash, record['rule_id']],
                                  build.SCAN_POLICY['advisories'][record['id']])
         self.assertNotIn('/Users/', path.read_text())
@@ -2047,15 +2059,16 @@ class RunnerArtifactsTests(unittest.TestCase):
                 self.assertTrue(row['all_other_advisory_fields_typed_equal'])
                 self.assertTrue(row['unchanged_applicability_basis'])
                 self.assertTrue(row['source_documents'])
+                current_hash = self.follow_nov4_reassessment(row['id'], row['current_advisory_sha256'])
                 if row['component'] == 'gstreamer':
-                    self.assertEqual(row['current_advisory_sha256'], build.SCAN_POLICY['gstreamer']['advisory_sha256'])
+                    self.assertEqual(current_hash, build.SCAN_POLICY['gstreamer']['advisory_sha256'])
                 elif row['component'] == 'runc':
                     self.assertNotIn(row['id'], build.SCAN_POLICY['advisories'])
                     historical = next(r for r in build.document(
                         build.ROOT / 'docs/RUNNER_SCAN_APPLICABILITY.json')['records'] if r['id'] == row['id'])
-                    self.assertEqual(row['current_advisory_sha256'], historical['advisory_content_sha256'])
+                    self.assertEqual(current_hash, historical['advisory_content_sha256'])
                 else:
-                    self.assertEqual([row['component'], row['current_advisory_sha256'], row['rule_id']],
+                    self.assertEqual([row['component'], current_hash, row['rule_id']],
                                      build.SCAN_POLICY['advisories'][row['id']])
                 if row['component'] == 'headers':
                     self.assertTrue(row['program_files_unchanged'])
@@ -2066,6 +2079,62 @@ class RunnerArtifactsTests(unittest.TestCase):
                                      {'References', 'LastModifiedDate', 'VendorSeverity', 'CVSS', 'Title'})
         self.assertNotIn('/Users/', path.read_text())
         self.assertNotIn('/home/', path.read_text())
+
+    def test_nov4_reassessment_binds_exact_scope_and_keeps_dotnet_unresolved(self):
+        review = build.document(build.ROOT / 'docs/RUNNER_ADVISORY_REVIEW_2026_11_04.json')
+        previous = build.ROOT / 'docs/RUNNER_ADVISORY_REVIEW_2026_11_02.json'
+        self.assertEqual(review['previous_review'], {'document': previous.name, 'sha256': oci.digest_file(previous)})
+        rows = review['records']
+        self.assertEqual(len(rows), 275)
+        self.assertEqual(len({row['id'] for row in rows}), 275)
+        self.assertEqual(sum(len(row['packages']) for row in rows), 276)
+        self.assertEqual(sum('current_primary_source' in row for row in rows), 9)
+        self.assertEqual(sum('cvss_review' in row for row in rows), 7)
+        self.assertNotIn('GHSA-p3jp-9v83-76w9', build.SCAN_POLICY['advisories'])
+        for row in rows:
+            with self.subTest(advisory=row['id']):
+                self.assertNotEqual(row['previous_advisory_sha256'], row['current_advisory_sha256'])
+                self.assertTrue(row['all_other_advisory_fields_typed_equal'])
+                self.assertTrue(row['changes'])
+                self.assertTrue(row['unchanged_applicability_basis'])
+                self.assertTrue(row['source_documents'])
+                if row['component'] == 'gstreamer':
+                    self.assertEqual(row['id'], build.SCAN_POLICY['gstreamer']['advisory'])
+                    self.assertEqual(row['current_advisory_sha256'], build.SCAN_POLICY['gstreamer']['advisory_sha256'])
+                else:
+                    self.assertEqual([row['component'], row['current_advisory_sha256'], row['rule_id']],
+                                     build.SCAN_POLICY['advisories'][row['id']])
+                if 'primary_comparison' in row:
+                    self.assertTrue(all(row['primary_comparison'].values()))
+        critical = next(row for row in rows if row['id'] == 'CVE-2026-98432')
+        self.assertIn({'path': '/Severity', 'before_present': True, 'after_present': True,
+                       'before': 'HIGH', 'after': 'CRITICAL'}, critical['changes'])
+        self.assertTrue(critical['severity_review'])
+
+    def test_reviewed_headers_and_backports_do_not_exempt_new_dotnet_findings(self):
+        raw, proof, evidence, context, policy = self.gstreamer_acceptance_fixture()
+        package = 'Microsoft.NETCore.App.Runtime.linux-x64'
+        identifier = package + '@8.0.32'
+        purl = 'pkg:nuget/' + identifier
+        for target in ('Runner.Listener', 'Runner.PluginHost', 'Runner.Plugins', 'Runner.Sdk', 'Runner.Worker'):
+            raw['Results'].append({'Class': 'lang-pkgs', 'Type': 'dotnet-core',
+                'Target': 'home/runner/bin/' + target + '.deps.json',
+                'Packages': [{'ID': identifier, 'Name': package, 'Version': '8.0.32', 'Identifier': {'PURL': purl}}],
+                'Vulnerabilities': [{'VulnerabilityID': 'GHSA-p3jp-9v83-76w9', 'Severity': 'HIGH',
+                    'PkgID': identifier, 'PkgName': package, 'InstalledVersion': '8.0.32',
+                    'FixedVersion': '8.0.33', 'PkgIdentifier': {'PURL': purl},
+                    'Layer': {'Digest': proof['platform']['layers'][0]['digest'],
+                              'DiffID': proof['platform']['diff_ids'][0]}}]})
+        before = copy.deepcopy(raw)
+        with mock.patch.object(build, 'SCAN_POLICY', policy):
+            result = build.scan_acceptance(raw, proof, evidence, context)
+        self.assertEqual(raw, before)
+        self.assertEqual(result['raw_blocking_findings'], 9)
+        self.assertEqual(len(result['assessed_not_affected']), 4)
+        self.assertEqual(result['unresolved_count'], 5)
+        self.assertEqual({row['vulnerability'] for row in result['unresolved_findings']}, {'GHSA-p3jp-9v83-76w9'})
+        self.assertEqual({row['reason'] for row in result['unresolved_findings']}, {'unreviewed_advisory'})
+        self.assertFalse(result['acceptance_passed'])
 
     def test_reviewed_vendor_addition_does_not_normalize_old_or_future_metadata(self):
         raw, proof, evidence, context, policy = self.acceptance_fixture()

@@ -81,7 +81,8 @@ RUN umask 022 && python3 scripts/build_runner_go_tools.py containerd \
     && go clean -modcache -cache
 FROM docker.io/library/docker@sha256:9e79b879b177fbd72c34376a3dd3d91747da5db49e1f560f76aea59561471977 AS docker
 FROM docker.io/library/node@sha256:55fb5f5a527ea2c5c4a95f963e48ef90aa38c7b346054fdc8ee9957a2b55d205 AS node
-FROM ghcr.io/actions/actions-runner@sha256:e275409999c37162649aa050ca573f03eab2eabcb3a1e7fcc47548de6b4f9690 AS runner
+# Runner v2.338.2 uses SDK 8.0.427 with the upstream .NET Brotli security fix.
+FROM ghcr.io/actions/actions-runner@sha256:759a1d94a15b05941aba5196974ff43fe15b4cbba29b694b35cbc32a1166b232 AS runner
 # Stage only the existing allowlisted local inputs on an empty filesystem.
 # Keeping these COPY operations off the populated runner avoids native snapshots
 # of the browser installation for each small input file.
