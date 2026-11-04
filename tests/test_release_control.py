@@ -281,6 +281,12 @@ class WholeReadRecoveryTests(unittest.TestCase):
 
     def test_retry_releases_failed_response_before_waiting_or_recapturing(self):
         def check_case(path, status, framed):
+            class CapturedBytes(bytes):
+                """Keep a weak-referenceable marker alive with the captured buffer."""
+
+            class BufferLifetime:
+                """Marker owned only by the captured stdout byte string."""
+
             previous = []
 
             def assert_released(*_args):
@@ -294,9 +300,10 @@ class WholeReadRecoveryTests(unittest.TestCase):
                 payload = b"x" * (1024 * 1024)
                 if framed:
                     payload = f"HTTP/2.0 {status} Test\r\n\r\n".encode() + payload
-                failed = self.failed(stdout=payload)
-                previous.append(weakref.ref(failed))
-                return failed
+                captured = CapturedBytes(payload)
+                captured.lifetime = BufferLifetime()
+                previous.append(weakref.ref(captured.lifetime))
+                return self.failed(stdout=captured)
 
             with (
                 patch.object(rc.subprocess, "run", side_effect=capture) as run,
