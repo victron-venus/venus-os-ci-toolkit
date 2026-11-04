@@ -17,7 +17,7 @@ permissions:
   actions: read
 jobs:
   package:
-    runs-on: ${{ fromJSON((vars.CI_RUNNER_MODE == 'self-hosted' || vars.CI_RUNNER_MODE == 'k3s') && (contains(fromJSON('["push","schedule","workflow_dispatch"]'), github.event_name) && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)) && (vars.CI_RUNNER_RELEASE_LABELS || '[]') || '["ubuntu-latest"]') }}
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
       - name: Harden the runner (Audit all outbound calls)
@@ -48,6 +48,10 @@ jobs:
         run: python3 scripts/toolkit_source.py build "$VERSION" "$CHANNEL" release-dist
       - name: Install and verify the exact source archive
         run: python3 scripts/toolkit_source.py verify release-dist/venus-os-ci-toolkit-*.tar.gz
+      - name: Preserve exact accepted builder archives
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/stage_accepted_builder_release.py release-dist
       - name: Verify all artifact checksums
         working-directory: release-dist
         run: sha256sum --check SHA256SUMS

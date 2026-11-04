@@ -194,7 +194,8 @@ def verify_evidence(path, lock, arch):
     return proof
 
 
-def prepare(lock, arch, destination, check):
+def acquire(lock, arch, destination, check):
+    """Verify original archives and evidence without importing or materializing them."""
     validate_lock(lock)
     require(arch in lock['architectures'], 'Native builder architecture unsupported')
     validate_run(lock, api(f"actions/runs/{lock['qualification_run']}", check))
@@ -209,6 +210,12 @@ def prepare(lock, arch, destination, check):
     require(all(proof[k] == spec[k] for k in ('manifest', 'config')) and
             proof['diff_ids'] == spec['oci']['diff_ids'], 'Verified builder identity differs')
     image.verify_docker_export(destination / DOCKER_ARCHIVE, proof, spec['embedded_import_tag'])
+    return proof
+
+
+def prepare(lock, arch, destination, check):
+    proof = acquire(lock, arch, destination, check)
+    spec = lock['architectures'][arch]
     oci.materialize(destination / OCI_ARCHIVE, proof, destination / 'layout', check)
     (destination / OCI_ARCHIVE).unlink()
     return {'source': lock['source'], 'qualification_run': lock['qualification_run'],

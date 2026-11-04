@@ -54,5 +54,9 @@
   },
   "fuzzing": {
     "toolkit_ref": "a1068073ef4b60b52542cd48954a99b4bc0be008"
+  },
+  "container_assets": {
+    "oci-builder-linux-amd64.oci.tar": "ghcr.io/victron-venus/oci-builder-amd64",
+    "oci-builder-linux-arm64.oci.tar": "ghcr.io/victron-venus/oci-builder-arm64"
   }
 }
