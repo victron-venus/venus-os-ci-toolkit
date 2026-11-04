@@ -580,6 +580,8 @@
   "tools/scorecard-scan/go.sum",
   "tools/scorecard-scan/main.go",
   "tools/scorecard-scan/main_test.go",
+  "tools/scorecard-scan/retry_transport.go",
+  "tools/scorecard-scan/retry_transport_test.go",
   "tools/scorecard-scan/testdata/upstream-policy.yml",
   "tools/secret_control/__init__.py",
   "tools/secret_control/__main__.py",

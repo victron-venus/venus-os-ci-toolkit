@@ -14,6 +14,7 @@ import (
 
 	"github.com/ossf/scorecard/v5/checker"
 	"github.com/ossf/scorecard/v5/clients/githubrepo"
+	"github.com/ossf/scorecard/v5/clients/githubrepo/roundtripper"
 	"github.com/ossf/scorecard/v5/docs/checks"
 	"github.com/ossf/scorecard/v5/finding"
 	"github.com/ossf/scorecard/v5/log"
@@ -157,10 +158,17 @@ func main() {
 		if err != nil {
 			return scorecard.Result{}, err
 		}
+		client, err := githubrepo.NewRepoClient(ctx, githubrepo.WithFileModeGit(),
+			githubrepo.WithRoundTripper(&readRetryTransport{
+				base: roundtripper.NewTransport(ctx, log.NewLogger(log.DefaultLevel)),
+			}))
+		if err != nil {
+			return scorecard.Result{}, err
+		}
 		_, names := reportingPolicy()
 		// GitHub branch/release metadata checks only support HEAD upstream.
 		// scanAndWrite rejects HEAD if it moved beyond the workflow commit.
-		return scorecard.Run(ctx, repo, scorecard.WithChecks(names), scorecard.WithFileModeGit(),
+		return scorecard.Run(ctx, repo, scorecard.WithChecks(names), scorecard.WithRepoClient(client),
 			scorecard.WithVulnerabilitiesClient(requirementsOSVClient{}))
 	})
 	if err != nil {
