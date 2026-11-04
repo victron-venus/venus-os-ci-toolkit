@@ -101,6 +101,14 @@ jobs:
               return subprocess.check_output(['gh', *args], text=True).strip()
 
 
+          def native_auto_merge_enabled(repo):
+              # A missing field or denied read is not evidence of a disabled setting.
+              enabled = json.loads(gh('api', f'repos/{repo}', '--jq', '.allow_auto_merge'))
+              if not isinstance(enabled, bool):
+                  raise RuntimeError('Cannot verify repository allow_auto_merge; check repository visibility and token access.')
+              return enabled
+
+
           def snapshot(repo, number, reviewed=False):
               pr = json.loads(gh('pr', 'view', number, '--repo', repo, '--json',
                                    'author,labels,isDraft,isCrossRepository,baseRefName,baseRefOid,headRefOid,state,statusCheckRollup,autoMergeRequest'))
@@ -208,7 +216,7 @@ jobs:
               successful = {identity[1] for identity, state in checks if state == 'SUCCESS'}
               named_checks_pass = required <= successful and all(
                   state == 'SUCCESS' for identity, state in checks if identity[1] in required)
-              ready = (ready and named_checks_pass and approved
+              ready = (ready and bool(successful) and named_checks_pass and approved
                        and pr.get('isCrossRepository') is False)
               return ready, (checks, reviews)
 
@@ -324,6 +332,8 @@ jobs:
                   cancel_withdrawn_request(repo, number, pr, default_branch, authors)
                   print('PR is not eligible for auto-merge.')
                   return
+              if not native_auto_merge_enabled(repo):
+                  raise RuntimeError('Native auto-merge is disabled for this repository; use the default checked merge mode.')
               # GitHub evaluates effective active rules, including organization rules.
               # Fail closed on missing rules, unreadable rules, or an unprotected gate.
               rules = json.loads(gh('api', f'repos/{repo}/rules/branches/{quote(default_branch, safe="")}'))
@@ -519,6 +529,8 @@ jobs:
               previous_green = None
               opt_in_head = None
               opt_in_request = UNOBSERVED_REQUEST
+              capability_checked = reviewed
+              protected_fallback = False
               while time.monotonic() < deadline:
                   pr = snapshot(repo, number, reviewed=True) if reviewed else snapshot(repo, number)
                   if reviewed and pr.get('isCrossRepository') is not False:
@@ -531,8 +543,17 @@ jobs:
                       return
                   opt_in_head = pr['headRefOid']
                   opt_in_request = pr.get('autoMergeRequest')
+                  if not capability_checked:
+                      capability_checked = True
+                      if not native_auto_merge_enabled(repo):
+                          reviewed = protected_fallback = True
+                          print('Native auto-merge is disabled; waiting for successful checks and a current-head independent review.')
+                          # Discard the unreviewed observation and fetch review history.
+                          continue
+                  if protected_fallback and not pr.get('baseRefOid'):
+                      raise RuntimeError('Cannot verify the current base for a protected merge.')
                   ready, checks = checked_snapshot(pr, required, os.environ.get('GITHUB_RUN_ID', ''), reviewed, actions_authors)
-                  fingerprint = (pr['headRefOid'], checks)
+                  fingerprint = (pr['headRefOid'], pr.get('baseRefOid') if protected_fallback else None, checks)
                   if ready and fingerprint == previous_green:
                       fresh = snapshot(repo, number, reviewed=True) if reviewed else snapshot(repo, number)
                       if not eligible(fresh, default_branch, authors):
@@ -542,7 +563,7 @@ jobs:
                           return
                       fresh_ready, fresh_checks = checked_snapshot(fresh, required, os.environ.get('GITHUB_RUN_ID', ''), reviewed, actions_authors)
                       if (eligible(fresh, default_branch, authors) and fresh_ready
-                              and (fresh['headRefOid'], fresh_checks) == fingerprint):
+                              and (fresh['headRefOid'], fresh.get('baseRefOid') if protected_fallback else None, fresh_checks) == fingerprint):
                           options = [] if reviewed else ['--auto']
                           gh('pr', 'merge', number, '--repo', repo, *options, f'--{method}',
                              '--match-head-commit', fresh['headRefOid'])
