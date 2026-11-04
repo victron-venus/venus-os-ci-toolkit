@@ -31,3 +31,11 @@ Review and merge the consumer source first. Dispatch the existing `runner-image-
 Image artifacts expire November 11, 2026 UTC; evidence expires November 18. If inputs expire, stop and establish a newly reviewed chain. Never silently rebuild or resolve a moving tag. Durable publication uses the existing release adapter and RC/stable process with explicit architecture mapping and unchanged image configs/layers.
 
 Direct Dockerfile builds now require the same verified `accepted-tools` OCI context. Do not substitute an arbitrary registry image. The supported artifact workflow prepares that context automatically.
+
+## Review evidence without downloading images
+
+Each stage also uploads `runner-image-evidence-<stage>-<run>-<attempt>` for 14 days. The existing complete image artifact remains unchanged. A fixed allowlist copies the original build/OCI receipts, complete scan and acceptance reports, file evidence, database metadata, scan input, cgroup proof and complete disk/cgroup observation logs. Its inventory binds every copied file by size and SHA-256. No image, Docker archive or layer is included.
+
+The raw scan retains its existing 128 MiB limit; other proof files are limited to 8 MiB each, with a 192 MiB total payload cap. Only `build.log` can be truncated: its final 4 MiB are marked with original size, byte offset and completeness. A successful build must provide every required file. After failure, available diagnostics are retained with an explicit missing-file list; these are not successful qualification evidence. Special files, changed inputs and exceeded limits fail staging and remove only the new staging directory.
+
+Inspect the compressed artifact size before a serialized local download, then enforce these producer-specific expanded limits. These bounds do not widen the smaller native-builder evidence collector. Verify the inventory and all original acceptance bindings before accepting a final image; logs or a successful upload alone are insufficient.

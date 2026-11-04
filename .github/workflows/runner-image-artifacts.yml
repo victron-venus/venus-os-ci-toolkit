@@ -38,9 +38,24 @@ jobs:
           persist-credentials: false
           fetch-depth: 1
       - name: Build and scan public base with invalid site CA
+        id: build_public
         env:
           GH_TOKEN: ${{ github.token }}
         run: python3 scripts/build_runner_image_artifacts.py public
+      - name: Stage bounded proof files separately from images
+        if: ${{ always() }}
+        env:
+          COMPLETE: ${{ steps.build_public.outcome == 'success' }}
+        run: python3 scripts/stage_runner_evidence.py public --complete "$COMPLETE"
+      - name: Preserve bounded runner evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: runner-image-evidence-public-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/runner-image-evidence-public-${{ github.run_id }}-${{ github.run_attempt }}/
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 9
       - name: Preserve complete artifact or failure evidence
         if: ${{ always() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -74,10 +89,25 @@ jobs:
           name: runner-image-public-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/runner-image-public-${{ github.run_id }}-${{ github.run_attempt }}
       - name: Build and scan private-mode image from accepted public bytes
+        id: build_private
         env:
           PARENT: ${{ runner.temp }}/runner-image-public-${{ github.run_id }}-${{ github.run_attempt }}
           GH_TOKEN: ${{ github.token }}
         run: python3 scripts/build_runner_image_artifacts.py private --parent "$PARENT"
+      - name: Stage bounded proof files separately from images
+        if: ${{ always() }}
+        env:
+          COMPLETE: ${{ steps.build_private.outcome == 'success' }}
+        run: python3 scripts/stage_runner_evidence.py private --complete "$COMPLETE"
+      - name: Preserve bounded runner evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: runner-image-evidence-private-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/runner-image-evidence-private-${{ github.run_id }}-${{ github.run_attempt }}/
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 9
       - name: Preserve complete artifact or failure evidence
         if: ${{ always() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
