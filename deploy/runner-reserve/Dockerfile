@@ -184,10 +184,12 @@ RUN arch="$(dpkg --print-architecture)" \
 COPY --from=docker /usr/local/bin/ /usr/local/bin/
 COPY --from=docker /usr/local/libexec/docker/cli-plugins/ /usr/local/libexec/docker/cli-plugins/
 # Replace the affected executables, including the separately supervised daemon.
-# Official runc is retained; its affected-package applicability is documented.
+# runc and its notices come only from the verified immutable OCI build context.
 COPY --from=patched-go-tools /opt/victron-go-tools/bin/ /usr/local/bin/
 COPY --from=patched-go-tools /opt/victron-go-tools/cli-plugins/ /usr/local/libexec/docker/cli-plugins/
 COPY --from=patched-go-tools /opt/victron-go-tools/notices/ /usr/local/share/licenses/victron-go-tools/
+COPY --from=accepted-tools /usr/bin/buildkit-runc /usr/local/bin/runc
+COPY --from=accepted-tools /usr/share/licenses/oci-tools/ /usr/local/share/licenses/accepted-oci-tools/
 COPY --from=node /usr/local/bin/node /usr/local/bin/node
 # Keep npm 11's CLI contract; replace only its two selected bundled dependencies with the
 # reviewed upstream security release. No lifecycle hooks or package resolution.

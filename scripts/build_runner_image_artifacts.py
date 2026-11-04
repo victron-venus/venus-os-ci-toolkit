@@ -20,9 +20,11 @@ import time
 import uuid
 
 if __package__:
+    from . import prepare_accepted_builder as accepted
     from . import runner_image_cgroup as cgroup
     from . import runner_image_oci as oci
 else:
+    import prepare_accepted_builder as accepted
     import runner_image_cgroup as cgroup
     import runner_image_oci as oci
 
@@ -33,6 +35,7 @@ RESERVE = 2 * GIB
 START_FREE = 10 * GIB
 SENTINEL = b'UNCONFIGURED SITE CA\n'
 OWNER = 'io.victron.runner-artifact-owner'
+RUNC_PATH = 'usr/local/bin/runc'
 LIMITS = {'Memory': 4 * GIB, 'MemorySwap': 4 * GIB,
           'CpuQuota': 200000, 'CpuPeriod': 100000}
 require = oci.require
@@ -51,6 +54,33 @@ SCAN_POLICY = {'schema': 1,
                      'ubuntu_signing_fingerprint': 'F6ECB3762474EDA9D21B7022871920D1991BC93C',
                      'runc_source_commit': '29dd3dc2b13b4123162e5fe132504bb4b15569f1',
                      'runc_source_archive_sha256': '5386e1968f70cc1482b4b2a93dc1a88ea7fa5517fba49b9e0fafe614d5a4c97a'},
+ 'runc_packages': [['github.com/aperturerobotics/protobuf-go-lite', 'v0.14.0'],
+                   ['github.com/checkpoint-restore/go-criu/v8', 'v8.3.0'],
+                   ['github.com/cilium/ebpf', 'v0.22.0'],
+                   ['github.com/containerd/console', 'v1.0.5'],
+                   ['github.com/coreos/go-systemd/v22', 'v22.7.0'],
+                   ['github.com/cpuguy83/go-md2man/v2', 'v2.0.7'],
+                   ['github.com/cyphar/filepath-securejoin', 'v0.7.0'],
+                   ['github.com/docker/go-units', 'v0.5.0'],
+                   ['github.com/godbus/dbus/v5', 'v5.2.2'],
+                   ['github.com/moby/sys/capability', 'v0.4.0'],
+                   ['github.com/moby/sys/mountinfo', 'v0.7.2'],
+                   ['github.com/moby/sys/user', 'v0.4.1'],
+                   ['github.com/moby/sys/userns', 'v0.2.1'],
+                   ['github.com/mrunalp/fileutils', 'v0.5.1'],
+                   ['github.com/opencontainers/cgroups', 'v0.1.0'],
+                   ['github.com/opencontainers/runc', None],
+                   ['github.com/opencontainers/runtime-spec', 'v1.3.0'],
+                   ['github.com/opencontainers/selinux', 'v1.13.1'],
+                   ['github.com/russross/blackfriday/v2', 'v2.1.0'],
+                   ['github.com/seccomp/libseccomp-golang', 'v0.12.0'],
+                   ['github.com/sirupsen/logrus', 'v1.9.4'],
+                   ['github.com/urfave/cli', 'v1.22.17'],
+                   ['github.com/vishvananda/netlink', 'v1.3.1'],
+                   ['github.com/vishvananda/netns', 'v0.0.5'],
+                   ['golang.org/x/net', 'v0.62.0'],
+                   ['golang.org/x/sys', 'v0.49.0'],
+                   ['stdlib', 'v1.27.3']],
  'headers': {'package': 'linux-libc-dev',
              'architecture': 'amd64',
              'version': '6.8.0-147.147',
@@ -64,9 +94,8 @@ SCAN_POLICY = {'schema': 1,
                                  'sha256': 'f96c03a170825a42f0a417efe70d77f05dd4265d7855eb05ba8024a58cc938f8',
                                  'elf': False}},
  'runc': {'type': 'regular',
-          'bytes': 14131248,
           'mode': 493,
-          'sha256': '6043541aca928890ab8ad0630cafd2b272c3880779d8ada1b3fe81bc22e80d20',
+          'sha256': '266ee9ba59f57fd4285d64f2542641bf70f61aacf88b68dc42ab92ff2767ef46',
           'elf': True},
  'gstreamer': {'source_manifest': {'schema': 1,
                      'source_package': 'gst-plugins-bad1.0',
@@ -238,18 +267,7 @@ SCAN_POLICY = {'schema': 1,
                             'source_version': '6.8.0',
                             'source_release': '147.147',
                             'architecture': 'amd64',
-                            'package_path': None},
-                'runc': {'class': 'lang-pkgs',
-                         'type': 'gobinary',
-                         'package_id': 'golang.org/x/net@v0.55.0',
-                         'package': 'golang.org/x/net',
-                         'version': 'v0.55.0',
-                         'purl': 'pkg:golang/golang.org/x/net@v0.55.0',
-                         'source_package': None,
-                         'source_version': None,
-                         'source_release': None,
-                         'architecture': None,
-                         'package_path': None}},
+                            'package_path': None}},
  'advisories': {'CVE-2022-50240': ['headers',
                                    'b2ab0615d6a746a196315b8ce869b6d2d14cc4305a7d77bc03b1998ce215675f',
                                    'kernel_code_absent_from_header_payload'],
@@ -436,9 +454,6 @@ SCAN_POLICY = {'schema': 1,
                 'CVE-2026-46330': ['headers',
                                    '042c3cd0693ddc43c81eae2a9ed8e9c42f1911ae67180a6f8a467acab76a4943',
                                    'kernel_code_absent_from_header_payload'],
-                'CVE-2026-46600': ['runc',
-                                   '7a34ce76597bada6319b5c98df6a70b417c6f8532c1e325c25250eea34a4c5c8',
-                                   'runc_affected_packages_not_linked'],
                 'CVE-2026-52946': ['headers',
                                    '351299a17887bb06efd87e403b3e1e0323630292385ec35ce9906977e44670ed',
                                    'kernel_code_absent_from_header_payload'],
@@ -670,9 +685,6 @@ SCAN_POLICY = {'schema': 1,
                 'CVE-2026-74752': ['headers',
                                    'aeb6547a4d4c5ad44ffb165853e19227e76045935764e5b9b6de9901713c4067',
                                    'kernel_code_absent_from_header_payload'],
-                'CVE-2026-78669': ['runc',
-                                   '842d8f452eca3e7aae30e1281a24286fbb284619b5c49a52431214fb54c784f1',
-                                   'runc_affected_packages_not_linked'],
                 'CVE-2026-80551': ['headers',
                                    '2c9ca59968767b6cd82c54107afa045c42f4eb0f65d50e94e29bb986872ed8c6',
                                    'kernel_code_absent_from_header_payload'],
@@ -1445,6 +1457,8 @@ def validate_event(env, event):
     require(re.fullmatch(r'[0-9a-f]{40}', env.get('GITHUB_SHA', '')), 'Full source identity required')
     for key in ('GITHUB_RUN_ID', 'GITHUB_RUN_ATTEMPT'):
         require(re.fullmatch(r'[1-9][0-9]*', env.get(key, '')), 'Invalid workflow identity')
+    require(env.get('REVIEWED_COMMIT') == env['GITHUB_SHA'] and env['GITHUB_RUN_ATTEMPT'] == '1',
+            'Exact reviewed first-attempt source required')
     return {'source_commit': env['GITHUB_SHA'], 'run_id': env['GITHUB_RUN_ID'],
             'run_attempt': env['GITHUB_RUN_ATTEMPT'], 'repository': repo['full_name']}
 
@@ -1476,9 +1490,12 @@ def validate_manifest(data):
                     re.fullmatch(r'[0-9a-f]{64}', item['sha256']) and 0 < item['bytes'] < 2 * 1024**2,
                     'Unsafe context declaration')
     require(set(data['tools']) == {'buildkit', 'trivy'}, 'Unexpected tool inventory')
-    for name, prefix in [('buildkit', 'docker.io/moby/buildkit'), ('trivy', 'ghcr.io/aquasecurity/trivy')]:
-        require(re.fullmatch(re.escape(prefix) + r'@sha256:[0-9a-f]{64}', data['tools'][name]['image']),
-                'Immutable official tool image required')
+    lock = accepted.read_lock()
+    require(data['tools']['buildkit'] == {
+        'kind': 'accepted-artifact', 'lock_sha256': oci.digest_file(accepted.LOCK),
+        'image': lock['architectures']['amd64']['config']}, 'Exact accepted builder required')
+    require(re.fullmatch(r'ghcr.io/aquasecurity/trivy@sha256:[0-9a-f]{64}',
+                        data['tools']['trivy']['image']), 'Immutable official scanner required')
 
 
 def prepare_context(root, destination, spec, sentinel, env):
@@ -1693,7 +1710,7 @@ def remove_builder(sup, name, owner, image, *, volume_absent_before=False):
     return {**result, 'state_volume': volume, 'state_volume_removed': True}
 
 
-def build_command(stage, data, identity, builder, context, output, layout=None, base=None):
+def build_command(stage, data, identity, builder, context, output, layout=None, base=None, *, tools_layout=None):
     command = ['docker', 'buildx', 'build', '--builder', builder, '--platform', 'linux/amd64',
                '--progress', 'plain', '--provenance=mode=max', '--network=default',
                '--label', 'org.opencontainers.image.revision=' + identity['source_commit'],
@@ -1701,6 +1718,10 @@ def build_command(stage, data, identity, builder, context, output, layout=None, 
                '--label', 'io.victron.runner.stage=' + stage,
                '--output', 'type=oci,dest=' + str(output), '--tag', 'localhost/runner-' + stage + ':artifact',
                '--file', str(context / data['contexts'][stage]['recipe'])]
+    if stage == 'public':
+        require(tools_layout is not None, 'Verified builder layout required for accepted runc')
+        spec = accepted.read_lock()['architectures']['amd64']
+        command += ['--build-context', 'accepted-tools=oci-layout://' + str(tools_layout) + '@' + spec['manifest']]
     if stage == 'private':
         require(layout is not None and base is not None, 'Accepted public base required')
         command += ['--build-context', 'accepted-base=oci-layout://' + str(layout) + '@' + base['image_index'],
@@ -1739,6 +1760,18 @@ def run_patch_preflights(sup, data, builder, context, record, check_build):
             record[key + 'claim'] = 'Canonical stage succeeded; the full build may reuse this builder cache.'
     finally:
         record['patch_preflight_elapsed_seconds'] = time.monotonic() - started
+
+
+def runc_packages(data):
+    """Require one complete final executable inventory, including its main module."""
+    rows = [r for r in data.get('Results', []) if r.get('Target') == RUNC_PATH
+            and r.get('Type') == 'gobinary' and r.get('Class') == 'lang-pkgs']
+    if len(rows) != 1 or not rows[0].get('Packages'):
+        return None
+    values = [[p.get('Name'), p.get('Version')] for p in rows[0]['Packages']]
+    if not all(isinstance(n, str) and (v is None or isinstance(v, str)) for n, v in values):
+        return None
+    return sorted(values, key=lambda pair: (pair[0], pair[1] or ''))
 
 
 def scan_summary(data, proof):
@@ -1783,7 +1816,7 @@ def scan_file_evidence(layout, selection, proof, check):
                 package['selected_header'] = record('usr/include/linux/netfilter/nf_conntrack_common.h')
                 components[name] = package
             elif name == 'runc':
-                components[name] = record('usr/local/bin/runc')
+                components[name] = record(RUNC_PATH)
             elif name == 'gstreamer':
                 prefix = 'usr/local/share/victron-gstreamer/'
                 spec = SCAN_POLICY['gstreamer']
@@ -2131,6 +2164,8 @@ def scan_acceptance(data, proof, file_evidence, context):
     failed = [] if components['libbpf'] else ['installed_libbpf_backport_not_verified']
     if not components['gstreamer']:
         failed.append('installed_gstreamer_backport_not_verified')
+    if not components['runc'] or runc_packages(data) != SCAN_POLICY['runc_packages']:
+        failed.append('accepted_runc_inventory_not_verified')
     rows = assessment_findings(data, proof, context['artifact_name'])
     assessed, unresolved = [], []
     for row in rows:
@@ -2160,7 +2195,7 @@ def scan_acceptance(data, proof, file_evidence, context):
         if policy:
             component, expected_hash, rule = policy
             identity = SCAN_POLICY['identities'][component]
-            target = context['artifact_name'] + ' (ubuntu 24.04)' if component == 'headers' else 'usr/local/bin/runc'
+            target = context['artifact_name'] + ' (ubuntu 24.04)' if component == 'headers' else RUNC_PATH
             matches = row['target'] == target and all(row[k] == v for k, v in identity.items())
             reason = 'finding_identity_changed' if not matches else 'advisory_content_changed'
             if matches and row['advisory_sha256'] == expected_hash:
@@ -2223,6 +2258,7 @@ def validate_parent(parent, identity, manifest):
     require(build.get('builder_cleanup_state', {}).get('state_volume_removed') is True,
             'Public builder cache removal is unconfirmed')
     check_cgroup_receipt(build)
+    accepted.check_receipt(build.get('accepted_builder', {}), accepted.read_lock(), 'amd64')
     check_patch_preflights(build, manifest)
     require(document(parent / 'cgroup-verification.json') == build['cgroup_proof'], 'Parent cgroup proof differs')
     require(build.get('manifest_sha256') == oci.digest_file(MANIFEST), 'Public manifest binding differs')
@@ -2263,6 +2299,10 @@ def execute(stage, parent=None):
     sup = Supervisor(env, paths, output / 'build.log', output / 'disk-observations.jsonl')
     name = 'runner-artifact-' + stage + '-' + identity['run_id'] + '-' + identity['run_attempt']
     image = data['tools']['buildkit']['image']
+    builder_lock = accepted.read_lock()
+    builder_spec = builder_lock['architectures']['amd64']
+    builder_inputs = work / 'accepted-builder'
+    record['accepted_builder'] = {}
     owner = name
     created = False
     volume_absent_before = False
@@ -2277,6 +2317,8 @@ def execute(stage, parent=None):
         record['initial_free_bytes'] = sup.check(START_FREE, force_record=True)
         record['docker_version'] = sup.run(['docker', '--version'], capture=True)
         record['buildx_version'] = sup.run(['docker', 'buildx', 'version'], capture=True)
+        record['accepted_builder'] = accepted.prepare(builder_lock, 'amd64', builder_inputs, sup.check)
+        accepted.load(sup, builder_inputs, builder_spec, record['accepted_builder'])
         context = work / 'context'
         prepare_context(ROOT, context, data['contexts'][stage], stage == 'public', env)
         base, layout = None, None
@@ -2316,7 +2358,8 @@ def execute(stage, parent=None):
         public_hash = hashlib.sha256(public_recipe.encode()).hexdigest()
         require(public_hash == data['contexts']['public']['files']['deploy/runner-reserve/Dockerfile']['sha256'],
                 'Preflight source differs from canonical recipe')
-        record['cgroup_proof'] = qualify_cgroup(sup, name, owner, image, observed, work, public_recipe, observe_cgroup)
+        record['cgroup_proof'] = qualify_cgroup(sup, name, owner, image, observed, work, public_recipe, observe_cgroup,
+                                                 cgroup_reader='/usr/bin/oci-cgroup-reader')
         save(output / 'cgroup-verification.json', record['cgroup_proof'])
         def check_build():
             current = inspect_builder(sup, name, owner, image)
@@ -2324,7 +2367,8 @@ def execute(stage, parent=None):
             cgroup.sample(current['State']['Pid'], record['cgroup_proof'], observe=observe_cgroup)
         if stage == 'public':
             run_patch_preflights(sup, data, name, context, record, check_build)
-        command = build_command(stage, data, identity, name, context, output / 'image.oci.tar', layout, base)
+        command = build_command(stage, data, identity, name, context, output / 'image.oci.tar', layout, base,
+                                tools_layout=builder_inputs / 'layout')
         record['command'] = command
         sup.run(command, seconds=2700, inspect=check_build)
         check_build()
@@ -2355,9 +2399,15 @@ def execute(stage, parent=None):
                 record['builder_removed'] = True
             except BaseException as exc:
                 record['cleanup_failure_type'] = type(exc).__name__
-        record['minimum_free_bytes'] = sup.minimum
-        record['finished_at'] = now()
-        save(output / 'build-receipt.json', record)
+        try:
+            accepted.cleanup(sup, builder_spec, record['accepted_builder'])
+        except BaseException as exc:
+            record['import_cleanup_failure_type'] = type(exc).__name__
+            raise
+        finally:
+            record['minimum_free_bytes'] = sup.minimum
+            record['finished_at'] = now()
+            save(output / 'build-receipt.json', record)
 
 
 def probe_scanner(sup, name, owner, image):
@@ -2526,6 +2576,7 @@ def gate(directories):
         require(len({b.get(key) for b in builds}) == 1 and builds[0].get(key), 'Stage identity differs')
     for directory, build in zip(directories, builds):
         check_cgroup_receipt(build)
+        accepted.check_receipt(build.get('accepted_builder', {}), accepted.read_lock(), 'amd64')
         if build['stage'] == 'public':
             check_patch_preflights(build, manifest)
         require(document(directory / 'cgroup-verification.json') == build['cgroup_proof'], 'Cgroup proof differs')
@@ -2541,7 +2592,8 @@ def gate(directories):
                 build.get('scan_completed') is True and build.get('builder_removed') is True and
                 build.get('scanner_removed') is True and
                 build.get('builder_cleanup_state', {}).get('state_volume_removed') is True and
-                not build.get('cleanup_failure_type'), 'Incomplete artifact production')
+                not build.get('cleanup_failure_type') and not build.get('import_cleanup_failure_type'),
+                'Incomplete artifact production')
         require(build.get('scan_gate_passed') is summary['scan_gate_passed'], 'Raw scanner gate changed')
         require(acceptance['acceptance_passed'] is True, 'Unresolved findings or image prerequisites require review')
 

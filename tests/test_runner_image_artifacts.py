@@ -252,7 +252,7 @@ class RunnerArtifactsTests(unittest.TestCase):
     def event(self):
         env = {'GITHUB_ACTIONS': 'true', 'RUNNER_ENVIRONMENT': 'github-hosted', 'RUNNER_OS': 'Linux',
                'RUNNER_ARCH': 'X64', 'GITHUB_EVENT_NAME': 'workflow_dispatch', 'GITHUB_REPOSITORY': 'victron-venus/venus-os-ci-toolkit',
-               'GITHUB_REF': 'refs/heads/main', 'GITHUB_SHA': SOURCE, 'GITHUB_RUN_ID': '123', 'GITHUB_RUN_ATTEMPT': '1'}
+               'GITHUB_REF': 'refs/heads/main', 'GITHUB_SHA': SOURCE, 'REVIEWED_COMMIT': SOURCE, 'GITHUB_RUN_ID': '123', 'GITHUB_RUN_ATTEMPT': '1'}
         return env, {'repository': {'private': False, 'full_name': 'victron-venus/venus-os-ci-toolkit', 'default_branch': 'main'}}
 
     def test_only_public_manual_default_branch_native_hosted_is_allowed(self):
@@ -260,7 +260,7 @@ class RunnerArtifactsTests(unittest.TestCase):
         build.validate_event(env, event)
         for key, value in [('GITHUB_EVENT_NAME', 'pull_request_target'), ('RUNNER_ENVIRONMENT', 'self-hosted'),
                            ('RUNNER_ARCH', 'ARM64'), ('GITHUB_REF', 'refs/heads/other'), ('GITHUB_SHA', 'main'),
-                           ('GITHUB_RUN_ATTEMPT', '../bad')]:
+                           ('GITHUB_RUN_ATTEMPT', '../bad'), ('GITHUB_RUN_ATTEMPT', '2'), ('REVIEWED_COMMIT', 'b' * 40)]:
             with self.subTest(key=key), self.assertRaises(ValueError):
                 build.validate_event({**env, key: value}, event)
         event['repository']['private'] = True
@@ -1111,6 +1111,8 @@ class RunnerArtifactsTests(unittest.TestCase):
             return 'version'
         fake.run.side_effect = run
         with mock.patch.dict(os.environ, env), mock.patch.object(build, 'Supervisor', return_value=fake), \
+             mock.patch.object(build.accepted, 'prepare', return_value={}), mock.patch.object(build.accepted, 'load'), \
+             mock.patch.object(build.accepted, 'cleanup'), \
              mock.patch.object(build, 'prepare_context'), mock.patch.object(build, 'remove_builder', return_value={'absent': True}) as cleanup:
             with mock.patch.object(build, 'probe_volume', return_value=None), self.assertRaises(subprocess.TimeoutExpired):
                 build.execute('public')
@@ -1120,6 +1122,26 @@ class RunnerArtifactsTests(unittest.TestCase):
         self.assertTrue(record['builder_removed'])
         self.assertFalse(record['build_success'])
         self.assertEqual(record['failure_type'], 'TimeoutExpired')
+
+    def test_import_cleanup_failure_propagates_after_receipt_is_saved(self):
+        env, event = self.event()
+        env['RUNNER_TEMP'] = str(self.root)
+        event_path = self.root / 'event.json'
+        event_path.write_text(json.dumps(event))
+        env['GITHUB_EVENT_PATH'] = str(event_path)
+        supervisor = mock.Mock(minimum=12 * build.GIB)
+        supervisor.check.return_value = 12 * build.GIB
+        supervisor.run.return_value = SOURCE
+        with mock.patch.dict(os.environ, env), \
+             mock.patch.object(build, 'Supervisor', return_value=supervisor), \
+             mock.patch.object(build.accepted, 'prepare', side_effect=ValueError('input failed')), \
+             mock.patch.object(build.accepted, 'cleanup', side_effect=RuntimeError('cleanup failed')):
+            with self.assertRaisesRegex(RuntimeError, 'cleanup failed'):
+                build.execute('public')
+        record = json.loads((self.root / 'runner-image-public-123-1/build-receipt.json').read_text())
+        self.assertEqual(record['failure_type'], 'ValueError')
+        self.assertEqual(record['import_cleanup_failure_type'], 'RuntimeError')
+        self.assertFalse(record['build_success'])
 
     def test_owned_cache_is_removed_even_after_container_is_inactive(self):
         for item in (self.builder(), None):
@@ -1170,7 +1192,8 @@ class RunnerArtifactsTests(unittest.TestCase):
         data = build.document(build.MANIFEST)
         identity = {'source_commit': SOURCE, 'repository': 'victron-venus/venus-os-ci-toolkit'}
         name = 'runner-artifact-public-123-1'
-        command = build.build_command('public', data, identity, name, self.root, self.root / 'out')
+        command = build.build_command('public', data, identity, name, self.root, self.root / 'out',
+                                      tools_layout=self.root / 'accepted-layout')
         record = {'command': command, 'run_id': '123', 'run_attempt': '1',
                   'patch_preflight_budget_seconds': 900, 'patch_preflight_elapsed_seconds': 300}
         for component in ('libbpf', 'gstreamer'):
@@ -1395,6 +1418,7 @@ class RunnerArtifactsTests(unittest.TestCase):
             'components': components, 'errors': [], 'kernel_paths': {}, 'perf_paths': {}}
         # Use the same report contract and exact identity matching as production.
         report['Results'][1]['Target'] = 'usr/local/bin/runc'
+        policy['runc_packages'] = build.runc_packages(report)
         policy['advisories'] = {}
         for row, component, rule in zip(build.assessment_findings(report, proof, context['artifact_name']),
                                        ('headers', 'runc'), ('headers_with_separately_repaired_libbpf', 'runc_affected_packages_not_linked')):
@@ -1704,7 +1728,10 @@ class RunnerArtifactsTests(unittest.TestCase):
         self.assertEqual(oci.digest_file(path), build.SCAN_POLICY['source_evidence']['public_rationale_document_sha256'])
         review = json.loads(path.read_text())
         rows = {row['id']: row for row in review['records']}
-        self.assertEqual(set(rows), set(build.SCAN_POLICY['advisories']))
+        retired = {row['id'] for row in review['records'] if row.get('target') == 'usr/local/bin/runc'}
+        self.assertEqual(retired, {'CVE-2026-46600', 'CVE-2026-78669'})
+        self.assertEqual(set(rows) - retired, set(build.SCAN_POLICY['advisories']))
+        self.assertFalse(retired & set(build.SCAN_POLICY['advisories']))
         for identifier, (_, digest, rule) in build.SCAN_POLICY['advisories'].items():
             self.assertEqual(rows[identifier]['advisory_content_sha256'], digest)
             self.assertEqual(rows[identifier]['rule_id'], rule)
@@ -1747,6 +1774,11 @@ class RunnerArtifactsTests(unittest.TestCase):
                     self.assertEqual(record['id'], build.SCAN_POLICY['gstreamer']['advisory'])
                     self.assertEqual(current_hash, build.SCAN_POLICY['gstreamer']['advisory_sha256'])
                     self.assertEqual(record['rule_id'], 'installed_gstreamer_h265_backport')
+                elif record['component'] == 'runc':
+                    self.assertNotIn(record['id'], build.SCAN_POLICY['advisories'])
+                    historical = next(row for row in build.document(
+                        build.ROOT / 'docs/RUNNER_SCAN_APPLICABILITY.json')['records'] if row['id'] == record['id'])
+                    self.assertEqual(current_hash, historical['advisory_content_sha256'])
                 else:
                     self.assertEqual([record['component'], current_hash, record['rule_id']],
                                      build.SCAN_POLICY['advisories'][record['id']])
@@ -1791,6 +1823,11 @@ class RunnerArtifactsTests(unittest.TestCase):
                     current_hash = next_record['current_advisory_sha256']
                 if record['component'] == 'gstreamer':
                     self.assertEqual(current_hash, build.SCAN_POLICY['gstreamer']['advisory_sha256'])
+                elif record['component'] == 'runc':
+                    self.assertNotIn(record['id'], build.SCAN_POLICY['advisories'])
+                    historical = next(row for row in build.document(
+                        build.ROOT / 'docs/RUNNER_SCAN_APPLICABILITY.json')['records'] if row['id'] == record['id'])
+                    self.assertEqual(current_hash, historical['advisory_content_sha256'])
                 else:
                     self.assertEqual([record['component'], current_hash, record['rule_id']],
                                      build.SCAN_POLICY['advisories'][record['id']])
@@ -1856,6 +1893,11 @@ class RunnerArtifactsTests(unittest.TestCase):
                 self.assertTrue(row['source_documents'])
                 if row['component'] == 'gstreamer':
                     self.assertEqual(row['current_advisory_sha256'], build.SCAN_POLICY['gstreamer']['advisory_sha256'])
+                elif row['component'] == 'runc':
+                    self.assertNotIn(row['id'], build.SCAN_POLICY['advisories'])
+                    historical = next(r for r in build.document(
+                        build.ROOT / 'docs/RUNNER_SCAN_APPLICABILITY.json')['records'] if r['id'] == row['id'])
+                    self.assertEqual(row['current_advisory_sha256'], historical['advisory_content_sha256'])
                 else:
                     self.assertEqual([row['component'], row['current_advisory_sha256'], row['rule_id']],
                                      build.SCAN_POLICY['advisories'][row['id']])
@@ -1990,7 +2032,9 @@ class RunnerArtifactsTests(unittest.TestCase):
 
     def test_workflow_has_only_manual_sequential_artifact_jobs(self):
         text = (build.ROOT / '.github/workflows/runner-image-artifacts.yml').read_text()
-        self.assertIn('workflow_dispatch: {}', text)
+        self.assertIn('workflow_dispatch:', text)
+        self.assertIn('reviewed_commit:', text)
+        self.assertIn('actions: read', text)
         self.assertIn('needs: public', text)
         self.assertNotIn('pull_request:', text)
         self.assertNotIn('secrets.', text)

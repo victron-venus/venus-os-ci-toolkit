@@ -204,7 +204,12 @@ This review does not rewrite or accept the original failed scan. Updated source
 and passing unit tests do not qualify an image, a host kernel or deployment.
 Complete image and runtime qualification remain separate requirements.
 
-### Exact retained runc applicability
+### Historical retained runc applicability
+
+The current artifact consumer replaces this executable with source-built runc
+and removes its two old exclusions. See [accepted builder consumption](ACCEPTED_BUILDER_CONSUMER.md).
+The following records describe the previous executable, not active exclusions
+for its replacement.
 
 The module scanner's runc findings are retained. For the exact Linux amd64 binary
 in `runner-runc-applicability.json`, the upstream release source and its matching
