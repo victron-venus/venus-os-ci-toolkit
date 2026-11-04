@@ -45,9 +45,11 @@ def control(package, arch='amd64'):
 
 def gstreamer_dpkg_commands():
     text = (ROOT / 'deploy/runner-reserve/Dockerfile').read_text().replace('\\\n', ' ')
-    return [shlex.split(line.removeprefix('RUN ').split('&&', 1)[0])
+    return [shlex.split(command.strip())
             for line in text.splitlines()
-            if line.startswith('RUN dpkg ') and 'victron-gstreamer/' in line]
+            if line.startswith('RUN ')
+            for command in line.removeprefix('RUN ').split('&&')
+            if command.strip().startswith('dpkg ') and 'victron-gstreamer/' in command]
 
 
 class GstreamerTests(unittest.TestCase):
