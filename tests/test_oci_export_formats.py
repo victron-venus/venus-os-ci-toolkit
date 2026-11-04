@@ -146,7 +146,8 @@ class DockerExportFormats(unittest.TestCase):
             proof, files, manifest, _ = self.exports()
             if change == 'config':
                 name = manifest[0]['Config']
-                data = json.loads(files[name]); data['config']['User'] = 'foreign'
+                data = json.loads(files[name])
+                data['config']['User'] = 'foreign'
                 files[name] = document(data)
             else:
                 manifest[0]['RepoTags'] = ['foreign/tag']
