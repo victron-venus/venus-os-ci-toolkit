@@ -35,8 +35,9 @@ python3 scripts/prepare_oci_promotion.py
 
 The new `$RUNNER_TEMP/oci-promotion/` contains the original candidate archives,
 an index with archive and binary hashes, and `amd64/` and `arm64/` builder contexts.
-Each context copies only the three accepted operational binaries into the pinned
-distroless base. The original archives retain `oci-probe`, evidence and license
+Each staging context contains the three accepted operational binaries and the
+image recipe. Image qualification separately adds the freshly tested cgroup
+reader and notices before the context is buildable. The original archives retain `oci-probe`, evidence and license
 notices. Candidate metadata, including `release: false`, is preserved; later
 publication must use a separate reviewed acceptance index. An existing output
 directory is never reused.
@@ -50,6 +51,45 @@ this workflow. Artifacts expire after 14 and 7 days respectively; replacement
 inputs require fresh qualification and lock review.
 
 ## Builder image acceptance remains required
+
+The manual `oci-builder-qualification.yml` workflow remains gated by
+`builder-qualification.json` and an exact reviewed default-branch commit. It
+uses separate disposable native AMD64 and ARM64 workers. It first revalidates
+the accepted artifacts, builds the existing source-locked Buildx client with
+Go 1.26.10, and builds the small cgroup reader with Go 1.27.3. Both new binaries
+must pass their inventory and vulnerability checks before they are used.
+
+The reader accepts no arguments and only reads `/proc/1/cgroup`. Its unit tests
+cover a 64 KiB limit, read errors, incomplete input and short/error writes.
+Hosted executable checks compare its output with that fixed file and reject
+an alternate-path argument. The later container check exercises the same
+argument rejection and preserves host PID/start-time correlation.
+
+The accepted standalone BuildKit assembles a COPY-only image under an owned
+transient systemd service. The service has a 2-CPU quota, 4 GiB memory limit,
+zero swap allowance, 256-task limit and a 10-minute lifetime; actual cgroup
+limits and process identity are checked during assembly. The ordinary-user
+BuildKit client has a bounded command deadline and connects only through the
+owned Unix socket. An OCI archive and a Docker archive come from the same
+solve and source timestamp; Docker-export layers are explicitly uncompressed
+so their bytes can be compared directly with OCI DiffIDs. The verifier checks every OCI blob, uncompressed layer digest, final
+binary and notice before scanning the image. It checks that the Docker
+archive has the same configuration and uncompressed layers before importing
+it; importer support for arbitrary OCI tar files is not assumed.
+
+Only then does the workflow start the image with Buildx's `docker-container`
+driver. It proves the real RUN process inherits the existing CPU/memory
+limits, verifies native platform selection, pulls the pinned test base over
+registry TLS, and exercises multi-stage builds, persistent cache mounts and
+OCI export. It removes only the identified builder container, state volume,
+assembly service and imported image reference. Failures retain evidence.
+The final image includes upstream, Go, native-package and project notices
+from the original accepted archive and reviewed source.
+
+`oci-builder-evidence-{amd64,arm64}` contains review evidence;
+`oci-builder-image-{amd64,arm64}` retains the original successful archives on
+GitHub. No registry write or release permission is granted. Both native jobs
+and independent evidence review are required before a separate publication.
 
 `builder.Dockerfile` is a native rootful candidate with an explicit runc path,
 native snapshotter and OCI worker. It uses the base already pinned by the

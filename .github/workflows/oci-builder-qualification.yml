@@ -1,0 +1,106 @@
+name: Qualify native OCI builder image
+
+on:
+  workflow_dispatch:
+    inputs:
+      reviewed_commit:
+        description: Exact reviewed image recipe commit
+        type: string
+        required: true
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: oci-builder-image-qualification
+  cancel-in-progress: false
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  image:
+    name: Native builder image (${{ matrix.arch }})
+    if: github.event_name == 'workflow_dispatch' && github.repository == 'victron-venus/venus-os-ci-toolkit' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && inputs.reviewed_commit == github.sha
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    env:
+      REVIEWED_COMMIT: ${{ inputs.reviewed_commit }}
+    steps:
+      - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Require reviewed native image recipe before any preparation
+        run: |
+          python3 - <<'PY'
+          import json, os, sys
+          from pathlib import Path
+          sys.path.insert(0, 'scripts')
+          from qualify_oci_builder import admit
+          admit(os.environ)
+          policy = json.loads(Path('.github/oci-tools/builder-qualification.json').read_text())
+          assert policy['schema'] == 1 and policy['reviewed'] is True, 'Image recipe is not reviewed'
+          PY
+      - name: Revalidate the original accepted artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/prepare_oci_promotion.py
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version: '1.26.10'
+          cache: false
+      - name: Build the source-locked native Buildx client
+        env:
+          TARGETARCH: ${{ matrix.arch }}
+        run: python3 scripts/build_runner_go_tools.py buildx --ci
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version: '1.27.3'
+          cache: false
+      - name: Build and test the fixed-path cgroup reader
+        run: python3 scripts/prepare_oci_builder_tools.py helper
+      - name: Install the locked binary analyzer
+        env:
+          GOTOOLCHAIN: local
+          GOWORK: 'off'
+          GOMAXPROCS: '2'
+        run: go -C actions/setup-go/tools/govulncheck install -mod=readonly golang.org/x/vuln/cmd/govulncheck
+      - name: Scan the exact helper and client before using them
+        run: python3 scripts/prepare_oci_builder_tools.py scan
+      - name: Assemble, verify, scan and exercise the native builder
+        run: python3 scripts/qualify_oci_builder.py
+      - name: Preserve small qualification and failure evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: oci-builder-evidence-${{ matrix.arch }}
+          path: |
+            ${{ runner.temp }}/oci-builder-${{ matrix.arch }}/evidence/
+            ${{ runner.temp }}/oci-builder-inputs/*.json
+            ${{ runner.temp }}/oci-builder-inputs/*.jsonl
+            ${{ runner.temp }}/oci-builder-inputs/*.log
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Preserve the accepted original image archives without publishing
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: oci-builder-image-${{ matrix.arch }}
+          path: |
+            ${{ runner.temp }}/oci-builder-${{ matrix.arch }}/builder.oci.tar
+            ${{ runner.temp }}/oci-builder-${{ matrix.arch }}/builder.docker.tar
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0

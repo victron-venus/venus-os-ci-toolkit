@@ -1057,6 +1057,44 @@ class RunnerArtifactsTests(unittest.TestCase):
         self.assertEqual(journal, [{'kind': 'binding', 'container_id': observed['Id'],
                                    'host_before': parent, 'host_after': after, 'private_cgroup': '0::/init'}])
 
+    def test_native_candidate_cgroup_probe_uses_bounded_reader_and_platform(self):
+        _, binding = self.cgroup_binding()
+        parent = binding['builder_process']
+        child = {'pid': 101, 'starttime_ticks': '13', 'cgroup': binding['owned_root'] + '/buildkit/run'}
+        observed = self.builder()
+        observed['HostConfig']['CgroupnsMode'] = 'private'
+        observed['State']['Pid'] = 100
+        recipe = 'FROM docker.io/library/ubuntu@sha256:' + 'a' * 64 + '\n'
+        for arch in ('amd64', 'arm64'):
+            work = self.root / arch
+            work.mkdir()
+            sup = mock.Mock()
+            def run(command, **kwargs):
+                if command[:2] == ['docker', 'exec']:
+                    self.assertEqual(command, ['docker', 'exec', observed['Id'], '/usr/bin/oci-cgroup-reader'])
+                    return '0::/init'
+                self.assertEqual(command[command.index('--platform') + 1], 'linux/' + arch)
+                kwargs['inspect']()
+            sup.run.side_effect = run
+            with self.subTest(architecture=arch), \
+                 mock.patch.object(build, 'inspect_builder', return_value=observed), \
+                 mock.patch.object(cgroup, 'process_identity', return_value=parent), \
+                 mock.patch.object(cgroup, 'sample', return_value=(parent, {})), \
+                 mock.patch.object(cgroup, 'run_processes', return_value=[child]):
+                proof = build.qualify_cgroup(sup, 'test', 'nonce', 'pinned', observed, work, recipe,
+                                            lambda entry: None, architecture=arch,
+                                            cgroup_reader='/usr/bin/oci-cgroup-reader')
+                self.assertEqual(proof['run_process'], child)
+                self.assertEqual(proof['platform'], 'linux/' + arch)
+
+    def test_cgroup_probe_rejects_unreviewed_reader_or_arch_before_execution(self):
+        for options in ({'architecture': 'armv7'}, {'cgroup_reader': '/bin/sh'}):
+            sup = mock.Mock()
+            with self.subTest(options=options), self.assertRaises(ValueError):
+                build.qualify_cgroup(sup, 'test', 'nonce', 'pinned', {}, self.root, '',
+                                    lambda entry: None, **options)
+            sup.run.assert_not_called()
+
     def test_create_timeout_retains_intent_and_still_reconciles_owned_builder(self):
         env, event = self.event()
         env['RUNNER_TEMP'] = str(self.root)
