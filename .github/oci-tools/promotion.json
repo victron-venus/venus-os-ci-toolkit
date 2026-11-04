@@ -1,0 +1,10 @@
+{
+  "schema": 1,
+  "reviewed": false,
+  "repository": "victron-venus/venus-os-ci-toolkit",
+  "source": null,
+  "sources_sha256": null,
+  "qualification_run": null,
+  "architectures": {},
+  "status": "Awaiting successful same-run source and runtime qualification; not publishable."
+}
