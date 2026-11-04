@@ -7,14 +7,16 @@
 - Reject required build-receipt filenames longer than 200 ASCII characters during policy validation, matching final asset staging and identifying invalid inventories before builds begin.
 - Keep inventory-only migrations compatible with the filename check through a separately hashed validation layer. Preserve accepted historical source states, exact reversal, idempotence, and rejection of unknown or partially migrated files.
 - Keep status-shaped lines inside partial release-asset and Actions ZIP bodies from being mistaken for HTTP denials. Inspect the validated response header without copying the partial body so permitted whole-read retries can recover.
+- Release each failed buffered response before waiting or allocating the next attempt, avoiding overlapping capture buffers during recovery. Treat explicit authorization and Unauthorized diagnostics as terminal even when accompanied by EOF or timeout text.
+- Handle disabled native auto-merge in the default shared workflow by requiring stable head/base/check/review observations, an independent current-head approval and successful CI, then submitting an ordinary protected merge. Explicit native mode reports a disabled setting; unknown capability metadata fails closed.
 
 ### Upgrade
 
-Use a reviewed toolkit refresh or the inventory-only migration for recognized source states to receive this validation change in copied consumers. Existing valid receipt inventories retain their names and publication requirements. The binary-read correction requires a reviewed release-client refresh or targeted backport; the inventory-only migration does not change the download engine.
+Use a reviewed toolkit refresh or the inventory-only migration for recognized source states to receive this validation change in copied consumers. Existing valid receipt inventories retain their names and publication requirements. The binary-read correction requires a reviewed release-client refresh or targeted backport; the inventory-only migration does not change the download engine. Adopt an immutable updated shared-workflow reference to receive the auto-merge capability handling.
 
 ### Security
 
-The receipt filename correction rejects invalid configuration earlier; it does not add privileges or change approval policy. Existing source, producer, checksum and complete-asset checks remain required. Real HTTP denials, authentication, certificate and rate-limit failures continue to fail closed, and publication writes are not retried. Read recovery still allows at most three total attempts; only false denial classifications from response bodies are corrected.
+The receipt filename correction rejects invalid configuration earlier; it does not add privileges or change approval policy. Existing source, producer, checksum and complete-asset checks remain required. Real HTTP denials, authentication, certificate and rate-limit failures continue to fail closed, and publication writes are not retried. Read recovery still allows at most three total attempts. The shared workflow never changes repository settings or uses administrator merge; existing server-side review, check and freshness rules remain enforced.
 
 ## [0.1.10] - 2026-11-03
 

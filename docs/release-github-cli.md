@@ -51,14 +51,20 @@ the OS trust store nor connects to a real authenticated service.
 
 ## Read recovery
 
-The release client retries complete GET responses at most three times for
-recognized connection loss, timeouts and HTTP 500/502/503/504. Each metadata
+The release client makes at most three total GET attempts for recognized
+connection loss, timeouts and HTTP 500/502/503/504. Each metadata
 attempt is limited to 30 seconds; buffered release-asset and Actions ZIP reads
 are limited to 120 seconds. Existing jitter adds at most six seconds overall.
 A failed response is discarded before retrying. Authentication, authorization,
 certificate errors, missing resources, rate limits and malformed successful
 responses fail closed. HTTP status remains authoritative for resource absence;
 error prose cannot authorize publication.
+
+Leave `GH_DEBUG` unset for normal release automation. With `GH_DEBUG=api`, the
+CLI can include a sanitized `Authorization` request header in stderr. The
+conservative authorization-diagnostic veto can then prevent a retry even for
+HTTP 503. Keep that veto intact; API debug traces are for diagnosis, not normal
+automated read recovery.
 
 POST, PATCH, PUT and uploads are never replayed. Large streamed downloads retain
 their separate 900-second limit, expected size/hash, cumulative byte budget and
