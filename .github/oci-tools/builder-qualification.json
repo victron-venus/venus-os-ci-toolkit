@@ -1,5 +1,5 @@
 {
   "schema": 1,
-  "reviewed": false,
-  "status": "Historical acceptance retained; current BuildKit 0.34.2 and Buildx 0.38.2 require new native source, runtime and image evidence before reactivation."
+  "reviewed": true,
+  "status": "Existing image recipe reviewed for qualification with the newly accepted native artifacts and source-locked Buildx 0.38.2. Actual image acceptance and publication remain separate."
 }

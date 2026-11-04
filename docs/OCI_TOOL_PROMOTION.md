@@ -3,13 +3,15 @@
 `scripts/prepare_oci_promotion.py` stages the exact two-architecture candidates
 from one successful source/runtime workflow. It neither compiles nor executes
 the candidates and does not publish a release, build an image or deploy anything.
-The checked-in `promotion.json` retains the historical identities of artifacts from
-[run 41770477731](https://github.com/victron-venus/venus-os-ci-toolkit/actions/runs/41770477731),
-source `9ebd756e38e6d946004f1b781e7577cba85a5dbd`. Both native source/security
-and runtime jobs passed for those original inputs. Staging and image qualification
-are now disabled (`reviewed: false`) until the current source inputs receive new
-native source, runtime and image acceptance. Historical receipts do not approve
-the replacement binaries or permit publication.
+The checked-in `promotion.json` binds the fresh artifacts from
+[run 41779973736](https://github.com/victron-venus/venus-os-ci-toolkit/actions/runs/41779973736),
+source `25d4f9fb419c12889be0428eb25e94617c3ed76e`. Both native source/security
+and actual runtime jobs passed on AMD64 and ARM64. Independent audits of the
+original evidence archives verified the production package graphs, raw scanner
+reports, installed inputs, seccomp/device restrictions and BuildKit confinement.
+Staging and the existing reviewed image recipe are enabled for these exact
+artifacts. Their actual outputs still need separate acceptance; this does not
+approve publication or deployment. The earlier v0.34.1 artifacts are not reused.
 
 ## Current source refresh
 
@@ -36,8 +38,11 @@ production-package guard now rejects its reintroduction. This source evidence
 does not substitute for clean scans of the actual replacement binaries.
 
 Go remains 1.26.10 for Buildx and 1.27.3 for BuildKit/runc; runc remains 1.5.2.
-The native compiler/library locks are unchanged. Re-enable staging only with new
-accepted archive identities, then qualify the actual new image before publication.
+The native inputs additionally pin matching zlib development headers so older
+hosted images can install the reviewed runtime without removing Python/MySQL
+development packages. The installer retains its no-download/no-remove policy;
+the added package is included in the installed inventory and vulnerability scan.
+Qualify the actual new image before publication.
 
 For each architecture the reviewed lock must contain candidate and runtime
 artifact IDs, SHA-256 digests and compressed sizes, plus all four binary hashes.

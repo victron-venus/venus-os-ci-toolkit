@@ -1,47 +1,47 @@
 {
   "schema": 1,
-  "reviewed": false,
+  "reviewed": true,
   "repository": "victron-venus/venus-os-ci-toolkit",
-  "source": "9ebd756e38e6d946004f1b781e7577cba85a5dbd",
-  "sources_sha256": "cf0bc9b38660960b7e938be816e21f0dd4680a8335a29ba7aa3ec6aa5b4f8234",
-  "qualification_run": 41770477731,
+  "source": "25d4f9fb419c12889be0428eb25e94617c3ed76e",
+  "sources_sha256": "7e87a0828fc32229631455787a102618811446afd3846ae63fd5c6e52f075487",
+  "qualification_run": 41779973736,
   "architectures": {
     "amd64": {
       "binaries": {
-        "buildctl": "b322d074f8c6f15f73ff94c73fae3c2ffa48bb281b60ab728b214c9ece905cc4",
-        "buildkitd": "c2d3310d92070ad7128c50416101e92f10350e0411f06dafafd56786e6568d87",
+        "buildctl": "88b4894df78d43114ad9401a5102efb099189b3f13b457b74ae8dacacbc8903f",
+        "buildkitd": "ca11fa467a9e5385413d6a9cd5778b95f9b2754b2dc46743ebd23464a2235f9d",
         "oci-probe": "f6de7c013be6919b959d8eb2a6a65b33fb983d42893bdd92c5d0b97a627617c9",
         "runc": "266ee9ba59f57fd4285d64f2542641bf70f61aacf88b68dc42ab92ff2767ef46"
       },
       "candidate": {
-        "id": 13294792206,
-        "sha256": "0d5d1e9745f83c515c3bbe609404e465bc077108ed87b33d3c796264c3c610ba",
-        "bytes": 69985215
+        "id": 13299111390,
+        "sha256": "e89de236eb40d92b3dbbae3b5959381bf03df88c73d26d010eab3b9b49bc8042",
+        "bytes": 69994066
       },
       "runtime": {
-        "id": 13294468882,
-        "sha256": "13ed511d79d8d736f8201f49abab60da92c6dbc419a77de988f58b0726810a64",
-        "bytes": 5114
+        "id": 13298403989,
+        "sha256": "2d0425203646fe922f96cfc5c72fe54434e64f4b1f5622cb695159878cf004f1",
+        "bytes": 5118
       }
     },
     "arm64": {
       "binaries": {
-        "buildctl": "b7483add161e8ce149588130cc050de45687e082b06fb1972f9b6e5a73ff8a7c",
-        "buildkitd": "2683d91a9bcce3c9a2a80dfcc422d06a1b3c846644500c228073f57b5b60bb01",
+        "buildctl": "62c05f9b901cb1ce248af8863c853d6cfb442995ed5bf86c47f1a28aa565f8ca",
+        "buildkitd": "68148a03c1c6fd4d55b43b5949cfba281a509f8474a654ee5739a96588fa05c4",
         "oci-probe": "5c115d1347f4bacf4031d930028de212509176b00d173761ea122cc90e595017",
         "runc": "2c3c100104b147758c9b55aa867ee651fd511ed5848aeeb053dafe5addc1889b"
       },
       "candidate": {
-        "id": 13295095543,
-        "sha256": "048cb3c6fdeb806a6e65a2f551ff49b6c3bd640bc82b59efd714b27a952b1ed6",
-        "bytes": 64542207
+        "id": 13298602450,
+        "sha256": "e017fe427709a51c47a3bc7d264fc266939af6a5541907782b6fa300086dbac2",
+        "bytes": 64545256
       },
       "runtime": {
-        "id": 13294404314,
-        "sha256": "e27a54b4fd89cf7f1090013e638a4e198488529813c9b5b85bf0de86979e1136",
-        "bytes": 5106
+        "id": 13298592642,
+        "sha256": "3e599de19def4e13660d3daa5c25b712f0661820fd506a54e7f6118a2f0cb1cb",
+        "bytes": 5112
       }
     }
   },
-  "status": "Historical acceptance retained; current BuildKit 0.34.2 and Buildx 0.38.2 require new native source, runtime and image evidence before reactivation."
+  "status": "Fresh BuildKit 0.34.2/runc 1.5.2 source and runtime artifacts independently accepted on both architectures. Staging and image qualification are separate; publication is not approved."
 }
