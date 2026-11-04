@@ -3,11 +3,41 @@
 `scripts/prepare_oci_promotion.py` stages the exact two-architecture candidates
 from one successful source/runtime workflow. It neither compiles nor executes
 the candidates and does not publish a release, build an image or deploy anything.
-The checked-in `promotion.json` binds the independently reviewed artifacts from
+The checked-in `promotion.json` retains the historical identities of artifacts from
 [run 41770477731](https://github.com/victron-venus/venus-os-ci-toolkit/actions/runs/41770477731),
 source `9ebd756e38e6d946004f1b781e7577cba85a5dbd`. Both native source/security
-and runtime jobs passed. This acceptance permits staging those exact bytes;
-it does not qualify a container image or permit publication.
+and runtime jobs passed for those original inputs. Staging and image qualification
+are now disabled (`reviewed: false`) until the current source inputs receive new
+native source, runtime and image acceptance. Historical receipts do not approve
+the replacement binaries or permit publication.
+
+## Current source refresh
+
+The source locks now target BuildKit 0.34.2 and Buildx 0.38.2. BuildKit's patch
+release fixes the resolver-cache panic affecting 0.34.1
+([GHSA-2fqp-xg6f-v7gj](https://github.com/moby/buildkit/security/advisories/GHSA-2fqp-xg6f-v7gj));
+the updated upstream sources also carry newer containerd, compression and fsutil
+dependencies. Not every advisory repeated in release notes affects the previous
+versions; applicability must be checked against the advisory ranges and source.
+
+The first native image attempt,
+[41774287612](https://github.com/victron-venus/venus-os-ci-toolkit/actions/runs/41774287612),
+failed before image assembly because its Buildx binary scanner reported the
+deprecated OpenPGP package and vulnerable `x/net` HTML code. That attempt remains
+failed. The replacement locks pin `x/net` 0.62.0 and the corrected `x/crypto`
+module layout, while preserving the existing `go-archive` fix and retained
+namesgenerator source and notices.
+
+[Source-only preparation 41775119688](https://github.com/victron-venus/venus-os-ci-toolkit/actions/runs/41775119688)
+resolved and verified both full upstream trees without building binaries. Its
+independently reviewed production closures contain no deprecated OpenPGP imports;
+the separate deprecated module remains in the broader module graph. An explicit
+production-package guard now rejects its reintroduction. This source evidence
+does not substitute for clean scans of the actual replacement binaries.
+
+Go remains 1.26.10 for Buildx and 1.27.3 for BuildKit/runc; runc remains 1.5.2.
+The native compiler/library locks are unchanged. Re-enable staging only with new
+accepted archive identities, then qualify the actual new image before publication.
 
 For each architecture the reviewed lock must contain candidate and runtime
 artifact IDs, SHA-256 digests and compressed sizes, plus all four binary hashes.

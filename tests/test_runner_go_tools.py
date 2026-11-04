@@ -19,6 +19,16 @@ SPEC.loader.exec_module(TOOLS)
 
 
 class RunnerGoToolTests(unittest.TestCase):
+    def test_production_openpgp_guard_rejects_legacy_root_and_subpackages(self):
+        supported = {'github.com/ProtonMail/go-crypto/openpgp', 'crypto', 'example/main'}
+        TOOLS.verify_openpgp_absent(supported)
+        for blocked in ('golang.org/x/crypto/openpgp', 'golang.org/x/crypto/openpgp/packet',
+                        'golang.org/x/crypto/openpgp/armor'):
+            with self.subTest(package=blocked), self.assertRaisesRegex(ValueError, 'GO-2026-5932'):
+                TOOLS.verify_openpgp_absent(supported | {blocked})
+        with self.assertRaisesRegex(ValueError, 'empty production'):
+            TOOLS.verify_openpgp_absent(set())
+
     def setUp(self):
         self.manifest = json.loads(TOOLS.MANIFEST.read_text())
         self.temp = tempfile.TemporaryDirectory()
@@ -58,7 +68,8 @@ class RunnerGoToolTests(unittest.TestCase):
             self.assertEqual(origin.get('runtime_test_fix'), spec.get('runtime_test_fix'))
             for lock in ('go.mod', 'go.sum'):
                 self.assertEqual(TOOLS.digest(folder / lock), spec['fixed_locks'][lock])
-            self.assertIn('golang.org/x/net v0.60.0', (folder / 'go.mod').read_text())
+            net_version = 'v0.62.0' if name == 'buildx' else 'v0.60.0'
+            self.assertIn('golang.org/x/net ' + net_version, (folder / 'go.mod').read_text())
         self.assertIn('github.com/moby/go-archive v0.3.0',
                       (TOOLS.LOCKS / 'buildx/go.mod').read_text())
         self.assertNotIn('\tgithub.com/docker/docker ', (TOOLS.LOCKS / 'buildx/go.mod').read_text())

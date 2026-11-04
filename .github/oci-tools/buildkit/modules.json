@@ -477,7 +477,7 @@
   },
   {
     "Path": "github.com/containerd/containerd/v2",
-    "Version": "v2.4.1"
+    "Version": "v2.4.2"
   },
   {
     "Path": "github.com/containerd/continuity",
@@ -1217,7 +1217,7 @@
   },
   {
     "Path": "github.com/klauspost/compress",
-    "Version": "v1.20.1"
+    "Version": "v1.20.2"
   },
   {
     "Path": "github.com/klauspost/pgzip",
@@ -1873,7 +1873,7 @@
   },
   {
     "Path": "github.com/tonistiigi/fsutil",
-    "Version": "v0.0.0-20260819142231-83cac42c1c52"
+    "Version": "v0.0.0-20261103091533-a72de9dcf763"
   },
   {
     "Path": "github.com/tonistiigi/go-actions-cache",

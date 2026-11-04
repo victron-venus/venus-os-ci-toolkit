@@ -18,7 +18,7 @@ import sys
 import tarfile
 import urllib.request
 
-from build_runner_go_tools import digest, json_stream, require, unpack
+from build_runner_go_tools import digest, json_stream, require, unpack, verify_openpgp_absent
 from oci_vulnerability import evaluate as evaluate_govulncheck
 import oci_header_disposition as header_review
 
@@ -381,6 +381,7 @@ def build_component(name, spec, stage, arch, manifest):
     graphs = {}
     for tool, command in builds.items():
         graphs[tool] = package_graph(source, env, TAGS[name], [command[-1]], evidence / (tool + "-packages.json"))
+        verify_openpgp_absent({package["ImportPath"] for package in graphs[tool]})
         run(command, cwd=source, env=env, log=evidence / (tool + "-build.log"))
         run(["go", "version", "-m", bins / tool], env=env, log=evidence / (tool + "-buildinfo.txt"))
         dynamic = run(["readelf", "-d", bins / tool], log=evidence / (tool + "-dynamic.txt"))

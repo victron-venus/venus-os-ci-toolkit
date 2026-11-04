@@ -1,22 +1,23 @@
 {
   "source": {
     "repository": "docker/buildx",
-    "release_tag": "v0.38.1",
-    "commit": "0dbe87f36ed472fe36b6796c3f70b4210a731fc5",
-    "archive_sha256": "c5c810b083ed3725f7d4299ba01505b5891d164cf81c3398ea4c3b27a3b71149"
+    "release_tag": "v0.38.2",
+    "commit": "3c4cbd35852fc1a476923627a780a7836c28b654",
+    "archive_sha256": "02bac8e7542eee39ab36228403c2d92d6822defab3f4bcf292052d74c644e732"
   },
   "go_version": "go1.26.10",
   "original_locks": {
-    "go.mod": "a93029abb94e88ddaa532ddeaab4802259a1025408f1eac417a9886e140067ef",
-    "go.sum": "c8541a1b2469760b360c480270742a4a0f3202b651e354078db7e35c23dadffe"
+    "go.mod": "64826abe20bb482bb0c7747b7397c371f42b8efa91c19672e2bfac8106f08060",
+    "go.sum": "07063b1e7e4885d061d6aa9efd48cead00cdd3a7e68527ce0863d18ae0ed5766"
   },
   "fixed_locks": {
-    "go.mod": "4b4e493002afcf4b996a2faef612a3072a5ac554c4288e34cbd6350628d464cc",
-    "go.sum": "b016df41b7aa851ae4d1b52a78987ef17ab85807273ed157efa2cacf9ad5cef5"
+    "go.mod": "a4638edafc40dda5d8f0fbef5d37127982f139738fda16e3169a3eba393ed129",
+    "go.sum": "d2cf87407a367f5279119eb3232062e1e513392cab72f3457bc09d87a0401a65"
   },
   "updates": [
-    "golang.org/x/net@v0.60.0",
     "github.com/moby/go-archive@v0.3.0",
+    "golang.org/x/crypto@v0.58.1-0.20261009181718-2f1f834330b2",
+    "golang.org/x/net@v0.62.0",
     "Retain exact frozen namesgenerator source and notices locally; remove unused legacy Docker module requirement"
   ],
   "qualification": "Lock preparation only. Source tests and final image acceptance are separate required gates.",
