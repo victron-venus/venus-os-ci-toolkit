@@ -40,9 +40,9 @@ def file_record(path):
     return {'sha256': accepted.oci.digest_file(path), 'bytes': path.stat().st_size}
 
 
-def acquire_architecture(lock, arch, destination, check):
+def acquire_architecture(lock, arch, destination, check, snapshot):
     """Verify one architecture and describe its three original release files."""
-    proof = accepted.acquire(lock, arch, destination, check)
+    proof = accepted.acquire(lock, arch, destination, check, snapshot=snapshot)
     spec = lock['architectures'][arch]
     files, payloads = {}, {}
     for local, suffix in [(accepted.OCI_ARCHIVE, '.oci.tar'),
@@ -80,10 +80,12 @@ def stage(output, lock, release, check):
     require(checksums.read_text() == source_record['sha256'] + '  ' + source_archive.name + '\n',
             'Source archive checksum differs')
     accepted.validate_lock(lock)
+    snapshot = accepted.read_transport()
     provenance = {'schema': 1, 'repository': accepted.REPOSITORY, 'release': release,
                   'qualification': {'source': lock['source'], 'run': lock['qualification_run'],
                                     'attempt': lock['attempt'], 'workflow': lock['workflow']},
-                  'lock_sha256': accepted.oci.digest_file(accepted.LOCK), 'architectures': {}}
+                  'lock_sha256': accepted.oci.digest_file(accepted.LOCK), 'architectures': {},
+                  'transport': accepted.transport_receipt(snapshot)}
     created = []
     committed = False
     try:
@@ -93,7 +95,7 @@ def stage(output, lock, release, check):
             for arch in ('amd64', 'arm64'):
                 check()
                 destination = scratch / arch
-                files, record = acquire_architecture(lock, arch, destination, check)
+                files, record = acquire_architecture(lock, arch, destination, check, snapshot)
                 payloads.update(files)
                 provenance['architectures'][arch] = record
             metadata = scratch / PROVENANCE
@@ -116,8 +118,10 @@ def stage(output, lock, release, check):
             checksum_file = scratch / CHECKSUMS
             checksum_file.write_text(''.join(value['sha256'] + '  ' + name + '\n'
                                              for name, value in sorted(records.items())))
+            accepted.require_transport_unchanged(snapshot)
             checksum_file.replace(checksums)
             committed = True
+        accepted.require_transport_unchanged(snapshot)
         return provenance
     except BaseException:
         # Checksum replacement commits the complete set. A later scratch-cleanup

@@ -1111,7 +1111,8 @@ class RunnerArtifactsTests(unittest.TestCase):
             return 'version'
         fake.run.side_effect = run
         with mock.patch.dict(os.environ, env), mock.patch.object(build, 'Supervisor', return_value=fake), \
-             mock.patch.object(build.accepted, 'prepare', return_value={}), mock.patch.object(build.accepted, 'load'), \
+             mock.patch.object(build.accepted, 'prepare', return_value={'transport': build.accepted.transport_receipt()}), \
+             mock.patch.object(build.accepted, 'load'), \
              mock.patch.object(build.accepted, 'cleanup'), \
              mock.patch.object(build, 'prepare_context'), mock.patch.object(build, 'remove_builder', return_value={'absent': True}) as cleanup:
             with mock.patch.object(build, 'probe_volume', return_value=None), self.assertRaises(subprocess.TimeoutExpired):
@@ -1122,6 +1123,49 @@ class RunnerArtifactsTests(unittest.TestCase):
         self.assertTrue(record['builder_removed'])
         self.assertFalse(record['build_success'])
         self.assertEqual(record['failure_type'], 'TimeoutExpired')
+
+    def _assert_execute_transport_boundary(self, changed):
+        env, event = self.event()
+        env['RUNNER_TEMP'] = str(self.root)
+        event_path = self.root / 'event.json'
+        event_path.write_text(json.dumps(event))
+        env['GITHUB_EVENT_PATH'] = str(event_path)
+        original = build.accepted.TRANSPORT.read_bytes()
+        transport = self.root / 'transport.json'
+        transport.write_bytes(original)
+        supervisor = mock.Mock(minimum=12 * build.GIB)
+        supervisor.check.return_value = 12 * build.GIB
+        def run(command, **kwargs):
+            if command[0] == 'git':
+                if changed:
+                    transport.write_bytes(original + b'\n')
+                return SOURCE
+            return 'version'
+        supervisor.run.side_effect = run
+        class ImportReached(RuntimeError):
+            pass
+        with mock.patch.dict(os.environ, env), \
+             mock.patch.object(build.accepted, 'TRANSPORT', transport), \
+             mock.patch.object(build, 'Supervisor', return_value=supervisor), \
+             mock.patch.object(build.accepted, 'prepare',
+                               side_effect=lambda *args: {'transport': build.accepted.transport_receipt()}), \
+             mock.patch.object(build.accepted.image, 'begin_import', side_effect=ImportReached) as begin, \
+             mock.patch.object(subprocess, 'Popen', side_effect=AssertionError('No external commands')):
+            if changed:
+                with self.assertRaisesRegex(ValueError, 'transport differs from validated manifest'):
+                    build.execute('public')
+                begin.assert_not_called()
+            else:
+                with self.assertRaises(ImportReached):
+                    build.execute('public')
+                begin.assert_called_once()
+        self.assertEqual(transport.read_bytes() != original, changed)
+
+    def test_changed_transport_after_manifest_validation_cannot_start_import(self):
+        self._assert_execute_transport_boundary(changed=True)
+
+    def test_unchanged_manifest_transport_reaches_import_boundary(self):
+        self._assert_execute_transport_boundary(changed=False)
 
     def test_import_cleanup_failure_propagates_after_receipt_is_saved(self):
         env, event = self.event()

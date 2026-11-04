@@ -6,7 +6,15 @@ The consumer remains amd64 and uses the same two sequential hosted jobs, public 
 
 ## Immutable inputs and ownership
 
-`.github/oci-tools/accepted-builder.json` binds the successful manual run/attempt, source, artifact IDs, ZIP sizes/digests, both inner archive sizes/digests, native manifest/config, rootfs DiffIDs, copied files and every small evidence member. The importer validates current GitHub metadata and hashes streamed downloads. Unsafe ZIP entries, wrong provenance, expired inputs and changed bytes fail closed.
+`.github/oci-tools/accepted-builder.json` binds the successful manual run/attempt, source, original artifact IDs, ZIP sizes/digests, both inner archive sizes/digests, native manifest/config, rootfs DiffIDs, copied files and every small evidence member. These remain the image identity and qualification contract regardless of its storage location.
+
+`.github/oci-tools/accepted-builder-transport.json` selects the download source explicitly. Its `release` mode pins one published stable release ID, tag and source commit; the provenance asset; and the original OCI, Docker and evidence asset IDs, names, sizes and SHA-256 digests for both architectures. Acquisition checks release ownership and uploaded state, streams bounded original bytes, and replays the same evidence and OCI/Docker verification. It neither resolves `latest` nor calls Actions APIs or checks historical artifact expiry. A missing or changed release asset fails without a fallback.
+
+The current transport is [stable v0.1.12](https://github.com/victron-venus/venus-os-ci-toolkit/releases/tag/v0.1.12), release ID `433653669`, source `31427ec808648f30b98fe81be466cd91f2971e88`. It was promoted unchanged from [RC v0.1.12-rc.1](https://github.com/victron-venus/venus-os-ci-toolkit/releases/tag/v0.1.12-rc.1) after its package, source, security and fuzzing checks. That toolkit source differs from the original image qualification source above. Updating transport does not requalify a final runner image.
+
+Transport selection and its hash come from one immutable copy of the file bytes. Both architecture acquisitions in a publication use that same copy. A changed transport file aborts before a successful receipt, image import or publication checksum commit. Consumer receipts and the reviewed runner manifest bind the transport identity separately from the original image lock.
+
+The explicit `actions` mode retains the original run/artifact metadata and expiry checks for historical workflows and tests. It is never selected automatically. Unsafe ZIP entries, wrong provenance and changed bytes fail in either mode.
 
 The original Docker export is loaded only after the shared OCI/Docker verifiers pass. The loaded image must have the accepted config and rootfs. Buildx uses that config digest. The embedded import tag must be absent beforehand; cleanup refuses to remove it if it now refers to another image.
 
@@ -28,7 +36,7 @@ The old runc exclusions for CVE-2026-46600 and CVE-2026-78669 are removed from a
 
 Review and merge the consumer source first. Dispatch the existing `runner-image-artifacts.yml` on main with `reviewed_commit` equal to that commit. Only attempt 1 is admitted; another execution requires a fresh reviewed dispatch. Import success is not final-image qualification: both full image scans, input and cleanup receipts, and the final gate must pass. Cold CI qualification remains separate.
 
-Image artifacts expire November 11, 2026 UTC; evidence expires November 18. If inputs expire, stop and establish a newly reviewed chain. Never silently rebuild or resolve a moving tag. Durable publication uses the existing release adapter and RC/stable process with explicit architecture mapping and unchanged image configs/layers.
+The original Actions image artifacts expire November 11, 2026 UTC; evidence expires November 18. Those deadlines apply to explicit Actions acquisition. The retained release route uses independently pinned stable assets and keeps the original qualification metadata as historical evidence. If its assets are unavailable or no longer match, stop and review a replacement transport; never silently rebuild, change stores or resolve a moving tag. Durable publication uses the existing release adapter and RC/stable process with explicit architecture mapping and unchanged image configs/layers.
 
 Direct Dockerfile builds now require the same verified `accepted-tools` OCI context. Do not substitute an arbitrary registry image. The supported artifact workflow prepares that context automatically.
 

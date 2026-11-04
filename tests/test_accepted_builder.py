@@ -39,6 +39,9 @@ class AcceptedBuilderTests(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
+        self.transport_path = self.root / 'transport.json'
+        self.transport_path.write_text('{"schema":1,"kind":"actions"}\n')
+        self.enterContext(patch.object(accepted, 'TRANSPORT', self.transport_path))
         self.lock = accepted.read_lock()
         self.spec = self.lock['architectures']['amd64']
 
@@ -184,7 +187,7 @@ class AcceptedBuilderTests(unittest.TestCase):
         self.assertIsNotNone(children[0].poll())
 
     def test_failed_import_is_reconciled_but_foreign_image_is_never_removed(self):
-        supervisor, record = Mock(env={}), {'architecture': 'amd64'}
+        supervisor, record = Mock(env={}), {'architecture': 'amd64', 'transport': accepted.transport_receipt()}
         absent = subprocess.CompletedProcess([], 1, '[]',
             'Error: No such image: ' + self.spec['embedded_import_tag'])
         supervisor.run.side_effect = TimeoutError('load timed out after daemon accepted bytes')
@@ -204,8 +207,10 @@ class AcceptedBuilderTests(unittest.TestCase):
 
     def test_manifest_only_accepts_reviewed_image_lock(self):
         manifest = runner.document(runner.MANIFEST)
+        manifest['tools']['buildkit']['transport_sha256'] = accepted.transport_receipt()['lock_sha256']
         runner.validate_manifest(manifest)
-        for key, value in [('image', 'sha256:' + '0' * 64), ('kind', 'arbitrary'), ('lock_sha256', '0' * 64)]:
+        for key, value in [('image', 'sha256:' + '0' * 64), ('kind', 'arbitrary'),
+                           ('lock_sha256', '0' * 64), ('transport_sha256', '0' * 64)]:
             changed = copy.deepcopy(manifest)
             changed['tools']['buildkit'][key] = value
             with self.subTest(key=key), self.assertRaises(ValueError):
