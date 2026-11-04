@@ -110,6 +110,17 @@ allow rule, leaving the explicit baseline/restricted policies in control.
 The unrestricted baseline must successfully open that exact node before its
 denial counts. Missing cgroup v2 is a failure, not a skip.
 
+The restricted policy permits `mknod` using separate character (`c`) and block
+(`b`) rules. Do not replace those with `type: a, access: m`: in the pinned
+[cgroups emulator](https://github.com/opencontainers/cgroups/blob/v0.1.0/devices/devices_emulator.go#L239-L260),
+any `a` rule resets the whole policy, regardless of its access mask. An allow
+rule of that type silently undoes the initial deny-all. Runtime run
+[`41767479918`](https://github.com/victron-venus/venus-os-ci-toolkit/actions/runs/41767479918)
+exposed this fixture error on both architectures: baseline and seccomp succeeded,
+but the device-denial check failed, so BuildKit was not exercised. That run is
+**not runtime acceptance**. Each subsequent runtime artifact also preserves the
+exact submitted baseline and restricted configurations for diagnosis.
+
 The candidate BuildKit then uses its explicitly named candidate runc, an isolated
 root/socket, native snapshotter and disabled containerd worker. A scratch image
 exercises ADD extraction, links, a real RUN instruction and local export, without

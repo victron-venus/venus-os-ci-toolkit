@@ -98,6 +98,60 @@ class QualificationTests(unittest.TestCase):
             with self.subTest(mutation=mutation), self.assertRaises(ValueError):
                 runtime.review_gate(dict(env, **mutation), commit)
 
+    def container_fixture(self, mode, fail=False):
+        binaries = self.root / "bin"
+        binaries.mkdir(exist_ok=True)
+        (binaries / "oci-probe").write_bytes(b"fixture")
+        runtime_root = self.root / mode
+        runtime_root.mkdir()
+        captured = {}
+
+        def command(args, **kwargs):
+            if args[1] == "spec":
+                runtime.write_json(kwargs["cwd"] / "config.json", {
+                    "root": {}, "process": {}, "linux": {},
+                })
+                return ""
+            bundle = Path(args[args.index("--bundle") + 1])
+            captured.update(json.loads((bundle / "config.json").read_text()))
+            if fail:
+                raise ValueError("fixture container failed")
+            return "OCI_PROBE_OK " + mode
+
+        with patch.object(runtime, "run", side_effect=command), \
+                patch.object(runtime.subprocess, "run") as cleanup:
+            if fail:
+                with self.assertRaisesRegex(ValueError, "fixture container failed"):
+                    runtime.run_container(runtime_root, binaries, mode)
+            else:
+                runtime.run_container(runtime_root, binaries, mode)
+        cleanup.assert_called_once()
+        return runtime_root, captured
+
+    def test_restricted_device_policy_never_resets_deny_all_with_partial_wildcard(self):
+        _, config = self.container_fixture("restricted")
+        rules = config["linux"]["resources"]["devices"]
+        # The pinned cgroups emulator treats type 'a' as a complete policy reset,
+        # regardless of access. In particular allow+'a'+'m' permits reads too.
+        resets = [rule for rule in rules if rule.get("type", "a") == "a"]
+        self.assertEqual(resets, [{"allow": False, "access": "rwm"}])
+        mknod = [rule for rule in rules if rule["access"] == "m"]
+        self.assertEqual({rule["type"] for rule in mknod}, {"b", "c"})
+        self.assertTrue(all(rule["allow"] and rule.get("major", -1) == -1
+                            and rule.get("minor", -1) == -1 for rule in mknod))
+        self.assertEqual(config["linux"]["devices"], [{
+            "path": "/dev/zero", "type": "c", "major": 1, "minor": 5,
+            "fileMode": 0o666, "uid": 0, "gid": 0,
+        }])
+        self.assertIn({"allow": True, "type": "c", "major": 1, "minor": 3,
+                       "access": "rwm"}, rules)
+
+    def test_container_failure_preserves_exact_submitted_config(self):
+        for mode in ("baseline", "restricted"):
+            with self.subTest(mode=mode):
+                root, config = self.container_fixture(mode, fail=True)
+                self.assertEqual(json.loads((root / (mode + "-config.json")).read_text()), config)
+
     def test_go_configuration_ignores_ambient_cross_toolchain_or_cgo_flags(self):
         with patch.dict(os.environ, {"GOPRIVATE": "*", "CGO_LDFLAGS": "-L/unreviewed",
                                      "GOTOOLCHAIN": "auto", "GOEXPERIMENT": "unreviewed"}):

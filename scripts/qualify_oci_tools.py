@@ -65,14 +65,18 @@ def run_container(root, binaries, mode):
         config["linux"].setdefault("resources", {})["devices"] = [
             {"allow": False, "access": "rwm"},
             # runc must still create the device nodes while preparing the rootfs.
-            # The probe tests read/write access, not the ability to create nodes.
-            {"allow": True, "type": "a", "access": "m"},
+            # Type 'a' resets the entire cgroups policy even with access 'm'.
+            # Separate char/block rules allow mknod without allowing reads.
+            {"allow": True, "type": "c", "access": "m"},
+            {"allow": True, "type": "b", "access": "m"},
             {"allow": True, "type": "c", "major": 1, "minor": 3, "access": "rwm"},
         ]
     else:
         config["linux"].pop("seccomp", None)
         config["linux"].setdefault("resources", {})["devices"] = [{"allow": True, "access": "rwm"}]
     write_json(bundle / "config.json", config)
+    # Preserve the actual submitted policy even when the container fails.
+    write_json(root / (mode + "-config.json"), config)
     state = root / "runc-state"
     cid = "qualification-" + mode
     try:
