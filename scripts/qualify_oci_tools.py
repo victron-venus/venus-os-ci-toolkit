@@ -87,6 +87,18 @@ def make_archive(path, entries):
             tf.addfile(member, io.BytesIO(data) if data else None)
 
 
+def require_confinement_failure(text):
+    # BuildKit echoes the Dockerfile (and escape.tar) on unrelated failures.
+    # Require a confinement diagnostic, not a fixture name or generic error.
+    require(re.search(
+        r"path traversal (?:detected|blocked|forbidden)|"
+        r"(?:invalid|unsafe|forbidden) (?:archive )?(?:path|symlink|hardlink)\b|"
+        r"(?:path|symlink|hardlink|entry)[^\n]*outside (?:the )?(?:root|destination|archive)|"
+        r"(?:escapes?|escaped) (?:the )?(?:root|destination|archive)\b",
+        text, re.IGNORECASE) is not None,
+        "Negative ADD failed for an unproven reason")
+
+
 def build_fixture(root, binaries):
     context = root / "context"
     context.mkdir()
@@ -137,9 +149,7 @@ def build_fixture(root, binaries):
             run([binaries / "buildctl", "--addr", endpoint, "debug", "workers"],
                 log=root / "post-traversal-workers.log", timeout=15)
             if result.returncode:
-                require(re.search(r"outside|escap|traversal|invalid.*path|path.*invalid",
-                                  result.stderr + result.stdout, re.IGNORECASE) is not None,
-                        "Negative ADD failed for an unproven reason")
+                require_confinement_failure(result.stderr + result.stdout)
             # Rejection or confinement is acceptable; record which actually happened.
             write_json(root / "escape-result.json", {"exit_code": result.returncode, "outside_write": False})
         finally:

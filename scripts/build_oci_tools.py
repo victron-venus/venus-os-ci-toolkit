@@ -246,7 +246,10 @@ def install_native(stage, arch):
         shutil.copyfile(notice, target)
     run(["gcc-13", "--version"], log=evidence / "gcc-version.txt")
     run(["pkg-config", "--modversion", "libseccomp"], log=evidence / "seccomp-version.txt")
-    shutil.rmtree(debs)
+    # apt creates root-owned cache metadata (notably partial/). Delete only
+    # our downloaded archives here; the disposable worker owns final teardown.
+    for package in packages:
+        package.unlink(missing_ok=True)
 
 
 def package_graph(source, env, tags, packages, log, tests=False):

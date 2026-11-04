@@ -28,6 +28,17 @@ class QualificationTests(unittest.TestCase):
         self.hosted = {"GITHUB_ACTIONS": "true", "RUNNER_OS": "Linux",
                        "RUNNER_ARCH": "X64", "RUNNER_ENVIRONMENT": "github-hosted"}
 
+    def test_negative_add_needs_confinement_diagnostic_not_echoed_fixture_name(self):
+        for diagnostic in ("invalid archive path: ../sentinel",
+                           "entry ../sentinel is outside the destination",
+                           "path traversal detected"):
+            runtime.require_confinement_failure(diagnostic)
+        for unrelated in ("ADD escape.tar /data/: no space left on device",
+                          "traversal fixture failed: daemon exited",
+                          "COPY /invalid/path: input/output error"):
+            with self.subTest(unrelated=unrelated), self.assertRaisesRegex(ValueError, "unproven"):
+                runtime.require_confinement_failure(unrelated)
+
     def test_execution_refuses_mac_or_self_hosted_workers(self):
         self.assertEqual(build.hosted_arch(self.hosted), "amd64")
         for field, value in (("RUNNER_OS", "macOS"), ("RUNNER_ENVIRONMENT", "self-hosted"),
