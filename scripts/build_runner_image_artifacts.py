@@ -1599,14 +1599,18 @@ def inspect_builder(sup, name, owner, image):
     return item
 
 
-def qualify_cgroup(sup, name, owner, image, observed, work, public_recipe, observe):
+def qualify_cgroup(sup, name, owner, image, observed, work, public_recipe, observe, *,
+                   architecture='amd64', cgroup_reader='cat'):
+    require(architecture in {'amd64', 'arm64'}, 'Unsupported native cgroup proof architecture')
+    require(cgroup_reader in {'cat', '/usr/bin/oci-cgroup-reader'}, 'Unreviewed cgroup reader')
     require(observed['HostConfig'].get('CgroupnsMode') == 'private', 'Private builder cgroup namespace required')
     pid = observed['State']['Pid']
     identity = cgroup.process_identity(pid)
     # PID 1 is the same process as Docker State.Pid, unlike the short-lived
     # `docker exec cat` process. BuildKit may move the daemon into /init while
     # both it and RUN workers still inherit the Docker-owned root's limits.
-    inside = sup.run(['docker', 'exec', observed['Id'], 'cat', '/proc/1/cgroup'], capture=True)
+    reader_command = ['cat', '/proc/1/cgroup'] if cgroup_reader == 'cat' else [cgroup_reader]
+    inside = sup.run(['docker', 'exec', observed['Id'], *reader_command], capture=True)
     after = cgroup.process_identity(pid)
     observe({'kind': 'binding', 'container_id': observed['Id'], 'host_before': identity,
              'host_after': after, 'private_cgroup': inside})
@@ -1632,13 +1636,14 @@ def qualify_cgroup(sup, name, owner, image, observed, work, public_recipe, obser
         cgroup.sample(item['State']['Pid'], binding, observe=observe)
         for child in cgroup.run_processes(marker, binding):
             seen[(child['pid'], child['starttime_ticks'])] = child
-    sup.run(['docker', 'buildx', 'build', '--builder', name, '--platform', 'linux/amd64',
+    sup.run(['docker', 'buildx', 'build', '--builder', name, '--platform', 'linux/' + architecture,
              '--progress', 'plain', '--no-cache', str(context)], seconds=180, inspect=check)
     check()
     require(len(seen) == 1, 'Actual bounded RUN process was not observed')
     return {**binding, 'cgroup_version': 2, 'namespace': 'private',
             'effective_limits': limits, 'run_process': next(iter(seen.values())),
-            'preflight_base': bases[0], 'run_inherits_builder_limits': True}
+            'preflight_base': bases[0], 'run_inherits_builder_limits': True,
+            'platform': 'linux/' + architecture, 'cgroup_reader': cgroup_reader}
 
 
 def state_volume(name):

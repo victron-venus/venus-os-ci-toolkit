@@ -1,0 +1,5 @@
+{
+  "schema": 1,
+  "reviewed": true,
+  "status": "Source recipe reviewed for exact-source disposable native image qualification only; publication and deployment remain separate."
+}
