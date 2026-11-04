@@ -3,9 +3,11 @@
 `scripts/prepare_oci_promotion.py` stages the exact two-architecture candidates
 from one successful source/runtime workflow. It neither compiles nor executes
 the candidates and does not publish a release, build an image or deploy anything.
-The checked-in `promotion.json` is intentionally unreviewed and unbound until the
-final runtime run has succeeded and its identities have received independent
-review.
+The checked-in `promotion.json` binds the independently reviewed artifacts from
+[run 41770477731](https://github.com/victron-venus/venus-os-ci-toolkit/actions/runs/41770477731),
+source `9ebd756e38e6d946004f1b781e7577cba85a5dbd`. Both native source/security
+and runtime jobs passed. This acceptance permits staging those exact bytes;
+it does not qualify a container image or permit publication.
 
 For each architecture the reviewed lock must contain candidate and runtime
 artifact IDs, SHA-256 digests and compressed sizes, plus all four binary hashes.
@@ -15,7 +17,17 @@ artifact metadata and downloaded bytes, runtime/confinement results, candidate
 metadata, source-security gate and binary hashes. Changed, missing or expired
 inputs are fatal. A replacement run needs a new reviewed lock.
 
-On a disposable GitHub-hosted Linux worker, run as the ordinary runner user:
+The manual `Stage qualified OCI tool bytes` workflow runs only on the default branch when its
+`reviewed_commit` input matches the full workflow commit. It uses a disposable
+GitHub-hosted Linux worker, a 15-minute limit and read-only contents/actions
+permissions. Dispatch it after reviewing that exact recipe commit:
+
+```sh
+gh workflow run oci-tool-staging.yml --ref main \
+  -f reviewed_commit=FULL_REVIEWED_RECIPE_COMMIT
+```
+
+Its only staging command runs as the ordinary runner user:
 
 ```sh
 python3 scripts/prepare_oci_promotion.py
@@ -28,6 +40,14 @@ distroless base. The original archives retain `oci-probe`, evidence and license
 notices. Candidate metadata, including `release: false`, is preserved; later
 publication must use a separate reviewed acceptance index. An existing output
 directory is never reused.
+
+`oci-staged-index` contains only the small acceptance index for independent
+review of the actual inner archive hashes. `oci-staged-bytes` retains the
+original archives and prepared contexts on GitHub for subsequent qualification;
+do not download that bulk artifact merely to inspect the index. No candidate
+program is executed, no Docker build is started and no release is published by
+this workflow. Artifacts expire after 14 and 7 days respectively; replacement
+inputs require fresh qualification and lock review.
 
 ## Builder image acceptance remains required
 
