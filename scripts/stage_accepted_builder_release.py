@@ -30,7 +30,7 @@ def release_identity(environment):
     result = {'source': source}
     for name, key in [('GITHUB_RUN_ID', 'run'), ('GITHUB_RUN_ATTEMPT', 'attempt')]:
         value = environment.get(name, '')
-        require(re.fullmatch(r'[1-9][0-9]*', value), 'Exact release run identity required')
+        require(re.fullmatch(r'[1-9]\d*', value, flags=re.ASCII), 'Exact release run identity required')
         result[key] = int(value)
     return result
 
@@ -38,6 +38,32 @@ def release_identity(environment):
 def file_record(path):
     require(path.is_file() and not path.is_symlink(), 'Release asset must be regular')
     return {'sha256': accepted.oci.digest_file(path), 'bytes': path.stat().st_size}
+
+
+def acquire_architecture(lock, arch, destination, check):
+    """Verify one architecture and describe its three original release files."""
+    proof = accepted.acquire(lock, arch, destination, check)
+    spec = lock['architectures'][arch]
+    files, payloads = {}, {}
+    for local, suffix in [(accepted.OCI_ARCHIVE, '.oci.tar'),
+                          (accepted.DOCKER_ARCHIVE, '.docker.tar'),
+                          ('evidence.zip', '.evidence.zip')]:
+        name = 'oci-builder-linux-' + arch + suffix
+        payloads[name] = destination / local
+        files[name] = file_record(payloads[name])
+        if local == 'evidence.zip':
+            expected = {'sha256': spec['artifacts']['evidence']['digest'][7:],
+                        'bytes': spec['artifacts']['evidence']['size_in_bytes']}
+        else:
+            kind = 'oci' if local == accepted.OCI_ARCHIVE else 'docker'
+            expected = {'sha256': spec[kind]['archive_sha256'],
+                        'bytes': spec[kind]['archive_bytes']}
+        require(files[name] == expected, 'Verified publication bytes changed')
+    record = {
+        'files': files, 'artifacts': spec['artifacts'],
+        'manifest': proof['manifest'], 'config': proof['config'],
+        'diff_ids': proof['diff_ids'], 'verification': 'original OCI and Docker exports verified'}
+    return payloads, record
 
 
 def stage(output, lock, release, check):
@@ -67,27 +93,9 @@ def stage(output, lock, release, check):
             for arch in ('amd64', 'arm64'):
                 check()
                 destination = scratch / arch
-                proof = accepted.acquire(lock, arch, destination, check)
-                spec = lock['architectures'][arch]
-                files = {}
-                for local, suffix in [(accepted.OCI_ARCHIVE, '.oci.tar'),
-                                      (accepted.DOCKER_ARCHIVE, '.docker.tar'),
-                                      ('evidence.zip', '.evidence.zip')]:
-                    name = 'oci-builder-linux-' + arch + suffix
-                    payloads[name] = destination / local
-                    files[name] = file_record(payloads[name])
-                    if local == 'evidence.zip':
-                        expected = {'sha256': spec['artifacts']['evidence']['digest'][7:],
-                                    'bytes': spec['artifacts']['evidence']['size_in_bytes']}
-                    else:
-                        kind = 'oci' if local == accepted.OCI_ARCHIVE else 'docker'
-                        expected = {'sha256': spec[kind]['archive_sha256'],
-                                    'bytes': spec[kind]['archive_bytes']}
-                    require(files[name] == expected, 'Verified publication bytes changed')
-                provenance['architectures'][arch] = {
-                    'files': files, 'artifacts': spec['artifacts'],
-                    'manifest': proof['manifest'], 'config': proof['config'],
-                    'diff_ids': proof['diff_ids'], 'verification': 'original OCI and Docker exports verified'}
+                files, record = acquire_architecture(lock, arch, destination, check)
+                payloads.update(files)
+                provenance['architectures'][arch] = record
             metadata = scratch / PROVENANCE
             metadata.write_text(json.dumps(provenance, sort_keys=True, indent=2) + '\n')
             require(metadata.stat().st_size <= accepted.MAX_METADATA, 'Provenance oversized')

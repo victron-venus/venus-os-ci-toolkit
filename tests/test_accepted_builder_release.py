@@ -194,5 +194,6 @@ class AcceptedBuilderReleaseTests(unittest.TestCase):
         verified = version_receipt.verify_receipts(self.output, plan, payloads(), policy)
         self.assertEqual(len(verified), 1)
         (self.output / 'oci-builder-linux-arm64.oci.tar').write_bytes(b'changed')
+        changed_payloads = payloads()
         with self.assertRaisesRegex(ValueError, 'does not match'):
-            version_receipt.verify_receipts(self.output, plan, payloads(), policy)
+            version_receipt.verify_receipts(self.output, plan, changed_payloads, policy)
