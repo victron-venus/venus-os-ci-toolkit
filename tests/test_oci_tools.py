@@ -353,6 +353,7 @@ class QualificationTests(unittest.TestCase):
                 return 'ID=ubuntu\nVERSION_ID="24.04"\n'
             return original_read(path, *args, **kwargs)
 
+        manifest = json.loads(build.MANIFEST.read_text())
         for arch in ("amd64", "arm64"):
             stage = self.root / arch
             stage.mkdir()
@@ -361,7 +362,7 @@ class QualificationTests(unittest.TestCase):
                     patch.object(headers, "verify_archive", return_value={}), \
                     patch.object(build, "run", side_effect=RuntimeError("stop before apt")) as run:
                 with self.assertRaisesRegex(RuntimeError, "stop before apt"):
-                    build.install_native(stage, arch, json.loads(build.MANIFEST.read_text()))
+                    build.install_native(stage, arch, manifest)
             run.assert_called_once()
             arguments = [str(value) for value in run.call_args.args[0]]
             self.assertIn("--no-remove", arguments)
