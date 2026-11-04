@@ -25,6 +25,8 @@ class ToolkitReleaseNotesTests(unittest.TestCase):
         }
         required.update({
             ".github/requirements-generator.txt",
+            ".github/oci-tools/accepted-builder.json",
+            "docs/ACCEPTED_BUILDER_CONSUMER.md",
             "deploy/arc-private/CAPACITY_PREFLIGHT.md",
             "deploy/arc-private/capacity_preflight.py",
             "tools/secret_control/requirements-github-lock.txt",
