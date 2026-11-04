@@ -3,6 +3,8 @@ FROM gcr.io/distroless/static-debian13@sha256:18f4cc26c9ffa7f20a359298be7deadac5
 COPY --chmod=0755 bin/buildkitd /usr/bin/buildkitd
 COPY --chmod=0755 bin/buildctl /usr/bin/buildctl
 COPY --chmod=0755 bin/runc /usr/bin/buildkit-runc
+# Accepted only for disposable hosted qualification; see docs/OCI_TOOL_PROMOTION.md.
+# trivy:ignore:DS-0002:exp:2026-12-04
 USER 0:0
 ENV PATH=/usr/bin
 VOLUME ["/var/lib/buildkit"]

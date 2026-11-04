@@ -50,3 +50,27 @@ reviewed operation. Full public/private runner images and Headlamp/cloudflared
 images then need their own scans and runtime acceptance before activation.
 Toolkit issue 261 and k3s-self-healing issue 276 stay open for those downstream
 requirements.
+
+## Scoped acceptance of rootful privilege
+
+The final `USER 0:0` in `.github/oci-tools/builder.Dockerfile` is a true positive
+for Trivy `DS-0002` and Sonar `docker:S6471`. Its privilege is intentional: this
+rootful BuildKit worker creates mount namespaces, mounts and cgroups and invokes
+runc. Changing only `USER` would break that implementation; a rootless design
+needs separately qualified RootlessKit, bootstrap and cgroup behavior.
+
+Accept this risk only for disposable GitHub-hosted native image qualification
+using trusted, reviewed local contexts. This decision does not authorize a
+long-lived privileged service, untrusted pull-request builds, household
+deployment or access to household credentials. The image still requires full
+filesystem scanning, exact-binary verification, resource and isolation probes,
+owned-resource cleanup and independent review before publication or adoption.
+Compromise of this privileged daemon can compromise its disposable host;
+cgroup/resource limits and cleanup are not a container-escape security boundary.
+
+The inline Trivy disposition applies only to that explicit `USER` instruction
+and expires on 2026-12-04. All other checks and Dockerfiles remain in scope.
+Sonar's individual finding is accepted as an intentional risk, never marked
+fixed or false positive. Reassess this decision when execution scope changes.
+The original findings are retained in [PR 367](https://github.com/victron-venus/venus-os-ci-toolkit/pull/367)
+and its first full-source scan, run `41770467501`.
