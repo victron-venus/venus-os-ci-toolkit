@@ -145,6 +145,23 @@ wording. Its workflow conclusion remains a failure.
 
 ## Running the lane
 
+### Hosted zlib development package compatibility
+
+The native inputs pin `zlib1g-dev` to the same version and architecture as
+`zlib1g`. Some hosted Ubuntu images include older development headers even when
+other packages are current. Updating only the runtime can make apt propose
+removing those headers and dependent Python/MySQL development packages.
+
+Run [`41777908155`](https://github.com/victron-venus/venus-os-ci-toolkit/actions/runs/41777908155)
+encountered this on AMD64 after the preceding PR CI had passed on another worker.
+The installer correctly stopped at `--no-remove`, before compiling or executing
+the candidate. This is not runtime acceptance. The matching header package is
+now an explicit native root on both architectures, downloaded from the same
+signed Ubuntu snapshot and checked by its locked hash. It joins the actual
+installed-package inventory, notices and full native vulnerability scan.
+Keep `--no-remove` and `--no-download`; do not work around a package conflict by
+allowing removals or resolving an unpinned package from a live repository.
+
 ### Finite Linux header applicability
 
 The [reviewed policy](../.github/oci-tools/header-disposition.json) binds a finite

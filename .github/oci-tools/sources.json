@@ -49,8 +49,8 @@
   "header_disposition_sha256": "fb0dd5889ad7f132df4692674c19513df87edafb086a26a810ba38210f9be699",
   "locks_reviewed": true,
   "native_locks": {
-    "amd64": "2b7196f9ec89cabbfcd233d0c0c19435fa87f55dfeb0fa746b02d905007fa860",
-    "arm64": "79fbd705afcc43a44f097925c95b55ff166f36570edecceb2dee48f91faa789d"
+    "amd64": "22a106ad7966bf9f7304cd797f28fede2cbae7f151fd780e29b34b9c58283030",
+    "arm64": "fd4b89abe318086c3c26cd2f879d66e5ab22a239aac40fff7a4018bdde1e6c55"
   },
   "schema": 1,
   "trivy": {
