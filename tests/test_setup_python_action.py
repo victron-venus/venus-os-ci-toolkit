@@ -113,7 +113,7 @@ class NativePortabilityMatrixTests(unittest.TestCase):
         expected = {
             "secret-control-contracts": {
                 (os, version)
-                for os in ("ubuntu-latest", "macos-26-intel")
+                for os in ("ubuntu-latest", "macos-26")
                 for version in ("3.12", "3.14")
             },
             "python-action-contracts": {
@@ -143,8 +143,10 @@ class NativePortabilityMatrixTests(unittest.TestCase):
                 }
                 actual.update((row["os"], row.get("python")) for row in matrix.get("include", []))
                 self.assertEqual(actual, wanted)
-                macos_targets.extend((name, version) for os, version in actual if os == "macos-26-intel")
+                macos_targets.extend((os, name, version) for os, version in actual if os.startswith("macos-"))
         self.assertEqual(len(macos_targets), 5)
+        self.assertEqual(sum(os == "macos-26" for os, _, _ in macos_targets), 2)
+        self.assertEqual(sum(os == "macos-26-intel" for os, _, _ in macos_targets), 3)
 
 
 if __name__ == "__main__":
