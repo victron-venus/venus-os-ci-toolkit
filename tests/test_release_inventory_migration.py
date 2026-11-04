@@ -161,6 +161,8 @@ class InventoryOracleTests(unittest.TestCase):
                 state, result = receipts.transform(old.replace("#!/usr/bin/env python3\n", PREFIX, 1), name, specifications[name])
                 self.assertEqual(state, "original")
                 inventory_v1 = migration._before_casefold(current) if name == migration.PLAN else current
+                if name == receipts.PUBLISHER:
+                    inventory_v1 = migration._before_notes_provenance(current)
                 self.assertEqual(result, inventory_v1.replace("#!/usr/bin/env python3\n", PREFIX, 1))
                 with self.assertRaisesRegex(ValueError, "Unknown current"):
                     migration.previous_canonical_source(current + "# unknown\n", name)
@@ -170,6 +172,9 @@ class PlanLayerCompatibilityTests(unittest.TestCase):
     def setUp(self):
         """Freeze real canonical states, including the literal accepted v1 plan hash."""
         self.current = {name: (ROOT / name).read_text() for name in migration.FILES}
+        self.notes_publisher = self.current[receipts.PUBLISHER]
+        # Inventory-only upgrades retain their literal pre-notes publisher scope.
+        self.current[receipts.PUBLISHER] = migration._before_notes_provenance(self.notes_publisher)
         self.casefold = dict(self.current)
         self.casefold[migration.PLAN] = migration._before_name_limit(self.current[migration.PLAN])
         self.assertEqual(receipts.digest(self.casefold[migration.PLAN]),
@@ -224,6 +229,39 @@ class PlanLayerCompatibilityTests(unittest.TestCase):
         for name, text in changes.items():
             (self.root / name).write_text(text)
         self.assertEqual(migration.render(self.root), {})
+
+    def test_notes_layer_reverses_exactly_without_changing_the_inventory_oracle(self):
+        self.assertEqual(receipts.digest(self.current[receipts.PUBLISHER]),
+                         "179a6fe589801c59bccfea0c9a0c2e1b5d0be1915e87e1b4ec9313f32380aa7a")
+        vendored = self.notes_publisher.replace("#!/usr/bin/env python3\n", PREFIX, 1)
+        self.assertEqual(migration._before_notes_provenance(vendored),
+                         self.current[receipts.PUBLISHER].replace("#!/usr/bin/env python3\n", PREFIX, 1))
+        self.assertEqual(migration.previous_canonical_source(self.notes_publisher, receipts.PUBLISHER),
+                         self.original[receipts.PUBLISHER])
+
+    def test_inventory_only_preserves_but_does_not_install_the_notes_fix(self):
+        self.write_state({**self.current, receipts.PUBLISHER: self.notes_publisher})
+        self.assertEqual(migration.render(self.root), {})
+        self.write_state({**self.casefold, receipts.PUBLISHER: self.notes_publisher})
+        before = self.snapshot()
+        self.assertEqual(migration.render(self.root), self.expected([migration.PLAN]))
+        self.assertEqual(self.snapshot(), before)
+        self.write_state(self.original)
+        changes = migration.render(self.root)
+        self.assertEqual(changes[receipts.PUBLISHER], self.expected([receipts.PUBLISHER])[receipts.PUBLISHER])
+        self.assertNotIn("def candidate_provenance(", changes[receipts.PUBLISHER])
+
+    def test_partial_or_changed_notes_layer_is_not_a_recognized_source(self):
+        for source in (self.notes_publisher + "# unreviewed\n",
+                       self.notes_publisher.replace("def candidate_provenance(", "def modified_provenance(", 1)):
+            with self.subTest(source_hash=receipts.digest(source)):
+                self.write_state({**self.current, receipts.PUBLISHER: source})
+                before = self.snapshot()
+                with self.assertRaisesRegex(ValueError, "Unknown or partially migrated"):
+                    migration.render(self.root)
+                self.assertEqual(self.snapshot(), before)
+                with self.assertRaisesRegex(ValueError, "Unknown current"):
+                    migration.previous_canonical_source(source, receipts.PUBLISHER)
 
     def test_current_inventory_is_idempotent(self):
         self.write_state(self.current)
