@@ -42,6 +42,53 @@ class QualificationTests(unittest.TestCase):
             with self.subTest(unrelated=unrelated), self.assertRaisesRegex(ValueError, "unproven"):
                 runtime.require_confinement_failure(unrelated)
 
+    def test_negative_add_matches_exact_expected_entry_in_final_error(self):
+        entry = "../" * 64 + "tmp/host-sentinel"
+        diagnostic = "error: failed to solve: invalid entry name " + json.dumps(entry)
+        runtime.require_confinement_failure("progress\n" + diagnostic + "\n", entry)
+        for unrelated in (diagnostic.replace("host-sentinel", "other-file"),
+                          diagnostic + "\nerror: daemon unavailable\n",
+                          "Dockerfile: RUN echo " + diagnostic,
+                          "error: failed to solve: invalid entry name \"normal-file\"",
+                          diagnostic + " (connection lost)"):
+            with self.subTest(unrelated=unrelated), self.assertRaisesRegex(ValueError, "unproven"):
+                runtime.require_confinement_failure(unrelated, entry)
+        with self.assertRaisesRegex(ValueError, "unproven"):
+            runtime.require_confinement_failure(diagnostic)
+        with self.assertRaisesRegex(ValueError, "unproven"):
+            runtime.require_confinement_failure(
+                'error: failed to solve: invalid entry name "normal-file"', "normal-file")
+
+    def test_build_fixture_binds_rejection_to_the_created_traversal_entry(self):
+        binaries = self.root / "bin"
+        binaries.mkdir()
+        (binaries / "oci-probe").write_bytes(b"fixture")
+        root = self.root / "runtime"
+        root.mkdir()
+
+        def command(args, **kwargs):
+            if "--output" in args:
+                export = root / "export"
+                (export / "data").mkdir(parents=True)
+                (export / "result").write_text("BUILD_PROBE_OK\n")
+                (export / "data/file").write_bytes(b"archive-payload")
+            return ""
+
+        def escape(args, work, sentinel):
+            with tarfile.open(work / "context/escape.tar") as archive:
+                entry = archive.getnames()[0]
+            self.assertEqual(entry, "../" * 64 + str(sentinel).lstrip("/"))
+            return subprocess.CompletedProcess(args, 1, stdout="", stderr=(
+                "error: failed to solve: invalid entry name " + json.dumps(entry) + "\n"))
+
+        with patch.object(runtime, "run", side_effect=command), \
+                patch.object(runtime, "escape_build", side_effect=escape), \
+                patch.object(runtime.subprocess, "Popen") as daemon, \
+                patch.object(runtime.subprocess, "run", return_value=subprocess.CompletedProcess([], 0)):
+            daemon.return_value.poll.return_value = None
+            runtime.build_fixture(root, binaries)
+            daemon.return_value.terminate.assert_called_once()
+
     def test_timeout_retains_observation_and_original_failure(self):
         sentinel = self.root / "sentinel"
         sentinel.write_bytes(b"unchanged")
