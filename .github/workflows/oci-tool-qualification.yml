@@ -56,7 +56,7 @@ jobs:
           relevant = ('.github/oci-tools/', '.github/workflows/oci-tool-qualification.yml',
                       'scripts/build_oci_tools.py', 'scripts/qualify_oci_tools.py',
                       'scripts/oci_vulnerability.py',
-                      'scripts/build_runner_go_tools.py', 'tests/test_oci_tools.py', 'tests/oci/')
+                      'scripts/build_runner_go_tools.py', 'tests/test_oci_tools.py', 'tests/oci_fixtures/')
           changed = subprocess.check_output(['git', 'diff', '--name-only', base, 'HEAD'], text=True).splitlines() if base else []
           needed = not base or any(path.startswith(relevant) for path in changed)
           with open(os.environ['GITHUB_OUTPUT'], 'a') as output:

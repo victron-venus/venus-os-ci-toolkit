@@ -184,7 +184,7 @@ class QualificationTests(unittest.TestCase):
 
     def golden(self, filename, index=0):
         """Extract one unmodified JSON scenario from the pinned upstream .ct file."""
-        content = (ROOT / "tests/oci/govulncheck" / filename).read_text()
+        content = (ROOT / "tests/oci_fixtures/govulncheck" / filename).read_text()
         block = re.split(r"(?m)^\$[^\n]*\n", content)[index + 1]
         block = block[block.index("{"):]
         records = []

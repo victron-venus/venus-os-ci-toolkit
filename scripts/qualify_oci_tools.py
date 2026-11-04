@@ -57,6 +57,9 @@ def run_container(root, binaries, mode):
         }
         config["linux"].setdefault("resources", {})["devices"] = [
             {"allow": False, "access": "rwm"},
+            # runc must still create the device nodes while preparing the rootfs.
+            # The probe tests read/write access, not the ability to create nodes.
+            {"allow": True, "type": "a", "access": "m"},
             {"allow": True, "type": "c", "major": 1, "minor": 3, "access": "rwm"},
         ]
     else:
@@ -130,6 +133,13 @@ def build_fixture(root, binaries):
                                     capture_output=True, text=True, timeout=120)
             (root / "escape-build.log").write_text(result.stdout + result.stderr)
             require(sentinel.read_bytes() == b"unchanged", "ADD escaped onto the worker")
+            require(daemon.poll() is None, "Traversal probe crashed the daemon")
+            run([binaries / "buildctl", "--addr", endpoint, "debug", "workers"],
+                log=root / "post-traversal-workers.log", timeout=15)
+            if result.returncode:
+                require(re.search(r"outside|escap|traversal|invalid.*path|path.*invalid",
+                                  result.stderr + result.stdout, re.IGNORECASE) is not None,
+                        "Negative ADD failed for an unproven reason")
             # Rejection or confinement is acceptable; record which actually happened.
             write_json(root / "escape-result.json", {"exit_code": result.returncode, "outside_write": False})
         finally:

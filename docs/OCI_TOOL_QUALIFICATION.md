@@ -38,6 +38,9 @@ pinned versions, download sizes and SHA-256 digests. The compiler, libc, binutil
 Linux headers and libseccomp dependency closure are explicit. Installation permits
 no missing-package download or package removal; a host incompatibility must be
 resolved in the recipe rather than silently accepted.
+Verified `.deb` files are staged under canonical apt cache names in an isolated
+archive directory. This lets `--no-download` install the reviewed files without
+consulting the host's shared archive cache.
 
 runc uses CGO and static external linking. The tags match the pinned BuildKit
 Dockerfile's runc build (`apparmor seccomp netgo cgo static_build osusergo`), rather
@@ -139,7 +142,10 @@ numbers while retaining an older vendor tree.
 - **Dependency/API failures:** inspect the native build log; never remove seccomp,
   change tags or bypass test packages simply to obtain a green result.
 - **Native install mismatch:** review the new hosted image and the entire locked
-  package closure. No apt fallback or implicit upgrade is allowed.
+  package closure. No apt fallback or implicit upgrade is allowed. If apt reports
+  missing archives despite successful downloads, check the isolated archive path
+  and epoch-encoded filenames; passing local `.deb` paths alone does not satisfy
+  `--no-download`.
 - **Security failure:** inspect full per-binary/per-package reports, module graph,
   exact ELF build information and scanner/database identity. A module-level alert
   is not permission to suppress its packages globally.

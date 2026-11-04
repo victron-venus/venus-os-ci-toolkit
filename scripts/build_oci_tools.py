@@ -199,11 +199,16 @@ def install_native(stage, arch):
     for item in spec["packages"]:
         require(item["architecture"] in (arch, "all") and item["filename"].startswith("pool/")
                 and ".." not in Path(item["filename"]).parts, "Invalid package input")
-        target = debs / Path(item["filename"]).name
+        # --no-download only accepts completed files in apt's archive cache.
+        # Local .deb arguments alone still enqueue a file acquisition, which
+        # that flag disables. apt's cache name preserves and quotes the epoch.
+        version = item["version"].replace(":", "%3a")
+        target = debs / f"{item['name']}_{version}_{item['architecture']}.deb"
         download(spec["base_url"] + item["filename"], target, item["sha256"], item["size"])
         packages.append(target)
     run(["sudo", "env", "DEBIAN_FRONTEND=noninteractive", "NEEDRESTART_MODE=l",
-         "apt-get", "install", "--yes", "--no-download", "--no-install-recommends",
+         "apt-get", "-o", f"Dir::Cache::archives={debs}",
+         "install", "--yes", "--no-download", "--no-install-recommends",
          "--allow-downgrades", "--no-remove", *packages], log=stage / "native-install.log", timeout=600)
     # Do not scan an invented OS inventory: these exact packages must be installed.
     status = []
@@ -329,8 +334,8 @@ def build_component(name, spec, stage, arch, manifest):
     run(["go", "mod", "vendor"], cwd=source, env=env, log=evidence / "vendor.txt")
     require(tree_digest(source / "vendor") == spec["vendor_sha256"], "Vendor bytes differ from reviewed resolution")
     if name == "buildkit":
-        shutil.copytree(ROOT / "tests/oci/archive", source / "qualification/archive")
-        shutil.copytree(ROOT / "tests/oci/probe", source / "qualification/probe")
+        shutil.copytree(ROOT / "tests/oci_fixtures/archive", source / "qualification/archive")
+        shutil.copytree(ROOT / "tests/oci_fixtures/probe", source / "qualification/probe")
     tests = UNIT_PACKAGES[name]
     graph = package_graph(source, env, TAGS[name], tests, evidence / "test-packages.json", tests=True)
     run(["go", "test", "-mod=vendor", "-json", "-count=1", "-short", "-p", "2", "-timeout=10m",
