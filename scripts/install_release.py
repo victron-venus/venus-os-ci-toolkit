@@ -1194,7 +1194,11 @@ def release(policy):
     jobs = workflow["jobs"]
     if release_validation.channel_workflows(policy) is not None:
         jobs["checks"]["uses"] = "./.github/workflows/" + release_validation.WORKFLOW
-        jobs["checks"]["with"] = {"channel": "${{ needs.prepare.outputs.channel }}"}
+        jobs["checks"]["with"] = {
+            "channel": "${{ needs.prepare.outputs.channel || "
+            "(github.event_name == 'push' && 'beta' || "
+            "github.event_name == 'schedule' && 'nightly' || inputs.channel) }}"
+        }
     prepare = jobs["prepare"]
     prepare["timeout-minutes"] = 30
     prepare["permissions"] = {"contents": "write", "actions": "read"}
@@ -1224,9 +1228,15 @@ def release(policy):
         }
     )
     build_condition = "${{ needs.prepare.outputs.build == 'true' }}"
+    checks_trusted = (
+        f"github.repository == '{policy['repository']}' && "
+        f"github.ref == 'refs/heads/{policy.get('default_branch', 'main')}'"
+    )
     jobs["checks"]["if"] = (
-        "${{ needs.prepare.outputs.build == 'true' || "
-        "needs.prepare.outputs.status == 'version-required' }}"
+        "${{ !cancelled() && ((needs.prepare.result == 'success' && "
+        "(needs.prepare.outputs.build == 'true' || "
+        "needs.prepare.outputs.status == 'version-required')) || "
+        "(needs.prepare.result == 'failure' && " + checks_trusted + ")) }}"
     )
     jobs["build"]["if"] = build_condition
     jobs["build"]["permissions"]["actions"] = "read"

@@ -113,7 +113,11 @@ class ChannelValidationTests(unittest.TestCase):
         pipeline = installer.release(self.policy)["jobs"]
         self.assertEqual(
             pipeline["checks"]["with"],
-            {"channel": "${{ needs.prepare.outputs.channel }}"},
+            {
+                "channel": "${{ needs.prepare.outputs.channel || "
+                "(github.event_name == 'push' && 'beta' || "
+                "github.event_name == 'schedule' && 'nightly' || inputs.channel) }}"
+            },
         )
         default = installer.release(original)["jobs"]
         for name in ("build", "gate", "candidate", "stable", "final"):
@@ -215,6 +219,38 @@ class ChannelValidationTests(unittest.TestCase):
                     contracts.validate_release_channels(self.policy, data)
         source["release-pipeline.yml"]["jobs"]["checks"]["with"]["channel"] = "beta"
         with self.assertRaises(ValueError):
+            contracts.validate_release_channels(self.policy, source)
+
+    def test_legacy_prepared_only_channel_remains_accepted(self):
+        self.render()
+        workflows = self.workflows()
+        workflows["release-pipeline.yml"]["jobs"]["checks"]["with"] = {
+            "channel": "${{ needs.prepare.outputs.channel }}"
+        }
+        contracts.validate_release_channels(self.policy, workflows)
+
+    def test_channel_fallback_rejects_altered_precedence_and_event_mapping(self):
+        self.render()
+        source = self.workflows()
+        expected = source["release-pipeline.yml"]["jobs"]["checks"]["with"]["channel"]
+        mutations = (
+            "${{ inputs.channel }}",
+            "${{ inputs.channel || needs.prepare.outputs.channel }}",
+            expected.replace("'push' && 'beta'", "'push' && 'rc'"),
+            expected.replace("'schedule' && 'nightly'", "'schedule' && 'beta'"),
+            expected.replace("inputs.channel)", "'rc')"),
+            expected.replace("needs.prepare.outputs.channel || ", ""),
+        )
+        for channel in mutations:
+            with self.subTest(channel=channel):
+                workflows = copy.deepcopy(source)
+                workflows["release-pipeline.yml"]["jobs"]["checks"]["with"] = {
+                    "channel": channel
+                }
+                with self.assertRaisesRegex(ValueError, "prepared channel"):
+                    contracts.validate_release_channels(self.policy, workflows)
+        source["release-pipeline.yml"]["jobs"]["checks"]["with"]["force-full"] = "false"
+        with self.assertRaisesRegex(ValueError, "prepared channel"):
             contracts.validate_release_channels(self.policy, source)
 
     def test_missing_recursive_or_independently_triggered_beta_workflow_is_rejected(

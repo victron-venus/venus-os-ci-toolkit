@@ -13,6 +13,7 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import yaml
 
@@ -42,7 +43,7 @@ def rendered(data):
     return yaml.safe_load(installer.dump(data))
 
 
-def job_runs(job, needs, *, ancestor_results=(), workflow_cancelled=False, **context):
+def job_runs(job, needs, *, ancestor_results=(), workflow_cancelled=False, value_only=False, **context):
     """Evaluate only rendered job conditions; fail on unsupported expression syntax.
 
     This deliberately small harness models GitHub's implicit success() guard and
@@ -87,11 +88,11 @@ def job_runs(job, needs, *, ancestor_results=(), workflow_cancelled=False, **con
         if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
             return not evaluate(node.operand)
         if isinstance(node, ast.BoolOp):
-            values = [bool(evaluate(child)) for child in node.values]
+            values = [evaluate(child) for child in node.values]
             if isinstance(node.op, ast.And):
-                return all(values)
+                return next((value for value in values if not value), values[-1])
             if isinstance(node.op, ast.Or):
-                return any(values)
+                return next((value for value in values if value), values[-1])
         if isinstance(node, ast.Compare) and len(node.ops) == 1:
             left, right = evaluate(node.left), evaluate(node.comparators[0])
             if isinstance(node.ops[0], ast.Eq):
@@ -100,7 +101,124 @@ def job_runs(job, needs, *, ancestor_results=(), workflow_cancelled=False, **con
                 return left != right
         raise AssertionError(f"Unsupported generated condition: {expression}")
 
-    return bool(evaluate(ast.parse(expression, mode="eval").body))
+    result = evaluate(ast.parse(expression, mode="eval").body)
+    return result if value_only else bool(result)
+
+
+class GeneratedPreparationFailureChecks(unittest.TestCase):
+    """Bad release metadata must not suppress trusted source diagnostics."""
+
+    @staticmethod
+    def jobs(signed=False, channel_profile=False, default_branch="main"):
+        config = policy(
+            default_branch=default_branch,
+            sign_releases=signed,
+            versioning={"schema": 1, "promotion": "final-build",
+                        "files": [{"path": "VERSION", "format": "text", "value": "package"}]},
+            fuzzing={"toolkit_ref": "a" * 40},
+        )
+        if channel_profile:
+            config["channel_validation_workflows"] = {"beta": ["ci.yml"]}
+        return rendered(installer.release(config))["jobs"]
+
+    @staticmethod
+    def context():
+        return {"repository": "example/change-aware", "ref": "refs/heads/main"}
+
+    def test_failed_prepare_runs_checks_but_no_build_or_publication(self):
+        for signed in (False, True):
+            jobs = self.jobs(signed)
+            for outputs in ({}, {"build": "true", "channel": "beta"},
+                            {"build": "true", "channel": "stable"}):
+                values = {name: {"result": "skipped", "outputs": {}} for name in jobs}
+                values["prepare"] = {"result": "failure", "outputs": outputs}
+                values["checks"]["result"] = "success"
+                with self.subTest(signed=signed, outputs=outputs):
+                    self.assertTrue(job_runs(jobs["checks"], values, github=self.context()))
+                    for name in ("build", "fuzz", "sign", "candidate", "final", "stable"):
+                        if name in jobs:
+                            self.assertFalse(job_runs(jobs[name], values, github=self.context(),
+                                                      vars={"RELEASE_CHANNELS_ENABLED": "true"}), name)
+                    # Even partially written prepare outputs cannot make the real gate pass.
+                    gate = subprocess.run(
+                        ["bash", "-e", "-c", next(step["run"] for step in jobs["gate"]["steps"] if "run" in step)],
+                        env=dict(os.environ, RESULTS=json.dumps({name: values[name]
+                            for name in jobs["gate"]["needs"]}), FUZZ_REQUIRED="false"),
+                        capture_output=True, text=True, timeout=10,
+                    )
+                    self.assertNotEqual(gate.returncode, 0)
+
+    def test_failed_prepare_is_limited_to_trusted_default_branch(self):
+        job = self.jobs()["checks"]
+        values = {"prepare": {"result": "failure", "outputs": {"build": "true"}}}
+        for context in ({"repository": "someone/fork", "ref": "refs/heads/main"},
+                        {"repository": "example/change-aware", "ref": "refs/heads/topic"}):
+            with self.subTest(context=context):
+                self.assertFalse(job_runs(job, values, github=context))
+
+    def test_failure_obeys_configured_non_main_default_branch(self):
+        job = self.jobs(default_branch="trunk")["checks"]
+        values = {"prepare": {"result": "failure", "outputs": {}}}
+        self.assertTrue(job_runs(job, values, github={
+            "repository": "example/change-aware", "ref": "refs/heads/trunk",
+        }))
+        self.assertFalse(job_runs(job, values, github=self.context()))
+        self.assertFalse(job_runs(job, values, github={
+            "repository": "someone/fork", "ref": "refs/heads/trunk",
+        }))
+
+    def test_cancelled_and_skipped_preparation_do_not_start_checks(self):
+        job = self.jobs()["checks"]
+        for result in ("cancelled", "skipped"):
+            values = {"prepare": {"result": result, "outputs": {"build": "true"}}}
+            self.assertFalse(job_runs(job, values, github=self.context()))
+        for result in ("success", "failure"):
+            values = {"prepare": {"result": result, "outputs": {"build": "true"}}}
+            self.assertFalse(job_runs(job, values, github=self.context(), workflow_cancelled=True))
+
+    def test_successful_preparation_preserves_check_selection(self):
+        job = self.jobs()["checks"]
+        for outputs, expected in (({"build": "true", "channel": "beta"}, True),
+                                  ({"build": "false", "status": "version-required"}, True),
+                                  ({"build": "false", "channel": "stable"}, False),
+                                  ({}, False)):
+            with self.subTest(outputs=outputs):
+                self.assertEqual(job_runs(job, {"prepare": {"result": "success", "outputs": outputs}},
+                                          github=self.context()), expected)
+        legacy = rendered(installer.release(policy()))["jobs"]["checks"]
+        self.assertFalse(job_runs(legacy, {"prepare": {"result": "failure", "outputs": {}}},
+                                  github=self.context()))
+
+    def test_missing_channel_uses_original_event_and_still_validates_it(self):
+        expression = self.jobs(channel_profile=True)["checks"]["with"]["channel"]
+        with tempfile.TemporaryDirectory() as temp:
+            event_path = Path(temp) / "event.json"
+            for event, requested, expected in (("push", "", "beta"),
+                                               ("schedule", "", "nightly"),
+                                               ("workflow_dispatch", "rc", "rc"),
+                                               ("workflow_dispatch", "stable", "stable")):
+                event_path.write_text(json.dumps({"inputs": {"channel": requested}}))
+                selected = job_runs({"if": expression}, {"prepare": {"outputs": {}}}, value_only=True,
+                                    github={"event_name": event}, inputs={"channel": requested})
+                with self.subTest(event=event, requested=requested), patch.dict(os.environ, {
+                    "GITHUB_EVENT_NAME": event, "GITHUB_EVENT_PATH": str(event_path),
+                }):
+                    self.assertEqual(selected, expected)
+                    installer.release_validation.check_event(selected)
+            event_path.write_text(json.dumps({"inputs": {"channel": "rc"}}))
+            with patch.dict(os.environ, {"GITHUB_EVENT_NAME": "workflow_dispatch",
+                                         "GITHUB_EVENT_PATH": str(event_path)}):
+                for output in ("beta", "invalid"):
+                    selected = job_runs({"if": expression}, {"prepare": {"outputs": {"channel": output}}},
+                                        value_only=True, github={"event_name": "workflow_dispatch"},
+                                        inputs={"channel": "rc"})
+                    self.assertEqual(selected, output)
+                    with self.assertRaisesRegex(ValueError, "differs"):
+                        installer.release_validation.check_event(selected)
+                selected = job_runs({"if": expression}, {"prepare": {"outputs": {}}}, value_only=True,
+                                    github={"event_name": "workflow_dispatch"}, inputs={"channel": "invalid"})
+                with self.assertRaisesRegex(ValueError, "differs"):
+                    installer.release_validation.check_event(selected)
 
 
 class GeneratedFuzzPublication(unittest.TestCase):
