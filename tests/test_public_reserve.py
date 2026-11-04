@@ -9,7 +9,7 @@ import tempfile
 import tomllib
 from pathlib import Path
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 ROOT = Path(__file__).resolve().parents[1]
 SPEC = importlib.util.spec_from_file_location('node_guard', ROOT / 'deploy/runner-reserve/node_guard.py')
@@ -92,6 +92,9 @@ class NetworkAdmissionTests(unittest.TestCase):
 class GuardReconciliationTests(unittest.TestCase):
     def setUp(self):
         self.guard = guard_module.Guard({'node_ip': '10.66.10.2', 'dns_ip': '10.43.0.10'})
+        # These retain the bridge/worker contract; listener integration is
+        # exercised independently below, including the actual sync/loop paths.
+        self.enterContext(patch.object(self.guard, 'protect_listener'))
         self.objects = [{'table': {'family': 'bridge', 'name': guard_module.TABLE}},
                         {'chain': {'family': 'bridge', 'table': guard_module.TABLE,
                                    'name': 'ingress', 'type': 'filter', 'hook': 'prerouting',
@@ -223,6 +226,186 @@ class GuardReconciliationTests(unittest.TestCase):
         for value in (True, 0, -1, float('nan'), float('inf'), '15', 301):
             with self.subTest(value=value), self.assertRaises(ValueError):
                 guard_module.Guard({'discovery_interval_seconds': value})
+
+
+class ListenerProtectionTests(unittest.TestCase):
+    def setUp(self):
+        self.config = {'node_ip': '192.0.2.10', 'dns_ip': '192.0.2.53'}
+        self.guard = guard_module.Guard(self.config)
+        self.objects = [
+            {'table': {'family': 'inet', 'name': guard_module.LISTENER_TABLE}},
+            {'chain': {'family': 'inet', 'table': guard_module.LISTENER_TABLE,
+                       'name': 'input', 'type': 'filter', 'hook': 'input',
+                       'prio': -310, 'policy': 'accept'}},
+            {'rule': {'family': 'inet', 'table': guard_module.LISTENER_TABLE,
+                      'chain': 'input', 'expr': [
+                          {'match': {'op': '==', 'left': {'payload': {
+                              'protocol': 'ip', 'field': 'protocol'}}, 'right': 6}},
+                          {'match': {'op': '==', 'left': {'payload': {
+                              'protocol': 'ip', 'field': 'daddr'}}, 'right': '192.0.2.10'}},
+                          {'match': {'op': '==', 'left': {'payload': {
+                              'protocol': 'tcp', 'field': 'dport'}}, 'right': 19999}},
+                          {'match': {'op': '>', 'left': {'payload': {
+                              'protocol': 'ip', 'field': 'hdrlength'}}, 'right': 5}},
+                          {'counter': {}}, {'drop': None}]}}]
+        self.echo = json.dumps({'nftables': [{'add': row} for row in self.objects]})
+        self.snapshot = self.enterContext(patch.object(
+            guard_module, 'listener_snapshot', return_value=self.objects))
+        self.apply = self.enterContext(patch.object(
+            guard_module, 'apply_firewall', return_value=self.echo))
+
+    def test_exact_endpoint_filter_has_no_worker_state_or_tcp_option_dependency(self):
+        expected = ('table inet victron_ci_guard_ipv4 {\nchain input {\n'
+                    'type filter hook input priority -310; policy accept;\n'
+                    'ip protocol tcp ip daddr 192.0.2.10 tcp dport 19999 '
+                    'ip hdrlength > 5 counter drop\n}\n}\n')
+        self.assertEqual(guard_module.listener_rules('192.0.2.10'), expected)
+        self.assertEqual(guard_module.listener_rules('192.0.2.10', exists=True),
+                         'delete table inet victron_ci_guard_ipv4\n' + expected)
+        self.assertNotIn('drop', guard_module.rules([], '192.0.2.10', '192.0.2.53'))
+        for value in ('::1', '192.0.2.10; flush ruleset', '192.0.2.10\naccept', ''):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                guard_module.listener_rules(value)
+
+    def test_first_install_attests_and_unchanged_rules_are_not_rewritten(self):
+        self.snapshot.side_effect = [None, self.objects, self.objects]
+        self.guard.protect_listener()
+        self.assertEqual(self.guard.listener_firewall, self.objects)
+        self.assertNotIn('delete', self.apply.call_args.args[0])
+        self.guard.protect_listener()
+        self.apply.assert_called_once()
+
+    def test_each_filter_attribute_drift_is_repaired_from_our_transaction(self):
+        variants = []
+        for key, value in [('hook', 'forward'), ('prio', 0), ('policy', 'drop')]:
+            changed = json.loads(json.dumps(self.objects))
+            changed[1]['chain'][key] = value
+            variants.append(changed)
+        for index, value in [(0, 17), (1, '192.0.2.11'), (2, 443), (3, 6)]:
+            changed = json.loads(json.dumps(self.objects))
+            changed[2]['rule']['expr'][index]['match']['right'] = value
+            variants.append(changed)
+        changed = json.loads(json.dumps(self.objects))
+        changed[2]['rule']['expr'][-1] = {'accept': None}
+        variants.extend([changed, self.objects[:-1], None])
+        for actual in variants:
+            with self.subTest(actual=actual):
+                self.guard.listener_firewall = self.objects
+                self.guard.admitted = {'old': 'worker'}
+                self.snapshot.side_effect = [actual, self.objects]
+                self.apply.reset_mock()
+                self.guard.protect_listener()
+                self.apply.assert_called_once()
+                self.assertEqual(self.guard.admitted, {})
+                self.assertEqual(self.guard.listener_firewall, self.objects)
+
+    def test_wrong_readback_or_echo_never_becomes_accepted_identity(self):
+        for echo, after in [(self.echo, self.objects[:-1]), ('{}', self.objects),
+                            ('{"nftables": []}', self.objects), ('private failure', self.objects)]:
+            with self.subTest(echo=echo):
+                self.guard.listener_firewall = None
+                self.guard.admitted = {'old': 'worker'}
+                self.guard.admitted_until = 123
+                self.snapshot.side_effect = [None, after]
+                self.apply.return_value = echo
+                with self.assertRaisesRegex(guard_module.ListenerProtectionError,
+                                            '^Host listener protection unavailable$'):
+                    self.guard.protect_listener()
+                self.assertEqual(self.guard.admitted, {})
+                self.assertEqual(self.guard.admitted_until, 0)
+                self.assertIsNone(self.guard.listener_firewall)
+
+    def test_command_failures_are_sanitized_and_cannot_admit(self):
+        for error in [OSError('private command output'),
+                      subprocess.TimeoutExpired('private argv', 15),
+                      RuntimeError('private stderr')]:
+            with self.subTest(error=type(error).__name__):
+                self.snapshot.side_effect = error
+                with self.assertRaises(guard_module.ListenerProtectionError) as caught:
+                    self.guard.sync()
+                self.assertEqual(str(caught.exception), 'Host listener protection unavailable')
+                self.assertTrue(caught.exception.__suppress_context__)
+                self.assertEqual(self.guard.admitted, {})
+                self.apply.assert_not_called()
+
+    def test_listener_check_precedes_cri_failure(self):
+        self.snapshot.side_effect = [None, self.objects]
+        with patch.object(guard_module, 'discover', side_effect=RuntimeError('CRI unavailable')):
+            with self.assertRaisesRegex(RuntimeError, 'CRI unavailable'):
+                self.guard.sync()
+        self.apply.assert_called_once()
+        self.assertEqual(self.guard.listener_firewall, self.objects)
+        self.assertEqual(self.guard.admitted, {})
+
+    def test_no_workers_still_get_protection_and_periodic_integrity_checks(self):
+        with patch.object(guard_module, 'discover', return_value=[]), \
+                patch.object(guard_module, 'validate_workers'), \
+                patch.object(guard_module, 'firewall_snapshot', return_value=self.objects), \
+                patch.object(guard_module.time, 'monotonic', return_value=100) as clock:
+            self.guard.sync()
+            self.assertEqual(self.guard.admitted, {})
+            self.snapshot.assert_called()
+            self.snapshot.reset_mock()
+            clock.return_value = 110
+            self.guard.sync()
+            self.snapshot.assert_called_once()
+
+    def test_table_reads_are_exact_and_keep_timeout(self):
+        # Bypass this class's snapshot mock to inspect the actual command.
+        with patch.object(guard_module.subprocess, 'run', return_value=Mock(
+                returncode=0, stdout=json.dumps({'nftables': self.objects}))) as run:
+            result = guard_module.table_snapshot('inet', guard_module.LISTENER_TABLE)
+        self.assertEqual(result, self.objects)
+        self.assertEqual(run.call_args.args[0], ['nft', '--json', '--stateless', 'list',
+                                              'table', 'inet', 'victron_ci_guard_ipv4'])
+        self.assertEqual(run.call_args.kwargs, {
+            'text': True, 'capture_output': True, 'check': False, 'timeout': 15})
+
+    def test_detected_protection_loss_stops_listener_without_retry_or_sleep(self):
+        stop = Mock()
+        self.guard.listener_firewall = self.objects
+        self.guard.admitted = {'old': 'worker'}
+        self.snapshot.side_effect = OSError('nft unavailable after startup')
+        with patch.object(guard_module.time, 'sleep') as sleep, \
+                patch('sys.stdout', new=io.StringIO()):
+            self.guard.loop(stop)
+        stop.assert_called_once_with()
+        sleep.assert_not_called()
+        self.assertEqual(self.guard.admitted, {})
+
+    def test_other_sync_errors_keep_existing_recovery_loop(self):
+        stop = Mock()
+        with patch.object(self.guard, 'sync', side_effect=RuntimeError('CRI unavailable')), \
+                patch.object(guard_module.time, 'sleep', side_effect=KeyboardInterrupt), \
+                patch('sys.stdout', new=io.StringIO()):
+            with self.assertRaises(KeyboardInterrupt):
+                self.guard.loop(stop)
+        stop.assert_not_called()
+
+    def test_startup_install_failure_never_creates_thread_or_listening_socket(self):
+        self.snapshot.side_effect = OSError('not allowed')
+        with patch.object(guard_module, 'ReadinessServer') as server, \
+                patch.object(guard_module.threading, 'Thread') as thread:
+            with self.assertRaises(guard_module.ListenerProtectionError):
+                guard_module.serve_guard(self.config, object())
+        server.assert_not_called()
+        thread.assert_not_called()
+
+    def test_startup_installs_before_listening_and_closes_after_shutdown(self):
+        events = []
+        self.snapshot.side_effect = lambda: events.append('readback') or self.objects
+        self.apply.side_effect = lambda _rules: events.append('apply') or self.echo
+        with patch.object(guard_module, 'ReadinessServer') as server_factory, \
+                patch.object(guard_module.threading, 'Thread') as thread:
+            server = server_factory.return_value.__enter__.return_value
+            server_factory.side_effect = lambda *_args, **_kwargs: (
+                events.append('listen') or server_factory.return_value)
+            server.serve_forever.side_effect = lambda: events.append('serve')
+            guard_module.serve_guard(self.config, object())
+            self.assertEqual(events, ['readback', 'apply', 'readback', 'listen', 'serve'])
+            self.assertEqual(thread.call_args.kwargs['args'], (server.shutdown,))
+            thread.return_value.start.assert_called_once()
+            server_factory.return_value.__exit__.assert_called_once()
 
 
 class LocalIdentityTests(unittest.TestCase):

@@ -3,7 +3,8 @@
 
 Runs on the node, never in a runner. Rules match the host veth and source MAC/IP, so a sandbox with Docker
 networking cannot spoof its way out through ARP, IPv6 or source-IP changes.
-Only dedicated sandbox workers are affected. Native LAN/ARM workers are excluded.
+Worker egress rules exclude native LAN/ARM workers. The host readiness endpoint
+also rejects IPv4 options, without changing ordinary TCP options or other ports.
 """
 from __future__ import annotations
 
@@ -22,6 +23,7 @@ from socketserver import TCPServer, ThreadingMixIn
 from pathlib import Path
 
 TABLE = "victron_ci_reserve"
+LISTENER_TABLE = "victron_ci_guard_ipv4"
 LABEL = "runner-reserve.github.io/role"
 NAMESPACES = {"runner-reserve-ci", "runner-reserve-automation", "runner-reserve-release",
               "arc-private-ci", "arc-private-automation", "arc-private-release"}
@@ -144,6 +146,16 @@ def rules(workers, node_ip, dns_ip, extra_denied=(), *, exists=False):
     return "\n".join([*result, "}", "}", ""])
 
 
+def listener_rules(node_ip, *, exists=False):
+    """Limit the host TCP endpoint's IPv4-option exposure, even with no workers."""
+    node_ip = str(ipaddress.IPv4Address(node_ip))
+    result = [f"delete table inet {LISTENER_TABLE}"] if exists else []
+    return "\n".join([*result, f"table inet {LISTENER_TABLE} {{", "chain input {",
+                      "type filter hook input priority -310; policy accept;",
+                      f"ip protocol tcp ip daddr {node_ip} tcp dport {PORT} "
+                      "ip hdrlength > 5 counter drop", "}", "}", ""])
+
+
 def canonical_ruleset(payload, *, echoed=False):
     """Ignore counters/handles, but retain rule order and every filtering attribute."""
     def stable(value):
@@ -174,10 +186,18 @@ def canonical_ruleset(payload, *, echoed=False):
     return objects
 
 
-def firewall_snapshot():
-    result = subprocess.run(["nft", "--json", "--stateless", "list", "table", "bridge", TABLE],
+def table_snapshot(family, name):
+    result = subprocess.run(["nft", "--json", "--stateless", "list", "table", family, name],
                             text=True, capture_output=True, check=False, timeout=15)
     return canonical_ruleset(result.stdout) if result.returncode == 0 else None
+
+
+def firewall_snapshot():
+    return table_snapshot("bridge", TABLE)
+
+
+def listener_snapshot():
+    return table_snapshot("inet", LISTENER_TABLE)
 
 
 def apply_firewall(rendered):
@@ -198,6 +218,10 @@ def interval(config, key, default, maximum):
     return value
 
 
+class ListenerProtectionError(RuntimeError):
+    """The host TCP listener must stop when its protection cannot be verified."""
+
+
 class Guard:
     """Check local identity frequently; reconcile expensive state only when needed."""
     def __init__(self, config):
@@ -209,6 +233,7 @@ class Guard:
         self.admitted_until = 0
         self.workers = None
         self.firewall = None
+        self.listener_firewall = None
         self.next_discovery = self.next_firewall = 0
         self.lock = threading.Lock()
 
@@ -216,6 +241,22 @@ class Guard:
         with self.lock:
             self.admitted = {}
             self.admitted_until = 0
+
+    def protect_listener(self):
+        """Use only our atomic transaction's echo as the expected rule identity."""
+        try:
+            actual = listener_snapshot()
+            if self.listener_firewall is None or actual != self.listener_firewall:
+                self.revoke()
+                installed = apply_firewall(listener_rules(
+                    self.config["node_ip"], exists=actual is not None))
+                expected = canonical_ruleset(installed, echoed=True)
+                if listener_snapshot() != expected:
+                    raise RuntimeError("Listener firewall changed during reconciliation")
+                self.listener_firewall = expected
+        except SYNC_ERRORS:
+            self.revoke()
+            raise ListenerProtectionError("Host listener protection unavailable") from None
 
     def sync(self):
         try:
@@ -228,6 +269,10 @@ class Guard:
 
     def _sync(self):
         now = time.monotonic()
+        # Check this before CRI: a discovery failure must not postpone the
+        # host listener's protection check. It is independent of worker count.
+        if self.listener_firewall is None or now >= self.next_firewall:
+            self.protect_listener()
         workers = self.workers
         if workers is None or now >= self.next_discovery:
             workers = discover()
@@ -258,10 +303,14 @@ class Guard:
             # A stalled/crashed reconciliation thread cannot admit indefinitely.
             self.admitted_until = time.monotonic() + self.poll_interval * 2 + 1
 
-    def loop(self):
+    def loop(self, stop_listener):
         while True:
             try:
                 self.sync()
+            except ListenerProtectionError:
+                print("Host listener protection unavailable; stopping listener", flush=True)
+                stop_listener()
+                return
             except SYNC_ERRORS:
                 print("Node guard unavailable; new workers remain stopped", flush=True)
             time.sleep(self.poll_interval)
@@ -325,6 +374,18 @@ def handler(guard):
     return Readiness
 
 
+def serve_guard(config, context):
+    guard = Guard(config)
+    # No socket may be bound/listening before exact installed-rule readback.
+    guard.protect_listener()
+    with ReadinessServer((str(ipaddress.IPv4Address(config["node_ip"])), PORT),
+                         handler(guard), tls_context=context) as server:
+        threading.Thread(target=guard.loop, args=(server.shutdown,), daemon=True).start()
+        # S5332 does not follow get_request's mandatory TLS wrapper in older analyzers.
+        # TLSAdmissionTests checks trust, hostname, pod identity and rejects plaintext.
+        server.serve_forever()  # NOSONAR(S5332) TLS-only socket; rejects plaintext.
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, required=True)
@@ -333,13 +394,7 @@ def main():
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     context.minimum_version = ssl.TLSVersion.TLSv1_2
     context.load_cert_chain(config["tls_certificate"], config["tls_private_key"])
-    guard = Guard(config)
-    threading.Thread(target=guard.loop, daemon=True).start()
-    server = ReadinessServer((str(ipaddress.IPv4Address(config["node_ip"])), PORT),
-                             handler(guard), tls_context=context)
-    # S5332 does not follow get_request's mandatory TLS wrapper in older analyzers.
-    # TLSAdmissionTests checks trust, hostname, pod identity and rejects plaintext.
-    server.serve_forever()  # NOSONAR(S5332) TLS-only socket; rejects plaintext.
+    serve_guard(config, context)
 
 
 if __name__ == "__main__":

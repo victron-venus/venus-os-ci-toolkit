@@ -147,6 +147,64 @@ as a deletion precondition. Preserve a pre-existing class and stop for ownership
 review if its UID or specification changed. Rendering never creates or deletes
 cluster resources automatically.
 
+## Host readiness endpoint and IPv4 options
+
+The node guard reserves the `inet victron_ci_guard_ipv4` table in its own network
+namespace. Before opening its TCP listener, it installs and verifies a filter
+for its exact configured IPv4 address and TCP port 19999. That endpoint drops
+IPv4 packets with IP options (`ip hdrlength > 5`). Ordinary TCP options, including
+timestamps, window scaling and SACK, are separate from IP options and remain
+unchanged. Other addresses, ports, IPv6 and the existing worker bridge rules are
+not broadened or blocked by this additional filter. Do not use this endpoint
+for connections that require IPv4 options.
+
+The dedicated table is independent of worker count. Its expected identity comes
+from the guard's own atomic nft transaction and must match a fresh readback;
+subsequent checks retain the existing configured firewall-check interval. The
+table remains installed when the guard stops. If checking or repairing this
+protection fails, admission is revoked and the listener is stopped, rather than
+relying on an HTTP rejection after TCP processing. The guard owns only its two
+named tables; do not allocate these names to another firewall manager. It does
+not flush the full ruleset or edit the host's firewall configuration files.
+
+Both supplied node-guard units use `Restart=always` with `RestartSec=3`, so the
+clean listener exit after a protection failure requests a service restart,
+subject to systemd start-rate limits. Each new process must verify the filter
+again before listening. A deliberate service stop is not automatically undone.
+These are source-unit guarantees; verify the installed unit and any drop-ins
+before relying on them. See the existing
+[guard lifecycle prerequisites](NUC_KVM_CANDIDATE.md#host-and-network-prerequisites).
+
+Retaining the table across process exit is intentional: never remove it during
+ordinary restart, repair failure or temporary shutdown. Its rules do not survive
+destruction of the network namespace or host reboot; startup verification must
+recreate them. Only after the guard is permanently retired, restart/activation
+paths are disabled, dependent workers are drained and the listener is confirmed
+absent may an operator separately remove this exact owned
+`inet victron_ci_guard_ipv4` table in its verified namespace. Confirm ownership
+and its recorded rule identity first; stop on unexpected contents. Do not delete
+the separate worker `bridge victron_ci_reserve` table or flush other tables as
+part of that cleanup. This document performs or authorizes none of those actions.
+
+This is a partial reduction of the
+[CVE-2026-98432](https://ubuntu.com/security/CVE-2026-98432) attack surface, not a
+kernel fix or deployment acceptance. The local INPUT hook follows IPv4 fragment
+reassembly and precedes the vulnerable TCP request processing. Earlier IPv4
+option parsing, other listening ports, other network namespaces and previously
+created socket/request state are outside this filter's guarantee. Periodic
+readback cannot eliminate the interval after privileged external rule removal;
+trusted host administration and persistent rule ownership remain prerequisites.
+An unresponsive process or nft command can also delay detection. TLS, gVisor and
+readiness rejection do not themselves repair the host kernel.
+
+Before relying on this mitigation, separately verify the deployed guard source,
+the listener's network namespace, the exact installed rule, normal TLS access
+and rejection of option-bearing/fragmented test traffic in an approved isolated
+environment. Preserve the hold for a supported fixed running host kernel or a
+separately approved, evidenced risk decision. Source tests neither change the
+live firewall nor authorize a service restart, runner activation or a waiver of
+that host acceptance requirement.
+
 ## Repeatable software checks
 
 ```sh
