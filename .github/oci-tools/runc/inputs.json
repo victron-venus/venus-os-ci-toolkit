@@ -20,6 +20,6 @@
     "release_tag": "v1.5.2",
     "repository": "opencontainers/runc",
     "root": "runc-29dd3dc2b13b4123162e5fe132504bb4b15569f1",
-    "vendor_sha256": null
+    "vendor_sha256": "1e9f8b38ce08797173c98587e93c7c72fe74b9192d85d4ae49bcc603f885a62c"
   }
 }

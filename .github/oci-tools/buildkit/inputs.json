@@ -9,9 +9,9 @@
     "compressed_bytes": 12143295,
     "downstream_version": "v0.34.1+victron.security.1",
     "locked_files": {
-      "go.mod": "7140420af3b2fbb3a5c84005097afc6f3ad304c00e11aee8eba9c97d15d1d4e9",
-      "go.sum": "4b1b9f3437b09bc5f2fd5efbc10d29a5ffb2f97272b737ed015267c0eb922d21",
-      "modules.json": "ac3a31a6f0781350217a95396c2c8de0e0dcdf9833032e2520502a70b4f9190d"
+      "go.mod": "a0321befdc668f5692995e5da51df1caae1417f5bc341da24eccdeb7c720bfc6",
+      "go.sum": "6b4a29c2acbc9124a3cd48a8b769564434a8222fddfb4b8bee1994d24cd35433",
+      "modules.json": "9a37fa833da1b2d381cc545e64969b8529f7b0ae660573f65709d7e08e214e8b"
     },
     "original_locks": {
       "go.mod": "9114ace60db407b7b70eccc340cda6cc5ff3313400afbdd8e1f14849bc244fb3",
@@ -20,6 +20,6 @@
     "release_tag": "v0.34.1",
     "repository": "moby/buildkit",
     "root": "buildkit-f5b59a1f2fb25a0cb7072c398cab9aed7835da4e",
-    "vendor_sha256": null
+    "vendor_sha256": "338bfc23ca2c051c1f3de31d921b4797b1370d3a124be914ad6679a1b223bde9"
   }
 }

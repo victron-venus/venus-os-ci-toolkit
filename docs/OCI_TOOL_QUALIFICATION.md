@@ -85,8 +85,10 @@ test pass.
   package is executed. BuildKit pins upstream's exact
   `v0.58.1-0.20261009181718-2f1f834330b2` fix: the immediate child of `v0.58.0`
   moves deprecated OpenPGP into a separate module without changing the maintained
-  cryptographic implementations. Fresh module resolution must not bring that
-  deprecated module back. There is **no automatic vulnerability exemption**.
+  cryptographic implementations. Full-module resolution still lists the separate
+  deprecated module as an indirect input; `openpgp-module-why.txt` records why.
+  It must remain absent from the actual target package closures and clean
+  source/binary scans. There is **no automatic vulnerability exemption**.
   Any finding must be assessed against the actual binary before a narrow,
   evidence-backed disposition is reviewed. See the [Go advisory](https://pkg.go.dev/vuln/GO-2026-5932).
 - All candidates retain upstream, Go, used module and native-package license or
