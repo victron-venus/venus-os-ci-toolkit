@@ -1,0 +1,56 @@
+{
+  "schema": 1,
+  "kind": "release",
+  "repository": "victron-venus/venus-os-ci-toolkit",
+  "release_id": 433653669,
+  "tag": "v0.1.12",
+  "source": "31427ec808648f30b98fe81be466cd91f2971e88",
+  "provenance": {
+    "id": 708750727,
+    "name": "accepted-builder-provenance.json",
+    "size": 6375,
+    "digest": "sha256:97df7093a53de88b59e558782f09512793e46edfa41b662b4d6a0d855f13590c"
+  },
+  "architectures": {
+    "amd64": {
+      "oci": {
+        "id": 708751162,
+        "name": "oci-builder-linux-amd64.oci.tar",
+        "size": 66936832,
+        "digest": "sha256:74fae220971e81c473041071b1a8249760138d4301af580c06260ed2e14c8292"
+      },
+      "docker": {
+        "id": 708750815,
+        "name": "oci-builder-linux-amd64.docker.tar",
+        "size": 140216832,
+        "digest": "sha256:24ae12e0058f894842421e5c484ecd60d1aa2aa8229ed2c6e0817e4095421049"
+      },
+      "evidence": {
+        "id": 708751109,
+        "name": "oci-builder-linux-amd64.evidence.zip",
+        "size": 251679,
+        "digest": "sha256:11088d0442014aa9d53ff6c7ea2402e798f6506f17845b4cf11f6d8487a939a9"
+      }
+    },
+    "arm64": {
+      "oci": {
+        "id": 708751715,
+        "name": "oci-builder-linux-arm64.oci.tar",
+        "size": 128363520,
+        "digest": "sha256:46e6ede1c399a6a81d62c193421bee08365eb76dca1fc65508f86c071f09a693"
+      },
+      "docker": {
+        "id": 708751378,
+        "name": "oci-builder-linux-arm64.docker.tar",
+        "size": 130918912,
+        "digest": "sha256:659ca84d795aaf4807c3cc0d6998e0cfd117b034464c7e3c61cc2397098d038b"
+      },
+      "evidence": {
+        "id": 708751677,
+        "name": "oci-builder-linux-arm64.evidence.zip",
+        "size": 251317,
+        "digest": "sha256:918653246d32f986f311ab848282be5322dc6cfb5629b8c851d6c09accda6c57"
+      }
+    }
+  }
+}

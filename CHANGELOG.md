@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.1.13] - 2026-11-04
+
+### Fixed
+
+- Acquire accepted native builder archives from an explicitly pinned stable toolkit release without depending on expired Actions artifacts. Preserve the original image, filesystem and qualification checks; missing or changed assets fail without fallback.
+- Bind transport selection and its digest to one immutable input snapshot throughout acquisition, preparation and two-architecture publication. Reject changes before successful receipts, imports or publication commit.
+
+### Upgrade
+
+Use the reviewed transport lock together with the unchanged original builder identity lock. The runner manifest and consumer receipt bind both separately. The retained release route requires exact release, tag, source and asset identities; it does not resolve the latest release or publish new image bytes. Final runner qualification and activation remain separate.
+
+### Security
+
+Release storage does not replace the original archive, root filesystem and qualification verification. Only reviewed immutable asset identities are accepted; changed transport inputs abort the operation. The downloader retains bounded reads and read-only access, without new credentials, registry writes or deployment permissions.
+
 ## [0.1.12] - 2026-11-03
 
 ### Added

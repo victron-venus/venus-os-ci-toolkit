@@ -7,7 +7,8 @@
     "buildkit": {
       "kind": "accepted-artifact",
       "lock_sha256": "9811bb033e00bd6e97defd751a0d6df35d86d774b18d288699377acbd8e0ab8b",
-      "image": "sha256:98d12bc911185a71586291e9432ac8cdee7209b9711cd28835579bbe11393f0c"
+      "image": "sha256:98d12bc911185a71586291e9432ac8cdee7209b9711cd28835579bbe11393f0c",
+      "transport_sha256": "c14cf7d70031a022c3b3dd8bdcfe2b967f1284378e176f002a6968aaec6759d3"
     },
     "trivy": {
       "version": "0.74.0",

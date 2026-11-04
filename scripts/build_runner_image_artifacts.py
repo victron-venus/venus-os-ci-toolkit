@@ -1493,6 +1493,7 @@ def validate_manifest(data):
     lock = accepted.read_lock()
     require(data['tools']['buildkit'] == {
         'kind': 'accepted-artifact', 'lock_sha256': oci.digest_file(accepted.LOCK),
+        'transport_sha256': accepted.transport_receipt()['lock_sha256'],
         'image': lock['architectures']['amd64']['config']}, 'Exact accepted builder required')
     require(re.fullmatch(r'ghcr.io/aquasecurity/trivy@sha256:[0-9a-f]{64}',
                         data['tools']['trivy']['image']), 'Immutable official scanner required')
@@ -2318,6 +2319,9 @@ def execute(stage, parent=None):
         record['docker_version'] = sup.run(['docker', '--version'], capture=True)
         record['buildx_version'] = sup.run(['docker', 'buildx', 'version'], capture=True)
         record['accepted_builder'] = accepted.prepare(builder_lock, 'amd64', builder_inputs, sup.check)
+        require(record['accepted_builder'].get('transport', {}).get('lock_sha256') ==
+                data['tools']['buildkit']['transport_sha256'],
+                'Prepared builder transport differs from validated manifest')
         accepted.load(sup, builder_inputs, builder_spec, record['accepted_builder'])
         context = work / 'context'
         prepare_context(ROOT, context, data['contexts'][stage], stage == 'public', env)

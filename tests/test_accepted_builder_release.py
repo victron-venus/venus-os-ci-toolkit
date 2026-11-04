@@ -130,8 +130,8 @@ class AcceptedBuilderReleaseTests(unittest.TestCase):
 
     def test_first_architecture_mutation_during_second_acquisition_is_rejected(self):
         acquire = accepted.acquire
-        def mutate(lock, arch, destination, check):
-            result = acquire(lock, arch, destination, check)
+        def mutate(lock, arch, destination, check, **kwargs):
+            result = acquire(lock, arch, destination, check, **kwargs)
             if arch == 'arm64':
                 (destination.parent / 'amd64' / accepted.OCI_ARCHIVE).write_bytes(b'changed later')
             return result
@@ -148,6 +148,35 @@ class AcceptedBuilderReleaseTests(unittest.TestCase):
                            ('GITHUB_RUN_ID', '../88'), ('GITHUB_REPOSITORY', 'fork/repo')]:
             with self.subTest(key=key), self.assertRaises(ValueError):
                 release.release_identity({**environment, key: value})
+
+    def test_transport_drift_between_architectures_fails_before_second_acquisition(self):
+        real = accepted.acquire
+        snapshots = []
+        def drift(lock, arch, destination, check, *, snapshot):
+            snapshots.append(snapshot)
+            result = real(lock, arch, destination, check, snapshot=snapshot)
+            if arch == 'amd64':
+                self.fixture.transport_path.write_text('{"schema":1,"kind":"release"}')
+            return result
+        with patch.object(accepted, 'acquire', side_effect=drift), \
+             self.assertRaisesRegex(ValueError, 'transport changed'):
+            self.stage()
+        self.assertEqual(len(snapshots), 2)
+        self.assertIs(snapshots[0], snapshots[1])
+        self.assertEqual(len(list(self.output.iterdir())), 2)
+        self.assertEqual((self.output / release.CHECKSUMS).read_text(), self.initial_checksums)
+
+    def test_transport_drift_after_last_link_cannot_commit_publication(self):
+        real = release.os.link
+        def drift(source, target):
+            real(source, target)
+            if target.name == release.PROVENANCE:
+                self.fixture.transport_path.write_text('{"schema":1,"kind":"release"}')
+        with patch.object(release.os, 'link', side_effect=drift), \
+             self.assertRaisesRegex(ValueError, 'transport changed'):
+            self.stage()
+        self.assertEqual(len(list(self.output.iterdir())), 2)
+        self.assertEqual((self.output / release.CHECKSUMS).read_text(), self.initial_checksums)
 
     def test_exact_two_publisher_mappings_no_latest_and_no_overwrite(self):
         mapping = json.loads((release.ROOT / '.release-policy.json').read_text())['container_assets']
