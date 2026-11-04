@@ -130,9 +130,10 @@ class BrowserTests(unittest.TestCase):
 
     def test_install_order_and_no_ad_hoc_browser_flags(self):
         docker = (ROOT / 'deploy/runner-reserve/Dockerfile').read_text()
-        install = 'RUN python3 /opt/victron-image-build/browsers/scripts/install_runner_browsers.py'
-        self.assertLess(docker.index(install), docker.index('RUN dpkg -i /tmp/victron-libbpf'))
-        self.assertLess(docker.index('COPY --from=node'), docker.index(install + ' --qualify'))
+        install = 'python3 /opt/victron-image-build/browsers/scripts/install_runner_browsers.py'
+        self.assertLess(docker.index(install), docker.index('dpkg -i /tmp/victron-libbpf'))
+        self.assertLess(docker.index('/tmp/runner-node /usr/local/bin/node'),
+                        docker.index(install + ' --qualify'))
         fixture = (ROOT / 'deploy/runner-reserve/qualify-browsers.cjs').read_text()
         self.assertIn('chromium.launch({ headless: true, channel, timeout: 30000 })', fixture)
         self.assertNotIn('--no-sandbox', fixture)

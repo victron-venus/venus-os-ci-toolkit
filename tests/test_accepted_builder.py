@@ -226,7 +226,10 @@ class AcceptedBuilderTests(unittest.TestCase):
         self.assertIn('accepted-tools=oci-layout://' + str(self.root / 'verified-layout') + '@' + self.spec['manifest'], command)
         self.assertNotIn('--push', command)
         dockerfile = (runner.ROOT / 'deploy/runner-reserve/Dockerfile').read_text()
-        self.assertIn('COPY --from=accepted-tools /usr/bin/buildkit-runc /usr/local/bin/runc', dockerfile)
+        self.assertIn('--mount=type=bind,from=accepted-tools,source=/,target=/tmp/runner-accepted-tools,ro',
+                      dockerfile)
+        self.assertIn('cp -a --remove-destination '
+                      '/tmp/runner-accepted-tools/usr/bin/buildkit-runc /usr/local/bin/runc', dockerfile)
 
     def test_final_runc_inventory_cannot_be_missing_partial_or_old(self):
         packages = [{'Name': n, **({'Version': v} if v is not None else {})}
