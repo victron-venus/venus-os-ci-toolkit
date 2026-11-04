@@ -1,6 +1,26 @@
 # Native auto-merge for protected CI gates
 
-The reusable `auto-merge.yml` keeps its existing check-waiting behavior by default.
+The reusable `auto-merge.yml` waits for stable successful checks by default.
+It reads the repository's `allow_auto_merge` setting after verifying PR eligibility.
+When enabled, the existing native request behavior is unchanged. When disabled,
+the default mode instead requires a same-repository PR, at least one successful
+independent check, all observed checks completed without failure, successful
+explicitly named checks, and an independent trusted approval of the current head.
+The base, head, checks and reviews must stay unchanged across the final observations.
+It then issues an ordinary protected merge with `--match-head-commit`, never
+`--admin`. Existing GitHub review, status-check and freshness rules still apply.
+Unknown, missing or denied capability metadata fails closed; verify repository
+visibility and token access to [merge settings](https://docs.github.com/en/rest/repos/repos#get-a-repository).
+
+The fallback does not create branch protections or infer a project's required CI
+from check names. Keep the repository's existing required checks and review rules;
+use explicit `required-status-checks` to strengthen the default observed-check gate.
+Unprotected repositories should still configure reviewed mode with exact check
+names. A final metadata race remains subject to GitHub's server-side protection.
+Withdrawal-only mode does not read or depend on native merge capability.
+Explicit native mode fails with a configuration error when the setting is disabled;
+it never silently changes the requested mode.
+
 Set `native-auto-merge: true` only after every required PR validator is included in
 `quality-gate.yml` and the repository requires `CI gate` with strict branch freshness.
 This mode verifies the effective GitHub branch rules, re-reads PR eligibility and the
@@ -65,7 +85,7 @@ covered by a required gate. This migration does not change release approval poli
 
 A private repository may have no branch protection on its current GitHub plan.
 For these repositories, `reviewed-merge: true` provides an opt-in bot gate while
-leaving existing native and legacy consumers unchanged. It is mutually exclusive
+retaining the same checks used by the default mode's disabled-native fallback. It is mutually exclusive
 with `native-auto-merge: true` and requires an explicit, nonempty
 `required-status-checks` list of exact check names.
 
