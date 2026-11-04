@@ -82,7 +82,11 @@ test pass.
 - `GO-2026-5932` affects the old `golang.org/x/crypto/openpgp` package. The maintained
   ProtonMail package is distinct. Production/test package graphs and exact binary
   analysis distinguish these; module presence alone is not evidence that the old
-  package is executed. There is currently **no automatic vulnerability exemption**.
+  package is executed. BuildKit pins upstream's exact
+  `v0.58.1-0.20261009181718-2f1f834330b2` fix: the immediate child of `v0.58.0`
+  moves deprecated OpenPGP into a separate module without changing the maintained
+  cryptographic implementations. Fresh module resolution must not bring that
+  deprecated module back. There is **no automatic vulnerability exemption**.
   Any finding must be assessed against the actual binary before a narrow,
   evidence-backed disposition is reviewed. See the [Go advisory](https://pkg.go.dev/vuln/GO-2026-5932).
 - All candidates retain upstream, Go, used module and native-package license or
@@ -92,14 +96,21 @@ The privileged stage starts from fresh disposable hosted workers. It verifies th
 source commit, architecture, input manifest and binary hashes against the passing
 source/security stage. A baseline container must execute the same static probe
 that the restricted container uses. The latter must see `EPERM` for `getppid`
-(seccomp), must be denied `/dev/zero` (cgroup v2 device filter), and must still open
-the explicitly permitted `/dev/null`. Missing cgroup v2 is a failure, not a skip.
+(seccomp), must be denied `/dev/zero` (cgroup v2 device filter), and must still
+open `/dev/null`. Both specifications explicitly declare the same `/dev/zero`
+node (1:5): pinned runc's `createDevices` then removes that device's implicit
+allow rule, leaving the explicit baseline/restricted policies in control.
+The unrestricted baseline must successfully open that exact node before its
+denial counts. Missing cgroup v2 is a failure, not a skip.
 
 The candidate BuildKit then uses its explicitly named candidate runc, an isolated
 root/socket, native snapshotter and disabled containerd worker. A scratch image
 exercises ADD extraction, links, a real RUN instruction and local export, without
 pulling an image or a frontend. Another ADD attempts a host-side traversal while
-an outside sentinel is checked. Results and exit codes are recorded honestly:
+an outside sentinel is checked, using 64 parent components to exceed the native
+snapshot directory depth. The bounded, no-follow sentinel observation is saved on failure and timeout;
+a timeout remains fatal even if writing evidence also fails.
+Results and exit codes are recorded honestly:
 safe confinement and rejection are distinguished, and no blanket claim about
 all upstream security tests is made.
 

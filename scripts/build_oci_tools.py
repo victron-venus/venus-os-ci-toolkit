@@ -228,6 +228,10 @@ def install_native(stage, arch):
     (scan / "etc").mkdir()
     (scan / "var/lib/dpkg/status").write_text("\n\n".join(status) + "\n")
     (scan / "etc/os-release").write_text(os_release)
+    # Trivy's pinned Ubuntu analyzer identifies the distro from lsb-release.
+    # Copy the worker's actual file, rather than fabricating scanner metadata.
+    shutil.copyfile("/etc/lsb-release", scan / "etc/lsb-release")
+    shutil.copyfile(scan / "etc/lsb-release", evidence / "native-lsb-release.txt")
     cc_files = {}
     for arg in ("libc.a", "libgcc.a", "crtbeginT.o", "crtend.o", "crt1.o", "crti.o", "crtn.o"):
         path = Path(run(["gcc-13", "-print-file-name=" + arg]).strip()).resolve()
@@ -436,7 +440,12 @@ def scan(stage, arch, manifest):
         run([scanner, "rootfs", "--cache-dir", cache, "--scanners", "vuln", "--list-all-pkgs",
              "--format", "json", "--output", report, target], log=evidence / (label + "-trivy.log"))
         data = json.loads(report.read_text())
-        failures += trivy_failures(data, label)
+        try:
+            failures += trivy_failures(data, label)
+        except ValueError as error:
+            # Keep scanner identities and an explicit failed gate even when the
+            # scanner output lacks a usable inventory.
+            failures.append(str(error))
         run([scanner, "rootfs", "--cache-dir", cache, "--scanners", "vuln", "--format", "cyclonedx",
              "--output", evidence / (label + "-sbom.cdx.json"), target],
             log=evidence / (label + "-sbom.log"))

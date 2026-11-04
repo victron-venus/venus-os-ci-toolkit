@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import stat
 import subprocess
 import tarfile
 import time
@@ -48,6 +49,12 @@ def run_container(root, binaries, mode):
     config["root"]["readonly"] = False
     config["process"].update(terminal=False, args=["/probe", mode], cwd="/")
     config["process"]["env"] = ["PATH=/", "GOMAXPROCS=1"]
+    # Pinned runc createDevices removes its implicit allow rule when the spec
+    # supplies this exact path. Both modes then exercise our explicit policy.
+    config["linux"].setdefault("devices", []).append({
+        "path": "/dev/zero", "type": "c", "major": 1, "minor": 5,
+        "fileMode": 0o666, "uid": 0, "gid": 0,
+    })
     # Each container gets a fresh, isolated cgroup; no systemd/global policy changes.
     config["linux"]["cgroupsPath"] = "/oci-tool-qualification-" + str(os.getpid()) + "/" + mode
     if mode == "restricted":
@@ -99,6 +106,43 @@ def require_confinement_failure(text):
         "Negative ADD failed for an unproven reason")
 
 
+def observe_sentinel(path):
+    """Read only the small regular sentinel, without following a replaced link."""
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        with os.fdopen(fd, "rb") as stream:
+            metadata = os.fstat(stream.fileno())
+            changed = (not stat.S_ISREG(metadata.st_mode) or metadata.st_size != 9
+                       or stream.read(10) != b"unchanged")
+        return {"outside_write": changed}
+    except OSError as error:
+        return {"outside_write": None, "sentinel_error": type(error).__name__, "errno": error.errno}
+
+
+def escape_build(command, root, sentinel):
+    try:
+        result = subprocess.run(list(map(str, command)), capture_output=True, text=True, timeout=120)
+    except subprocess.TimeoutExpired as error:
+        try:
+            write_json(root / "escape-result.json", {
+                "exit_code": None, "timed_out": True, "parent_components": 64,
+                **observe_sentinel(sentinel),
+            })
+            text = "".join(data.decode(errors="replace") if isinstance(data, bytes) else data
+                           for data in (error.stdout or "", error.stderr or ""))
+            (root / "escape-build.log").write_text(text[-2 * 1024 * 1024:])
+        except OSError as save_error:
+            error.add_note("Could not preserve timeout evidence: " + type(save_error).__name__)
+        raise
+    observed = observe_sentinel(sentinel)
+    write_json(root / "escape-result.json", {
+        "exit_code": result.returncode, "timed_out": False, "parent_components": 64, **observed,
+    })
+    (root / "escape-build.log").write_text(result.stdout + result.stderr)
+    require(observed["outside_write"] is False, "ADD changed the sentinel or its state is unprovable")
+    return result
+
+
 def build_fixture(root, binaries):
     context = root / "context"
     context.mkdir()
@@ -138,20 +182,16 @@ def build_fixture(root, binaries):
             sentinel = root / "host-sentinel"
             sentinel.write_bytes(b"unchanged")
             make_archive(context / "escape.tar", [
-                ("../../../../../../../../../../" + str(sentinel).lstrip("/"), b"escaped", tarfile.REGTYPE, ""),
+                ("../" * 64 + str(sentinel).lstrip("/"), b"escaped", tarfile.REGTYPE, ""),
             ])
             (context / "Dockerfile").write_text('FROM scratch\nADD escape.tar /data/\n')
-            result = subprocess.run(list(map(str, [*common, "--output", "type=local,dest=" + str(root / "escape-export")])),
-                                    capture_output=True, text=True, timeout=120)
-            (root / "escape-build.log").write_text(result.stdout + result.stderr)
-            require(sentinel.read_bytes() == b"unchanged", "ADD escaped onto the worker")
+            result = escape_build([*common, "--output", "type=local,dest=" + str(root / "escape-export")],
+                                  root, sentinel)
             require(daemon.poll() is None, "Traversal probe crashed the daemon")
             run([binaries / "buildctl", "--addr", endpoint, "debug", "workers"],
                 log=root / "post-traversal-workers.log", timeout=15)
             if result.returncode:
                 require_confinement_failure(result.stderr + result.stdout)
-            # Rejection or confinement is acceptable; record which actually happened.
-            write_json(root / "escape-result.json", {"exit_code": result.returncode, "outside_write": False})
         finally:
             daemon.terminate()
             try:

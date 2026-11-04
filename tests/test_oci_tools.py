@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import subprocess
 import sys
 import tarfile
 import tempfile
@@ -38,6 +39,45 @@ class QualificationTests(unittest.TestCase):
                           "COPY /invalid/path: input/output error"):
             with self.subTest(unrelated=unrelated), self.assertRaisesRegex(ValueError, "unproven"):
                 runtime.require_confinement_failure(unrelated)
+
+    def test_timeout_retains_observation_and_original_failure(self):
+        sentinel = self.root / "sentinel"
+        sentinel.write_bytes(b"unchanged")
+        timeout = subprocess.TimeoutExpired(["buildctl"], 120, output=b"partial", stderr=b" timeout")
+        with patch.object(runtime.subprocess, "run", side_effect=timeout), \
+                self.assertRaises(subprocess.TimeoutExpired) as caught:
+            runtime.escape_build(["buildctl"], self.root, sentinel)
+        self.assertIs(caught.exception, timeout)
+        report = json.loads((self.root / "escape-result.json").read_text())
+        self.assertTrue(report["timed_out"])
+        self.assertIs(report["outside_write"], False)
+        self.assertEqual((self.root / "escape-build.log").read_text(), "partial timeout")
+        with patch.object(runtime.subprocess, "run", side_effect=timeout), \
+                patch.object(runtime, "write_json", side_effect=PermissionError("fixture")), \
+                self.assertRaises(subprocess.TimeoutExpired) as caught:
+            runtime.escape_build(["buildctl"], self.root, sentinel)
+        self.assertIs(caught.exception, timeout)
+
+    def test_sentinel_observation_is_bounded_and_does_not_follow_replaced_links(self):
+        sentinel = self.root / "sentinel"
+        sentinel.write_bytes(b"unchanged")
+        self.assertIs(runtime.observe_sentinel(sentinel)["outside_write"], False)
+        with sentinel.open("r+b") as stream:
+            stream.truncate(1024 * 1024)
+        self.assertIs(runtime.observe_sentinel(sentinel)["outside_write"], True)
+        target = self.root / "other"
+        sentinel.rename(target)
+        sentinel.symlink_to(target)
+        self.assertIsNone(runtime.observe_sentinel(sentinel)["outside_write"])
+
+    def test_changed_sentinel_is_recorded_before_failure(self):
+        sentinel = self.root / "sentinel"
+        sentinel.write_bytes(b"escaped")
+        process = subprocess.CompletedProcess(["buildctl"], 0, stdout="done", stderr="")
+        with patch.object(runtime.subprocess, "run", return_value=process), \
+                self.assertRaisesRegex(ValueError, "sentinel"):
+            runtime.escape_build(["buildctl"], self.root, sentinel)
+        self.assertIs(json.loads((self.root / "escape-result.json").read_text())["outside_write"], True)
 
     def test_execution_refuses_mac_or_self_hosted_workers(self):
         self.assertEqual(build.hosted_arch(self.hosted), "amd64")
@@ -192,6 +232,12 @@ class QualificationTests(unittest.TestCase):
             build.write_json(target / "runc/inputs.json", {"go_version": manifest["go_version"], "source": spec})
             with patch.object(build, "INPUTS", target), self.assertRaisesRegex(ValueError, "Lock inventory"):
                 build.validate_locks(manifest)
+
+    def test_govulncheck_fixtures_match_pinned_upstream_hashes(self):
+        directory = ROOT / "tests/oci_fixtures/govulncheck"
+        for item in json.loads((directory / "sources.json").read_text()):
+            with self.subTest(file=item["file"]):
+                self.assertEqual(build.digest(directory / item["file"]), item["sha256"])
 
     def golden(self, filename, index=0):
         """Extract one unmodified JSON scenario from the pinned upstream .ct file."""
