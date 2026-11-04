@@ -1,0 +1,67 @@
+{
+  "schema": 1,
+  "go_version": "go1.27.3",
+  "locks_reviewed": false,
+  "components": {
+    "buildkit": {
+      "repository": "moby/buildkit",
+      "release_tag": "v0.34.1",
+      "commit": "f5b59a1f2fb25a0cb7072c398cab9aed7835da4e",
+      "archive_sha256": "6608d2ee63bedf99e1e3fecbfa19868c36f34a402c410a9605529986632816c3",
+      "root": "buildkit-f5b59a1f2fb25a0cb7072c398cab9aed7835da4e",
+      "allowed_symlinks": {
+        "examples/kube-consistent-hash": "kubernetes/consistenthash"
+      },
+      "compressed_bytes": 12143295,
+      "downstream_version": "v0.34.1+victron.security.1",
+      "original_locks": {
+        "go.mod": "9114ace60db407b7b70eccc340cda6cc5ff3313400afbdd8e1f14849bc244fb3",
+        "go.sum": "35904aa6f9ae03717b2ee03ed55e6f026de822f556e37491801d13cf13fb9e46"
+      },
+      "locked_files": {
+        "go.mod": "14ef933c1739c3ece969375618eba52c756a2d4e2a198c3b00d0ff9d40c06b6b",
+        "go.sum": "4b1b9f3437b09bc5f2fd5efbc10d29a5ffb2f97272b737ed015267c0eb922d21",
+        "modules.json": "37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570"
+      },
+      "vendor_sha256": null
+    },
+    "runc": {
+      "repository": "opencontainers/runc",
+      "release_tag": "v1.5.2",
+      "commit": "29dd3dc2b13b4123162e5fe132504bb4b15569f1",
+      "archive_sha256": "5386e1968f70cc1482b4b2a93dc1a88ea7fa5517fba49b9e0fafe614d5a4c97a",
+      "root": "runc-29dd3dc2b13b4123162e5fe132504bb4b15569f1",
+      "allowed_symlinks": {
+        "libcontainer/nsenter/test/escape.c": "../escape.c"
+      },
+      "compressed_bytes": 2666129,
+      "downstream_version": "v1.5.2+victron.security.1",
+      "original_locks": {
+        "go.mod": "8a0003c2cffd24dbd449e6a891ae03d62f56f43151c5844f327268261eb6e8e7",
+        "go.sum": "b75a468d05b1bfedde110814da1d6f91a84f97d512a86fa27cd5ee3f49e473e6"
+      },
+      "locked_files": {
+        "go.mod": "e58a4888d2fe0a7ae0abdd1ab2936c2680b408d139a33b72a820dc7cc7eb5df1",
+        "go.sum": "4017e6af75417079a70fc9994eb513677a051550011a4e022561f74d697ab476",
+        "modules.json": "37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570"
+      },
+      "vendor_sha256": null
+    }
+  },
+  "native_locks": {
+    "amd64": "2b7196f9ec89cabbfcd233d0c0c19435fa87f55dfeb0fa746b02d905007fa860",
+    "arm64": "79fbd705afcc43a44f097925c95b55ff166f36570edecceb2dee48f91faa789d"
+  },
+  "trivy": {
+    "amd64": {
+      "version": "0.74.0",
+      "url": "https://github.com/aquasecurity/trivy/releases/download/v0.74.0/trivy_0.74.0_Linux-64bit.tar.gz",
+      "sha256": "2ae6fe3ee734b7fdf11335663e18c75ea12dccc76062f09f164a3b0f8be4371a"
+    },
+    "arm64": {
+      "version": "0.74.0",
+      "url": "https://github.com/aquasecurity/trivy/releases/download/v0.74.0/trivy_0.74.0_Linux-ARM64.tar.gz",
+      "sha256": "b94ce1976bbf3c15b514b605ee88be7c6d94a29be2302847ff01cb794d47aad5"
+    }
+  }
+}

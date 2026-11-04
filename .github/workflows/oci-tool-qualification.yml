@@ -1,0 +1,189 @@
+name: OCI tool source qualification
+
+on:
+  pull_request:
+    paths:
+      - .github/oci-tools/**
+      - .github/workflows/oci-tool-qualification.yml
+      - scripts/build_oci_tools.py
+      - scripts/qualify_oci_tools.py
+      - scripts/build_runner_go_tools.py
+      - tests/test_oci_tools.py
+      - tests/oci/**
+  workflow_dispatch:
+    inputs:
+      qualify_runtime:
+        description: Execute privileged candidates on disposable hosted workers after recipe review
+        type: boolean
+        default: false
+      reviewed_commit:
+        description: Full reviewed commit SHA (required only for privileged runtime tests)
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  group: oci-qualification-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  inputs:
+    name: Lock review state
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      reviewed: ${{ steps.state.outputs.reviewed }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - id: state
+        run: |
+          python3 scripts/build_oci_tools.py validate
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          reviewed = json.loads(Path('.github/oci-tools/sources.json').read_text())['locks_reviewed']
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write(f'reviewed={str(reviewed).lower()}\n')
+          PY
+  prepare:
+    name: Prepare source-bound locks for review
+    needs: inputs
+    if: needs.inputs.outputs.reviewed == 'false'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version: '1.27.3'
+          cache: false
+      - name: Resolve and verify without compiling or running candidate code
+        run: python3 scripts/build_oci_tools.py prepare
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: oci-prepared-locks
+          path: ${{ runner.temp }}/oci-tool-qualification/prepared-inputs/
+          if-no-files-found: error
+          retention-days: 7
+  source:
+    name: Native source and security (${{ matrix.arch }})
+    needs: inputs
+    if: needs.inputs.outputs.reviewed == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    # Deliberately no repository-variable or self-hosted fallback.
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    steps:
+      - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version: '1.27.3'
+          cache: false
+      - name: Validate locks and adversarial recipe contracts
+        run: |
+          python3 scripts/build_oci_tools.py validate
+          python3 -m unittest discover -s tests -p test_oci_tools.py -v
+      - name: Install the hash-pinned native compiler and library closure
+        run: python3 scripts/build_oci_tools.py native
+      - name: Compile without root and execute targeted upstream unit tests
+        run: python3 scripts/build_oci_tools.py build
+      - name: Install the locked source and binary vulnerability analyzer
+        env:
+          GOTOOLCHAIN: local
+          GOWORK: 'off'
+          GOMAXPROCS: '2'
+        run: go -C actions/setup-go/tools/govulncheck install -mod=readonly golang.org/x/vuln/cmd/govulncheck
+      - name: Analyze exact binaries, package graphs and native inputs
+        run: python3 scripts/build_oci_tools.py scan
+      - name: Bundle an internal qualification candidate (not a release)
+        run: python3 scripts/build_oci_tools.py bundle
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: oci-candidate-${{ matrix.arch }}
+          path: ${{ runner.temp }}/oci-tool-qualification/candidate.tar.gz
+          if-no-files-found: error
+          retention-days: 7
+      - name: Preserve failures as well as successful evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: oci-source-evidence-${{ matrix.arch }}
+          path: |
+            ${{ runner.temp }}/oci-tool-qualification/output/evidence/
+            ${{ runner.temp }}/oci-tool-qualification/native-install.log
+          if-no-files-found: warn
+          retention-days: 14
+
+  runtime:
+    name: Reviewed disposable OCI runtime (${{ matrix.arch }})
+    needs: source
+    if: github.event_name == 'workflow_dispatch' && inputs.qualify_runtime && inputs.reviewed_commit == github.sha
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    env:
+      QUALIFY_RUNTIME: 'true'
+      REVIEWED_COMMIT: ${{ inputs.reviewed_commit }}
+    steps:
+      - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: oci-candidate-${{ matrix.arch }}
+          path: ${{ runner.temp }}/oci-tool-qualification
+      - name: Unpack only this run's scanned candidate
+        run: |
+          python3 - <<'PY'
+          import os, tarfile
+          from pathlib import Path
+          stage = Path(os.environ['RUNNER_TEMP']) / 'oci-tool-qualification'
+          with tarfile.open(stage / 'candidate.tar.gz') as archive:
+              archive.extractall(stage, filter='data')
+          PY
+      - name: Verify provenance, then exercise actual cgroup/seccomp and ADD paths
+        run: |
+          sudo --preserve-env=RUNNER_TEMP,RUNNER_OS,RUNNER_ARCH,RUNNER_ENVIRONMENT,GITHUB_ACTIONS,GITHUB_EVENT_NAME,QUALIFY_RUNTIME,REVIEWED_COMMIT \
+            python3 scripts/qualify_oci_tools.py
+      - name: Preserve exact runtime outcomes
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: oci-runtime-evidence-${{ matrix.arch }}
+          path: |
+            ${{ runner.temp }}/oci-tool-qualification/output/evidence/runtime.json
+            ${{ runner.temp }}/oci-tool-qualification/output/evidence/runtime-logs/
+          if-no-files-found: warn
+          retention-days: 14
