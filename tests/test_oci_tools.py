@@ -337,6 +337,41 @@ class QualificationTests(unittest.TestCase):
                 self.assertRegex(package["sha256"], r"^[a-f0-9]{64}$")
                 self.assertGreater(package["size"], 0)
 
+    def test_native_zlib_headers_match_the_locked_runtime(self):
+        for arch in ("amd64", "arm64"):
+            data = json.loads((build.INPUTS / f"native-{arch}.json").read_text())
+            packages = {package["name"]: package for package in data["packages"]}
+            self.assertIn("zlib1g-dev", data["roots"])
+            self.assertEqual(packages["zlib1g-dev"]["version"], packages["zlib1g"]["version"])
+            self.assertEqual(packages["zlib1g-dev"]["architecture"], arch)
+
+    def test_native_install_keeps_no_remove_with_both_zlib_packages(self):
+        original_read = Path.read_text
+
+        def read_text(path, *args, **kwargs):
+            if str(path) == "/etc/os-release":
+                return 'ID=ubuntu\nVERSION_ID="24.04"\n'
+            return original_read(path, *args, **kwargs)
+
+        for arch in ("amd64", "arm64"):
+            stage = self.root / arch
+            stage.mkdir()
+            with patch.object(Path, "read_text", autospec=True, side_effect=read_text), \
+                    patch.object(build, "download"), \
+                    patch.object(headers, "verify_archive", return_value={}), \
+                    patch.object(build, "run", side_effect=RuntimeError("stop before apt")) as run:
+                with self.assertRaisesRegex(RuntimeError, "stop before apt"):
+                    build.install_native(stage, arch, json.loads(build.MANIFEST.read_text()))
+            run.assert_called_once()
+            arguments = [str(value) for value in run.call_args.args[0]]
+            self.assertIn("--no-remove", arguments)
+            self.assertIn("--no-download", arguments)
+            data = json.loads((build.INPUTS / f"native-{arch}.json").read_text())
+            for package in data["packages"]:
+                if package["name"] in {"zlib1g", "zlib1g-dev"}:
+                    filename = f"{package['name']}_{package['version'].replace(':', '%3a')}_{arch}.deb"
+                    self.assertIn(str(stage / "debs" / filename), arguments)
+
     def test_omitted_or_extra_lock_key_cannot_bypass_verification(self):
         target = self.root / "inputs"
         shutil.copytree(build.INPUTS, target)

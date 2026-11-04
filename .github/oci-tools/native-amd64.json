@@ -10,7 +10,8 @@
     "libseccomp-dev",
     "linux-libc-dev",
     "binutils",
-    "pkgconf"
+    "pkgconf",
+    "zlib1g-dev"
   ],
   "packages": [
     {
@@ -425,6 +426,15 @@
       "filename": "pool/main/z/zlib/zlib1g_1.3.dfsg-3.1ubuntu2.3_amd64.deb",
       "sha256": "376249c8de139568221dbb242318cc8cb8f02299e3a62b7432948e1754fbddf9",
       "size": 63158,
+      "source": "zlib"
+    },
+    {
+      "name": "zlib1g-dev",
+      "version": "1:1.3.dfsg-3.1ubuntu2.3",
+      "architecture": "amd64",
+      "filename": "pool/main/z/zlib/zlib1g-dev_1.3.dfsg-3.1ubuntu2.3_amd64.deb",
+      "sha256": "419902a649e1078f24596cdf31ced9c839519828790f59888056fcdcd58e8a28",
+      "size": 894134,
       "source": "zlib"
     }
   ]
