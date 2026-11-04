@@ -6,9 +6,12 @@ Buildx or an existing BuildKit daemon to bootstrap either tool. It does not chan
 the toolkit release policy, publish a production binary, install a household
 service or include private application sources.
 
-**Status:** implementation under review. Neither compilation nor runtime success
-is implied by this document. Use the exact workflow run and its evidence to assess
-a candidate. A passing source job alone does not qualify its runtime behavior.
+**Status:** implementation under review. At source `86de20e`, both native targets
+compiled, targeted tests passed, and source/binary Go scans were clean. The native
+package gate remained blocked by 385 findings on the exact Linux header package.
+The applicability guard below is pending activation review. No privileged runtime
+qualification has run. Use the exact workflow run and its evidence to assess a
+candidate; source validation alone does not qualify runtime behavior.
 
 ## Inputs and stages
 
@@ -118,6 +121,68 @@ all upstream security tests is made.
 
 ## Running the lane
 
+### Finite Linux header applicability
+
+The [pending policy](../.github/oci-tools/header-disposition.json) binds a finite
+set of 385 observed CVEs to Ubuntu 24.04 `linux-libc-dev` version `6.8.0-147.147`,
+with separate amd64/arm64 archive hashes, sizes, complete member inventories and
+installed-file hashes. It is **inactive while `reviewed` is false**. It is not a
+package-wide suppression or a claim that header files cannot contain vulnerable
+inline code: for example, exported `linux/swab.h` contains inline operations.
+
+The [per-ID evidence](../.github/oci-tools/header-cve-evidence.json) records official
+Linux CNA source URLs, response hashes, affected paths and kernel fix references
+for every observed ID. The determination rests on those specific vulnerable
+implementations being absent from this userspace component. It relies on the
+published affected-component metadata and reviewed patches; it is not a new audit
+of all kernel code. The older [Canonical explanation](https://lists.ubuntu.com/archives/kernel-team/2024-February/148886.html)
+provides context, not the verdict for newer CVEs.
+
+One case, `CVE-2026-80668`, does touch an exported UAPI path. Its
+[upstream patch](https://github.com/torvalds/linux/commit/b8b09dc2bf35a00d4e0556b5d6308c7b917ebda2)
+and [stable patch](https://github.com/gregkh/linux/commit/61ca26e1a45965590f7e477c4d6f711162642e1c)
+add `NF_CT_EXPECT_DEAD` inside an existing `__KERNEL__` branch, alongside the actual
+kernel timer/refcount/garbage-collection fix. The exported 4,588-byte header in
+both locked packages has SHA-256
+`f96c03a170825a42f0a417efe70d77f05dd4265d7855eb05ba8024a58cc938f8`;
+it contains neither that branch marker nor that kernel-only flag. Both archive
+and installed-byte checks verify this boundary. They do not infer that C headers
+were unused by runc. The normal verbose build command and Go dependency evidence
+retain the CGO input names/flags; libc, libseccomp and compiler inputs still have
+their own full security checks.
+
+Before installation, the inspector verifies the locked deb hash/size and records
+all ar members, tar types, modes, owners, links, directories and control files.
+These packages contain only `control`/`md5sums` metadata, no maintainer scripts,
+and 990/962 regular data files with 53 directories per architecture. Any link,
+special member, duplicate/non-normal path, executable payload or unexpected
+control file fails. After installation, the complete `dpkg-query -L` membership,
+file UID/GID, permissions, sizes and SHA-256 values must match. Every inventoried
+directory, including the installation root, must also match its expected UID/GID
+and mode. Component-wise no-follow
+opens reject substituted parent directories and final symlinks.
+
+After explicit policy review, each matching finding can receive a separate
+`not_affected` assessment. Raw Trivy JSON, severity counts and CycloneDX inputs
+remain intact. Unknown CVEs, package/version/source/architecture drift, changed
+bytes, missing receipts, and HIGH/CRITICAL findings on other native packages or
+on binaries remain blocking. The exact package inventory must be in the finding's
+own `os-pkgs` result with `Type: ubuntu`; an inventory in a different result cannot
+authorize the disposition. A failed security gate cannot produce a candidate
+bundle. The native dependency scan does not assess or clear the booted host
+kernel; runtime and host-kernel review remain separate.
+
+To reproduce an archive check without installing it, obtain the exact deb URL
+from `native-<arch>.json`, verify its size/SHA-256, and call
+`oci_header_disposition.inspect_deb(path, package)` with that lock entry.
+Compare both returned inventories to `linux-libc-dev-archive-<arch>.json` and
+`linux-libc-dev-files-<arch>.json`. On the disposable hosted worker, the normal
+`native` action additionally performs the installed-file verification and saves
+both receipts. Refreshing a public CNA URL may return revised content: a hash
+change requires explicit review, never an automatic extension of this policy.
+
+### Source and runtime execution
+
 Pull requests touching this lane run source/unit/security qualification only.
 When `locks_reviewed` is false, they instead run only nonprivileged dependency
 preparation on a hosted worker and upload `oci-prepared-locks`. No native packages
@@ -139,6 +204,15 @@ The workflow and Python gate both reject a different commit or event. No schedul
 or pull-request event enables privileged candidate execution. The source and
 security checks rerun before the privileged jobs; an earlier success is not
 substituted for the dispatched commit.
+
+For the initial rollout, a new workflow may need to be merged onto the default
+branch before manual dispatch is available. GitHub's
+[manual execution documentation](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/manually-run-a-workflow)
+requires default-branch presence. A successful source-only bootstrap merge is
+not runtime acceptance: privileged execution stays disabled by default. Review
+the resulting full merged commit, then authorize and dispatch that exact commit;
+the fresh source/security and candidate-hash checks still apply. Do not weaken
+the event, commit or artifact gates to work around workflow registration.
 
 Candidate tarballs expire after seven days; evidence expires after fourteen.
 Download necessary review evidence before expiry. Both successful and failed

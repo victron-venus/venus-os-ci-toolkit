@@ -1,0 +1,482 @@
+{
+  "archive_members": [
+    {
+      "mode": 33188,
+      "name": "debian-binary",
+      "sha256": "d526eb4e878a23ef26ae190031b4efd2d58ed66789ac049ea3dbaf74c9df7402",
+      "size": 4
+    },
+    {
+      "mode": 33188,
+      "name": "control.tar.zst",
+      "sha256": "44ede8ae1ecf68a77beb6e90222423ac21d0d433bfd4990e65ca9a7af98e2503",
+      "size": 23394
+    },
+    {
+      "mode": 33188,
+      "name": "data.tar.zst",
+      "sha256": "9639513e58d816f433f503dbb7a03177b705e5f2bb0c4dd55d5a91c7844e160d",
+      "size": 1545131
+    }
+  ],
+  "control_members": [
+    {
+      "gid": 0,
+      "mode": 493,
+      "path": ".",
+      "size": 0,
+      "type": "directory",
+      "uid": 0
+    },
+    {
+      "gid": 0,
+      "mode": 420,
+      "path": "control",
+      "sha256": "c53b59d379ac9ebf944e2a9b96e7d61634bfb31af8a9b2be3803d8ba63d3c2b1",
+      "size": 632,
+      "type": "file",
+      "uid": 0
+    },
+    {
+      "gid": 0,
+      "mode": 420,
+      "path": "md5sums",
+      "sha256": "729e44a005dfe6e8440b3faa004f61275fb70da40efed737598cef5228e3a671",
+      "size": 63394,
+      "type": "file",
+      "uid": 0
+    }
+  ],
+  "data_directories": [
+    {
+      "gid": 0,
+      "mode": 493,
+      "path": ".",
+      "size": 0,
+      "type": "directory",
+      "uid": 0
+    },
+    {
+      "gid": 0,
+      "mode": 493,
+      "path": "usr",
+      "size": 0,
+      "type": "directory",
+      "uid": 0
+    },
+    {
+      "gid": 0,
+      "mode": 493,
+      "path": "usr/include",
+      "size": 0,
+      "type": "directory",
+      "uid": 0
+    },
+    {
+      "gid": 0,
+      "mode": 493,
+      "path": "usr/include/aarch64-linux-gnu",
+      "size": 0,
+      "type": "directory",
+      "uid": 0
+    },
+    {
+      "gid": 0,
+      "mode": 493,
+      "path": "usr/include/aarch64-linux-gnu/asm",
+      "size": 0,
+      "type": "directory",
+      "uid": 0
+    },
+    {
+      "gid": 0,
+      "mode": 493,
+      "path": "usr/include/asm-generic",
+      "size": 0,
+      "type": "directory",
+      "uid": 0
+    },
+    {
+      "gid": 0,
+      "mode": 493,
+      "path": "usr/include/drm",
+      "size": 0,
+      "type": "directory",
+      "uid": 0
+    },
+    {
+      "gid": 0,
+      "mode": 493,
+      "path": "usr/include/linux",
+      "size": 0,
+      "type": "directory",
+      "uid": 0
+    },
+    {
+      "gid": 0,
+      "mode": 493,
+      "path": "usr/include/linux/android",
+      "size": 0,
+      "type": "directory",
+      "uid": 0
+    },
+    {
+      "gid": 0,
+      "mode": 493,
+      "path": "usr/include/linux/byteorder",
+      "size": 0,
+      "type": "directory",
+      "uid": 0
+    },
+    {
+      "gid": 0,
+      "mode": 493,
+      "path": "usr/include/linux/caif",
+      "size": 0,
+      "type": "directory",
+      "uid": 0
+    },
+    {
+      "gid": 0,
+      "mode": 493,
+      "path": "usr/include/linux/can",
+      "size": 0,
+      "type": "directory",
+      "uid": 0
+    },
+    {
+      "gid": 0,
+      "mode": 493,
+      "path": "usr/include/linux/cifs",
+      "size": 0,
+      "type": "directory",
+      "uid": 0
+    },
+    {
+      "gid": 0,
+      "mode": 493,
+      "path": "usr/include/linux/dvb",
+      "size": 0,
+      "type": "directory",
+      "uid": 0
+    },
+    {
+      "gid": 0,
+      "mode": 493,
+      "path": "usr/include/linux/genwqe",
+      "size": 0,
+      "type": "directory",
+      "uid": 0
+    },
+    {
+      "gid": 0,
+      "mode": 493,
+      "path": "usr/include/linux/hdlc",
+      "size": 0,
+      "type": "directory",
+      "uid": 0
+    },
+    {
+      "gid": 0,
+      "mode": 493,
+      "path": "usr/include/linux/hsi",
+      "size": 0,
+      "type": "directory",
+      "uid": 0
+    },
+    {
+      "gid": 0,
+      "mode": 493,
+      "path": "usr/include/linux/iio",
+      "size": 0,
+      "type": "directory",
+      "uid": 0
+    },
+    {
+      "gid": 0,
+      "mode": 493,
+      "path": "usr/include/linux/isdn",
+      "size": 0,
+      "type": "directory",
+      "uid": 0
+    },
+    {
+      "gid": 0,
+      "mode": 493,
+      "path": "usr/include/linux/misc",
+      "size": 0,
+      "type": "directory",
+      "uid": 0
+    },
+    {
+      "gid": 0,
+      "mode": 493,
+      "path": "usr/include/linux/mmc",
+      "size": 0,
+      "type": "directory",
+      "uid": 0
+    },
+    {
+      "gid": 0,
+      "mode": 493,
+      "path": "usr/include/linux/netfilter",
+      "size": 0,
+      "type": "directory",
+      "uid": 0
+    },
+    {
+      "gid": 0,
+      "mode": 493,
+      "path": "usr/include/linux/netfilter/ipset",
+      "size": 0,
+      "type": "directory",
+      "uid": 0
+    },
+    {
+      "gid": 0,
+      "mode": 493,
+      "path": "usr/include/linux/netfilter_arp",
+      "size": 0,
+      "type": "directory",
+      "uid": 0
+    },
+    {
+      "gid": 0,
+      "mode": 493,
+      "path": "usr/include/linux/netfilter_bridge",
+      "size": 0,
+      "type": "directory",
+      "uid": 0
+    },
+    {
+      "gid": 0,
+      "mode": 493,
+      "path": "usr/include/linux/netfilter_ipv4",
+      "size": 0,
+      "type": "directory",
+      "uid": 0
+    },
+    {
+      "gid": 0,
+      "mode": 493,
+      "path": "usr/include/linux/netfilter_ipv6",
+      "size": 0,
+      "type": "directory",
+      "uid": 0
+    },
+    {
+      "gid": 0,
+      "mode": 493,
+      "path": "usr/include/linux/nfsd",
+      "size": 0,
+      "type": "directory",
+      "uid": 0
+    },
+    {
+      "gid": 0,
+      "mode": 493,
+      "path": "usr/include/linux/raid",
+      "size": 0,
+      "type": "directory",
+      "uid": 0
+    },
+    {
+      "gid": 0,
+      "mode": 493,
+      "path": "usr/include/linux/sched",
+      "size": 0,
+      "type": "directory",
+      "uid": 0
+    },
+    {
+      "gid": 0,
+      "mode": 493,
+      "path": "usr/include/linux/spi",
+      "size": 0,
+      "type": "directory",
+      "uid": 0
+    },
+    {
+      "gid": 0,
+      "mode": 493,
+      "path": "usr/include/linux/sunrpc",
+      "size": 0,
+      "type": "directory",
+      "uid": 0
+    },
+    {
+      "gid": 0,
+      "mode": 493,
+      "path": "usr/include/linux/surface_aggregator",
+      "size": 0,
+      "type": "directory",
+      "uid": 0
+    },
+    {
+      "gid": 0,
+      "mode": 493,
+      "path": "usr/include/linux/tc_act",
+      "size": 0,
+      "type": "directory",
+      "uid": 0
+    },
+    {
+      "gid": 0,
+      "mode": 493,
+      "path": "usr/include/linux/tc_ematch",
+      "size": 0,
+      "type": "directory",
+      "uid": 0
+    },
+    {
+      "gid": 0,
+      "mode": 493,
+      "path": "usr/include/linux/usb",
+      "size": 0,
+      "type": "directory",
+      "uid": 0
+    },
+    {
+      "gid": 0,
+      "mode": 493,
+      "path": "usr/include/misc",
+      "size": 0,
+      "type": "directory",
+      "uid": 0
+    },
+    {
+      "gid": 0,
+      "mode": 493,
+      "path": "usr/include/misc/uacce",
+      "size": 0,
+      "type": "directory",
+      "uid": 0
+    },
+    {
+      "gid": 0,
+      "mode": 493,
+      "path": "usr/include/mtd",
+      "size": 0,
+      "type": "directory",
+      "uid": 0
+    },
+    {
+      "gid": 0,
+      "mode": 493,
+      "path": "usr/include/rdma",
+      "size": 0,
+      "type": "directory",
+      "uid": 0
+    },
+    {
+      "gid": 0,
+      "mode": 493,
+      "path": "usr/include/rdma/hfi",
+      "size": 0,
+      "type": "directory",
+      "uid": 0
+    },
+    {
+      "gid": 0,
+      "mode": 493,
+      "path": "usr/include/regulator",
+      "size": 0,
+      "type": "directory",
+      "uid": 0
+    },
+    {
+      "gid": 0,
+      "mode": 493,
+      "path": "usr/include/scsi",
+      "size": 0,
+      "type": "directory",
+      "uid": 0
+    },
+    {
+      "gid": 0,
+      "mode": 493,
+      "path": "usr/include/scsi/fc",
+      "size": 0,
+      "type": "directory",
+      "uid": 0
+    },
+    {
+      "gid": 0,
+      "mode": 493,
+      "path": "usr/include/sound",
+      "size": 0,
+      "type": "directory",
+      "uid": 0
+    },
+    {
+      "gid": 0,
+      "mode": 493,
+      "path": "usr/include/sound/intel",
+      "size": 0,
+      "type": "directory",
+      "uid": 0
+    },
+    {
+      "gid": 0,
+      "mode": 493,
+      "path": "usr/include/sound/intel/avs",
+      "size": 0,
+      "type": "directory",
+      "uid": 0
+    },
+    {
+      "gid": 0,
+      "mode": 493,
+      "path": "usr/include/sound/sof",
+      "size": 0,
+      "type": "directory",
+      "uid": 0
+    },
+    {
+      "gid": 0,
+      "mode": 493,
+      "path": "usr/include/video",
+      "size": 0,
+      "type": "directory",
+      "uid": 0
+    },
+    {
+      "gid": 0,
+      "mode": 493,
+      "path": "usr/include/xen",
+      "size": 0,
+      "type": "directory",
+      "uid": 0
+    },
+    {
+      "gid": 0,
+      "mode": 493,
+      "path": "usr/share",
+      "size": 0,
+      "type": "directory",
+      "uid": 0
+    },
+    {
+      "gid": 0,
+      "mode": 493,
+      "path": "usr/share/doc",
+      "size": 0,
+      "type": "directory",
+      "uid": 0
+    },
+    {
+      "gid": 0,
+      "mode": 493,
+      "path": "usr/share/doc/linux-libc-dev",
+      "size": 0,
+      "type": "directory",
+      "uid": 0
+    }
+  ],
+  "links": [],
+  "maintainer_scripts": [],
+  "payload_bytes": 6634068,
+  "payload_count": 962,
+  "schema": 1,
+  "special_members": []
+}

@@ -19,6 +19,7 @@ import urllib.request
 
 from build_runner_go_tools import digest, json_stream, require, unpack
 from oci_vulnerability import evaluate as evaluate_govulncheck
+import oci_header_disposition as header_review
 
 ROOT = Path(__file__).resolve().parents[1]
 INPUTS = ROOT / ".github/oci-tools"
@@ -92,7 +93,7 @@ def environment(component, arch):
                CC="gcc-13", CXX="g++-13")
     for key in ("GOPRIVATE", "GONOSUMDB", "GONOPROXY", "GOINSECURE", "CGO_CFLAGS",
                 "CGO_CPPFLAGS", "CGO_LDFLAGS", "CGO_CXXFLAGS", "PKG_CONFIG_PATH",
-                "PKG_CONFIG_LIBDIR", "GOEXPERIMENT"):
+                "PKG_CONFIG_LIBDIR", "GOEXPERIMENT", "CPATH", "C_INCLUDE_PATH", "CPLUS_INCLUDE_PATH"):
         env.pop(key, None)
     return env
 
@@ -129,6 +130,8 @@ def validate_locks(manifest):
     for arch in ("amd64", "arm64"):
         require(digest(INPUTS / f"native-{arch}.json") == manifest["native_locks"][arch],
                 "Native input lock changed")
+        header_review.load_policy(INPUTS, manifest["header_disposition_sha256"], arch,
+                                  json.loads((INPUTS / f"native-{arch}.json").read_text())["packages"])
     for name, spec in manifest["components"].items():
         require(spec["repository"] == {"buildkit": "moby/buildkit", "runc": "opencontainers/runc"}[name],
                 "Unexpected upstream")
@@ -186,9 +189,11 @@ def prepare_locks(stage, arch, manifest):
     write_json(target / "sources.json", result)
 
 
-def install_native(stage, arch):
+def install_native(stage, arch, manifest):
     """Install an explicit closure of hash-pinned Ubuntu packages; no apt fetch."""
     spec = json.loads((INPUTS / f"native-{arch}.json").read_text())
+    _, binding, files = header_review.load_policy(INPUTS, manifest["header_disposition_sha256"],
+                                                  arch, spec["packages"])
     require(spec["architecture"] == arch, "Wrong native package architecture")
     os_release = Path("/etc/os-release").read_text()
     require('ID=ubuntu' in os_release and 'VERSION_ID="24.04"' in os_release,
@@ -205,6 +210,8 @@ def install_native(stage, arch):
         version = item["version"].replace(":", "%3a")
         target = debs / f"{item['name']}_{version}_{item['architecture']}.deb"
         download(spec["base_url"] + item["filename"], target, item["sha256"], item["size"])
+        if item["name"] == "linux-libc-dev":
+            header_archive = header_review.verify_archive(target, binding, files, INPUTS)
         packages.append(target)
     run(["sudo", "env", "DEBIAN_FRONTEND=noninteractive", "NEEDRESTART_MODE=l",
          "apt-get", "-o", f"Dir::Cache::archives={debs}",
@@ -242,6 +249,13 @@ def install_native(stage, arch):
                  Path(shutil.which("ld")).resolve()):
         cc_files[str(path)] = digest(path)
     write_json(evidence / "native-files.json", cc_files)
+    owned = run(["dpkg-query", "-L", "linux-libc-dev"]).splitlines()
+    verified = header_review.verify_installed(Path("/"), files, owned, header_archive["data_directories"])
+    write_json(evidence / "header-archive-verification.json", header_archive)
+    write_json(evidence / "installed-header-verification.json", {
+        **verified, "package": binding, "policy_sha256": manifest["header_disposition_sha256"],
+        "archive_verified": True, "parser_sha256": digest(Path(header_review.__file__)),
+    })
     for item in spec["packages"]:
         notice = Path("/usr/share/doc") / item["name"] / "copyright"
         require(notice.is_file(), "Missing native package copyright: " + item["name"])
@@ -264,7 +278,9 @@ def package_graph(source, env, tags, packages, log, tests=False):
     graph = []
     for package in json_stream(text):
         require(not package.get("Error") and not package.get("DepsErrors"), "Incomplete package graph")
-        entry = {k: package[k] for k in ("ImportPath", "Standard", "Imports") if k in package}
+        entry = {k: package[k] for k in ("ImportPath", "Standard", "Imports", "CgoFiles", "CFiles",
+                 "CXXFiles", "HFiles", "SFiles", "CgoCFLAGS", "CgoCPPFLAGS", "CgoCXXFLAGS",
+                 "CgoLDFLAGS") if k in package}
         if package.get("Module"):
             entry["Module"] = {k: package["Module"][k] for k in ("Path", "Version") if k in package["Module"]}
         graph.append(entry)
@@ -308,7 +324,7 @@ def commands(name, spec, output):
     if name == "runc":
         flags = ("-linkmode external -extldflags -static "
                  f"-X main.gitCommit={spec['commit']} -X main.extraVersion=victron.security.1")
-        return {"runc": common + ["-tags", TAGS[name], "-ldflags", flags,
+        return {"runc": common + ["-x", "-tags", TAGS[name], "-ldflags", flags,
                                   "-o", str(output / "runc"), "."]}
     prefix = "github.com/moby/buildkit/version."
     flags = (f"-X {prefix}Version={spec['downstream_version']} "
@@ -393,7 +409,7 @@ def install_scanner(stage, arch, manifest):
     return target
 
 
-def trivy_failures(data, label):
+def trivy_failures(data, label, expected_packages=None):
     results = data.get("Results", [])
     if label == "binaries":
         covered = {Path(r["Target"]).name for r in results
@@ -401,9 +417,21 @@ def trivy_failures(data, label):
         require(covered == {"buildctl", "buildkitd", "runc", "oci-probe"},
                 "Trivy did not inventory every exact candidate binary")
     else:
-        require(data.get("Metadata", {}).get("OS", {}).get("Family") == "ubuntu"
+        require(data.get("Metadata", {}).get("OS") == {"Family": "ubuntu", "Name": "24.04"}
                 and any(r.get("Class") == "os-pkgs" and r.get("Packages") for r in results),
                 "Trivy did not inventory native Ubuntu inputs")
+        require(expected_packages, "Native scan requires the locked package inventory")
+        packages = [p for r in results if r.get("Class") == "os-pkgs" for p in r.get("Packages", [])]
+        observed = []
+        for package in packages:
+            version = ((str(package["Epoch"]) + ":" if package.get("Epoch") else "")
+                       + package["Version"]
+                       + ("-" + package["Release"] if package.get("Release") else ""))
+            require(package.get("ID") == package["Name"] + "@" + version,
+                    "Inconsistent native package identity")
+            observed.append((package["Name"], version, package.get("Arch")))
+        expected = [(p["name"], p["version"], p["architecture"]) for p in expected_packages]
+        require(sorted(observed) == sorted(expected), "Native scan inventory differs from locked packages")
     return [f"{label}: {v['VulnerabilityID']} {v.get('PkgName')} {v.get('Severity')}"
             for result in results for v in result.get("Vulnerabilities", [])
             if v.get("Severity") in ("HIGH", "CRITICAL")]
@@ -414,6 +442,7 @@ def scan(stage, arch, manifest):
     evidence = stage / "output/evidence/security"
     evidence.mkdir(parents=True, exist_ok=False)
     failures = []
+    not_affected = []
     for name in manifest["components"]:
         source = stage / "source" / name
         env = environment(name, arch)
@@ -443,7 +472,22 @@ def scan(stage, arch, manifest):
              "--format", "json", "--output", report, target], log=evidence / (label + "-trivy.log"))
         data = json.loads(report.read_text())
         try:
-            failures += trivy_failures(data, label)
+            expected = (json.loads((INPUTS / f"native-{arch}.json").read_text())["packages"]
+                        if label == "native" else None)
+            raw_failures = trivy_failures(data, label, expected)
+            if label == "native":
+                policy, binding, _ = header_review.load_policy(
+                    INPUTS, manifest["header_disposition_sha256"], arch, expected)
+                receipt = json.loads((stage / "output/evidence/installed-header-verification.json").read_text())
+                not_affected = header_review.classify(data, policy, binding, receipt,
+                                                      manifest["header_disposition_sha256"])
+                write_json(evidence / "header-applicability.json", {
+                    "reviewed": policy["reviewed"], "raw_blocking_count": len(raw_failures),
+                    "not_affected": not_affected, "policy_sha256": manifest["header_disposition_sha256"],
+                })
+                raw_failures = trivy_failures(header_review.remaining_findings(data, not_affected),
+                                             label, expected)
+            failures += raw_failures
         except ValueError as error:
             # Keep scanner identities and an explicit failed gate even when the
             # scanner output lacks a usable inventory.
@@ -459,7 +503,7 @@ def scan(stage, arch, manifest):
         "go": run(["go", "version"]).strip(),
     })
     write_json(evidence / "gate.json", {"passed": not failures, "failures": failures,
-                                       "suppressed_findings": []})
+                                       "suppressed_findings": [], "reviewed_not_affected": not_affected})
     require(not failures, "Security gate failed; full reports retained, no automatic exemptions")
 
 
@@ -480,7 +524,7 @@ def main():
         return
     require(manifest["locks_reviewed"], "Lock preparation/review must finish before qualification")
     if args.action == "native":
-        install_native(stage, arch)
+        install_native(stage, arch, manifest)
     elif args.action == "build":
         require((stage / "output/evidence/native-files.json").is_file(), "Native inputs not qualified")
         for name, spec in manifest["components"].items():
