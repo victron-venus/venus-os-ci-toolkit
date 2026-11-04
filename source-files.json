@@ -78,6 +78,7 @@
   ".github/workflows/gvisor-vfs-candidate.yml",
   ".github/workflows/nightly.yml",
   ".github/workflows/oci-tool-qualification.yml",
+  ".github/workflows/oci-tool-staging.yml",
   ".github/workflows/python-action-tests.yml",
   ".github/workflows/python-ci.yml",
   ".github/workflows/quality-gate.yml",
