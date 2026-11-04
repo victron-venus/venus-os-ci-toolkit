@@ -15,6 +15,7 @@ from unittest.mock import Mock, patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 import qualify_oci_builder as builder  # noqa: E402
 import oci_builder_assembly as assembly  # noqa: E402
+import prepare_oci_builder_tools as tools  # noqa: E402
 
 
 def sha(value):
@@ -165,6 +166,57 @@ class BuilderTests(unittest.TestCase):
         for value in (bad_image, bad_inventory, bad_finding):
             with self.assertRaises(ValueError):
                 builder.check_scan(value, image, {"buildkitd"})
+
+    def test_tool_scan_preserves_executable_bytes_and_rejects_missing_inventory(self):
+        for targets in ((), ("docker-buildx",), ("oci-cgroup-reader",)):
+            with self.subTest(targets=targets), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                stage = root / "oci-builder-inputs"
+                stage.mkdir()
+                helper = stage / "oci-cgroup-reader"
+                helper.write_bytes(b"helper fixture")
+                output = root / "victron-go-tools-buildx/output"
+                binary = output / "cli-plugins/docker-buildx"
+                binary.parent.mkdir(parents=True)
+                binary.write_bytes(b"client fixture")
+                # Neither source mode may accidentally mask the copyfile regression.
+                for path in (helper, binary):
+                    path.chmod(0o755)
+                (stage / "helper.json").write_text(json.dumps({"architecture": "amd64",
+                    "unit_tests_passed": True, "sha256": sha(helper.read_bytes())}))
+                manifest = root / "client-manifest.json"
+                manifest.write_text(json.dumps({"components": {"buildx": {"commit": "fixture"}},
+                                                 "go_version": "go1.26.10"}))
+                provenance = output / "notices/buildx/provenance.json"
+                provenance.parent.mkdir(parents=True)
+                provenance.write_text(json.dumps({"source": {"commit": "fixture"},
+                    "target_architecture": "amd64", "go_version": "go version go1.26.10 linux/amd64",
+                    "binaries": {"cli-plugins/docker-buildx": sha(binary.read_bytes())}}))
+                scanned = []
+                def execute(command, **kwargs):
+                    if str(command[0]) == "govulncheck":
+                        return "{}"
+                    self.assertEqual(command[1], "rootfs")
+                    inputs = Path(command[-1])
+                    for original in (helper, binary):
+                        copied = inputs / original.name
+                        self.assertEqual(copied.stat().st_mode & 0o777, 0o755)
+                        self.assertEqual(copied.read_bytes(), original.read_bytes())
+                    scanned.append(True)
+                    (stage / "tools-trivy.json").write_text(json.dumps({"Results": [
+                        {"Type": "gobinary", "Target": name, "Packages": [{"Name": "stdlib"}]}
+                        for name in targets]}))
+                with patch.dict(tools.os.environ, {"RUNNER_TEMP": str(root)}), \
+                     patch.object(tools.client, "MANIFEST", manifest), \
+                     patch.object(tools, "evaluate", return_value={"passed": True}), \
+                     patch.object(tools.source, "install_scanner", return_value=root / "trivy"), \
+                     patch.object(tools.source, "run", side_effect=execute), \
+                     patch.object(tools.subprocess, "run") as invoke:
+                    with self.assertRaisesRegex(ValueError, "Incomplete builder tool scan"):
+                        tools.scan("amd64", stage)
+                self.assertEqual(scanned, [True])
+                invoke.assert_not_called()
+                self.assertFalse((stage / "acceptance.json").exists())
 
     def test_assembly_requires_real_limits_and_owned_process(self):
         supervisor = Mock()

@@ -49,8 +49,12 @@ def scan(arch, stage):
             "Fresh Buildx proof differs")
     binaries = stage / "scan-binaries"
     binaries.mkdir()
-    shutil.copyfile(buildx, binaries / "docker-buildx")
-    shutil.copyfile(helper_binary, binaries / "oci-cgroup-reader")
+    for original in (buildx, helper_binary):
+        copied = binaries / original.name
+        shutil.copyfile(original, copied)
+        # Trivy's Go analyzer only discovers executable files.
+        copied.chmod(0o755)
+        require(source.digest(copied) == source.digest(original), "Scan input bytes changed")
     assessments = {}
     for name, root, go_version in (("docker-buildx", "github.com/docker/buildx", manifest["go_version"]),
                                    ("oci-cgroup-reader", "github.com/victron-venus/venus-os-ci-toolkit/oci-cgroup-reader",
