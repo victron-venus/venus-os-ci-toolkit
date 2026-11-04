@@ -1123,6 +1123,26 @@ class RunnerArtifactsTests(unittest.TestCase):
         self.assertFalse(record['build_success'])
         self.assertEqual(record['failure_type'], 'TimeoutExpired')
 
+    def test_import_cleanup_failure_propagates_after_receipt_is_saved(self):
+        env, event = self.event()
+        env['RUNNER_TEMP'] = str(self.root)
+        event_path = self.root / 'event.json'
+        event_path.write_text(json.dumps(event))
+        env['GITHUB_EVENT_PATH'] = str(event_path)
+        supervisor = mock.Mock(minimum=12 * build.GIB)
+        supervisor.check.return_value = 12 * build.GIB
+        supervisor.run.return_value = SOURCE
+        with mock.patch.dict(os.environ, env), \
+             mock.patch.object(build, 'Supervisor', return_value=supervisor), \
+             mock.patch.object(build.accepted, 'prepare', side_effect=ValueError('input failed')), \
+             mock.patch.object(build.accepted, 'cleanup', side_effect=RuntimeError('cleanup failed')):
+            with self.assertRaisesRegex(RuntimeError, 'cleanup failed'):
+                build.execute('public')
+        record = json.loads((self.root / 'runner-image-public-123-1/build-receipt.json').read_text())
+        self.assertEqual(record['failure_type'], 'ValueError')
+        self.assertEqual(record['import_cleanup_failure_type'], 'RuntimeError')
+        self.assertFalse(record['build_success'])
+
     def test_owned_cache_is_removed_even_after_container_is_inactive(self):
         for item in (self.builder(), None):
             sup = mock.Mock(env={'DOCKER_CONFIG': str(self.root / 'docker')})

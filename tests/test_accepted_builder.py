@@ -98,14 +98,16 @@ class AcceptedBuilderTests(unittest.TestCase):
         for key, wrong in [('head_sha', '0' * 40), ('run_attempt', 2), ('conclusion', 'failure'),
                            ('event', 'pull_request'), ('id', 7), ('path', '.github/workflows/other.yml'),
                            ('repository', {'full_name': 'fork/repo'}), ('head_branch', 'feature')]:
+            changed = {**self.run_metadata(), key: wrong}
             with self.subTest(key=key), self.assertRaises(ValueError):
-                accepted.validate_run(self.lock, {**self.run_metadata(), key: wrong})
+                accepted.validate_run(self.lock, changed)
         spec = self.spec['artifacts']['image']
         for key, wrong in [('expired', True), ('id', 7), ('digest', 'sha256:' + '0' * 64),
                            ('size_in_bytes', 1), ('expires_at', '2000-01-01T00:00:00Z'),
                            ('workflow_run', {'id': 7, 'head_sha': self.lock['source']})]:
+            changed = {**self.metadata(spec), key: wrong}
             with self.subTest(key=key), self.assertRaises(ValueError):
-                accepted.validate_artifact(self.lock, spec, {**self.metadata(spec), key: wrong})
+                accepted.validate_artifact(self.lock, spec, changed)
 
     def test_actual_archive_verification_and_layout_materialization(self):
         responses = self.fixture()
@@ -174,9 +176,10 @@ class AcceptedBuilderTests(unittest.TestCase):
                                 stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
             children.append(process)
             return process
+        output = io.BytesIO()
         with patch.object(accepted.subprocess, 'Popen', side_effect=child), \
              self.assertRaisesRegex(ValueError, 'byte limit'):
-            accepted.stream_api('actions/artifacts/1/zip', io.BytesIO(), 100, lambda: None)
+            accepted.stream_api('actions/artifacts/1/zip', output, 100, lambda: None)
         self.assertIsNotNone(children[0].poll())
 
     def test_failed_import_is_reconciled_but_foreign_image_is_never_removed(self):

@@ -35,6 +35,7 @@ RESERVE = 2 * GIB
 START_FREE = 10 * GIB
 SENTINEL = b'UNCONFIGURED SITE CA\n'
 OWNER = 'io.victron.runner-artifact-owner'
+RUNC_PATH = 'usr/local/bin/runc'
 LIMITS = {'Memory': 4 * GIB, 'MemorySwap': 4 * GIB,
           'CpuQuota': 200000, 'CpuPeriod': 100000}
 require = oci.require
@@ -1763,7 +1764,7 @@ def run_patch_preflights(sup, data, builder, context, record, check_build):
 
 def runc_packages(data):
     """Require one complete final executable inventory, including its main module."""
-    rows = [r for r in data.get('Results', []) if r.get('Target') == 'usr/local/bin/runc'
+    rows = [r for r in data.get('Results', []) if r.get('Target') == RUNC_PATH
             and r.get('Type') == 'gobinary' and r.get('Class') == 'lang-pkgs']
     if len(rows) != 1 or not rows[0].get('Packages'):
         return None
@@ -1815,7 +1816,7 @@ def scan_file_evidence(layout, selection, proof, check):
                 package['selected_header'] = record('usr/include/linux/netfilter/nf_conntrack_common.h')
                 components[name] = package
             elif name == 'runc':
-                components[name] = record('usr/local/bin/runc')
+                components[name] = record(RUNC_PATH)
             elif name == 'gstreamer':
                 prefix = 'usr/local/share/victron-gstreamer/'
                 spec = SCAN_POLICY['gstreamer']
@@ -2194,7 +2195,7 @@ def scan_acceptance(data, proof, file_evidence, context):
         if policy:
             component, expected_hash, rule = policy
             identity = SCAN_POLICY['identities'][component]
-            target = context['artifact_name'] + ' (ubuntu 24.04)' if component == 'headers' else 'usr/local/bin/runc'
+            target = context['artifact_name'] + ' (ubuntu 24.04)' if component == 'headers' else RUNC_PATH
             matches = row['target'] == target and all(row[k] == v for k, v in identity.items())
             reason = 'finding_identity_changed' if not matches else 'advisory_content_changed'
             if matches and row['advisory_sha256'] == expected_hash:
@@ -2402,9 +2403,11 @@ def execute(stage, parent=None):
             accepted.cleanup(sup, builder_spec, record['accepted_builder'])
         except BaseException as exc:
             record['import_cleanup_failure_type'] = type(exc).__name__
-        record['minimum_free_bytes'] = sup.minimum
-        record['finished_at'] = now()
-        save(output / 'build-receipt.json', record)
+            raise
+        finally:
+            record['minimum_free_bytes'] = sup.minimum
+            record['finished_at'] = now()
+            save(output / 'build-receipt.json', record)
 
 
 def probe_scanner(sup, name, owner, image):
