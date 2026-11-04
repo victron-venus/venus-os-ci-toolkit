@@ -1,0 +1,68 @@
+{
+  "components": {
+    "buildkit": {
+      "allowed_symlinks": {
+        "examples/kube-consistent-hash": "kubernetes/consistenthash"
+      },
+      "archive_sha256": "6608d2ee63bedf99e1e3fecbfa19868c36f34a402c410a9605529986632816c3",
+      "commit": "f5b59a1f2fb25a0cb7072c398cab9aed7835da4e",
+      "compressed_bytes": 12143295,
+      "downstream_version": "v0.34.1+victron.security.1",
+      "locked_files": {
+        "go.mod": "a0321befdc668f5692995e5da51df1caae1417f5bc341da24eccdeb7c720bfc6",
+        "go.sum": "6b4a29c2acbc9124a3cd48a8b769564434a8222fddfb4b8bee1994d24cd35433",
+        "modules.json": "9a37fa833da1b2d381cc545e64969b8529f7b0ae660573f65709d7e08e214e8b"
+      },
+      "original_locks": {
+        "go.mod": "9114ace60db407b7b70eccc340cda6cc5ff3313400afbdd8e1f14849bc244fb3",
+        "go.sum": "35904aa6f9ae03717b2ee03ed55e6f026de822f556e37491801d13cf13fb9e46"
+      },
+      "release_tag": "v0.34.1",
+      "repository": "moby/buildkit",
+      "root": "buildkit-f5b59a1f2fb25a0cb7072c398cab9aed7835da4e",
+      "vendor_sha256": "338bfc23ca2c051c1f3de31d921b4797b1370d3a124be914ad6679a1b223bde9"
+    },
+    "runc": {
+      "allowed_symlinks": {
+        "libcontainer/nsenter/test/escape.c": "../escape.c"
+      },
+      "archive_sha256": "5386e1968f70cc1482b4b2a93dc1a88ea7fa5517fba49b9e0fafe614d5a4c97a",
+      "commit": "29dd3dc2b13b4123162e5fe132504bb4b15569f1",
+      "compressed_bytes": 2666129,
+      "downstream_version": "v1.5.2+victron.security.1",
+      "locked_files": {
+        "go.mod": "e58a4888d2fe0a7ae0abdd1ab2936c2680b408d139a33b72a820dc7cc7eb5df1",
+        "go.sum": "b279aff47638491fc31214571090858efdc0da30964ac0b1481e4b549870e301",
+        "modules.json": "ba623d1b86dfce254c164445cd7c1e5764d4d5edd417648a2ffd917aa48c1a64"
+      },
+      "original_locks": {
+        "go.mod": "8a0003c2cffd24dbd449e6a891ae03d62f56f43151c5844f327268261eb6e8e7",
+        "go.sum": "b75a468d05b1bfedde110814da1d6f91a84f97d512a86fa27cd5ee3f49e473e6"
+      },
+      "release_tag": "v1.5.2",
+      "repository": "opencontainers/runc",
+      "root": "runc-29dd3dc2b13b4123162e5fe132504bb4b15569f1",
+      "vendor_sha256": "1e9f8b38ce08797173c98587e93c7c72fe74b9192d85d4ae49bcc603f885a62c"
+    }
+  },
+  "go_version": "go1.27.3",
+  "header_disposition_sha256": "fb0dd5889ad7f132df4692674c19513df87edafb086a26a810ba38210f9be699",
+  "locks_reviewed": true,
+  "native_locks": {
+    "amd64": "2b7196f9ec89cabbfcd233d0c0c19435fa87f55dfeb0fa746b02d905007fa860",
+    "arm64": "79fbd705afcc43a44f097925c95b55ff166f36570edecceb2dee48f91faa789d"
+  },
+  "schema": 1,
+  "trivy": {
+    "amd64": {
+      "sha256": "2ae6fe3ee734b7fdf11335663e18c75ea12dccc76062f09f164a3b0f8be4371a",
+      "url": "https://github.com/aquasecurity/trivy/releases/download/v0.74.0/trivy_0.74.0_Linux-64bit.tar.gz",
+      "version": "0.74.0"
+    },
+    "arm64": {
+      "sha256": "b94ce1976bbf3c15b514b605ee88be7c6d94a29be2302847ff01cb794d47aad5",
+      "url": "https://github.com/aquasecurity/trivy/releases/download/v0.74.0/trivy_0.74.0_Linux-ARM64.tar.gz",
+      "version": "0.74.0"
+    }
+  }
+}

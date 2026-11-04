@@ -1,0 +1,688 @@
+"""Local adversarial tests; no network, Go compilation, root or daemons."""
+
+import copy
+import io
+import json
+import os
+from pathlib import Path
+import re
+import shutil
+import stat
+import subprocess
+import sys
+import tarfile
+import tempfile
+import unittest
+from unittest.mock import patch
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "scripts"))
+import build_oci_tools as build  # noqa: E402
+import qualify_oci_tools as runtime  # noqa: E402
+import oci_vulnerability as vulnerability  # noqa: E402
+import oci_header_disposition as headers  # noqa: E402
+
+
+class QualificationTests(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        self.hosted = {"GITHUB_ACTIONS": "true", "RUNNER_OS": "Linux",
+                       "RUNNER_ARCH": "X64", "RUNNER_ENVIRONMENT": "github-hosted"}
+
+    def test_negative_add_needs_confinement_diagnostic_not_echoed_fixture_name(self):
+        for diagnostic in ("invalid archive path: ../sentinel",
+                           "entry ../sentinel is outside the destination",
+                           "path traversal detected"):
+            runtime.require_confinement_failure(diagnostic)
+        for unrelated in ("ADD escape.tar /data/: no space left on device",
+                          "traversal fixture failed: daemon exited",
+                          "COPY /invalid/path: input/output error"):
+            with self.subTest(unrelated=unrelated), self.assertRaisesRegex(ValueError, "unproven"):
+                runtime.require_confinement_failure(unrelated)
+
+    def test_timeout_retains_observation_and_original_failure(self):
+        sentinel = self.root / "sentinel"
+        sentinel.write_bytes(b"unchanged")
+        timeout = subprocess.TimeoutExpired(["buildctl"], 120, output=b"partial", stderr=b" timeout")
+        with patch.object(runtime.subprocess, "run", side_effect=timeout), \
+                self.assertRaises(subprocess.TimeoutExpired) as caught:
+            runtime.escape_build(["buildctl"], self.root, sentinel)
+        self.assertIs(caught.exception, timeout)
+        report = json.loads((self.root / "escape-result.json").read_text())
+        self.assertTrue(report["timed_out"])
+        self.assertIs(report["outside_write"], False)
+        self.assertEqual((self.root / "escape-build.log").read_text(), "partial timeout")
+        with patch.object(runtime.subprocess, "run", side_effect=timeout), \
+                patch.object(runtime, "write_json", side_effect=PermissionError("fixture")), \
+                self.assertRaises(subprocess.TimeoutExpired) as caught:
+            runtime.escape_build(["buildctl"], self.root, sentinel)
+        self.assertIs(caught.exception, timeout)
+
+    def test_sentinel_observation_is_bounded_and_does_not_follow_replaced_links(self):
+        sentinel = self.root / "sentinel"
+        sentinel.write_bytes(b"unchanged")
+        self.assertIs(runtime.observe_sentinel(sentinel)["outside_write"], False)
+        with sentinel.open("r+b") as stream:
+            stream.truncate(1024 * 1024)
+        self.assertIs(runtime.observe_sentinel(sentinel)["outside_write"], True)
+        target = self.root / "other"
+        sentinel.rename(target)
+        sentinel.symlink_to(target)
+        self.assertIsNone(runtime.observe_sentinel(sentinel)["outside_write"])
+
+    def test_changed_sentinel_is_recorded_before_failure(self):
+        sentinel = self.root / "sentinel"
+        sentinel.write_bytes(b"escaped")
+        process = subprocess.CompletedProcess(["buildctl"], 0, stdout="done", stderr="")
+        with patch.object(runtime.subprocess, "run", return_value=process), \
+                self.assertRaisesRegex(ValueError, "sentinel"):
+            runtime.escape_build(["buildctl"], self.root, sentinel)
+        self.assertIs(json.loads((self.root / "escape-result.json").read_text())["outside_write"], True)
+
+    def test_execution_refuses_mac_or_self_hosted_workers(self):
+        self.assertEqual(build.hosted_arch(self.hosted), "amd64")
+        for field, value in (("RUNNER_OS", "macOS"), ("RUNNER_ENVIRONMENT", "self-hosted"),
+                             ("RUNNER_ARCH", "ARM"), ("GITHUB_ACTIONS", "false")):
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                build.hosted_arch(dict(self.hosted, **{field: value}))
+
+    def test_privileged_gate_requires_exact_reviewed_checkout_and_manual_event(self):
+        commit = "a" * 40
+        env = dict(self.hosted, GITHUB_EVENT_NAME="workflow_dispatch", QUALIFY_RUNTIME="true",
+                   REVIEWED_COMMIT=commit)
+        runtime.review_gate(env, commit)
+        for mutation in ({"GITHUB_EVENT_NAME": "pull_request"}, {"QUALIFY_RUNTIME": "false"},
+                         {"REVIEWED_COMMIT": "a" * 7}, {"REVIEWED_COMMIT": "b" * 40}):
+            with self.subTest(mutation=mutation), self.assertRaises(ValueError):
+                runtime.review_gate(dict(env, **mutation), commit)
+
+    def test_go_configuration_ignores_ambient_cross_toolchain_or_cgo_flags(self):
+        with patch.dict(os.environ, {"GOPRIVATE": "*", "CGO_LDFLAGS": "-L/unreviewed",
+                                     "GOTOOLCHAIN": "auto", "GOEXPERIMENT": "unreviewed"}):
+            env = build.environment("runc", "arm64")
+        self.assertEqual(env["GOTOOLCHAIN"], "local")
+        self.assertEqual(env["CGO_ENABLED"], "1")
+        self.assertEqual(env["GOARCH"], "arm64")
+        self.assertNotIn("CGO_LDFLAGS", env)
+        self.assertNotIn("GOPRIVATE", env)
+        self.assertNotIn("GOEXPERIMENT", env)
+
+    def test_module_graph_cannot_hide_replacements_or_resolution_errors(self):
+        text = '{"Path":"z","Version":"v1.0.0","Dir":"/private"}\n{"Path":"a","Main":true}'
+        self.assertEqual(build.locked_modules(text), [{"Path": "a", "Main": True},
+                                                    {"Path": "z", "Version": "v1.0.0"}])
+        for text in ('{"Path":"a","Replace":{"Dir":"/tmp/override"}}',
+                     '{"Path":"a","Error":{"Err":"missing"}}'):
+            with self.assertRaises(ValueError):
+                build.locked_modules(text)
+
+    def test_vendor_digest_detects_paths_bytes_and_symlinks(self):
+        (self.root / "one").write_bytes(b"data")
+        initial = build.tree_digest(self.root)
+        (self.root / "one").rename(self.root / "two")
+        self.assertNotEqual(initial, build.tree_digest(self.root))
+        (self.root / "two").write_bytes(b"changed")
+        self.assertNotEqual(initial, build.tree_digest(self.root))
+        (self.root / "link").symlink_to("two")
+        with self.assertRaises(ValueError):
+            build.tree_digest(self.root)
+
+    def test_source_extraction_rejects_traversal_and_symlink_write_through(self):
+        for entries in ([('source/../outside', tarfile.REGTYPE, b'bad')],
+                        [('source/link', tarfile.SYMTYPE, 'inside'),
+                         ('source/link/escaped', tarfile.REGTYPE, b'bad')]):
+            with self.subTest(entries=entries):
+                archive = self.root / "source.tar.gz"
+                with tarfile.open(archive, "w:gz") as tf:
+                    for name, kind, content in entries:
+                        member = tarfile.TarInfo(name)
+                        member.type = kind
+                        if kind == tarfile.SYMTYPE:
+                            member.linkname = content
+                            tf.addfile(member)
+                        else:
+                            member.size = len(content)
+                            tf.addfile(member, io.BytesIO(content))
+                spec = {"root": "source", "allowed_symlinks": {"link": "inside"},
+                        "archive_sha256": build.digest(archive)}
+                with self.assertRaises(ValueError):
+                    build.unpack(archive, self.root / "destination", spec)
+                self.assertFalse((self.root / "outside").exists())
+
+    def scan_fixture(self):
+        return {"Results": [{"Target": "bin/" + name, "Type": "gobinary",
+                              "Packages": [{"Name": "stdlib"}]} for name in
+                             ("buildctl", "buildkitd", "runc", "oci-probe")]}
+
+    def test_empty_or_partial_security_scan_is_not_a_pass(self):
+        self.assertEqual(build.trivy_failures(self.scan_fixture(), "binaries"), [])
+        for bad in ({}, {"Results": []}, {"Results": self.scan_fixture()["Results"][:2]}):
+            with self.assertRaises(ValueError):
+                build.trivy_failures(bad, "binaries")
+        with self.assertRaises(ValueError):
+            build.trivy_failures({}, "native")
+
+    def test_high_findings_are_kept_even_without_a_fixed_version(self):
+        data = self.scan_fixture()
+        data["Results"][0]["Vulnerabilities"] = [
+            {"VulnerabilityID": "GO-example", "PkgName": "example", "Severity": "HIGH"}]
+        self.assertEqual(len(build.trivy_failures(data, "binaries")), 1)
+
+    def test_native_scan_requires_exact_epoch_release_architecture_and_membership(self):
+        package = {"ID": "zlib1g@1:1.3.dfsg-3.1ubuntu2.3", "Name": "zlib1g", "Epoch": 1,
+                   "Version": "1.3.dfsg", "Release": "3.1ubuntu2.3", "Arch": "arm64"}
+        expected = [{"name": "zlib1g", "version": "1:1.3.dfsg-3.1ubuntu2.3", "architecture": "arm64"}]
+        data = {"Metadata": {"OS": {"Family": "ubuntu", "Name": "24.04"}},
+                "Results": [{"Class": "os-pkgs", "Packages": [package]}]}
+        self.assertEqual(build.trivy_failures(data, "native", expected), [])
+        for field, value in (("Epoch", 0), ("Release", "older"), ("Arch", "amd64")):
+            bad = copy.deepcopy(data)
+            bad["Results"][0]["Packages"][0][field] = value
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                build.trivy_failures(bad, "native", expected)
+        with self.assertRaises(ValueError):
+            build.trivy_failures(data, "native", expected + expected)
+
+    def test_modified_binary_or_failed_scan_prevents_runtime(self):
+        output = self.root
+        bins = output / "bin"
+        bins.mkdir()
+        digests = {}
+        for name in ("buildctl", "buildkitd", "runc", "oci-probe"):
+            (bins / name).write_bytes(name.encode())
+            digests[name] = build.digest(bins / name)
+        build.write_json(output / "evidence/security/gate.json", {"passed": True})
+        build.write_json(output / "evidence/buildkit/provenance.json",
+                         {"binaries": {k: v for k, v in digests.items() if k != "runc"}})
+        build.write_json(output / "evidence/runc/provenance.json", {"binaries": {"runc": digests["runc"]}})
+        build.write_json(output / "candidate.json", {"commit": "a" * 40, "architecture": "amd64",
+                         "sources_sha256": build.digest(build.MANIFEST), "binaries": digests})
+        runtime.verify_binaries(output, "a" * 40, "amd64")
+        (bins / "runc").write_bytes(b"tampered")
+        with self.assertRaisesRegex(ValueError, "changed after scan"):
+            runtime.verify_binaries(output, "a" * 40, "amd64")
+        (bins / "runc").write_bytes(b"runc")
+        build.write_json(output / "evidence/security/gate.json", {"passed": False})
+        with self.assertRaisesRegex(ValueError, "security gate"):
+            runtime.verify_binaries(output, "a" * 40, "amd64")
+
+    def test_reviewed_locks_bind_sources_and_full_graph(self):
+        manifest = json.loads(build.MANIFEST.read_text())
+        build.validate_locks(manifest)
+        corrupted = copy.deepcopy(manifest)
+        corrupted["components"]["runc"]["commit"] = "f" * 40
+        with self.assertRaises(ValueError):
+            build.validate_locks(corrupted)
+        for name, spec in manifest["components"].items():
+            modules = json.loads((build.INPUTS / name / "modules.json").read_text())
+            if manifest["locks_reviewed"]:
+                self.assertGreater(len(modules), 15)
+            else:
+                self.assertIsNone(spec["vendor_sha256"])
+            self.assertEqual(spec["locked_files"]["modules.json"],
+                             build.digest(build.INPUTS / name / "modules.json"))
+
+    def test_native_inputs_are_architecture_specific_and_hash_pinned(self):
+        for arch in ("amd64", "arm64"):
+            data = json.loads((build.INPUTS / f"native-{arch}.json").read_text())
+            names = {p["name"] for p in data["packages"]}
+            self.assertTrue(set(data["roots"]) <= names)
+            self.assertIn("libseccomp-dev", names)
+            self.assertIn("libc6-dev", names)
+            for package in data["packages"]:
+                self.assertIn(package["architecture"], (arch, "all"))
+                self.assertRegex(package["sha256"], r"^[a-f0-9]{64}$")
+                self.assertGreater(package["size"], 0)
+
+    def test_omitted_or_extra_lock_key_cannot_bypass_verification(self):
+        target = self.root / "inputs"
+        shutil.copytree(build.INPUTS, target)
+        for key, add in (("go.sum", False), ("unchecked.txt", True)):
+            manifest = json.loads(build.MANIFEST.read_text())
+            spec = manifest["components"]["runc"]
+            if add:
+                spec["locked_files"][key] = "0" * 64
+            else:
+                del spec["locked_files"][key]
+            build.write_json(target / "runc/inputs.json", {"go_version": manifest["go_version"], "source": spec})
+            with patch.object(build, "INPUTS", target), self.assertRaisesRegex(ValueError, "Lock inventory"):
+                build.validate_locks(manifest)
+
+    def test_govulncheck_fixtures_match_pinned_upstream_hashes(self):
+        directory = ROOT / "tests/oci_fixtures/govulncheck"
+        for item in json.loads((directory / "sources.json").read_text()):
+            with self.subTest(file=item["file"]):
+                self.assertEqual(build.digest(directory / item["file"]), item["sha256"])
+
+    def golden(self, filename, index=0):
+        """Extract one unmodified JSON scenario from the pinned upstream .ct file."""
+        content = (ROOT / "tests/oci_fixtures/govulncheck" / filename).read_text()
+        block = re.split(r"(?m)^\$[^\n]*\n", content)[index + 1]
+        block = block[block.index("{"):]
+        records = []
+        decoder = json.JSONDecoder()
+        while block.lstrip().startswith("{"):
+            block = block.lstrip()
+            value, end = decoder.raw_decode(block)
+            records.append(value)
+            block = block[end:]
+        return records
+
+    def test_authentic_clean_binary_stream_passes_but_config_alone_does_not(self):
+        records = self.golden("binary_call_json.ct")
+        report = "\n".join(map(json.dumps, records))
+        self.assertTrue(vulnerability.evaluate(report, "binary", completed=True)["passed"])
+        with self.assertRaisesRegex(ValueError, "SBOM"):
+            vulnerability.evaluate(json.dumps(records[0]), "binary", completed=True)
+        with self.assertRaisesRegex(ValueError, "complete"):
+            vulnerability.evaluate(report, "binary", completed=False)
+
+    def test_authentic_json_findings_fail_even_with_successful_process_exit(self):
+        records = self.golden("binary_call_json.ct", 1)
+        summary = vulnerability.evaluate("\n".join(map(json.dumps, records)), "binary", completed=True)
+        self.assertFalse(summary["passed"])
+        self.assertTrue(any(f["level"] == "symbol_present" and f["status"] == "affected" for f in summary["findings"]))
+        self.assertTrue(any(f["status"] == "review_required" for f in summary["findings"]))
+        self.assertEqual(summary["suppressed_findings"], [])
+
+    def test_authentic_source_trace_is_reachable_but_not_a_binary_trace(self):
+        records = self.golden("source_call_json.ct")
+        findings = vulnerability.classify_findings(records, "source")
+        self.assertTrue(any(f["level"] == "reachable_call" and len(f["trace"]) > 1 for f in findings))
+        with self.assertRaisesRegex(ValueError, "binary trace"):
+            vulnerability.classify_findings(records, "binary")
+
+    def test_malformed_incomplete_and_wrong_target_scans_are_rejected(self):
+        clean = self.golden("binary_call_json.ct")
+        report = "\n".join(map(json.dumps, clean))
+        for bad in ("", report + "{", report + json.dumps(clean[0]),
+                    '{"config":{},"config":{}}'):
+            with self.subTest(bad=bad[:50]), self.assertRaises(ValueError):
+                vulnerability.evaluate(bad, "binary", completed=True)
+        with self.assertRaisesRegex(ValueError, "different root"):
+            vulnerability.evaluate(report, "binary", completed=True, expected_root="wrong")
+        with self.assertRaisesRegex(ValueError, "mode"):
+            vulnerability.evaluate(report, "source", completed=True)
+        vulnerable = self.golden("binary_call_json.ct", 1)
+        next(r["finding"] for r in vulnerable if "finding" in r)["trace"] = []
+        with self.assertRaisesRegex(ValueError, "trace"):
+            vulnerability.evaluate("\n".join(map(json.dumps, vulnerable)), "binary", completed=True)
+
+
+class HeaderApplicabilityTests(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.manifest = json.loads(build.MANIFEST.read_text())
+        self.packages = json.loads((build.INPUTS / "native-amd64.json").read_text())["packages"]
+        self.policy, self.binding, _ = headers.load_policy(
+            build.INPUTS, self.manifest["header_disposition_sha256"], "amd64", self.packages)
+
+    def installed_fixture(self):
+        path = self.root / headers.CONNTRACK_HEADER
+        path.parent.mkdir(parents=True)
+        path.write_bytes(b"#define _NF_CONNTRACK_COMMON_H\n#define SAFE_USERSPACE 1\n")
+        path.chmod(0o644)
+        files = [{"path": headers.CONNTRACK_HEADER, "type": "file", "size": path.stat().st_size,
+                  "mode": 0o644, "uid": path.stat().st_uid, "gid": path.stat().st_gid,
+                  "sha256": headers.sha256(path)}]
+        dirs = [{"path": p.relative_to(self.root).as_posix(), "uid": p.stat().st_uid,
+                 "gid": p.stat().st_gid, "mode": stat.S_IMODE(p.stat().st_mode)}
+                for p in [self.root, *path.parents]
+                if p == self.root or p.is_relative_to(self.root)]
+        dirs = list({d["path"]: d for d in dirs}.values())
+        owned = ["/" + d["path"] for d in dirs] + ["/" + headers.CONNTRACK_HEADER]
+        return path, files, owned, dirs
+
+    def disposition_fixture(self):
+        policy = copy.deepcopy(self.policy)
+        policy["reviewed"] = True
+        package = {"Name": self.binding["name"], "ID": self.binding["name"] + "@" + self.binding["version"],
+                   "Arch": "amd64", "SrcName": "linux", "Version": "6.8.0", "Release": "147.147"}
+        finding = {"VulnerabilityID": policy["cve_ids"][0], "Severity": "HIGH",
+                   "PkgName": package["Name"], "PkgID": package["ID"],
+                   "InstalledVersion": self.binding["version"], "DataSource": {"ID": "ubuntu"}}
+        data = {"Metadata": {"OS": policy["distro"]},
+                "Results": [{"Class": "os-pkgs", "Type": "ubuntu", "Packages": [package],
+                             "Vulnerabilities": [finding]}]}
+        receipt = {"verified": True, "archive_verified": True, "ownership_verified": True,
+                   "package": self.binding,
+                   "policy_sha256": self.manifest["header_disposition_sha256"],
+                   "file_count": self.binding["file_count"], "bytes": self.binding["total_bytes"],
+                   "exported_conntrack": self.binding["exported_conntrack"]}
+        return policy, data, receipt
+
+    def classify(self, policy, data, receipt):
+        return headers.classify(data, policy, self.binding, receipt,
+                                self.manifest["header_disposition_sha256"])
+
+    def test_pending_review_never_exempts_a_finding(self):
+        _, data, receipt = self.disposition_fixture()
+        policy = dict(self.policy, reviewed=False)
+        self.assertEqual(self.classify(policy, data, receipt), [])
+
+    def test_exact_reviewed_fixture_preserves_raw_findings(self):
+        policy, data, receipt = self.disposition_fixture()
+        original = copy.deepcopy(data)
+        findings = self.classify(policy, data, receipt)
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["status"], "not_affected")
+        view = headers.remaining_findings(data, findings)
+        self.assertEqual(view["Results"][0]["Vulnerabilities"], [])
+        self.assertEqual(data, original)
+
+    def test_scanner_finding_requires_its_own_package_inventory(self):
+        policy, data, receipt = self.disposition_fixture()
+        original = data["Results"][0]
+        finding = original["Vulnerabilities"].pop()
+        data["Results"].append({"Class": "os-pkgs", "Type": "ubuntu", "Packages": [],
+                                "Vulnerabilities": [finding]})
+        dispositions = self.classify(policy, data, receipt)
+        self.assertEqual(dispositions, [])
+        remaining = headers.remaining_findings(data, dispositions)
+        self.assertEqual(build.trivy_failures(remaining, "native", [self.binding]),
+                         build.trivy_failures(data, "native", [self.binding]))
+        self.assertEqual(len(build.trivy_failures(remaining, "native", [self.binding])), 1)
+
+    def test_scanner_result_type_must_be_ubuntu(self):
+        for kind in (None, "debian", "gobinary", ""):
+            policy, data, receipt = self.disposition_fixture()
+            data["Results"][0]["Type"] = kind
+            with self.subTest(kind=kind):
+                self.assertEqual(self.classify(policy, data, receipt), [])
+
+    def test_unreviewed_ids_packages_versions_and_scanners_still_block(self):
+        for key, value in (("VulnerabilityID", "CVE-2999-12345"), ("PkgName", "libc6"),
+                           ("InstalledVersion", "6.8.0-other"), ("PkgID", "other@1"),
+                           ("DataSource", {"ID": "debian"})):
+            policy, data, receipt = self.disposition_fixture()
+            data["Results"][0]["Vulnerabilities"][0][key] = value
+            with self.subTest(key=key):
+                self.assertEqual(self.classify(policy, data, receipt), [])
+
+    def test_duplicate_display_label_does_not_remove_unreviewed_finding(self):
+        policy, data, receipt = self.disposition_fixture()
+        wrong = copy.deepcopy(data["Results"][0]["Vulnerabilities"][0])
+        wrong["InstalledVersion"] = "other"
+        data["Results"][0]["Vulnerabilities"].append(wrong)
+        dispositions = self.classify(policy, data, receipt)
+        view = headers.remaining_findings(data, dispositions)
+        self.assertEqual(view["Results"][0]["Vulnerabilities"], [wrong])
+        self.assertEqual(len(build.trivy_failures(view, "native", [self.binding])), 1)
+
+    def test_binary_and_linked_native_findings_are_never_exempted(self):
+        policy, data, receipt = self.disposition_fixture()
+        bad = copy.deepcopy(data["Results"][0]["Vulnerabilities"][0])
+        bad["PkgName"] = "libseccomp2"
+        data["Results"][0]["Vulnerabilities"].append(bad)
+        data["Results"].append({"Class": "lang-pkgs", "Type": "gobinary",
+                                "Vulnerabilities": [copy.deepcopy(bad)]})
+        view = headers.remaining_findings(data, self.classify(policy, data, receipt))
+        self.assertEqual(sum(len(r["Vulnerabilities"]) for r in view["Results"]), 2)
+
+    def test_missing_or_changed_install_and_archive_receipts_fail(self):
+        for key, value in (("verified", False), ("archive_verified", False), ("ownership_verified", False),
+                           ("package", {}),
+                           ("policy_sha256", "f" * 64), ("file_count", 0), ("bytes", 0),
+                           ("exported_conntrack", {})):
+            policy, data, receipt = self.disposition_fixture()
+            receipt[key] = value
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                self.classify(policy, data, receipt)
+        for key, value in (("Arch", "arm64"), ("SrcName", "other")):
+            policy, data, receipt = self.disposition_fixture()
+            data["Results"][0]["Packages"][0][key] = value
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                self.classify(policy, data, receipt)
+
+    def test_policy_archive_and_per_id_evidence_are_bound(self):
+        target = self.root / "inputs"
+        shutil.copytree(build.INPUTS, target)
+        for name in ("header-disposition.json", "header-cve-evidence.json",
+                     "linux-libc-dev-files-amd64.json", "linux-libc-dev-archive-amd64.json"):
+            path = target / name
+            original = path.read_bytes()
+            path.write_bytes(original + b" ")
+            with self.subTest(name=name), self.assertRaises(ValueError):
+                headers.load_policy(target, self.manifest["header_disposition_sha256"], "amd64", self.packages)
+            path.write_bytes(original)
+        for key, value in (("sha256", "0" * 64), ("version", "other"), ("architecture", "arm64"), ("size", 1)):
+            packages = copy.deepcopy(self.packages)
+            next(p for p in packages if p["name"] == "linux-libc-dev")[key] = value
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                headers.load_policy(target, self.manifest["header_disposition_sha256"], "amd64", packages)
+
+    def test_installed_exact_bytes_pass_and_changes_fail(self):
+        path, files, owned, dirs = self.installed_fixture()
+        result = headers.verify_installed(self.root, files, owned, dirs)
+        self.assertTrue(result["exported_conntrack"]["kernel_guard_absent"])
+        original = path.read_bytes()
+        path.write_bytes(original.replace(b"1", b"2"))
+        with self.assertRaises(ValueError):
+            headers.verify_installed(self.root, files, owned, dirs)
+        path.write_bytes(original)
+        for mode in (0o755, 0o666):
+            path.chmod(mode)
+            with self.assertRaises(ValueError):
+                headers.verify_installed(self.root, files, owned, dirs)
+
+    def test_installed_file_ownership_must_match_manifest(self):
+        _, files, owned, dirs = self.installed_fixture()
+        for field in ("uid", "gid"):
+            altered = copy.deepcopy(files)
+            altered[0][field] = 0 if files[0][field] else 1
+            with self.subTest(field=field), self.assertRaisesRegex(ValueError, "owner"):
+                headers.verify_installed(self.root, altered, owned, dirs)
+
+    def test_installed_directory_ownership_and_permissions_must_match(self):
+        _, files, owned, dirs = self.installed_fixture()
+        for index, directory in enumerate(dirs):
+            for field in ("uid", "gid", "mode"):
+                altered = copy.deepcopy(dirs)
+                altered[index][field] = (directory[field] ^ 0o020) if field == "mode" else directory[field] + 1
+                with self.subTest(path=directory["path"], field=field), self.assertRaisesRegex(ValueError, "directory"):
+                    headers.verify_installed(self.root, files, owned, altered)
+
+    def test_missing_extra_duplicate_and_symlink_installed_members_fail(self):
+        path, files, owned, dirs = self.installed_fixture()
+        extra = self.root / "extra.h"
+        extra.write_text("extra")
+        for paths in (owned[:-1], owned + ["/extra.h"], owned + [owned[-1]]):
+            with self.assertRaises(ValueError):
+                headers.verify_installed(self.root, files, paths, dirs)
+        path.unlink()
+        path.symlink_to(extra)
+        with self.assertRaises(ValueError):
+            headers.verify_installed(self.root, files, owned, dirs)
+
+    def test_parent_symlink_and_non_normal_paths_fail(self):
+        path, files, owned, dirs = self.installed_fixture()
+        parent = path.parent
+        parent.rename(parent.with_name("real"))
+        parent.symlink_to(parent.with_name("real"), target_is_directory=True)
+        with self.assertRaises((ValueError, OSError)):
+            headers.verify_installed(self.root, files, owned, dirs)
+        for name in ("/tmp/file", "../file", "a/../file", "a//file", "a/./file", "a\\file"):
+            with self.subTest(name=name), self.assertRaises(ValueError):
+                headers.normal_path(name)
+
+    def test_exported_header_rejects_kernel_branch_or_flag(self):
+        for data in (b"#define _NF_CONNTRACK_COMMON_H\n#ifdef __KERNEL__",
+                     b"#define _NF_CONNTRACK_COMMON_H\n#define NF_CT_EXPECT_DEAD 8", b"wrong"):
+            with self.assertRaises(ValueError):
+                headers.verify_exported_conntrack(data)
+
+    def test_tar_special_duplicate_and_executable_payloads_fail(self):
+        for kind, mode, payload, repeat in ((tarfile.SYMTYPE, 0o644, b"", 1),
+                                           (tarfile.LNKTYPE, 0o644, b"", 1),
+                                           (tarfile.FIFOTYPE, 0o644, b"", 1),
+                                           (tarfile.REGTYPE, 0o755, b"text", 1),
+                                           (tarfile.REGTYPE, 0o644, b"\x7fELFdata", 1),
+                                           (tarfile.REGTYPE, 0o644, b"text", 2)):
+            stream = io.BytesIO()
+            with tarfile.open(fileobj=stream, mode="w") as tf:
+                for _ in range(repeat):
+                    member = tarfile.TarInfo("usr/include/fixture.h")
+                    member.type, member.mode, member.size = kind, mode, len(payload)
+                    tf.addfile(member, io.BytesIO(payload))
+            with self.subTest(kind=kind, mode=mode, repeat=repeat), self.assertRaises(ValueError):
+                headers.tar_inventory(stream.getvalue())
+
+    def test_archive_hash_is_checked_before_decompression(self):
+        path = self.root / "fake.deb"
+        path.write_bytes(b"untrusted")
+        with patch.object(headers.subprocess, "run") as command, self.assertRaises(ValueError):
+            headers.inspect_deb(path, {"size": path.stat().st_size, "sha256": "0" * 64})
+        command.assert_not_called()
+
+    def test_control_script_cannot_be_omitted_from_archive_audit(self):
+        path = self.root / "fake.deb"
+        data = b"!<arch>\n"
+        for name, content in (("debian-binary", b"2.0\n"), ("control.tar.zst", b"00"), ("data.tar.zst", b"00")):
+            record = f"{name:<16}{0:<12}{0:<6}{0:<6}{'100644':<8}{len(content):<10}`\n".encode()
+            self.assertEqual(len(record), 60)
+            data += record + content
+        path.write_bytes(data)
+        stream = io.BytesIO()
+        with tarfile.open(fileobj=stream, mode="w") as archive:
+            for name in ("control", "md5sums", "postinst"):
+                member = tarfile.TarInfo(name)
+                member.mode = 0o644
+                archive.addfile(member, io.BytesIO(b""))
+        command_result = subprocess.CompletedProcess([], 0, stdout=stream.getvalue())
+        with patch.object(headers.subprocess, "run", return_value=command_result), \
+                self.assertRaisesRegex(ValueError, "control script"):
+            headers.inspect_deb(path, {"size": len(data), "sha256": headers.sha256(path)})
+
+
+    def hardening_fixture(self):
+        self.root.chmod(0o755)
+        package_dir = self.root / "usr/share/doc/linux-libc-dev"
+        package_dir.mkdir(parents=True)
+        files = []
+        for name in ("changelog.Debian.gz", "copyright"):
+            path = package_dir / name
+            path.write_bytes(name.encode())
+            files.append({"path": path.relative_to(self.root).as_posix(), "size": path.stat().st_size,
+                          "sha256": headers.sha256(path), "mode": 0o644,
+                          "uid": path.stat().st_uid, "gid": path.stat().st_gid})
+            path.chmod(0o777)
+        dirs = []
+        for name in (".", "usr", "usr/share", "usr/share/doc", "usr/share/doc/linux-libc-dev"):
+            path = self.root / name
+            path.chmod(0o755 if name in (".", "usr") else 0o777)
+            dirs.append({"path": name, "uid": path.stat().st_uid, "gid": path.stat().st_gid, "mode": 0o755})
+        return files, dirs
+
+    def test_hardening_changes_exactly_five_paths_and_is_idempotent(self):
+        files, dirs = self.hardening_fixture()
+        neighbor = self.root / "usr/share/unrelated"
+        neighbor.write_bytes(b"untouched")
+        neighbor.chmod(0o777)
+        actions = []
+        headers.harden_hosted_metadata(self.root, files, dirs, actions)
+        expected = {f["path"] for f in files} | {d["path"] for d in dirs if d["path"] not in (".", "usr")}
+        self.assertEqual({a["path"] for a in actions if a["changed"]}, expected)
+        self.assertEqual(stat.S_IMODE(neighbor.stat().st_mode), 0o777)
+        self.assertEqual(neighbor.read_bytes(), b"untouched")
+        again = []
+        headers.harden_hosted_metadata(self.root, files, dirs, again)
+        self.assertFalse(any(a["changed"] for a in again))
+
+    def test_hardening_rejects_unreviewed_ancestor_modes(self):
+        files, dirs = self.hardening_fixture()
+        for name, mode in ((".", 0o777), ("usr", 0o777), ("usr/share", 0o775)):
+            path = self.root / name
+            original = stat.S_IMODE(path.stat().st_mode)
+            path.chmod(mode)
+            with self.subTest(name=name), self.assertRaisesRegex(ValueError, "starting mode"):
+                headers.harden_hosted_metadata(self.root, files, dirs, [])
+            self.assertEqual(stat.S_IMODE(path.stat().st_mode), mode)
+            path.chmod(original)
+
+    def test_hardening_rejects_wrong_owner_and_doc_bytes_before_chmod(self):
+        files, dirs = self.hardening_fixture()
+        for field in ("uid", "gid"):
+            wrong = copy.deepcopy(dirs)
+            next(d for d in wrong if d["path"] == "usr/share")[field] += 1
+            with self.subTest(field=field), self.assertRaisesRegex(ValueError, "ownership"):
+                headers.harden_hosted_metadata(self.root, files, wrong, [])
+            self.assertEqual(stat.S_IMODE((self.root / "usr/share").stat().st_mode), 0o777)
+        notice = self.root / files[0]["path"]
+        notice.write_bytes(b"x" * files[0]["size"])
+        with self.assertRaisesRegex(ValueError, "bytes"):
+            headers.harden_hosted_metadata(self.root, files, dirs, [])
+        self.assertEqual(stat.S_IMODE(notice.stat().st_mode), 0o777)
+
+    def test_hardening_never_follows_substituted_directory(self):
+        files, dirs = self.hardening_fixture()
+        path = self.root / "usr/share"
+        moved = self.root / "moved"
+        path.rename(moved)
+        path.symlink_to(moved, target_is_directory=True)
+        with self.assertRaises(OSError):
+            headers.harden_hosted_metadata(self.root, files, dirs, [])
+        self.assertEqual(stat.S_IMODE(moved.stat().st_mode), 0o777)
+
+    def test_hardening_rejects_hardlinked_notice_without_changing_alias(self):
+        files, dirs = self.hardening_fixture()
+        notice = self.root / files[0]["path"]
+        alias = self.root / "outside-notice-alias"
+        os.link(notice, alias)
+        self.assertEqual(notice.stat().st_nlink, 2)
+        with self.assertRaisesRegex(ValueError, "hard link"):
+            headers.harden_hosted_metadata(self.root, files, dirs, [])
+        self.assertEqual(stat.S_IMODE(alias.stat().st_mode), 0o777)
+        self.assertEqual(stat.S_IMODE(notice.stat().st_mode), 0o777)
+
+    def test_hardening_rejects_link_count_drift_during_chmod(self):
+        files, dirs = self.hardening_fixture()
+        notice = self.root / files[0]["path"]
+        alias = self.root / "concurrent-alias"
+        original_fchmod = os.fchmod
+
+        def link_during_chmod(fd, mode):
+            if mode == 0o644 and not alias.exists():
+                os.link(notice, alias)
+            original_fchmod(fd, mode)
+
+        actions = []
+        with patch.object(headers.os, "fchmod", side_effect=link_during_chmod), \
+                self.assertRaisesRegex(ValueError, "hard link appeared during"):
+            headers.harden_hosted_metadata(self.root, files, dirs, actions)
+        self.assertEqual(notice.stat().st_nlink, 2)
+        self.assertTrue(actions[-1]["changed"])
+        self.assertNotIn("after_mode", actions[-1])
+
+    def test_hardening_uses_verified_fd_if_file_path_is_replaced(self):
+        files, dirs = self.hardening_fixture()
+        notice = self.root / files[0]["path"]
+        outside = self.root / "outside"
+        outside.write_bytes(b"must not chmod")
+        outside.chmod(0o777)
+        original_fchmod = os.fchmod
+        replaced = False
+
+        def replace_then_chmod(fd, mode):
+            nonlocal replaced
+            if mode == 0o644 and not replaced:
+                notice.rename(notice.with_name("original"))
+                notice.symlink_to(outside)
+                replaced = True
+            original_fchmod(fd, mode)
+
+        with patch.object(headers.os, "fchmod", side_effect=replace_then_chmod):
+            headers.harden_hosted_metadata(self.root, files, dirs, [])
+        self.assertTrue(replaced)
+        self.assertEqual(stat.S_IMODE(outside.stat().st_mode), 0o777)
+        self.assertEqual(outside.read_bytes(), b"must not chmod")
+        owned = ["/" + entry["path"] for entry in [*dirs, *files]]
+        with self.assertRaisesRegex(ValueError, "Unexpected installed header payload"):
+            headers.verify_installed(self.root, files, owned, dirs)
+
+
+if __name__ == "__main__":
+    unittest.main()

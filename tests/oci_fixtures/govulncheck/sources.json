@@ -1,0 +1,17 @@
+[
+  {
+    "upstream": "https://raw.githubusercontent.com/golang/vuln/v1.8.0/cmd/govulncheck/testdata/main/testfiles/binary/binary_call_json.ct",
+    "sha256": "f06700d3d9084ef8ee6387d280b32db10803d5f23b620cf97a39b119b023561e",
+    "file": "binary_call_json.ct"
+  },
+  {
+    "upstream": "https://raw.githubusercontent.com/golang/vuln/v1.8.0/cmd/govulncheck/testdata/common/testfiles/source-call/source_call_json.ct",
+    "sha256": "ba2368616a267fa711675430f746911adc73832867d2c1399f7a9f39c532e045",
+    "file": "source_call_json.ct"
+  },
+  {
+    "upstream": "https://raw.githubusercontent.com/golang/vuln/v1.8.0/LICENSE",
+    "sha256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad",
+    "file": "LICENSE"
+  }
+]

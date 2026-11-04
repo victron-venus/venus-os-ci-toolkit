@@ -1,0 +1,431 @@
+{
+  "schema": 1,
+  "distribution": "ubuntu:24.04",
+  "architecture": "amd64",
+  "snapshot": "20261103T000000Z",
+  "base_url": "https://snapshot.ubuntu.com/ubuntu/20261103T000000Z/",
+  "roots": [
+    "gcc-13",
+    "libc6-dev",
+    "libseccomp-dev",
+    "linux-libc-dev",
+    "binutils",
+    "pkgconf"
+  ],
+  "packages": [
+    {
+      "name": "binutils",
+      "version": "2.42-4ubuntu2.10",
+      "architecture": "amd64",
+      "filename": "pool/main/b/binutils/binutils_2.42-4ubuntu2.10_amd64.deb",
+      "sha256": "b3b5a84181a38fd191820b2cdcc1a3eeb1cd6333ad472f2092f96e81047e9c74",
+      "size": 18154,
+      "source": "binutils"
+    },
+    {
+      "name": "binutils-common",
+      "version": "2.42-4ubuntu2.10",
+      "architecture": "amd64",
+      "filename": "pool/main/b/binutils/binutils-common_2.42-4ubuntu2.10_amd64.deb",
+      "sha256": "d136073f5e2153f3df11c1d08d66727b9466b28ff483f50085f14bbe3464b5ee",
+      "size": 240286,
+      "source": "binutils"
+    },
+    {
+      "name": "binutils-x86-64-linux-gnu",
+      "version": "2.42-4ubuntu2.10",
+      "architecture": "amd64",
+      "filename": "pool/main/b/binutils/binutils-x86-64-linux-gnu_2.42-4ubuntu2.10_amd64.deb",
+      "sha256": "1e510a15f30208d39edcd840e48f26a77bbca7c417805eeccb1e3f7de198ef29",
+      "size": 2462744,
+      "source": "binutils"
+    },
+    {
+      "name": "cpp-13",
+      "version": "13.3.0-6ubuntu2~24.04.1",
+      "architecture": "amd64",
+      "filename": "pool/main/g/gcc-13/cpp-13_13.3.0-6ubuntu2~24.04.1_amd64.deb",
+      "sha256": "c7535331fbb183c802c3bf4b6b210872dcc12d0421b3212b3c4b940f2c59ed3a",
+      "size": 1042,
+      "source": "gcc-13"
+    },
+    {
+      "name": "cpp-13-x86-64-linux-gnu",
+      "version": "13.3.0-6ubuntu2~24.04.1",
+      "architecture": "amd64",
+      "filename": "pool/main/g/gcc-13/cpp-13-x86-64-linux-gnu_13.3.0-6ubuntu2~24.04.1_amd64.deb",
+      "sha256": "2ca48bf0c2d6465bc39322899715a85d934b4d7442dd5586a7bebbe3ce0f806b",
+      "size": 10714542,
+      "source": "gcc-13"
+    },
+    {
+      "name": "gcc-13",
+      "version": "13.3.0-6ubuntu2~24.04.1",
+      "architecture": "amd64",
+      "filename": "pool/main/g/gcc-13/gcc-13_13.3.0-6ubuntu2~24.04.1_amd64.deb",
+      "sha256": "7438ff160b020a74970672189ecae25d0ca650de6d7f543f12a3134192cffbd9",
+      "size": 494262,
+      "source": "gcc-13"
+    },
+    {
+      "name": "gcc-13-base",
+      "version": "13.3.0-6ubuntu2~24.04.1",
+      "architecture": "amd64",
+      "filename": "pool/main/g/gcc-13/gcc-13-base_13.3.0-6ubuntu2~24.04.1_amd64.deb",
+      "sha256": "e859aca26585bb91113a451f1e66bc0e5283cb08797d679aacc1d936ae6dff8e",
+      "size": 51616,
+      "source": "gcc-13"
+    },
+    {
+      "name": "gcc-13-x86-64-linux-gnu",
+      "version": "13.3.0-6ubuntu2~24.04.1",
+      "architecture": "amd64",
+      "filename": "pool/main/g/gcc-13/gcc-13-x86-64-linux-gnu_13.3.0-6ubuntu2~24.04.1_amd64.deb",
+      "sha256": "a134b0319a82d14581b3a14820d2832af4ec9778ed8b9b4ddaeecfb0555ec325",
+      "size": 21084546,
+      "source": "gcc-13"
+    },
+    {
+      "name": "gcc-14-base",
+      "version": "14.2.0-4ubuntu2~24.04.1",
+      "architecture": "amd64",
+      "filename": "pool/main/g/gcc-14/gcc-14-base_14.2.0-4ubuntu2~24.04.1_amd64.deb",
+      "sha256": "b95c172411a7fdae70307cf33a9f5320ba5e056b556454543dd5b679d5ce1c4f",
+      "size": 51014,
+      "source": "gcc-14"
+    },
+    {
+      "name": "libasan8",
+      "version": "14.2.0-4ubuntu2~24.04.1",
+      "architecture": "amd64",
+      "filename": "pool/main/g/gcc-14/libasan8_14.2.0-4ubuntu2~24.04.1_amd64.deb",
+      "sha256": "8321aac6230fa1da320e76eb6288b7436164624aec449ed3933ea6c4cc86daac",
+      "size": 3026656,
+      "source": "gcc-14"
+    },
+    {
+      "name": "libatomic1",
+      "version": "14.2.0-4ubuntu2~24.04.1",
+      "architecture": "amd64",
+      "filename": "pool/main/g/gcc-14/libatomic1_14.2.0-4ubuntu2~24.04.1_amd64.deb",
+      "sha256": "fe49cbbc7be753528380c724a8eef5f1e31dffa9221f692c5069048d81c7449d",
+      "size": 10466,
+      "source": "gcc-14"
+    },
+    {
+      "name": "libbinutils",
+      "version": "2.42-4ubuntu2.10",
+      "architecture": "amd64",
+      "filename": "pool/main/b/binutils/libbinutils_2.42-4ubuntu2.10_amd64.deb",
+      "sha256": "064dce00ce94e1fc2d33779cb0071088f4c8aac79e85345f2e78a020f7d14699",
+      "size": 576834,
+      "source": "binutils"
+    },
+    {
+      "name": "libc-dev-bin",
+      "version": "2.39-0ubuntu8.9",
+      "architecture": "amd64",
+      "filename": "pool/main/g/glibc/libc-dev-bin_2.39-0ubuntu8.9_amd64.deb",
+      "sha256": "77db23aba4582d034d9a95e4818a16e7e51a2d4fb17a9204439688e288d67f4c",
+      "size": 20402,
+      "source": "glibc"
+    },
+    {
+      "name": "libc6",
+      "version": "2.39-0ubuntu8.9",
+      "architecture": "amd64",
+      "filename": "pool/main/g/glibc/libc6_2.39-0ubuntu8.9_amd64.deb",
+      "sha256": "ff5557d99b51f761c4b7c92368b9cc45565eda17df9bf9eb4b134d09825008be",
+      "size": 3264314,
+      "source": "glibc"
+    },
+    {
+      "name": "libc6-dev",
+      "version": "2.39-0ubuntu8.9",
+      "architecture": "amd64",
+      "filename": "pool/main/g/glibc/libc6-dev_2.39-0ubuntu8.9_amd64.deb",
+      "sha256": "e13d5fcc1b2a86f75bca8e0026a8e39f24fe97ca86e92be79991f8697eb1306f",
+      "size": 2125612,
+      "source": "glibc"
+    },
+    {
+      "name": "libcc1-0",
+      "version": "14.2.0-4ubuntu2~24.04.1",
+      "architecture": "amd64",
+      "filename": "pool/main/g/gcc-14/libcc1-0_14.2.0-4ubuntu2~24.04.1_amd64.deb",
+      "sha256": "454456436ca767817a860557263d7cc2489f0a410f03efff4c0bb236d579ec09",
+      "size": 48002,
+      "source": "gcc-14"
+    },
+    {
+      "name": "libcrypt-dev",
+      "version": "1:4.4.36-4build1",
+      "architecture": "amd64",
+      "filename": "pool/main/libx/libxcrypt/libcrypt-dev_4.4.36-4build1_amd64.deb",
+      "sha256": "2edff420ef80b4a3f3751e65c33423ef30e563122a58b759e4854ea8d84ba1b1",
+      "size": 111780,
+      "source": "libxcrypt"
+    },
+    {
+      "name": "libcrypt1",
+      "version": "1:4.4.36-4build1",
+      "architecture": "amd64",
+      "filename": "pool/main/libx/libxcrypt/libcrypt1_4.4.36-4build1_amd64.deb",
+      "sha256": "9474785cd6f398512bf8c305c3901dbb111569dccb6f5832002373c0a8ac5832",
+      "size": 82302,
+      "source": "libxcrypt"
+    },
+    {
+      "name": "libctf-nobfd0",
+      "version": "2.42-4ubuntu2.10",
+      "architecture": "amd64",
+      "filename": "pool/main/b/binutils/libctf-nobfd0_2.42-4ubuntu2.10_amd64.deb",
+      "sha256": "da352eb7fa6c4369d2a6c1e5e680f574eda2e38576563326b18d9e47e61c4078",
+      "size": 98012,
+      "source": "binutils"
+    },
+    {
+      "name": "libctf0",
+      "version": "2.42-4ubuntu2.10",
+      "architecture": "amd64",
+      "filename": "pool/main/b/binutils/libctf0_2.42-4ubuntu2.10_amd64.deb",
+      "sha256": "7ec86d697c3668503c85f308a6832f092075b5880ad002f22185264da0bd4645",
+      "size": 94474,
+      "source": "binutils"
+    },
+    {
+      "name": "libgcc-13-dev",
+      "version": "13.3.0-6ubuntu2~24.04.1",
+      "architecture": "amd64",
+      "filename": "pool/main/g/gcc-13/libgcc-13-dev_13.3.0-6ubuntu2~24.04.1_amd64.deb",
+      "sha256": "cd689db2691edaa10f37329307292796bb599e722e0505c79e14caaa1fe9a93a",
+      "size": 2680642,
+      "source": "gcc-13"
+    },
+    {
+      "name": "libgcc-s1",
+      "version": "14.2.0-4ubuntu2~24.04.1",
+      "architecture": "amd64",
+      "filename": "pool/main/g/gcc-14/libgcc-s1_14.2.0-4ubuntu2~24.04.1_amd64.deb",
+      "sha256": "aa7fadbe33b78bcf99885318040601c550c208929565b179891d9a3cc2aa68cd",
+      "size": 78392,
+      "source": "gcc-14"
+    },
+    {
+      "name": "libgmp10",
+      "version": "2:6.3.0+dfsg-2ubuntu6.1",
+      "architecture": "amd64",
+      "filename": "pool/main/g/gmp/libgmp10_6.3.0+dfsg-2ubuntu6.1_amd64.deb",
+      "sha256": "285f8a505dfa8e1b33f357a9d8d3477ad35bf18c0b34771a6df4c25923f3ae0d",
+      "size": 253460,
+      "source": "gmp"
+    },
+    {
+      "name": "libgomp1",
+      "version": "14.2.0-4ubuntu2~24.04.1",
+      "architecture": "amd64",
+      "filename": "pool/main/g/gcc-14/libgomp1_14.2.0-4ubuntu2~24.04.1_amd64.deb",
+      "sha256": "e8a95ec58125b4933597f30ff56c2ae10edf90f287262e366d4b6edea3019144",
+      "size": 148062,
+      "source": "gcc-14"
+    },
+    {
+      "name": "libgprofng0",
+      "version": "2.42-4ubuntu2.10",
+      "architecture": "amd64",
+      "filename": "pool/main/b/binutils/libgprofng0_2.42-4ubuntu2.10_amd64.deb",
+      "sha256": "1b7e3c2fc162e8358ca6e5a3fffdb4d0d632f790630323215841bb36a63c0ab8",
+      "size": 848684,
+      "source": "binutils"
+    },
+    {
+      "name": "libhwasan0",
+      "version": "14.2.0-4ubuntu2~24.04.1",
+      "architecture": "amd64",
+      "filename": "pool/main/g/gcc-14/libhwasan0_14.2.0-4ubuntu2~24.04.1_amd64.deb",
+      "sha256": "2195318cfe68fe16b601913ef7b33c9a900372f57861643fdc9ae6fef84534cd",
+      "size": 1640706,
+      "source": "gcc-14"
+    },
+    {
+      "name": "libisl23",
+      "version": "0.26-3build1.1",
+      "architecture": "amd64",
+      "filename": "pool/main/i/isl/libisl23_0.26-3build1.1_amd64.deb",
+      "sha256": "4e040926e50fb961fae9bf95660189d468336a4a17bc321872c434fc8f777e7f",
+      "size": 679812,
+      "source": "isl"
+    },
+    {
+      "name": "libitm1",
+      "version": "14.2.0-4ubuntu2~24.04.1",
+      "architecture": "amd64",
+      "filename": "pool/main/g/gcc-14/libitm1_14.2.0-4ubuntu2~24.04.1_amd64.deb",
+      "sha256": "1fca498129dd3510294809d77ee754f72a9de281111200e9b7b9a5adf37faa9f",
+      "size": 29702,
+      "source": "gcc-14"
+    },
+    {
+      "name": "libjansson4",
+      "version": "2.14-2build2",
+      "architecture": "amd64",
+      "filename": "pool/main/j/jansson/libjansson4_2.14-2build2_amd64.deb",
+      "sha256": "0cf79113f5d193ce9af2be2ff4b2c3b30dd4e55a0b6c47f7d28f6c849ff3aa60",
+      "size": 32830,
+      "source": "jansson"
+    },
+    {
+      "name": "liblsan0",
+      "version": "14.2.0-4ubuntu2~24.04.1",
+      "architecture": "amd64",
+      "filename": "pool/main/g/gcc-14/liblsan0_14.2.0-4ubuntu2~24.04.1_amd64.deb",
+      "sha256": "dc0c2a1a053e833ba4d71e1ec2ba4244fe301761ad4a91d6725f927a52d86a14",
+      "size": 1321652,
+      "source": "gcc-14"
+    },
+    {
+      "name": "libmpc3",
+      "version": "1.3.1-1build1.1",
+      "architecture": "amd64",
+      "filename": "pool/main/m/mpclib3/libmpc3_1.3.1-1build1.1_amd64.deb",
+      "sha256": "cebe6098bb3d66fdacac9dc6fe406a651216d9c00f27c3f9c159d15d96cdf864",
+      "size": 54636,
+      "source": "mpclib3"
+    },
+    {
+      "name": "libmpfr6",
+      "version": "4.2.1-1build1.1",
+      "architecture": "amd64",
+      "filename": "pool/main/m/mpfr4/libmpfr6_4.2.1-1build1.1_amd64.deb",
+      "sha256": "aebc1c8b69a1f98bb43dfc268daecd181116dbf40b13ee4e822eb4bdd52b493a",
+      "size": 353020,
+      "source": "mpfr4"
+    },
+    {
+      "name": "libpkgconf3",
+      "version": "1.8.1-2build1",
+      "architecture": "amd64",
+      "filename": "pool/main/p/pkgconf/libpkgconf3_1.8.1-2build1_amd64.deb",
+      "sha256": "fc3a57e8f931ec06cb7c51acc56878f1fec247ff02a7adcab26905c2faeb2792",
+      "size": 30652,
+      "source": "pkgconf"
+    },
+    {
+      "name": "libquadmath0",
+      "version": "14.2.0-4ubuntu2~24.04.1",
+      "architecture": "amd64",
+      "filename": "pool/main/g/gcc-14/libquadmath0_14.2.0-4ubuntu2~24.04.1_amd64.deb",
+      "sha256": "dc8f0ca542e09d662f29370c8393c016440dd4bc5c996c5fcc19f632b63ce3b0",
+      "size": 153316,
+      "source": "gcc-14"
+    },
+    {
+      "name": "libseccomp-dev",
+      "version": "2.5.5-1ubuntu3.1",
+      "architecture": "amd64",
+      "filename": "pool/main/libs/libseccomp/libseccomp-dev_2.5.5-1ubuntu3.1_amd64.deb",
+      "sha256": "26421f22f2150986735b79ece61d811400debab7fa505b08b731ec5a7917e45f",
+      "size": 92272,
+      "source": "libseccomp"
+    },
+    {
+      "name": "libseccomp2",
+      "version": "2.5.5-1ubuntu3.1",
+      "architecture": "amd64",
+      "filename": "pool/main/libs/libseccomp/libseccomp2_2.5.5-1ubuntu3.1_amd64.deb",
+      "sha256": "33fc96f1e008d27c042a3db9bcd16f7f4d49e866f7a3141b758a799328dbdc3f",
+      "size": 50424,
+      "source": "libseccomp"
+    },
+    {
+      "name": "libsframe1",
+      "version": "2.42-4ubuntu2.10",
+      "architecture": "amd64",
+      "filename": "pool/main/b/binutils/libsframe1_2.42-4ubuntu2.10_amd64.deb",
+      "sha256": "72093fb456864db55f1352bfa5e952a94f7abaff64e71dff1fbf001db1984564",
+      "size": 15724,
+      "source": "binutils"
+    },
+    {
+      "name": "libstdc++6",
+      "version": "14.2.0-4ubuntu2~24.04.1",
+      "architecture": "amd64",
+      "filename": "pool/main/g/gcc-14/libstdc++6_14.2.0-4ubuntu2~24.04.1_amd64.deb",
+      "sha256": "a51f8de7829211db961a31f02158058ad1a95f92ac6d0a5dff6350e2821c54c0",
+      "size": 792064,
+      "source": "gcc-14"
+    },
+    {
+      "name": "libtsan2",
+      "version": "14.2.0-4ubuntu2~24.04.1",
+      "architecture": "amd64",
+      "filename": "pool/main/g/gcc-14/libtsan2_14.2.0-4ubuntu2~24.04.1_amd64.deb",
+      "sha256": "8cbcc9b3ae5ef23b449383d47a9035b27596e307d7dce7df9b83d47a7acd1d91",
+      "size": 2771910,
+      "source": "gcc-14"
+    },
+    {
+      "name": "libubsan1",
+      "version": "14.2.0-4ubuntu2~24.04.1",
+      "architecture": "amd64",
+      "filename": "pool/main/g/gcc-14/libubsan1_14.2.0-4ubuntu2~24.04.1_amd64.deb",
+      "sha256": "a16dea3abe2dcac99bcfae27e7e5672fde64573c3c170dcb0cd55631238f9814",
+      "size": 1183812,
+      "source": "gcc-14"
+    },
+    {
+      "name": "libzstd1",
+      "version": "1.5.5+dfsg2-2build1.1",
+      "architecture": "amd64",
+      "filename": "pool/main/libz/libzstd/libzstd1_1.5.5+dfsg2-2build1.1_amd64.deb",
+      "sha256": "dfcf25061e07aad7efd3f4f880ba5ad4d4d09ebe7fc8cc77ab6b8a161d6d4727",
+      "size": 299472,
+      "source": "libzstd"
+    },
+    {
+      "name": "linux-libc-dev",
+      "version": "6.8.0-147.147",
+      "architecture": "amd64",
+      "filename": "pool/main/l/linux/linux-libc-dev_6.8.0-147.147_amd64.deb",
+      "sha256": "fec8e4a308c03cd98dace67370a8d5a8031c36741796065c9f6e3f9548ab0cd2",
+      "size": 1595188,
+      "source": "linux"
+    },
+    {
+      "name": "pkgconf",
+      "version": "1.8.1-2build1",
+      "architecture": "amd64",
+      "filename": "pool/main/p/pkgconf/pkgconf_1.8.1-2build1_amd64.deb",
+      "sha256": "834a58031069d97d7cfb8b2f5bfd5effc69cecf7f30cc362071875f1f8dc1828",
+      "size": 16790,
+      "source": "pkgconf"
+    },
+    {
+      "name": "pkgconf-bin",
+      "version": "1.8.1-2build1",
+      "architecture": "amd64",
+      "filename": "pool/main/p/pkgconf/pkgconf-bin_1.8.1-2build1_amd64.deb",
+      "sha256": "7a812f05ee1610154b433e2ad54f6e4163fcbb306b9fb31afe959afb2e5e1545",
+      "size": 20730,
+      "source": "pkgconf"
+    },
+    {
+      "name": "rpcsvc-proto",
+      "version": "1.4.2-0ubuntu7",
+      "architecture": "amd64",
+      "filename": "pool/main/r/rpcsvc-proto/rpcsvc-proto_1.4.2-0ubuntu7_amd64.deb",
+      "sha256": "7eb710fe148d224c159ddec1ceb0ba53ead52a80a6793dcdae1474acf20d8f71",
+      "size": 67446,
+      "source": "rpcsvc-proto"
+    },
+    {
+      "name": "zlib1g",
+      "version": "1:1.3.dfsg-3.1ubuntu2.3",
+      "architecture": "amd64",
+      "filename": "pool/main/z/zlib/zlib1g_1.3.dfsg-3.1ubuntu2.3_amd64.deb",
+      "sha256": "376249c8de139568221dbb242318cc8cb8f02299e3a62b7432948e1754fbddf9",
+      "size": 63158,
+      "source": "zlib"
+    }
+  ]
+}
