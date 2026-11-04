@@ -95,6 +95,10 @@ on:
         description: 'Unique artifact namespace when this workflow is called more than once per run'
         type: string
         default: 'browser-compatibility'
+      browser-success-report-retention-days:
+        description: 'Retention for successful ordinary browser reports (1..14 days); failures and release qualification retain 14 days'
+        type: number
+        default: 14
       browser-artifact-id:
         description: 'Optional exact artifact ID produced earlier in this workflow run'
         type: string
@@ -197,6 +201,7 @@ jobs:
           BROWSER_COMMAND: ${{ inputs.browser-test-command }}
           BROWSER_ARTIFACT_ID: ${{ inputs.browser-artifact-id }}
           BROWSER_EVIDENCE_PREFIX: ${{ inputs.browser-evidence-prefix }}
+          BROWSER_SUCCESS_REPORT_RETENTION_DAYS: ${{ inputs.browser-success-report-retention-days }}
           BROWSER_ARTIFACT_PATH: ${{ inputs.browser-artifact-path }}
         run: |
           node <<'NODE'
@@ -211,6 +216,8 @@ jobs:
             source = fs.readFileSync(file, 'utf8');
           }
           if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(process.env.BROWSER_EVIDENCE_PREFIX)) throw new Error('Artifact evidence prefix must be a safe unique identifier');
+          const reportRetention = Number(process.env.BROWSER_SUCCESS_REPORT_RETENTION_DAYS ?? '14');
+          if (!Number.isSafeInteger(reportRetention) || reportRetention < 1 || reportRetention > 14) throw new Error('Successful browser report retention must be an integer from 1 to 14 days');
           const artifactId = process.env.BROWSER_ARTIFACT_ID || '';
           const artifactPath = process.env.BROWSER_ARTIFACT_PATH || '';
           if (artifactId || artifactPath) {
@@ -517,7 +524,7 @@ jobs:
           path: ${{ inputs.working-directory }}/.compatibility/${{ matrix.id }}/
           include-hidden-files: true
           if-no-files-found: error
-          retention-days: 14
+          retention-days: ${{ job.status == 'success' && inputs.browser-release-channel == '' && inputs.browser-success-report-retention-days || 14 }}
   browser-gate:
     name: Verify selected browser scope
     needs: [change-scope, browser-plan, browser]
