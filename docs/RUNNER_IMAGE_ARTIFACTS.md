@@ -1,5 +1,9 @@
 # Hosted runner image artifacts
 
+The builder now comes from the [accepted immutable artifact chain](ACCEPTED_BUILDER_CONSUMER.md),
+which also supplies the final runner's runc. Dispatch requires the exact
+`reviewed_commit`; old retained-runc applicability does not carry forward.
+
 `runner-image-artifacts.yml` builds the canonical Linux amd64 public runner and
 private-mode derivative on two sequential, disposable GitHub-hosted workers.
 It produces downloadable OCI archives and evidence, without publishing an image

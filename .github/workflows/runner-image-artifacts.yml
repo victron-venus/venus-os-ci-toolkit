@@ -1,10 +1,19 @@
 name: Build nondeployable runner image artifacts
 
 'on':
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      reviewed_commit:
+        description: Exact reviewed consumer source commit
+        required: true
+        type: string
 
 permissions:
   contents: read
+  actions: read
+
+env:
+  REVIEWED_COMMIT: ${{ inputs.reviewed_commit }}
 
 concurrency:
   group: runner-image-artifacts
@@ -27,6 +36,8 @@ jobs:
           persist-credentials: false
           fetch-depth: 1
       - name: Build and scan public base with invalid site CA
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: python3 scripts/build_runner_image_artifacts.py public
       - name: Preserve complete artifact or failure evidence
         if: ${{ always() }}
@@ -60,6 +71,7 @@ jobs:
       - name: Build and scan private-mode image from accepted public bytes
         env:
           PARENT: ${{ runner.temp }}/runner-image-public-${{ github.run_id }}-${{ github.run_attempt }}
+          GH_TOKEN: ${{ github.token }}
         run: python3 scripts/build_runner_image_artifacts.py private --parent "$PARENT"
       - name: Preserve complete artifact or failure evidence
         if: ${{ always() }}

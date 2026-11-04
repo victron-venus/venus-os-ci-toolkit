@@ -1,13 +1,13 @@
 {
   "schema": 1,
   "scan_acceptance_schema": 1,
-  "canonical_source": "c94e794933987710b76f8c75f548adbb60137dd5",
+  "canonical_source": "d42d0f0e7976a34d99a6b85f5d424bb148ffc909",
   "platform": "linux/amd64",
   "tools": {
     "buildkit": {
-      "version": "v0.34.1",
-      "image": "docker.io/moby/buildkit@sha256:b651bf250c2805569f1db385ad1ea8fb73737dfc851de305f274ca02690fa93f",
-      "index_sha256": "99368f3e46177c6405b9740e4461d91cee004128daeecca78d4ceac50ec1da5c"
+      "kind": "accepted-artifact",
+      "lock_sha256": "9811bb033e00bd6e97defd751a0d6df35d86d774b18d288699377acbd8e0ab8b",
+      "image": "sha256:98d12bc911185a71586291e9432ac8cdee7209b9711cd28835579bbe11393f0c"
     },
     "trivy": {
       "version": "0.74.0",
@@ -150,8 +150,8 @@
           "mode": "100644"
         },
         "deploy/runner-reserve/Dockerfile": {
-          "sha256": "3e686dd7c357763dbde310fdf7cb0c86a2ed252a62a9cbe6013c6e9c3aa22167",
-          "bytes": 15667,
+          "sha256": "4f77dec7f8b331645791d6ff286cf1ab5dde0db97c9718dc57e4f7d24b4befd9",
+          "bytes": 15842,
           "mode": "100644"
         },
         "deploy/runner-reserve/Dockerfile.dockerignore": {
