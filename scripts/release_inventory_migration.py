@@ -49,6 +49,35 @@ NAME_LIMIT = {
 }
 
 
+# Recognize the independently reviewed notes fix without changing inventory-only scope.
+NOTES_PROVENANCE = {
+    "hunks": [
+        {
+            "before": "    return \"\"\n\n\ndef prepare(args: argparse.Namespace) -> dict[str, object]:\n    \"\"\"Freeze one durable plan before any platform build consumes version files.\"\"\"\n    inputs = event_inputs()\n",
+            "after": "    return \"\"\n\n\ndef candidate_provenance(\n    repository: str, channel: str, source_sha: str, run_id: int,\n    parent_tag: str | None,\n) -> str:\n    \"\"\"Render the exact known publication text before any version reservation.\"\"\"\n    description = (\n        f\"Final build from accepted {parent_tag}; new verified package bytes.\"\n        if parent_tag\n        else f\"{channel} candidate with a version fixed before compilation.\"\n    )\n    return (\n        description + f\"\\n\\nSource: `{source_sha}`\\n\\n\"\n        f\"Validation: https://github.com/{repository}/actions/runs/{run_id}\\n\\n\"\n        f\"See `{rc.MANIFEST}` for package hashes and version input evidence.\"\n    )\n\n\ndef prepare(args: argparse.Namespace) -> dict[str, object]:\n    \"\"\"Freeze one durable plan before any platform build consumes version files.\"\"\"\n    inputs = event_inputs()\n"
+        },
+        {
+            "before": "        # Every channel selects the base-version section; do not allocate a\n        # sequence or build number merely to discover unpublishable notes.\n        # The publisher independently validates the same source again.\n        rc.release_notes(gh, f\"v{base}\", cast(str, run[\"head_sha\"]), \"\")\n    plan = reserve_plan(\n        gh,\n        policy,\n",
+            "after": "        # Every channel selects the base-version section; do not allocate a\n        # sequence or build number merely to discover unpublishable notes.\n        # The publisher independently validates the same source again.\n        rc.release_notes(\n            gh, f\"v{base}\", cast(str, run[\"head_sha\"]),\n            candidate_provenance(\n                gh.repo, channel, cast(str, run[\"head_sha\"]), cast(int, run[\"id\"]),\n                cast(str, parent[\"tag\"]) if parent else None,\n            ),\n        )\n    plan = reserve_plan(\n        gh,\n        policy,\n"
+        },
+        {
+            "before": "        verify_reservation(gh, plan, cast(int, run[\"id\"]), parent)\n        if channel == \"stable\":\n            rc.require_reviewers(gh)\n        description = (\n            f\"Final build from accepted {parent['tag']}; new verified package bytes.\"\n            if parent\n            else f\"{channel} candidate with a version fixed before compilation.\"\n        )\n        superseded = rc.superseded_candidate(gh, info, run, channel)\n        if superseded:\n            return superseded\n",
+            "after": "        verify_reservation(gh, plan, cast(int, run[\"id\"]), parent)\n        if channel == \"stable\":\n            rc.require_reviewers(gh)\n        superseded = rc.superseded_candidate(gh, info, run, channel)\n        if superseded:\n            return superseded\n"
+        },
+        {
+            "before": "            gh,\n            cast(str, plan[\"tag\"]),\n            cast(str, plan[\"source_sha\"]),\n            description + f\"\\n\\nSource: `{plan['source_sha']}`\\n\\n\"\n            f\"Validation: https://github.com/{gh.repo}/actions/runs/{run['id']}\\n\\n\"\n            f\"See `{rc.MANIFEST}` for package hashes and version input evidence.\",\n        )\n        rc.EVIDENCE.parent.mkdir(parents=True, exist_ok=True)\n        rc.EVIDENCE.write_bytes(content)\n",
+            "after": "            gh,\n            cast(str, plan[\"tag\"]),\n            cast(str, plan[\"source_sha\"]),\n            candidate_provenance(\n                gh.repo, channel, cast(str, plan[\"source_sha\"]), cast(int, run[\"id\"]),\n                cast(str, parent[\"tag\"]) if parent else None,\n            ),\n        )\n        rc.EVIDENCE.parent.mkdir(parents=True, exist_ok=True)\n        rc.EVIDENCE.write_bytes(content)\n"
+        }
+    ],
+    "original_to_current": {
+        "179a6fe589801c59bccfea0c9a0c2e1b5d0be1915e87e1b4ec9313f32380aa7a": "579c4409b768f90311a58eb6e9afef2eb423fa4ccdd75f9056e31d0e3497ee99"
+    },
+    "current": [
+        "579c4409b768f90311a58eb6e9afef2eb423fa4ccdd75f9056e31d0e3497ee99"
+    ]
+}
+
+
 def _before_layer(source: str, layer: dict, label: str) -> str:
     """Reverse one exact accepted layer, preserving a vendor header."""
     prefix = "#!/usr/bin/env python3\n" + receipts.HEADER
@@ -64,6 +93,11 @@ def _before_layer(source: str, layer: dict, label: str) -> str:
     if layer["original_to_current"].get(receipts.digest(body)) != current:
         raise ValueError(f"{label} reverse result changed")
     return body.replace("#!/usr/bin/env python3\n", prefix, 1) if vendored else body
+
+
+def _before_notes_provenance(source: str) -> str:
+    """Unwrap only the exact known publisher layer for the historical oracle."""
+    return _before_layer(source, NOTES_PROVENANCE, "Notes provenance")
 
 
 def _before_name_limit(source: str) -> str:
@@ -97,10 +131,15 @@ def render(directory: Path) -> dict[str, str]:
     for name in FILES:
         source = receipts.read_local(directory, name)
         prior = _before_casefold(source) if name == PLAN else source
+        if name == receipts.PUBLISHER:
+            prior = _before_notes_provenance(source)
         state, result = receipts.transform(prior, name, specification[name])
         if name == PLAN:
             _, result = receipts.transform(result, name, CASEFOLD)
             _, result = receipts.transform(result, name, NAME_LIMIT)
+        elif name == receipts.PUBLISHER and prior != source:
+            # Preserve a fix already present; this mode does not install it.
+            _, result = receipts.transform(result, name, NOTES_PROVENANCE)
         states.add(state)
         if result != source:
             changes[name] = result
@@ -115,6 +154,8 @@ def previous_canonical_source(source: str, name: str) -> str:
         return source
     if name == PLAN:
         source = _before_casefold(source)
+    elif name == receipts.PUBLISHER:
+        source = _before_notes_provenance(source)
     if name not in FILES:
         raise ValueError("Unknown inventory source")
     specification = json.loads(DELTA.read_text(encoding="utf-8"))["files"][name]
