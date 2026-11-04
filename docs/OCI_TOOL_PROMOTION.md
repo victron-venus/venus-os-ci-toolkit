@@ -94,6 +94,14 @@ the accepted artifacts, builds the existing source-locked Buildx client with
 Go 1.26.10, and builds the small cgroup reader with Go 1.27.3. Both new binaries
 must pass their inventory and vulnerability checks before they are used.
 
+The scan directory uses byte-identical copies with explicit mode `0755`.
+Trivy's Go binary analyzer requires executable files; `shutil.copyfile` alone
+does not preserve those permissions. This caused
+[attempt 41781949282](https://github.com/victron-venus/venus-os-ci-toolkit/actions/runs/41781949282)
+to stop before assembly with `Incomplete builder tool scan`, even though the
+separate Go checks passed. An empty or partial Trivy inventory remains fatal;
+do not bypass that check or treat the failed attempt as image acceptance.
+
 The reader accepts no arguments and only reads `/proc/1/cgroup`. Its unit tests
 cover a 64 KiB limit, read errors, incomplete input and short/error writes.
 Hosted executable checks compare its output with that fixed file and reject
