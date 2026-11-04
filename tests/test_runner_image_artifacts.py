@@ -811,7 +811,9 @@ class RunnerArtifactsTests(unittest.TestCase):
                 returncode=0, stdout=json.dumps([self.builder()]).encode())) as run:
             with self.assertRaises(ValueError):
                 build.remove_builder(sup, 'test', 'foreign', 'pinned')
-        self.assertEqual(run.call_count, 1)
+        self.assertTrue(all(call.args[0][:2] in (['docker', 'inspect'], ['docker', 'volume'])
+                            for call in run.call_args_list))
+        self.assertFalse(any('rm' in call.args[0] for call in run.call_args_list))
 
     def test_last_write_is_subject_to_disk_floor_for_both_command_modes(self):
         for capture in (False, True):
@@ -1167,7 +1169,7 @@ class RunnerArtifactsTests(unittest.TestCase):
     def test_unchanged_manifest_transport_reaches_import_boundary(self):
         self._assert_execute_transport_boundary(changed=False)
 
-    def test_import_cleanup_failure_propagates_after_receipt_is_saved(self):
+    def test_import_cleanup_failure_does_not_hide_original_failure(self):
         env, event = self.event()
         env['RUNNER_TEMP'] = str(self.root)
         event_path = self.root / 'event.json'
@@ -1180,12 +1182,116 @@ class RunnerArtifactsTests(unittest.TestCase):
              mock.patch.object(build, 'Supervisor', return_value=supervisor), \
              mock.patch.object(build.accepted, 'prepare', side_effect=ValueError('input failed')), \
              mock.patch.object(build.accepted, 'cleanup', side_effect=RuntimeError('cleanup failed')):
-            with self.assertRaisesRegex(RuntimeError, 'cleanup failed'):
+            with self.assertRaisesRegex(ValueError, 'input failed'):
                 build.execute('public')
         record = json.loads((self.root / 'runner-image-public-123-1/build-receipt.json').read_text())
         self.assertEqual(record['failure_type'], 'ValueError')
         self.assertEqual(record['import_cleanup_failure_type'], 'RuntimeError')
         self.assertFalse(record['build_success'])
+
+    def test_failed_command_remains_primary_when_final_disk_check_also_fails(self):
+        sup = build.Supervisor({}, [self.root], self.root / 'log', self.root / 'disk')
+        original = subprocess.CalledProcessError(7, ['fixture'])
+        with mock.patch.object(sup, 'check', side_effect=[3 * build.GIB, ValueError('disk exhausted')]), \
+             mock.patch.object(build.subprocess, 'run', side_effect=original):
+            with self.assertRaises(subprocess.CalledProcessError) as raised:
+                sup.run(['fixture'], capture=True)
+        self.assertIs(raised.exception, original)
+
+    def test_cleanup_records_exact_timeout_step_and_bounded_readbacks(self):
+        for target in ('remove-container', 'remove-instance', 'remove-volume'):
+            with self.subTest(target=target):
+                docker = self.root / target
+                metadata = docker / 'buildx/instances/test'
+                metadata.parent.mkdir(parents=True)
+                metadata.write_text('{}')
+                sup = mock.Mock(env={'DOCKER_CONFIG': str(docker)})
+                state = {'container': self.builder(), 'volume': {'Name': 'state'}}
+                observations = []
+                original = subprocess.TimeoutExpired(target, 60)
+                def remove(command, **kwargs):
+                    self.assertEqual(kwargs['timeout'], 60)
+                    if command[:2] == ['docker', 'rm']:
+                        step = 'remove-container'
+                        self.assertEqual(command[-1], 'a' * 64)
+                        state['container'] = None
+                    elif command[:3] == ['docker', 'buildx', 'rm']:
+                        step = 'remove-instance'
+                        metadata.unlink()
+                    else:
+                        step = 'remove-volume'
+                        self.assertEqual(command, ['docker', 'volume', 'rm', 'buildx_buildkit_test0_state'])
+                        state['volume'] = None
+                    if step == target:
+                        raise original
+                with mock.patch.object(build, 'probe_builder', side_effect=lambda *a: state['container']), \
+                     mock.patch.object(build, 'probe_volume', side_effect=lambda *a: state['volume']), \
+                     mock.patch.object(build.subprocess, 'run', side_effect=remove):
+                    with self.assertRaises(subprocess.TimeoutExpired) as raised:
+                        build.remove_builder(sup, 'test', 'nonce', 'pinned', observations=observations)
+                self.assertIs(raised.exception, original)
+                failed = [entry for entry in observations if entry['status'] == 'failed']
+                self.assertEqual([entry['step'] for entry in failed], [target])
+                self.assertEqual(failed[0]['error_type'], 'TimeoutExpired')
+                readbacks = {entry['step']: entry for entry in observations if entry['step'].startswith('readback-')}
+                self.assertEqual(set(readbacks), {'readback-container', 'readback-instance', 'readback-volume'})
+                self.assertFalse(readbacks['readback-container']['present'])
+                self.assertEqual(readbacks['readback-instance']['present'], metadata.exists())
+                self.assertEqual(readbacks['readback-volume']['present'], state['volume'] is not None)
+                self.assertTrue(all('started_at' in entry and 'finished_at' in entry for entry in observations))
+
+    def test_builder_storage_diagnostics_require_exact_instance_and_do_not_raise(self):
+        sup = mock.Mock(env={})
+        for item, error in ((self.builder(), None), (self.builder(), TimeoutError),
+                            ({**self.builder(), 'Id': 'b' * 64}, None)):
+            record = {'builder_id': 'a' * 64}
+            with mock.patch.object(build, 'inspect_builder', return_value=item), \
+                 mock.patch.object(build, 'bounded_readonly_command', return_value=b'cache metadata',
+                                   side_effect=error) as run:
+                build.observe_builder_storage(sup, 'test', 'nonce', 'pinned', record, 'failed')
+            observation = record['builder_storage_observations'][0]
+            if item['Id'] != record['builder_id']:
+                run.assert_not_called()
+                self.assertEqual(observation['status'], 'unavailable')
+            elif error:
+                self.assertEqual(observation['status'], 'unavailable')
+                self.assertNotIn('output', observation)
+            else:
+                run.assert_called_once_with(['docker', 'exec', 'a' * 64, '/usr/bin/buildctl', 'du', '-v'], env={})
+                self.assertEqual(observation['status'], 'observed')
+                self.assertEqual(observation['sha256'], hashlib.sha256(b'cache metadata').hexdigest())
+
+    def test_cleanup_verification_is_failed_if_any_owned_object_remains(self):
+        for retained in ('container', 'instance', 'volume'):
+            with self.subTest(retained=retained):
+                docker = self.root / retained
+                metadata = docker / 'buildx/instances/test'
+                metadata.parent.mkdir(parents=True)
+                # No instance for the container case: reach the final container
+                # verification without the earlier instance-removal prerequisite.
+                if retained != 'container':
+                    metadata.write_text('{}')
+                sup = mock.Mock(env={'DOCKER_CONFIG': str(docker)})
+                state = {'container': self.builder(), 'volume': {'Name': 'state'}}
+                observations = []
+                def remove(command, **kwargs):
+                    if command[:2] == ['docker', 'rm'] and retained != 'container':
+                        state['container'] = None
+                    elif command[:3] == ['docker', 'buildx', 'rm'] and retained != 'instance':
+                        metadata.unlink()
+                    elif command[:3] == ['docker', 'volume', 'rm'] and retained != 'volume':
+                        state['volume'] = None
+                with mock.patch.object(build, 'probe_builder', side_effect=lambda *a: state['container']), \
+                     mock.patch.object(build, 'probe_volume', side_effect=lambda *a: state['volume']), \
+                     mock.patch.object(build.subprocess, 'run', side_effect=remove):
+                    with self.assertRaisesRegex(ValueError, 'removal not confirmed'):
+                        build.remove_builder(sup, 'test', 'nonce', 'pinned', observations=observations)
+                verification = next(entry for entry in observations
+                                    if entry['step'] == f'verify-{retained}-absent')
+                self.assertEqual(verification['status'], 'failed')
+                self.assertEqual(verification['error_type'], 'ValueError')
+                readback = next(entry for entry in observations if entry['step'] == f'readback-{retained}')
+                self.assertTrue(readback['present'])
 
     def test_owned_cache_is_removed_even_after_container_is_inactive(self):
         for item in (self.builder(), None):
@@ -1218,7 +1324,8 @@ class RunnerArtifactsTests(unittest.TestCase):
              mock.patch.object(build.subprocess, 'run') as run:
             with self.assertRaisesRegex(ValueError, 'association'):
                 build.remove_builder(sup, 'test', 'nonce', 'pinned')
-        run.assert_not_called()
+        self.assertTrue(all(call.args[0] == ['docker', 'volume', 'inspect', 'buildx_buildkit_test0_state']
+                            for call in run.call_args_list))
 
     def test_build_command_is_artifact_only_with_exact_private_index(self):
         data = build.document(build.MANIFEST)

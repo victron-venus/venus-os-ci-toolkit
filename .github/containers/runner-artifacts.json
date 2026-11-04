@@ -151,8 +151,8 @@
           "mode": "100644"
         },
         "deploy/runner-reserve/Dockerfile": {
-          "sha256": "4f77dec7f8b331645791d6ff286cf1ab5dde0db97c9718dc57e4f7d24b4befd9",
-          "bytes": 15842,
+          "sha256": "ab1075846bf97c69111a0304b74248f67e6581aa8a803d879aaeb57eb2ac054a",
+          "bytes": 13815,
           "mode": "100644"
         },
         "deploy/runner-reserve/Dockerfile.dockerignore": {
@@ -191,8 +191,8 @@
           "mode": "100644"
         },
         "scripts/build_runner_go_tools.py": {
-          "sha256": "84bb2551e64544d9f46ece8579582d5a954f1053ebb1329c5495c71c8a18cdd5",
-          "bytes": 23640,
+          "sha256": "57a109ee0614855c4c18c3caddfca14717bbe515d2fadc330cb1133d4885cf2f",
+          "bytes": 27884,
           "mode": "100644"
         },
         "scripts/build_runner_gstreamer.py": {

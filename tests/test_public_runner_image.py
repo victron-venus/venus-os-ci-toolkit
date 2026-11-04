@@ -59,7 +59,14 @@ class PublicRunnerImageTests(unittest.TestCase):
         copied = set()
         for line in source.splitlines():
             if line.startswith('COPY ') and '--from=' not in line:
-                copied.update(shlex.split(line)[1:-1])
+                words = shlex.split(line)
+                for path in words[1:-1]:
+                    if path.endswith('/'):
+                        self.assertIn(path, ('.github/containers/runner-go-tools/',
+                                             '.github/containers/runner-browsers/'))
+                        copied.update(name for name in allowed if name.startswith(path))
+                    else:
+                        copied.add(path)
         self.assertEqual(copied, allowed - {
             'deploy/runner-reserve/Dockerfile',
             'deploy/runner-reserve/Dockerfile.dockerignore'})
@@ -111,11 +118,15 @@ class PublicRunnerImageTests(unittest.TestCase):
                 self.assertEqual(user, '10001:10001')
                 self.assertEqual(workdir, '/opt/victron-go-tools-inputs')
                 self.assertEqual({name: environment.get(name) for name in expected_env}, expected_env)
-                words = shlex.split(value)
-                self.assertEqual(words[:-1], ['umask', '022', '&&', 'python3',
-                                             'scripts/build_runner_go_tools.py'])
-                calls.append(words[-1])
+                commands = [shlex.split(command.strip()) for command in value.split('&&')]
+                self.assertEqual(commands[0], ['umask', '022'])
+                self.assertEqual(commands[-1], ['go', 'clean', '-modcache', '-cache'])
+                for words in commands[1:-1]:
+                    self.assertEqual(words[:-1], ['python3', 'scripts/build_runner_go_tools.py'])
+                    calls.append(words[-1])
         self.assertEqual(calls, ['containerd', 'buildx', 'compose'])
+        self.assertEqual(sum('scripts/build_runner_go_tools.py' in command
+                             for _, _, command in stage_runs), 1)
         self.assertEqual(user, '1001:1001', 'The final runtime identity must not change')
         provision = [command for identity, _, command in stage_runs
                      if identity in (None, 'root', '0', '0:0') and 'useradd' in command]
@@ -148,6 +159,58 @@ class PublicRunnerImageTests(unittest.TestCase):
                          'if test -d "$path"; then test -x "$path"; else test -f "$path"; fi || exit 1'):
             self.assertIn(fragment, preflight)
         self.assertNotIn('|| true', preflight)
+
+    def test_grouped_copy_keeps_exact_destinations_and_default_modes(self):
+        source = (RESERVE / 'Dockerfile').read_text().replace('\\\n', ' ')
+        mapping = {}
+        for line in source.splitlines():
+            if not line.startswith('COPY ') or '--from=' in line:
+                continue
+            words = shlex.split(line)[1:]
+            destination = words[-1]
+            self.assertFalse(any(word.startswith('--') for word in words))
+            for path in words[:-1]:
+                if path.endswith('/'):
+                    inputs = [str(p.relative_to(ROOT)) for p in (ROOT / path).rglob('*') if p.is_file()]
+                    for name in inputs:
+                        mapping[name] = destination + name[len(path):]
+                else:
+                    mapping[path] = destination + Path(path).name if destination.endswith('/') else destination
+        for component in ('containerd', 'buildx', 'compose'):
+            for name in ('go.mod', 'go.sum', 'inputs.json'):
+                path = f'.github/containers/runner-go-tools/{component}/{name}'
+                self.assertEqual(mapping[path], path)
+        for name in ('google-Release', 'google-Release.gpg', 'google-key.gpg', 'google-amd64-Packages',
+                     'edge-Release', 'edge-Release.gpg', 'microsoft-key.gpg', 'edge-amd64-Packages'):
+            path = '.github/containers/runner-browsers/' + name
+            self.assertEqual(mapping[path], '/opt/victron-image-build/browsers/' + path)
+        for name in ('install_runner_browsers.py', 'browser-toolchains.json'):
+            self.assertEqual(mapping['scripts/' + name], '/opt/victron-image-build/browsers/scripts/' + name)
+
+    def test_go_stage_stops_on_failure_and_cleans_only_after_all_components(self):
+        source = (RESERVE / 'Dockerfile').read_text().replace('\\\n', ' ')
+        command = next(line[4:] for line in source.splitlines()
+                       if line.startswith('RUN ') and 'scripts/build_runner_go_tools.py' in line)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for name in ('python3', 'go'):
+                executable(root / name, '#!/bin/sh\nprintf "%s\\n" "$*" >> "$CALLS"\n'
+                           'if [ "$2" = "$FAIL_COMPONENT" ]; then exit 42; fi\n')
+            for failed in ('none', 'containerd', 'buildx', 'compose'):
+                log = root / failed
+                result = subprocess.run(['/bin/sh', '-c', command], check=False,
+                                        env={**os.environ, 'PATH': directory, 'CALLS': str(log),
+                                             'FAIL_COMPONENT': failed}, timeout=5)
+                calls = log.read_text().splitlines()
+                expected = ['scripts/build_runner_go_tools.py ' + name
+                            for name in ('containerd', 'buildx', 'compose')]
+                if failed == 'none':
+                    expected.append('clean -modcache -cache')
+                    self.assertEqual(result.returncode, 0)
+                else:
+                    expected = expected[:('containerd', 'buildx', 'compose').index(failed) + 1]
+                    self.assertEqual(result.returncode, 42)
+                self.assertEqual(calls, expected)
 
     def test_gh_uses_existing_manifest_and_verified_offline_installer(self):
         source = (RESERVE / 'Dockerfile').read_text()

@@ -55,15 +55,7 @@ ENV HOME=/home/go-builder \
 WORKDIR /opt/victron-go-tools-inputs
 COPY scripts/build_runner_go_tools.py scripts/build_runner_go_tools.py
 COPY .github/containers/runner-go-tools.json .github/containers/runner-go-tools.json
-COPY .github/containers/runner-go-tools/containerd/go.mod .github/containers/runner-go-tools/containerd/go.mod
-COPY .github/containers/runner-go-tools/containerd/go.sum .github/containers/runner-go-tools/containerd/go.sum
-COPY .github/containers/runner-go-tools/containerd/inputs.json .github/containers/runner-go-tools/containerd/inputs.json
-COPY .github/containers/runner-go-tools/buildx/go.mod .github/containers/runner-go-tools/buildx/go.mod
-COPY .github/containers/runner-go-tools/buildx/go.sum .github/containers/runner-go-tools/buildx/go.sum
-COPY .github/containers/runner-go-tools/buildx/inputs.json .github/containers/runner-go-tools/buildx/inputs.json
-COPY .github/containers/runner-go-tools/compose/go.mod .github/containers/runner-go-tools/compose/go.mod
-COPY .github/containers/runner-go-tools/compose/go.sum .github/containers/runner-go-tools/compose/go.sum
-COPY .github/containers/runner-go-tools/compose/inputs.json .github/containers/runner-go-tools/compose/inputs.json
+COPY .github/containers/runner-go-tools/ .github/containers/runner-go-tools/
 USER 10001:10001
 # Check the actual image-stage identity and permissions before any source build.
 # Upstream root-only tests select their own skip paths; unit packages stay intact.
@@ -83,9 +75,10 @@ RUN test "$(id -u)" = 10001 && test "$(id -u -r)" = 10001 \
         done' sh {} + \
     && printf 'Go source builder uid=%s gid=%s; workspace/cache ownership and readonly inputs verified\n' \
         "$(id -u)" "$(id -g)"
-RUN umask 022 && python3 scripts/build_runner_go_tools.py containerd
-RUN umask 022 && python3 scripts/build_runner_go_tools.py buildx
-RUN umask 022 && python3 scripts/build_runner_go_tools.py compose
+RUN umask 022 && python3 scripts/build_runner_go_tools.py containerd \
+    && python3 scripts/build_runner_go_tools.py buildx \
+    && python3 scripts/build_runner_go_tools.py compose \
+    && go clean -modcache -cache
 FROM docker.io/library/docker@sha256:9e79b879b177fbd72c34376a3dd3d91747da5db49e1f560f76aea59561471977 AS docker
 FROM docker.io/library/node@sha256:55fb5f5a527ea2c5c4a95f963e48ef90aa38c7b346054fdc8ee9957a2b55d205 AS node
 FROM ghcr.io/actions/actions-runner@sha256:e275409999c37162649aa050ca573f03eab2eabcb3a1e7fcc47548de6b4f9690 AS runner
@@ -137,16 +130,8 @@ RUN apt-get update && apt-get -o Dpkg::Options::=--force-unsafe-io install -y --
     chown runner:runner /opt/hostedtoolcache
 # Browser apt work must precede the final exact patched-libbpf installation.
 COPY .github/containers/runner-browsers.json /opt/victron-image-build/browsers/.github/containers/runner-browsers.json
-COPY scripts/install_runner_browsers.py /opt/victron-image-build/browsers/scripts/install_runner_browsers.py
-COPY scripts/browser-toolchains.json /opt/victron-image-build/browsers/scripts/browser-toolchains.json
-COPY .github/containers/runner-browsers/edge-Release /opt/victron-image-build/browsers/.github/containers/runner-browsers/edge-Release
-COPY .github/containers/runner-browsers/edge-Release.gpg /opt/victron-image-build/browsers/.github/containers/runner-browsers/edge-Release.gpg
-COPY .github/containers/runner-browsers/edge-amd64-Packages /opt/victron-image-build/browsers/.github/containers/runner-browsers/edge-amd64-Packages
-COPY .github/containers/runner-browsers/google-Release /opt/victron-image-build/browsers/.github/containers/runner-browsers/google-Release
-COPY .github/containers/runner-browsers/google-Release.gpg /opt/victron-image-build/browsers/.github/containers/runner-browsers/google-Release.gpg
-COPY .github/containers/runner-browsers/google-amd64-Packages /opt/victron-image-build/browsers/.github/containers/runner-browsers/google-amd64-Packages
-COPY .github/containers/runner-browsers/google-key.gpg /opt/victron-image-build/browsers/.github/containers/runner-browsers/google-key.gpg
-COPY .github/containers/runner-browsers/microsoft-key.gpg /opt/victron-image-build/browsers/.github/containers/runner-browsers/microsoft-key.gpg
+COPY scripts/install_runner_browsers.py scripts/browser-toolchains.json /opt/victron-image-build/browsers/scripts/
+COPY .github/containers/runner-browsers/ /opt/victron-image-build/browsers/.github/containers/runner-browsers/
 RUN python3 /opt/victron-image-build/browsers/scripts/install_runner_browsers.py \
     && rm -rf /var/lib/apt/lists/*
 # Install the rebuilt distro package, retaining dpkg version and copyright metadata.

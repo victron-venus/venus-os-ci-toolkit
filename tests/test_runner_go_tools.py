@@ -6,11 +6,14 @@ import io
 import json
 import os
 from pathlib import Path
+import signal
+import sys
+import time
 import tarfile
 import tempfile
 import unittest
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 ROOT = Path(__file__).resolve().parents[1]
 SPEC = importlib.util.spec_from_file_location('runner_go_tools', ROOT / 'scripts/build_runner_go_tools.py')
@@ -19,6 +22,127 @@ SPEC.loader.exec_module(TOOLS)
 
 
 class RunnerGoToolTests(unittest.TestCase):
+    @unittest.skipUnless(sys.platform == 'linux', 'Real image diagnostics run on Linux')
+    def test_storage_diagnostic_output_and_lifetime_are_bounded(self):
+        with patch.object(TOOLS.os, 'killpg', wraps=os.killpg) as kill:
+            self.assertEqual(TOOLS.bounded_readonly_command(
+                [sys.executable, '-c', 'print(123)']), b'123\n')
+            kill.assert_called_once()
+        cases = [
+            ('import os,time; os.write(1,b"x"*8192); time.sleep(30)', ValueError),
+            # The leader exits immediately while its descendant retains stdout.
+            ('import os,time; child=os.fork(); time.sleep(30) if child == 0 else os._exit(0)', TimeoutError),
+        ]
+        for source, error in cases:
+            with self.subTest(error=error), patch.object(TOOLS.os, 'killpg', wraps=os.killpg) as kill:
+                with self.assertRaises(error):
+                    TOOLS.bounded_readonly_command([sys.executable, '-c', source], maximum=32, seconds=0.5)
+                kill.assert_called_once()
+                self.assertEqual(kill.call_args.args[1], signal.SIGKILL)
+
+    @unittest.skipUnless(sys.platform == 'linux', 'Real image diagnostics run on Linux')
+    def test_successful_diagnostic_terminates_child_that_closed_output(self):
+        pid_file = self.root / 'child'
+        # The child signals readiness before the parent exits; it has no output
+        # pipe left to keep the collector's select loop alive.
+        code = ('import os,time\nfrom pathlib import Path\n'
+                f'p=Path({str(pid_file)!r})\n'
+                'if os.fork() == 0:\n'
+                ' os.close(1); os.close(2); p.write_text(str(os.getpid())); time.sleep(5); os._exit(0)\n'
+                'while not p.exists(): time.sleep(.005)\n')
+        TOOLS.bounded_readonly_command([sys.executable, '-c', code], seconds=1)
+        child = int(pid_file.read_text())
+        deadline = time.monotonic() + 1
+        while True:
+            try:
+                # A zombie cannot run and no longer owns open resources.
+                status = Path(f'/proc/{child}/stat').read_text().rsplit(')', 1)[1].split()[0]
+            except FileNotFoundError:
+                break
+            if status == 'Z':
+                break
+            if time.monotonic() >= deadline:
+                self.fail('Diagnostic left a running descendant')
+            time.sleep(.01)
+
+    def test_diagnostic_requires_linux_waitid_and_default_child_handler(self):
+        with patch.object(TOOLS.sys, 'platform', 'darwin'), patch.object(TOOLS.subprocess, 'Popen') as launch:
+            with self.assertRaisesRegex(ValueError, 'Linux waitid'):
+                TOOLS.bounded_readonly_command(['unused'])
+            launch.assert_not_called()
+        capabilities = {name: getattr(os, name, 1) for name in
+                        ('waitid', 'P_PID', 'WEXITED', 'WNOHANG', 'WNOWAIT', 'CLD_EXITED')}
+        with patch.object(TOOLS.sys, 'platform', 'linux'), patch.dict(TOOLS.os.__dict__, capabilities), \
+             patch.object(TOOLS.signal, 'getsignal', return_value=signal.SIG_IGN), \
+             patch.object(TOOLS.subprocess, 'Popen') as launch:
+            with self.assertRaisesRegex(ValueError, 'sole child reaper'):
+                TOOLS.bounded_readonly_command(['unused'])
+            launch.assert_not_called()
+        with patch.object(TOOLS.sys, 'platform', 'linux'), patch.dict(TOOLS.os.__dict__), \
+             patch.object(TOOLS.subprocess, 'Popen') as launch:
+            TOOLS.os.__dict__.pop('waitid', None)
+            with self.assertRaisesRegex(ValueError, 'Linux waitid'):
+                TOOLS.bounded_readonly_command(['unused'])
+            launch.assert_not_called()
+
+    def test_diagnostic_signals_only_while_leader_is_waitable(self):
+        for ownership_lost in (False, True):
+            read_fd, write_fd = os.pipe()
+            os.close(write_fd)
+            stream = os.fdopen(read_fd, 'rb')
+            process = SimpleNamespace(pid=12345, returncode=None, stdout=stream, wait=Mock(return_value=0))
+            status = SimpleNamespace(si_pid=12345, si_code=1, si_status=0)
+            waitid = Mock(return_value=status, side_effect=ChildProcessError if ownership_lost else None)
+            capabilities = {name: getattr(os, name, 1) for name in
+                            ('P_PID', 'WEXITED', 'WNOHANG', 'WNOWAIT')}
+            capabilities.update(waitid=waitid, CLD_EXITED=1)
+            def signal_owned(pid, sig):
+                process.wait.assert_not_called()
+                self.assertEqual((pid, sig), (12345, signal.SIGKILL))
+            with patch.object(TOOLS.sys, 'platform', 'linux'), patch.dict(TOOLS.os.__dict__, capabilities), \
+                 patch.object(TOOLS.signal, 'getsignal', return_value=signal.SIG_DFL), \
+                 patch.object(TOOLS.subprocess, 'Popen', return_value=process), \
+                 patch.object(TOOLS.os, 'killpg', side_effect=signal_owned) as kill:
+                if ownership_lost:
+                    with self.assertRaisesRegex(ValueError, 'ownership lost'):
+                        TOOLS.bounded_readonly_command(['unused'])
+                    kill.assert_not_called()
+                    process.wait.assert_not_called()
+                else:
+                    self.assertEqual(TOOLS.bounded_readonly_command(['unused']), b'')
+                    kill.assert_called_once()
+                    process.wait.assert_called_once_with(timeout=5)
+            self.assertTrue(stream.closed)
+
+    def test_storage_observations_accept_only_fixed_numeric_paths(self):
+        paths = [str(TOOLS.BUILD_ROOT), str(TOOLS.OUTPUT), '/home/go-builder/go/pkg/mod',
+                 '/home/go-builder/.cache/go-build']
+        raw = ''.join(f'{index}\t{path}\n' for index, path in enumerate(paths)).encode()
+        for value, status in ((raw, 'observed'), (b'1\t/arbitrary\n', 'unavailable')):
+            stream = io.StringIO()
+            with patch.object(TOOLS, 'bounded_readonly_command', return_value=value) as run, \
+                 patch('sys.stdout', stream):
+                TOOLS.observe_image_storage('containerd', 'before')
+            run.assert_called_once_with(['du', '-sk', '--', *paths], maximum=4096)
+            record = json.loads(stream.getvalue())
+            self.assertEqual(record['status'], status)
+            if status == 'observed':
+                self.assertEqual(record['kib'], dict(zip(paths, range(4))))
+            else:
+                self.assertNotIn('kib', record)
+
+    def test_image_build_failure_stays_primary_after_diagnostic_failure(self):
+        stream = io.StringIO()
+        with patch.object(sys, 'argv', ['build_runner_go_tools.py', 'containerd']), \
+             patch.object(TOOLS, 'build', side_effect=RuntimeError('original build failure')), \
+             patch.object(TOOLS, 'bounded_readonly_command', side_effect=TimeoutError), \
+             patch('sys.stdout', stream):
+            with self.assertRaisesRegex(RuntimeError, 'original build failure'):
+                TOOLS.main()
+        records = [json.loads(line) for line in stream.getvalue().splitlines()]
+        self.assertEqual([r['phase'] for r in records], ['before', 'failed'])
+        self.assertTrue(all(r['status'] == 'unavailable' for r in records))
+
     def test_production_openpgp_guard_rejects_legacy_root_and_subpackages(self):
         supported = {'github.com/ProtonMail/go-crypto/openpgp', 'crypto', 'example/main'}
         TOOLS.verify_openpgp_absent(supported)
