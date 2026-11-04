@@ -4,6 +4,7 @@
 
 ### Fixed
 
+- Accept Docker export layers that exactly match the corresponding verified OCI blob, including gzip-compressed layers. Preserve layer order, content digests, exact sizes, configuration checks and archive limits; retain support for uncompressed layers.
 - Validate the complete release-note body, including the exact candidate or final-build provenance, before reserving a sequence or build number. Notes that exceed the UTF-8 byte limit now fail before creating a plan; bodies exactly at the limit remain publishable.
 
 ### Upgrade
