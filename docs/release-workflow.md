@@ -97,11 +97,19 @@ and source in every receipt; publication requires the current verified run ident
 The installer scopes build, signing and collection artifact names to that attempt.
 ID-selected candidate downloads require a separate consumer check of receipt
 producer identity and payload digest; the name-scoping helper does not verify them.
-Before publication starts, use **Re-run all jobs** only if the allocator and
-release policy permit reuse of that reservation. Recreate every required input
-in the same attempt; older packages must not fill missing current builds. After
-publication starts, or its result is partial or uncertain, inspect existing tags,
-releases and assets before a policy-authorized new run. Never reset the ledger or
+**Re-run failed jobs** can retain successful checks and packages from an older
+attempt, so it is insufficient when publication requires fresh inputs from the
+current attempt. Before publication starts, read back the release ledger and
+existing tags and releases. If the reservation is still eligible, its build
+number is above the publication floor, and the candidate tag is absent, use
+**Re-run all jobs** on the same run only when the allocator and release policy
+permit it. Recreate every required input in the same attempt; older packages
+must not fill missing current builds.
+
+Once the publication floor has consumed the build number, use a policy-authorized
+new workflow run and reservation. If publication started or its external result
+is partial or uncertain, inspect existing tags, releases and assets first; an
+immutable tag may also require a new base version. Never reset the ledger or
 overwrite published assets. See [publication-phase retry rules](VERSIONING.md#package-identity-across-reruns).
 Update shared fuzz workflow pins with the producer and collector rollout. Local
 offline receipts cannot qualify live publication.
