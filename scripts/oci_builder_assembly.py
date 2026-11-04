@@ -26,7 +26,8 @@ class AssemblyService:
         command = ["systemctl", "show", self.unit, "--no-pager",
                    "--property=LoadState,ActiveState,Description,FragmentPath,ControlGroup,MainPID"]
         result = subprocess.run(command, env=self.sup.env, text=True, capture_output=True, timeout=15)
-        data = dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
+        fields = [line.split("=", 1) for line in result.stdout.splitlines() if "=" in line]
+        data = {key: value for key, value in fields}
         if data.get("LoadState") == "not-found" and result.returncode in (0, 1):
             return None
         require(result.returncode == 0, "Cannot determine assembly unit ownership")
@@ -121,7 +122,7 @@ def assemble(supervisor, binaries, context, work, tag, arch, observe, record, *,
                 for line in instructions) and not re.search(r"(?mi)^\s*#\s*syntax\s*=", recipe),
             "Assembly permits only the reviewed COPY-only recipe")
     require(arch in {"amd64", "arm64"}, "Native architecture required")
-    require(re.fullmatch(r"[1-9][0-9]*", source_epoch), "Source commit timestamp required")
+    require(re.fullmatch(r"[1-9]\d*", source_epoch, flags=re.ASCII), "Source commit timestamp required")
     service = AssemblyService(supervisor, binaries, work, observe)
     try:
         client = service.start()

@@ -18,6 +18,7 @@ import prepare_oci_promotion as promotion
 ROOT = Path(__file__).resolve().parents[1]
 REQUIRE = promotion.require
 MAX_ROOTFS = 512 * 1024 * 1024
+INDEX_FILENAME = "index.json"
 ENTRYPOINT = ["/usr/bin/buildkitd", "--oci-worker=true", "--containerd-worker=false",
               "--oci-worker-snapshotter=native", "--oci-worker-net=host",
               "--oci-worker-binary=/usr/bin/buildkit-runc"]
@@ -36,7 +37,7 @@ def admit(environment):
     REQUIRE(re.fullmatch(r"[0-9a-f]{40}", commit)
             and environment.get("REVIEWED_COMMIT") == commit, "Exact reviewed recipe required")
     for key in ("GITHUB_RUN_ID", "GITHUB_RUN_ATTEMPT"):
-        REQUIRE(re.fullmatch(r"[1-9][0-9]*", environment.get(key, "")), "Invalid workflow identity")
+        REQUIRE(re.fullmatch(r"[1-9]\d*", environment.get(key, ""), flags=re.ASCII), "Invalid workflow identity")
     REQUIRE(environment["GITHUB_RUN_ATTEMPT"] == "1", "Retries need a fresh reviewed dispatch")
     return arch, commit
 
@@ -75,7 +76,7 @@ def verify_oci(path, arch, expected_files, check):
     try:
         REQUIRE(runner.oci.json_document(archive.read("oci-layout")) == {"imageLayoutVersion": "1.0.0"},
                 "Unexpected OCI layout")
-        index = runner.oci.json_document(archive.read("index.json"))
+        index = runner.oci.json_document(archive.read(INDEX_FILENAME))
         REQUIRE(index.get("schemaVersion") == 2 and len(index["manifests"]) == 1, "Ambiguous OCI root")
         descriptor = index["manifests"][0]
         if descriptor.get("mediaType") == runner.oci.INDEX:
@@ -100,7 +101,7 @@ def verify_oci(path, arch, expected_files, check):
             tree = runner.oci.merge_effective_layer(tree, entries)
         files = {name: runner.oci.effective_regular(tree, name)["sha256"] for name in expected_files}
         REQUIRE(files == expected_files, "Actual OCI payload differs")
-        REQUIRE(archive.used == set(archive.files) - {"index.json", "oci-layout"}, "Unreferenced OCI blobs")
+        REQUIRE(archive.used == set(archive.files) - {INDEX_FILENAME, "oci-layout"}, "Unreferenced OCI blobs")
         archive.unchanged()
         return {"archive_sha256": archive_sha, "archive_bytes": path.stat().st_size,
                 "manifest": descriptor["digest"], "config": manifest["config"]["digest"],
@@ -261,7 +262,7 @@ def main():
     stage = temporary / "oci-promotion"
     lock = json.loads((ROOT / ".github/oci-tools/promotion.json").read_text())
     promotion.validate_lock(lock)
-    index = json.loads((stage / "index.json").read_text())
+    index = json.loads((stage / INDEX_FILENAME).read_text())
     REQUIRE(index["source"] == lock["source"] and index["qualification_run"] == lock["qualification_run"]
             and index["published"] is False and index["builder_image_qualified"] is False,
             "Unexpected staged input")

@@ -75,7 +75,8 @@ class BuilderTests(unittest.TestCase):
         self.assertEqual(builder.admit(env), ("arm64", "a" * 40))
         for key, value in (("RUNNER_ENVIRONMENT", "self-hosted"), ("GITHUB_EVENT_NAME", "pull_request"),
                            ("GITHUB_REF", "refs/heads/other"), ("REVIEWED_COMMIT", "b" * 40),
-                           ("GITHUB_RUN_ATTEMPT", "2"), ("GITHUB_REPOSITORY", "other/repo")):
+                           ("GITHUB_RUN_ATTEMPT", "2"), ("GITHUB_REPOSITORY", "other/repo"),
+                           ("GITHUB_RUN_ID", "1\u0661")):
             with self.subTest(key=key), self.assertRaises(ValueError):
                 builder.admit({**env, key: value})
 
@@ -249,3 +250,11 @@ class BuilderTests(unittest.TestCase):
         self.assertTrue(all("source-date-epoch=1793734000" in value for value in outputs))
         self.assertTrue(any("type=docker,compression=uncompressed,force-compression=true" in value for value in outputs))
         self.assertIn("build-arg:SOURCE_DATE_EPOCH=1793734000", command)
+
+    def test_assembly_rejects_unicode_timestamp_digits(self):
+        (self.root / "Dockerfile").write_text("FROM scratch\n")
+        supervisor, observe = Mock(), Mock()
+        with patch.object(assembly, "AssemblyService") as service, self.assertRaisesRegex(ValueError, "timestamp"):
+            assembly.assemble(supervisor, self.root, self.root, self.root, "local/proof:test", "amd64",
+                              observe, {}, source_epoch="1\u0661")
+        service.assert_not_called()

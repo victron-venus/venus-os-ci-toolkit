@@ -14,10 +14,11 @@ from oci_vulnerability import evaluate
 
 ROOT = Path(__file__).resolve().parents[1]
 require = source.require
+HELPER_GO_VERSION = "go1.27.3"
 
 
 def helper(arch, stage):
-    require(subprocess.check_output(["go", "version"], text=True).split()[2] == "go1.27.3",
+    require(subprocess.check_output(["go", "version"], text=True).split()[2] == HELPER_GO_VERSION,
             "Exact helper compiler required")
     stage.mkdir(mode=0o700, exist_ok=False)
     directory = ROOT / "tools/oci-cgroup-reader"
@@ -26,7 +27,7 @@ def helper(arch, stage):
                log=stage / "helper-tests.log")
     source.run(["go", "build", "-trimpath", "-p", "2", "-o", stage / "oci-cgroup-reader", "."],
                cwd=directory, env=env, log=stage / "helper-build.log")
-    proof = {"architecture": arch, "compiler": "go1.27.3", "unit_tests_passed": True,
+    proof = {"architecture": arch, "compiler": HELPER_GO_VERSION, "unit_tests_passed": True,
              "sha256": source.digest(stage / "oci-cgroup-reader"), "sources": {
                  path.name: source.digest(path) for path in directory.iterdir() if path.is_file()}}
     source.write_json(stage / "helper.json", proof)
@@ -53,7 +54,7 @@ def scan(arch, stage):
     assessments = {}
     for name, root, go_version in (("docker-buildx", "github.com/docker/buildx", manifest["go_version"]),
                                    ("oci-cgroup-reader", "github.com/victron-venus/venus-os-ci-toolkit/oci-cgroup-reader",
-                                    "go1.27.3")):
+                                    HELPER_GO_VERSION)):
         raw = source.run(["govulncheck", "-json", "-mode=binary", binaries / name],
                          log=stage / (name + "-govulncheck.jsonl"))
         assessed = evaluate(raw, "binary", completed=True, expected_root=root, expected_go=go_version)
@@ -82,7 +83,7 @@ def scan(arch, stage):
     source.write_json(stage / "acceptance.json", {
         "source": os.environ["GITHUB_SHA"], "architecture": arch, "passed": True,
         "buildx_sha256": source.digest(buildx), "reader_sha256": source.digest(helper_binary),
-        "client_compiler": manifest["go_version"], "helper_compiler": "go1.27.3",
+        "client_compiler": manifest["go_version"], "helper_compiler": HELPER_GO_VERSION,
         "client_source": manifest["components"]["buildx"]["commit"],
         "client_manifest_sha256": source.digest(client.MANIFEST),
         "scanner_sha256": source.digest(scanner), "helper_proof": helper_proof,
