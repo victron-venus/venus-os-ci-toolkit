@@ -47,6 +47,24 @@ Verified `.deb` files are staged under canonical apt cache names in an isolated
 archive directory. This lets `--no-download` install the reviewed files without
 consulting the host's shared archive cache.
 
+Downloads retry only HTTP 500/502/503/504, up to five attempts per origin with 2/4/8/16-second
+backoff. The existing socket timeout and CI job deadline still apply. If the
+snapshot exhausts those transient retries, native packages alone may use the
+[official Ubuntu archive](https://ubuntu.com/server/docs/package-management/):
+`archive.ubuntu.com/ubuntu` for amd64 or `ports.ubuntu.com/ubuntu-ports` for arm64.
+For the Ubuntu 24.04 locks, the package filename, version, size and SHA-256 remain
+identical at both origins. Native requests validate the canonical snapshot and package path before
+connecting; redirects must retain the same HTTPS origin. Authentication, TLS, rate-limit, missing-file and integrity errors stop
+immediately instead of selecting another origin. Source and scanner downloads
+have no archive fallback. Each attempt stages private temporary bytes and links
+the final filename only after verification; existing files are never overwritten.
+After one archive download passes the exact size and SHA-256 checks, the remaining
+packages in that installation use the same official archive directly. This avoids
+paying snapshot retry delays for every package during an outage. The preference
+is local to the installation and resets for each new build; a failed or corrupt
+archive download cannot select it. Logs identify the package basename so a
+persistent upstream failure is traceable.
+
 runc uses CGO and static external linking. The tags match the pinned BuildKit
 Dockerfile's runc build (`apparmor seccomp netgo cgo static_build osusergo`), rather
 than the separate runc Makefile defaults that add libpathrs. **Seccomp remains
