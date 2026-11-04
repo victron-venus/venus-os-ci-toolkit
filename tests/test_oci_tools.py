@@ -558,5 +558,131 @@ class HeaderApplicabilityTests(unittest.TestCase):
             headers.inspect_deb(path, {"size": len(data), "sha256": headers.sha256(path)})
 
 
+    def hardening_fixture(self):
+        self.root.chmod(0o755)
+        package_dir = self.root / "usr/share/doc/linux-libc-dev"
+        package_dir.mkdir(parents=True)
+        files = []
+        for name in ("changelog.Debian.gz", "copyright"):
+            path = package_dir / name
+            path.write_bytes(name.encode())
+            files.append({"path": path.relative_to(self.root).as_posix(), "size": path.stat().st_size,
+                          "sha256": headers.sha256(path), "mode": 0o644,
+                          "uid": path.stat().st_uid, "gid": path.stat().st_gid})
+            path.chmod(0o777)
+        dirs = []
+        for name in (".", "usr", "usr/share", "usr/share/doc", "usr/share/doc/linux-libc-dev"):
+            path = self.root / name
+            path.chmod(0o755 if name in (".", "usr") else 0o777)
+            dirs.append({"path": name, "uid": path.stat().st_uid, "gid": path.stat().st_gid, "mode": 0o755})
+        return files, dirs
+
+    def test_hardening_changes_exactly_five_paths_and_is_idempotent(self):
+        files, dirs = self.hardening_fixture()
+        neighbor = self.root / "usr/share/unrelated"
+        neighbor.write_bytes(b"untouched")
+        neighbor.chmod(0o777)
+        actions = []
+        headers.harden_hosted_metadata(self.root, files, dirs, actions)
+        expected = {f["path"] for f in files} | {d["path"] for d in dirs if d["path"] not in (".", "usr")}
+        self.assertEqual({a["path"] for a in actions if a["changed"]}, expected)
+        self.assertEqual(stat.S_IMODE(neighbor.stat().st_mode), 0o777)
+        self.assertEqual(neighbor.read_bytes(), b"untouched")
+        again = []
+        headers.harden_hosted_metadata(self.root, files, dirs, again)
+        self.assertFalse(any(a["changed"] for a in again))
+
+    def test_hardening_rejects_unreviewed_ancestor_modes(self):
+        files, dirs = self.hardening_fixture()
+        for name, mode in ((".", 0o777), ("usr", 0o777), ("usr/share", 0o775)):
+            path = self.root / name
+            original = stat.S_IMODE(path.stat().st_mode)
+            path.chmod(mode)
+            with self.subTest(name=name), self.assertRaisesRegex(ValueError, "starting mode"):
+                headers.harden_hosted_metadata(self.root, files, dirs, [])
+            self.assertEqual(stat.S_IMODE(path.stat().st_mode), mode)
+            path.chmod(original)
+
+    def test_hardening_rejects_wrong_owner_and_doc_bytes_before_chmod(self):
+        files, dirs = self.hardening_fixture()
+        for field in ("uid", "gid"):
+            wrong = copy.deepcopy(dirs)
+            next(d for d in wrong if d["path"] == "usr/share")[field] += 1
+            with self.subTest(field=field), self.assertRaisesRegex(ValueError, "ownership"):
+                headers.harden_hosted_metadata(self.root, files, wrong, [])
+            self.assertEqual(stat.S_IMODE((self.root / "usr/share").stat().st_mode), 0o777)
+        notice = self.root / files[0]["path"]
+        notice.write_bytes(b"x" * files[0]["size"])
+        with self.assertRaisesRegex(ValueError, "bytes"):
+            headers.harden_hosted_metadata(self.root, files, dirs, [])
+        self.assertEqual(stat.S_IMODE(notice.stat().st_mode), 0o777)
+
+    def test_hardening_never_follows_substituted_directory(self):
+        files, dirs = self.hardening_fixture()
+        path = self.root / "usr/share"
+        moved = self.root / "moved"
+        path.rename(moved)
+        path.symlink_to(moved, target_is_directory=True)
+        with self.assertRaises(OSError):
+            headers.harden_hosted_metadata(self.root, files, dirs, [])
+        self.assertEqual(stat.S_IMODE(moved.stat().st_mode), 0o777)
+
+    def test_hardening_rejects_hardlinked_notice_without_changing_alias(self):
+        files, dirs = self.hardening_fixture()
+        notice = self.root / files[0]["path"]
+        alias = self.root / "outside-notice-alias"
+        os.link(notice, alias)
+        self.assertEqual(notice.stat().st_nlink, 2)
+        with self.assertRaisesRegex(ValueError, "hard link"):
+            headers.harden_hosted_metadata(self.root, files, dirs, [])
+        self.assertEqual(stat.S_IMODE(alias.stat().st_mode), 0o777)
+        self.assertEqual(stat.S_IMODE(notice.stat().st_mode), 0o777)
+
+    def test_hardening_rejects_link_count_drift_during_chmod(self):
+        files, dirs = self.hardening_fixture()
+        notice = self.root / files[0]["path"]
+        alias = self.root / "concurrent-alias"
+        original_fchmod = os.fchmod
+
+        def link_during_chmod(fd, mode):
+            if mode == 0o644 and not alias.exists():
+                os.link(notice, alias)
+            original_fchmod(fd, mode)
+
+        actions = []
+        with patch.object(headers.os, "fchmod", side_effect=link_during_chmod), \
+                self.assertRaisesRegex(ValueError, "hard link appeared during"):
+            headers.harden_hosted_metadata(self.root, files, dirs, actions)
+        self.assertEqual(notice.stat().st_nlink, 2)
+        self.assertTrue(actions[-1]["changed"])
+        self.assertNotIn("after_mode", actions[-1])
+
+    def test_hardening_uses_verified_fd_if_file_path_is_replaced(self):
+        files, dirs = self.hardening_fixture()
+        notice = self.root / files[0]["path"]
+        outside = self.root / "outside"
+        outside.write_bytes(b"must not chmod")
+        outside.chmod(0o777)
+        original_fchmod = os.fchmod
+        replaced = False
+
+        def replace_then_chmod(fd, mode):
+            nonlocal replaced
+            if mode == 0o644 and not replaced:
+                notice.rename(notice.with_name("original"))
+                notice.symlink_to(outside)
+                replaced = True
+            original_fchmod(fd, mode)
+
+        with patch.object(headers.os, "fchmod", side_effect=replace_then_chmod):
+            headers.harden_hosted_metadata(self.root, files, dirs, [])
+        self.assertTrue(replaced)
+        self.assertEqual(stat.S_IMODE(outside.stat().st_mode), 0o777)
+        self.assertEqual(outside.read_bytes(), b"must not chmod")
+        owned = ["/" + entry["path"] for entry in [*dirs, *files]]
+        with self.assertRaisesRegex(ValueError, "Unexpected installed header payload"):
+            headers.verify_installed(self.root, files, owned, dirs)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -186,6 +186,8 @@ def open_beneath(root, relative):
     parent = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     try:
         parts = Path(relative).parts
+        if not parts:
+            return os.dup(parent)
         for part in parts[:-1]:
             child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent)
             os.close(parent)
@@ -252,6 +254,57 @@ def installed_metadata(root, owned_paths):
                          "mode": stat.S_IMODE(metadata.st_mode),
                          "type": stat.S_IFMT(metadata.st_mode), "size": metadata.st_size})
     return observed
+
+
+def harden_hosted_metadata(root, files, directories, actions):
+    """Restore only the five observed hosted-image mode deviations, via open FDs.
+
+    Parents become non-writable before opening their children. Ownership is never
+    repaired: a replaced object or any unexpected starting mode fails closed.
+    """
+    expected_dirs = {entry["path"]: entry for entry in directories}
+    expected_files = {entry["path"]: entry for entry in files}
+    paths = (".", "usr", "usr/share", "usr/share/doc", "usr/share/doc/linux-libc-dev",
+             "usr/share/doc/linux-libc-dev/changelog.Debian.gz",
+             "usr/share/doc/linux-libc-dev/copyright")
+    for name in paths:
+        is_directory = name in expected_dirs
+        entry = expected_dirs[name] if is_directory else expected_files[name]
+        expected_mode = entry["mode"]
+        need(expected_mode == (0o755 if is_directory else 0o644), "Unexpected hardening target mode")
+        fd = open_beneath(root, name)
+        try:
+            before = os.fstat(fd)
+            need((stat.S_ISDIR if is_directory else stat.S_ISREG)(before.st_mode)
+                 and before.st_uid == entry["uid"] and before.st_gid == entry["gid"],
+                 "Hosted hardening target type or ownership changed: " + name)
+            mode = stat.S_IMODE(before.st_mode)
+            allowed_modes = (expected_mode,) if name in (".", "usr") else (expected_mode, 0o777)
+            need(mode in allowed_modes, "Unreviewed hosted hardening starting mode: " + name)
+            if not is_directory:
+                need(before.st_nlink == 1, "Hosted notice has an unreviewed hard link: " + name)
+                need(before.st_size == entry["size"], "Hosted notice size changed: " + name)
+                with os.fdopen(os.dup(fd), "rb") as stream:
+                    data = stream.read(entry["size"] + 1)
+                need(len(data) == entry["size"] and hashlib.sha256(data).hexdigest() == entry["sha256"],
+                     "Hosted notice bytes changed: " + name)
+            action = {"path": name, "uid": before.st_uid, "gid": before.st_gid,
+                      "before_mode": mode, "target_mode": expected_mode, "changed": False}
+            actions.append(action)
+            if mode != expected_mode:
+                if not is_directory:
+                    need(os.fstat(fd).st_nlink == 1, "Hosted notice hard link appeared before repair: " + name)
+                os.fchmod(fd, expected_mode)
+                action["changed"] = True
+            after = os.fstat(fd)
+            if not is_directory:
+                need(after.st_nlink == 1, "Hosted notice hard link appeared during repair: " + name)
+            need(stat.S_IMODE(after.st_mode) == expected_mode
+                 and (after.st_uid, after.st_gid) == (before.st_uid, before.st_gid),
+                 "Hosted hardening did not restore expected metadata: " + name)
+            action["after_mode"] = stat.S_IMODE(after.st_mode)
+        finally:
+            os.close(fd)
 
 
 def matches_header_package(package, binding):

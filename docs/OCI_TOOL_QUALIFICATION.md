@@ -9,7 +9,8 @@ service or include private application sources.
 **Status:** implementation under review. At source `86de20e`, both native targets
 compiled, targeted tests passed, and source/binary Go scans were clean. The native
 package gate remained blocked by 385 findings on the exact Linux header package.
-The applicability guard below is pending activation review. No privileged runtime
+The finite applicability guard below has been reviewed. Fresh hosted validation
+must still pass the strict installed-file and security gates. No privileged runtime
 qualification has run. Use the exact workflow run and its evidence to assess a
 candidate; source validation alone does not qualify runtime behavior.
 
@@ -35,8 +36,9 @@ flowchart LR
 
 The two native targets are `ubuntu-24.04`/amd64 and `ubuntu-24.04-arm`/arm64.
 Neither job falls back to shared or household runners. Compilation and unit tests
-run without root. Native package installation is the only sudo operation in the
-source job. Packages come from the 2026-11-03 Ubuntu snapshot, with individually
+run without root. Native package installation and the finite metadata repair
+described below are the only sudo operations in the source job. Packages come
+from the 2026-11-03 Ubuntu snapshot, with individually
 pinned versions, download sizes and SHA-256 digests. The compiler, libc, binutils,
 Linux headers and libseccomp dependency closure are explicit. Installation permits
 no missing-package download or package removal; a host incompatibility must be
@@ -123,7 +125,7 @@ all upstream security tests is made.
 
 ### Finite Linux header applicability
 
-The [pending policy](../.github/oci-tools/header-disposition.json) binds a finite
+The [reviewed policy](../.github/oci-tools/header-disposition.json) binds a finite
 set of 385 observed CVEs to Ubuntu 24.04 `linux-libc-dev` version `6.8.0-147.147`,
 with separate amd64/arm64 archive hashes, sizes, complete member inventories and
 installed-file hashes. It is **inactive while `reviewed` is false**. It is not a
@@ -161,6 +163,18 @@ file UID/GID, permissions, sizes and SHA-256 values must match. Every inventorie
 directory, including the installation root, must also match its expected UID/GID
 and mode. Component-wise no-follow
 opens reject substituted parent directories and final symlinks.
+
+The tested hosted images supplied five package-related paths with mode `0777`:
+`/usr/share`, `/usr/share/doc`, `/usr/share/doc/linux-libc-dev`, and that package's
+`changelog.Debian.gz` and `copyright`. The source lane restores only these exact
+paths to their archived modes (`0755` directories, `0644` files), top-down, before
+full installed-file verification. It requires the exact expected owners, types,
+and either the documented starting mode or already-correct mode. The two notice
+files must each have exactly one hard link and match their archived bytes.
+It opens each path without following
+symlinks, checks and changes the same descriptor with `fchmod`, and logs every
+action including partial progress on failure. There is no recursive repair,
+ownership change, or permission exception in the final verification.
 
 After explicit policy review, each matching finding can receive a separate
 `not_affected` assessment. Raw Trivy JSON, severity counts and CycloneDX inputs

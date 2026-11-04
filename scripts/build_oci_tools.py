@@ -14,6 +14,7 @@ from pathlib import Path
 import platform
 import shutil
 import subprocess
+import sys
 import tarfile
 import urllib.request
 
@@ -249,6 +250,11 @@ def install_native(stage, arch, manifest):
                  Path(shutil.which("ld")).resolve()):
         cc_files[str(path)] = digest(path)
     write_json(evidence / "native-files.json", cc_files)
+    # Hosted Ubuntu images make /usr/share writable, including preinstalled
+    # package notices. Restore only the observed exact paths before verification.
+    run(["sudo", "--preserve-env=GITHUB_ACTIONS,RUNNER_OS,RUNNER_ENVIRONMENT,RUNNER_ARCH,RUNNER_TEMP",
+         "--", sys.executable, Path(__file__).resolve(), "harden"],
+        log=evidence / "native-metadata-hardening.log")
     owned = run(["dpkg-query", "-L", "linux-libc-dev"]).splitlines()
     write_json(evidence / "installed-header-metadata.json", header_review.installed_metadata(Path("/"), owned))
     verified = header_review.verify_installed(Path("/"), files, owned, header_archive["data_directories"])
@@ -510,7 +516,7 @@ def scan(stage, arch, manifest):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=("validate", "prepare", "native", "build", "scan", "bundle"))
+    parser.add_argument("action", choices=("validate", "prepare", "native", "harden", "build", "scan", "bundle"))
     args = parser.parse_args()
     manifest = json.loads(MANIFEST.read_text())
     validate_locks(manifest)
@@ -526,6 +532,18 @@ def main():
     require(manifest["locks_reviewed"], "Lock preparation/review must finish before qualification")
     if args.action == "native":
         install_native(stage, arch, manifest)
+    elif args.action == "harden":
+        require(os.geteuid() == 0, "Hosted metadata hardening requires root")
+        packages = json.loads((INPUTS / f"native-{arch}.json").read_text())["packages"]
+        _, binding, files = header_review.load_policy(INPUTS, manifest["header_disposition_sha256"], arch, packages)
+        archive = json.loads((INPUTS / f"linux-libc-dev-archive-{arch}.json").read_text())
+        actions = []
+        try:
+            header_review.harden_hosted_metadata(Path("/"), files, archive["data_directories"], actions)
+        finally:
+            write_json(stage / "output/evidence/native-metadata-hardening.json", {
+                "package": binding, "policy_sha256": manifest["header_disposition_sha256"], "actions": actions,
+            })
     elif args.action == "build":
         require((stage / "output/evidence/native-files.json").is_file(), "Native inputs not qualified")
         for name, spec in manifest["components"].items():
