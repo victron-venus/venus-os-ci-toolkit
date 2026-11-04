@@ -10,6 +10,7 @@
 - Record bounded builder and Go-directory storage observations and exact cleanup steps. Preserve the original build failure when diagnostics, final disk checks or import cleanup also fail; unresolved cleanup remains a failure.
 - Assemble the final runner through read-only pinned stage mounts in one RUN, retaining payload paths, modes, override order and installation checks while avoiding repeated copies of the browser-equipped root filesystem. Keep the final listener qualification unprivileged.
 - Apply the same snapshot reduction to the private child image: stage its existing six input files separately and combine installation and wrapper replacement, preserving the inherited CA and runtime configuration.
+- Allow up to 180 seconds only for verified owned BuildKit state-volume removal after native image export. Preserve the 60-second container/instance deadlines, 30-second readbacks, non-forced volume deletion and fatal timeout behavior.
 
 ### Upgrade
 

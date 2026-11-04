@@ -1766,9 +1766,10 @@ def remove_builder_resources(sup, name, owner, image, volume_absent_before, obse
                     lambda: probe_builder(sup, name, owner, image), 'Owned builder removal not confirmed')
     if cleanup_step(observations, 'probe-volume', volume, lambda: probe_volume(sup, volume)) is not None:
         require(associated or volume_absent_before, 'State volume ownership is not established')
+        # Native snapshot deletion outlasted 60s; allow only this owned volume 180s.
         # No force: Docker refuses removal if another container references it.
         cleanup_step(observations, 'remove-volume', volume, lambda:
-            subprocess.run(['docker', 'volume', 'rm', volume], env=sup.env, check=True, timeout=60))
+            subprocess.run(['docker', 'volume', 'rm', volume], env=sup.env, check=True, timeout=180))
     cleanup_absence(observations, 'verify-volume-absent', volume,
                     lambda: probe_volume(sup, volume), 'Owned state volume removal not confirmed')
     result = {key: item['State'].get(key) for key in ('OOMKilled', 'ExitCode', 'Error')} if item else {'absent': True}

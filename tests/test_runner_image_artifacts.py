@@ -1208,9 +1208,9 @@ class RunnerArtifactsTests(unittest.TestCase):
                 sup = mock.Mock(env={'DOCKER_CONFIG': str(docker)})
                 state = {'container': self.builder(), 'volume': {'Name': 'state'}}
                 observations = []
-                original = subprocess.TimeoutExpired(target, 60)
+                deadlines = {'remove-container': 60, 'remove-instance': 60, 'remove-volume': 180}
+                original = subprocess.TimeoutExpired(target, deadlines[target])
                 def remove(command, **kwargs):
-                    self.assertEqual(kwargs['timeout'], 60)
                     if command[:2] == ['docker', 'rm']:
                         step = 'remove-container'
                         self.assertEqual(command[-1], 'a' * 64)
@@ -1222,6 +1222,7 @@ class RunnerArtifactsTests(unittest.TestCase):
                         step = 'remove-volume'
                         self.assertEqual(command, ['docker', 'volume', 'rm', 'buildx_buildkit_test0_state'])
                         state['volume'] = None
+                    self.assertEqual(kwargs['timeout'], deadlines[step])
                     if step == target:
                         raise original
                 with mock.patch.object(build, 'probe_builder', side_effect=lambda *a: state['container']), \
@@ -1229,7 +1230,9 @@ class RunnerArtifactsTests(unittest.TestCase):
                      mock.patch.object(build.subprocess, 'run', side_effect=remove):
                     with self.assertRaises(subprocess.TimeoutExpired) as raised:
                         build.remove_builder(sup, 'test', 'nonce', 'pinned', observations=observations)
+                # Even a successful late absence readback must not erase a timeout.
                 self.assertIs(raised.exception, original)
+                self.assertEqual(raised.exception.timeout, deadlines[target])
                 failed = [entry for entry in observations if entry['status'] == 'failed']
                 self.assertEqual([entry['step'] for entry in failed], [target])
                 self.assertEqual(failed[0]['error_type'], 'TimeoutExpired')
@@ -1304,6 +1307,8 @@ class RunnerArtifactsTests(unittest.TestCase):
             self.assertEqual(run.call_args_list[-1].args[0],
                              ['docker', 'volume', 'rm', 'buildx_buildkit_test0_state'])
             self.assertNotIn('--force', run.call_args_list[-1].args[0])
+            self.assertEqual(run.call_args_list[-1].kwargs['timeout'], 180)
+            self.assertTrue(all(call.kwargs['timeout'] == 60 for call in run.call_args_list[:-1]))
         with mock.patch.object(build, 'probe_builder', return_value=None), \
              mock.patch.object(build, 'probe_volume', return_value={'Name': 'state'}), \
              mock.patch.object(build.subprocess, 'run') as run:

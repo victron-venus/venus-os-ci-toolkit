@@ -269,7 +269,14 @@ removal is not forced, so another container's reference prevents deletion.
 After a cleanup failure, bounded readbacks inspect the exact container, private
 Buildx instance metadata and state volume. Unknown state is not absence, and
 later absence does not turn a timed-out removal into a successful cleanup.
-Removal deadlines remain 60 seconds and Docker readbacks remain 30 seconds.
+Only the owned state-volume removal has a 180-second deadline. Container and
+Buildx-instance removal remain bounded to 60 seconds, and Docker readbacks to
+30 seconds. In run `41807700618`, native image export succeeded but the volume
+removal client exceeded 60 seconds; the first confirmed absence was observed
+about 83 seconds after removal began. That observation is not an exact daemon
+completion time, and the failed run remains failed. The extra time applies only
+to `docker volume rm` for the already verified owned volume; it adds no retry,
+force flag or late-success recovery. A timeout at 180 seconds remains fatal.
 The original failure stays primary when a final disk check or accepted-image
 cleanup also fails; the separate cleanup error is retained in the build receipt.
 
