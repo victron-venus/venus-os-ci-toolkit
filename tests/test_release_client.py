@@ -601,8 +601,9 @@ jobs:
             # The canonical toolkit is itself a fuzz-enabled release consumer.
             shutil.copyfile(installer.ROOT / ".github/fuzz.json", root / ".github/fuzz.json")
             files = installer.render(root)
-            for name in ("test_release_control.py", "test_version_plan.py", "test_versioned_release.py"):
-                self.assertIn(".github/release-tests/" + name, files)
+            for name in ("test_release_control.py", "test_version_plan.py", "test_versioned_release.py",
+                         "test_release_create.py"):
+                self.assertIn(".github/release-tests/" + name, tuple(files))
             for name in ("scripts/workflow_contracts.py", exported):
                 path = root / name
                 path.parent.mkdir(parents=True, exist_ok=True)
@@ -617,6 +618,21 @@ jobs:
             # tying self-containment to the suite's evolving test count.
             self.assertIn("test_duplicate_top_level_and_nested_keys_are_rejected", run.stderr)
             self.assertIn("test_docker_actions_require_full_content_digest", run.stderr)
+            # Exercise the new transport tests with only the generated consumer
+            # bundle on sys.path, including its adapted lifecycle dependencies.
+            for name, content in files.items():
+                target = root / name
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(content)
+            created = subprocess.run(
+                [sys.executable, "-B", "-m", "unittest", "discover", "-s",
+                 ".github/release-tests", "-p", "test_release_create.py", "-v"],
+                cwd=root, capture_output=True, text=True, check=False, timeout=30,
+            )
+            self.assertEqual(created.returncode, 0, created.stdout + created.stderr)
+            self.assertIn("test_only_typed_ambiguous_responses", created.stderr)
+            self.assertIn("test_full_page_without_link_requires_an_extra_page", created.stderr)
+            self.assertIn("test_fresh_nonce_strict_current_attempt_and_consumed_ledger", created.stderr)
         steps = installer.quality(dict(self.policy, single_entry_ci=True))[
             "jobs"
         ]["workflow-contracts"]["steps"]
