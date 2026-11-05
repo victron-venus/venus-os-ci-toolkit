@@ -1592,7 +1592,7 @@ def execution_check_run_id() -> int | None:
     value = os.environ.get("RELEASE_EXECUTION_CHECK_RUN_ID", "")
     if not value:
         return None
-    require(re.fullmatch(r"[1-9][0-9]*", value, re.ASCII) is not None,
+    require(re.fullmatch(r"[1-9]\d*", value, re.ASCII) is not None,
             "Invalid execution check-run ID")
     return int(value)
 
@@ -1671,7 +1671,7 @@ def execution_check_url_id(value: object, repository: str) -> int:
     """Accept only GitHub's exact check route; repository casing is not identity."""
     require(isinstance(value, str), "Invalid execution check-run URL")
     match = re.fullmatch(
-        r"https://api\.github\.com/repos/([^/]+/[^/]+)/check-runs/([1-9][0-9]*)",
+        r"https://api\.github\.com/repos/([^/]+/[^/]+)/check-runs/([1-9]\d*)",
         cast(str, value), re.ASCII,
     )
     require(match is not None, "Invalid execution check-run URL")

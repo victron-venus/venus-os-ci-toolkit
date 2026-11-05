@@ -57,6 +57,7 @@ CHANGE_SCOPE_PATH = "scripts/change_scope.py"
 WORKFLOW_CONTRACTS_PATH = "scripts/workflow_contracts.py"
 RELEASE_CONTROL_PATH = "scripts/release_control.py"
 GITHUB_TOKEN = "${{ github.token }}"
+EXECUTION_CHECK_RUN_ID = "${{ job.check_run_id }}"
 PUBLISH_CANDIDATE_STEP = "Publish checked candidate"
 RELEASE_PIPELINE_NAME = 'release-pipeline.yml'
 FUZZ_RUNNER_PATH = 'scripts/release_fuzz.py'
@@ -1012,7 +1013,7 @@ PY
                     "id": "publication",
                     "env": {
                         **publication_env,
-                        "RELEASE_EXECUTION_CHECK_RUN_ID": "${{ job.check_run_id }}",
+                        "RELEASE_EXECUTION_CHECK_RUN_ID": EXECUTION_CHECK_RUN_ID,
                         "CHANNEL": "${{ needs.prepare.outputs.channel }}",
                         "VERSION": "${{ needs.prepare.outputs.version }}",
                     },
@@ -1050,7 +1051,7 @@ PY
                     "name": "Promote RC bytes after approval",
                     "env": {
                         **publication_env,
-                        "RELEASE_EXECUTION_CHECK_RUN_ID": "${{ job.check_run_id }}",
+                        "RELEASE_EXECUTION_CHECK_RUN_ID": EXECUTION_CHECK_RUN_ID,
                         "RC_TAG": "${{ inputs.rc_tag }}",
                     },
                     "run": (
@@ -1215,7 +1216,7 @@ def release(policy):
         'python3 scripts/release_versioned.py prepare --repo "$GITHUB_REPOSITORY"'
     )
     metadata["env"]["GH_TOKEN"] = GITHUB_TOKEN
-    metadata["env"]["RELEASE_EXECUTION_CHECK_RUN_ID"] = "${{ job.check_run_id }}"
+    metadata["env"]["RELEASE_EXECUTION_CHECK_RUN_ID"] = EXECUTION_CHECK_RUN_ID
     prepare["steps"].append(
         {
             "name": "Store exact version plan before building",
