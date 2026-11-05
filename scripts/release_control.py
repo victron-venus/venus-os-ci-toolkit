@@ -34,6 +34,7 @@ from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 WORKFLOW = ".github/workflows/release-pipeline.yml"
 GITHUB_HOSTNAME = "github.com"
+POSITIVE_INTEGER_PATTERN = r"[1-9]\d*"
 MANIFEST = "release-manifest.json"
 POLICY = ".release-policy.json"
 EVIDENCE = Path(".release-evidence") / MANIFEST
@@ -259,7 +260,7 @@ def positive(value: object, name: str) -> int:
     require(
         isinstance(value, (str, int)) and not isinstance(value, bool), f"Invalid {name}"
     )
-    require(bool(re.fullmatch(r"[1-9]\d*", str(value), re.ASCII)), f"Invalid {name}")
+    require(bool(re.fullmatch(POSITIVE_INTEGER_PATTERN, str(value), re.ASCII)), f"Invalid {name}")
     return int(cast(str | int, value))
 
 
@@ -1592,7 +1593,7 @@ def execution_check_run_id() -> int | None:
     value = os.environ.get("RELEASE_EXECUTION_CHECK_RUN_ID", "")
     if not value:
         return None
-    require(re.fullmatch(r"[1-9]\d*", value, re.ASCII) is not None,
+    require(re.fullmatch(POSITIVE_INTEGER_PATTERN, value, re.ASCII) is not None,
             "Invalid execution check-run ID")
     return int(value)
 
@@ -1908,7 +1909,7 @@ def next_sequence(gh: GitHub, base_version: str, channel: str) -> int:
     tags += [cast(str, item.get("tag_name", "")) for item in gh.pages("releases")]
     for tag in tags:
         if tag.startswith(prefix) and re.fullmatch(
-            r"[1-9]\d*", tag[len(prefix) :], re.ASCII
+            POSITIVE_INTEGER_PATTERN, tag[len(prefix) :], re.ASCII
         ):
             numbers.append(int(tag[len(prefix) :]))
     return max(numbers, default=0) + 1
