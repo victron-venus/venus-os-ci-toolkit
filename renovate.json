@@ -54,7 +54,8 @@
     ".github/oci-tools/**",
     "actions/setup-go/tools/**",
     "tools/scorecard-scan/**",
-    "tools/secret_control/**"
+    "tools/secret_control/**",
+    "actions/setup-python/requirements.txt"
   ],
   "pip_requirements": {
     "managerFilePatterns": [
