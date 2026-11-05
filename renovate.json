@@ -9,7 +9,6 @@
     "custom.jsonata",
     "npm",
     "pip_requirements",
-    "pip-compile",
     "gomod",
     "dockerfile"
   ],
@@ -36,7 +35,7 @@
       "separateMinorPatch": false
     },
     {
-      "description": "Regenerate the hashed Python tool lock from its input with pip-compile.",
+      "description": "Regenerate the compiled, binary-only tool lock through its pinned source workflow.",
       "matchManagers": [
         "pip_requirements"
       ],
@@ -60,11 +59,6 @@
   "pip_requirements": {
     "managerFilePatterns": [
       "/(^|/)requirements[^/]*\\.(txt|pip)$/"
-    ]
-  },
-  "pip-compile": {
-    "managerFilePatterns": [
-      "/^actions/setup-python/requirements\\.txt$/"
     ]
   }
 }
