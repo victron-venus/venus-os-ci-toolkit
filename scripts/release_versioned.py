@@ -169,6 +169,10 @@ def create_confirmation(
                    and all(type(current.get(key)) is type(run[key]) and current[key] == run[key] for key in
                            ("id", "run_attempt", "head_sha", "path", "event")),
                    "Create readback run identity changed")
+        info = readback.json("")
+        rc.require(isinstance(info, dict) and isinstance(info.get("default_branch"), str)
+                   and f"git/ref/heads/{quote(info['default_branch'], safe='')}" == source_ref[0],
+                   "Create readback default branch changed")
         rc.require(readback.json(source_ref[0]) == source_ref[1],
                    "Create readback default source changed")
         content = readback.json("contents/release-version-state.json?ref=release-version-state")
@@ -805,6 +809,24 @@ def publish_versioned(args: argparse.Namespace) -> dict[str, object]:
         rc.EVIDENCE.write_bytes(content)
         source_path = f"git/ref/heads/{quote(cast(str, info['default_branch']), safe='')}"
         source_ref = (source_path, gh.api(source_path))
+        automatic = (run["event"], channel) in {("push", "beta"), ("schedule", "nightly")}
+        if automatic:
+            captured = source_ref[1]
+            rc.require(
+                isinstance(captured, dict)
+                and captured.get("ref") == f"refs/heads/{info['default_branch']}"
+                and isinstance(captured.get("object"), dict)
+                and cast(dict[str, object], captured["object"]).get("type") == "commit"
+                and cast(dict[str, object], captured["object"]).get("sha") == run["head_sha"],
+                "Default branch moved before source snapshot",
+            )
+
+        def confirm_automatic_source() -> None:
+            rc.require(rc.repository_info(gh)["default_branch"] == info["default_branch"],
+                       "Automatic publication default branch changed; draft left unpublished")
+            rc.require(gh.api(source_path) == source_ref[1],
+                       "Automatic publication default source changed; draft left unpublished")
+
         consumed = begin_publication(gh, plan, cast(int, run["id"]), parent)
         confirm_create = create_confirmation(run, source_ref, consumed)
         result = rc._publish_prepared(  # pylint: disable=protected-access
@@ -815,6 +837,7 @@ def publish_versioned(args: argparse.Namespace) -> dict[str, object]:
             channel != "stable",
             body,
             confirm_create=confirm_create,
+            confirm_publish=confirm_automatic_source if automatic else None,
         )
     return {
         "status": "published",

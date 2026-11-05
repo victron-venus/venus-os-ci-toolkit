@@ -110,6 +110,44 @@ CREATE_READBACK = {
     ]
 }
 
+# Preserve the later default-branch guard without installing it in inventory-only mode.
+CREATE_IDENTITY = {
+    "hunks": [
+        {
+            "before": "        rc.require(readback.json(source_ref[0]) == source_ref[1],\n",
+            "after": "        info = readback.json(\"\")\n        rc.require(isinstance(info, dict) and isinstance(info.get(\"default_branch\"), str)\n                   and f\"git/ref/heads/{quote(info['default_branch'], safe='')}\" == source_ref[0],\n                   \"Create readback default branch changed\")\n        rc.require(readback.json(source_ref[0]) == source_ref[1],\n"
+        }
+    ],
+    "original_to_current": {
+        "2d2e1b65544c817107a4d7a5008fcc11335a9408faec4cb159c87d454d58c7dd": "978783bc3465c174f45669fe38568337d8c886161749f8d1c050ab67d8999e9d"
+    },
+    "current": [
+        "978783bc3465c174f45669fe38568337d8c886161749f8d1c050ab67d8999e9d"
+    ]
+}
+
+
+# Preserve the automatic-source fix only when already present.
+AUTOMATIC_SOURCE = {
+    "hunks": [
+        {
+            "before": "        source_ref = (source_path, gh.api(source_path))\n        consumed = begin_publication(gh, plan, cast(int, run[\"id\"]), parent)\n",
+            "after": "        source_ref = (source_path, gh.api(source_path))\n        automatic = (run[\"event\"], channel) in {(\"push\", \"beta\"), (\"schedule\", \"nightly\")}\n        if automatic:\n            captured = source_ref[1]\n            rc.require(\n                isinstance(captured, dict)\n                and captured.get(\"ref\") == f\"refs/heads/{info['default_branch']}\"\n                and isinstance(captured.get(\"object\"), dict)\n                and cast(dict[str, object], captured[\"object\"]).get(\"type\") == \"commit\"\n                and cast(dict[str, object], captured[\"object\"]).get(\"sha\") == run[\"head_sha\"],\n                \"Default branch moved before source snapshot\",\n            )\n\n        def confirm_automatic_source() -> None:\n            rc.require(rc.repository_info(gh)[\"default_branch\"] == info[\"default_branch\"],\n                       \"Automatic publication default branch changed; draft left unpublished\")\n            rc.require(gh.api(source_path) == source_ref[1],\n                       \"Automatic publication default source changed; draft left unpublished\")\n\n        consumed = begin_publication(gh, plan, cast(int, run[\"id\"]), parent)\n"
+        },
+        {
+            "before": "            confirm_create=confirm_create,\n        )\n",
+            "after": "            confirm_create=confirm_create,\n            confirm_publish=confirm_automatic_source if automatic else None,\n        )\n"
+        }
+    ],
+    "original_to_current": {
+        "978783bc3465c174f45669fe38568337d8c886161749f8d1c050ab67d8999e9d": "19cb27817c0aaf75867cdfba01a72dacb1026f71773bf42acb6527fc8553cb42"
+    },
+    "current": [
+        "19cb27817c0aaf75867cdfba01a72dacb1026f71773bf42acb6527fc8553cb42"
+    ]
+}
+
+
 def _before_layer(source: str, layer: dict, label: str) -> str:
     """Reverse one exact accepted layer, preserving a vendor header."""
     prefix = "#!/usr/bin/env python3\n" + receipts.HEADER
@@ -127,9 +165,19 @@ def _before_layer(source: str, layer: dict, label: str) -> str:
     return body.replace("#!/usr/bin/env python3\n", prefix, 1) if vendored else body
 
 
+def _before_automatic_source(source: str) -> str:
+    """Reverse only the exact automatic publication source layer."""
+    return _before_layer(source, AUTOMATIC_SOURCE, "Automatic source")
+
+
+def _before_create_identity(source: str) -> str:
+    """Reverse only the exact later default-branch identity guard."""
+    return _before_layer(_before_automatic_source(source), CREATE_IDENTITY, "Create identity")
+
+
 def _before_create_readback(source: str) -> str:
-    """Return the exact notes-only publisher when the new layer is recognized."""
-    return _before_layer(source, CREATE_READBACK, "Create readback")
+    """Return the exact notes-only publisher when the new layers are recognized."""
+    return _before_layer(_before_create_identity(source), CREATE_READBACK, "Create readback")
 
 
 def _before_notes_provenance(source: str) -> str:
@@ -179,6 +227,10 @@ def render(directory: Path) -> dict[str, str]:
             _, result = receipts.transform(result, name, NOTES_PROVENANCE)
             if _before_create_readback(source) != source:
                 _, result = receipts.transform(result, name, CREATE_READBACK)
+                if _before_create_identity(source) != source:
+                    _, result = receipts.transform(result, name, CREATE_IDENTITY)
+                    if _before_automatic_source(source) != source:
+                        _, result = receipts.transform(result, name, AUTOMATIC_SOURCE)
         states.add(state)
         if result != source:
             changes[name] = result

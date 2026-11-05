@@ -120,8 +120,12 @@ newer automatic replacement run at current HEAD are verified. This does not clai
 that the replacement passed or published. No tag, release or promotion evidence
 is created for that skipped publication, and its reserved number is not reused.
 Missing replacement evidence or API failures remain errors. Manual releases keep
-their existing checks. A race after the final check can still fail publication;
-inspect the error and dispatch a fresh run at current HEAD, never reset the ledger.
+their existing checks. Automatic publication validates the captured default-branch
+source before consuming the reservation, then checks the default branch and source
+again after uploads, immediately before publishing the draft. A detected late
+change leaves the draft unpublished and the consumed reservation intact. The last
+check and GitHub PATCH are not atomic; inspect any error and dispatch a fresh run
+at current HEAD, never reset the ledger.
 
 ## Stable promotion
 
