@@ -73,21 +73,7 @@ func fetchArchive(ctx context.Context, client *http.Client, address string, wait
 			return nil, err
 		}
 		if response.StatusCode == http.StatusOK {
-			defer response.Body.Close()
-			if response.ContentLength > maxArchive {
-				return nil, errors.New("archive exceeds size limit")
-			}
-			data, err := io.ReadAll(io.LimitReader(response.Body, maxArchive+1))
-			if err != nil {
-				return nil, err
-			}
-			if len(data) > maxArchive {
-				return nil, errors.New("archive exceeds size limit")
-			}
-			if err := ctx.Err(); err != nil {
-				return nil, err
-			}
-			return data, nil
+			return readArchive(ctx, response)
 		}
 		response.Body.Close()
 		statusError := fmt.Errorf("download returned HTTP %d", response.StatusCode)
@@ -109,6 +95,25 @@ func fetchArchive(ctx context.Context, client *http.Client, address string, wait
 		}
 	}
 	return nil, errors.New("download attempts exhausted")
+}
+
+// readArchive closes the successful response and checks its size and deadline.
+func readArchive(ctx context.Context, response *http.Response) ([]byte, error) {
+	defer response.Body.Close()
+	if response.ContentLength > maxArchive {
+		return nil, errors.New("archive exceeds size limit")
+	}
+	data, err := io.ReadAll(io.LimitReader(response.Body, maxArchive+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > maxArchive {
+		return nil, errors.New("archive exceeds size limit")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return data, nil
 }
 
 func retryDelay(header string, now time.Time, minimum time.Duration) (time.Duration, error) {

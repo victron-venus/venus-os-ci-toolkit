@@ -75,34 +75,39 @@ func TestImmediateSuccessUsesOneRequestWithoutWaiting(t *testing.T) {
 func TestEachTransientStatusThenSuccess(t *testing.T) {
 	for _, status := range []int{429, 500, 502, 503, 504} {
 		t.Run(http.StatusText(status), func(t *testing.T) {
-			ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-			defer cancel()
-			deadline, _ := ctx.Deadline()
-			calls, waits := 0, 0
-			first := &testBody{reader: strings.NewReader("transient error")}
-			last := &testBody{reader: strings.NewReader("verified later by installer")}
-			client := &http.Client{Transport: testTransport(func(r *http.Request) (*http.Response, error) {
-				calls++
-				got, ok := r.Context().Deadline()
-				if !ok || !got.Equal(deadline) || r.Method != http.MethodGet {
-					t.Fatal("attempt changed deadline or method")
-				}
-				if calls == 1 {
-					return response(status, first), nil
-				}
-				return response(200, last), nil
-			})}
-			data, err := fetchArchive(ctx, client, "https://example.invalid/archive", func(got context.Context, delay time.Duration) error {
-				waits++
-				if !first.closed || got != ctx || delay != time.Second {
-					t.Fatal("body not closed before bounded retry")
-				}
-				return nil
-			})
-			if err != nil || string(data) != "verified later by installer" || calls != 2 || waits != 1 || !last.closed {
-				t.Fatalf("calls=%d waits=%d closed=%v error=%v", calls, waits, last.closed, err)
-			}
+			checkTransientThenSuccess(t, status)
 		})
+	}
+}
+
+func checkTransientThenSuccess(t *testing.T, status int) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	deadline, _ := ctx.Deadline()
+	calls, waits := 0, 0
+	first := &testBody{reader: strings.NewReader("transient error")}
+	last := &testBody{reader: strings.NewReader("verified later by installer")}
+	client := &http.Client{Transport: testTransport(func(r *http.Request) (*http.Response, error) {
+		calls++
+		got, ok := r.Context().Deadline()
+		if !ok || !got.Equal(deadline) || r.Method != http.MethodGet {
+			t.Fatal("attempt changed deadline or method")
+		}
+		if calls == 1 {
+			return response(status, first), nil
+		}
+		return response(200, last), nil
+	})}
+	data, err := fetchArchive(ctx, client, "https://example.invalid/archive", func(got context.Context, delay time.Duration) error {
+		waits++
+		if !first.closed || got != ctx || delay != time.Second {
+			t.Fatal("body not closed before bounded retry")
+		}
+		return nil
+	})
+	if err != nil || string(data) != "verified later by installer" || calls != 2 || waits != 1 || !last.closed {
+		t.Fatalf("calls=%d waits=%d closed=%v error=%v", calls, waits, last.closed, err)
 	}
 }
 
