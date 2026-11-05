@@ -3204,6 +3204,72 @@ class CheckRunExecutionTests(unittest.TestCase):
             with self.subTest(url=url), self.assertRaises(rc.ReleaseError):
                 rc.require_executing_job({**job, "check_run_url": url}, current, REPO, 800)
 
+    def pending_step_job(self):
+        """Model step propagation while the exact current job already runs."""
+        current, job = self.execution()
+        job["steps"] = [
+            {"number": 1, "status": "completed", "conclusion": "success",
+             "started_at": "2026-01-01T00:00:01Z", "completed_at": "2026-01-01T00:00:02Z"},
+            {"number": 2, "status": "queued", "conclusion": None,
+             "started_at": None, "completed_at": None},
+        ]
+        return current, job
+
+    def test_valid_queued_steps_are_unresolved_and_not_an_execution_proof(self):
+        current, job = self.pending_step_job()
+        with patch.object(self.gh, "pages", return_value=[job]):
+            self.assertIsNone(rc.current_execution_job(self.gh, current, 800))
+
+    def test_step_becoming_active_uses_the_original_wait_budget(self):
+        current, pending = self.pending_step_job()
+        active = deepcopy(pending)
+        active["steps"][1].update(status="in_progress", started_at="2026-01-01T00:00:03Z")
+        proof = []
+        with patch.object(self.gh, "api", return_value=current), \
+                patch.object(self.gh, "pages", side_effect=[[pending], [active]]):
+            self.wait(proof)
+        self.assertEqual(self.now, 2)
+        self.assertEqual(proof, [rc.ExecutionJobProof(700, 800, 900, "runner-example")])
+
+    def test_never_visible_active_step_expires_without_a_proof(self):
+        current, job = self.pending_step_job()
+        proof = []
+        with patch.object(self.gh, "api", return_value=current), \
+                patch.object(self.gh, "pages", return_value=[job]), \
+                self.assertRaisesRegex(rc.ReleaseError, "within 300 seconds"):
+            self.wait(proof)
+        self.assertEqual(self.now, 300)
+        self.assertEqual(proof, [])
+
+    def test_direct_execution_validator_keeps_pending_steps_strict(self):
+        current, job = self.pending_step_job()
+        with self.assertRaisesRegex(rc.ReleaseError, "Exactly one executing step"):
+            rc.require_executing_job(job, current, REPO, 800)
+
+    def test_invalid_zero_active_steps_are_fatal_not_delayed(self):
+        current, job = self.pending_step_job()
+        completed, pending = job["steps"]
+        invalid = [[], [completed], [pending, pending],
+                   [{**pending, "status": "unknown"}],
+                   [{**pending, "started_at": "2026-01-01T00:00:03Z"}],
+                   [{**pending, "conclusion": "failure"}],
+                   [{**completed, "started_at": "2025-12-31T23:59:59Z"}, pending],
+                   [{**completed, "completed_at": "2999-01-01T00:00:00Z"}, pending],
+                   [{**completed, "conclusion": "failure"}, pending]]
+        for steps in invalid:
+            with self.subTest(steps=steps), patch.object(self.gh, "pages", return_value=[{**job, "steps": steps}]), \
+                    self.assertRaises(rc.ReleaseError):
+                rc.current_execution_job(self.gh, current, 800)
+
+    def test_waiting_steps_cannot_mask_wrong_job_source_or_runner(self):
+        current, job = self.pending_step_job()
+        for change in ({"head_sha": "b" * 40}, {"run_attempt": 2}, {"runner_name": "other"},
+                       {"runner_id": 0}, {"status": "completed"}):
+            with self.subTest(change=change), \
+                    patch.object(self.gh, "pages", return_value=[{**job, **change}]), \
+                    self.assertRaises(rc.ReleaseError):
+                rc.current_execution_job(self.gh, current, 800)
+
 
 if __name__ == "__main__":
     unittest.main()

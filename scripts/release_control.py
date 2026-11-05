@@ -1610,7 +1610,33 @@ def require_active_attempt(current: object, run: JSONObject) -> JSONObject:
     return current
 
 
-def require_executing_job_timing(job: JSONObject, run: JSONObject) -> None:
+def require_pending_execution_steps(steps: list[JSONObject], start: datetime, now: datetime) -> None:
+    """Only consistent queued steps may wait; completed-only or invalid data fails."""
+    pending = False
+    for step in steps:
+        if step.get("status") == "queued":
+            require(all(step.get(key) is None for key in
+                        ("conclusion", "started_at", "completed_at")),
+                    "Queued execution step already started or concluded")
+            pending = True
+        else:
+            require(step.get("status") == "completed"
+                    and step.get("conclusion") in {"success", "skipped"},
+                    "Invalid pending execution step state")
+            if step.get("conclusion") == "skipped" and all(
+                step.get(key) is None for key in ("started_at", "completed_at")
+            ):
+                continue
+            step_start = _execution_timestamp(step.get("started_at"), "completed step start")
+            step_end = _execution_timestamp(step.get("completed_at"), "completed step end")
+            require(start <= step_start <= step_end <= now,
+                    "Completed step lies outside its current job")
+    require(pending, "Executing job has only terminal steps")
+
+
+def require_executing_job_timing(
+    job: JSONObject, run: JSONObject, *, allow_pending_steps: bool = False,
+) -> bool:
     """Require a current-attempt job and one presently executing, dated step."""
     boundary = _execution_timestamp(run.get("run_started_at"), "execution attempt start")
     start = _execution_timestamp(job.get("started_at"), "executing job start")
@@ -1629,12 +1655,16 @@ def require_executing_job_timing(job: JSONObject, run: JSONObject) -> None:
         numbers.add(cast(int, number))
         if step.get("status") == "in_progress":
             active.append(step)
+    if not active and allow_pending_steps:
+        require_pending_execution_steps(cast(list[JSONObject], steps), start, now)
+        return False
     require(len(active) == 1, "Exactly one executing step is required")
     step = active[0]
     require(step.get("conclusion") is None and step.get("completed_at") is None,
             "Executing step already completed")
     step_start = _execution_timestamp(step.get("started_at"), "executing step start")
     require(start <= step_start <= now, "Executing step lies outside its current job")
+    return True
 
 
 def execution_check_url_id(value: object, repository: str) -> int:
@@ -1653,7 +1683,8 @@ def execution_check_url_id(value: object, repository: str) -> int:
 
 def require_executing_job(
     job: object, run: JSONObject, repository: str, check_run_id: int,
-) -> ExecutionJobProof:
+    *, allow_pending_steps: bool = False,
+) -> ExecutionJobProof | None:
     """Bind a REST job to official check-run context, not display or matrix names."""
     require(type(check_run_id) is int and check_run_id > 0, "Invalid execution check-run ID")
     require(isinstance(job, dict), "Malformed executing job")
@@ -1672,7 +1703,8 @@ def require_executing_job(
     runner_name = os.environ.get("RUNNER_NAME", "")
     require(bool(runner_name) and job.get("runner_name") == runner_name,
             "Executing job runner mismatch")
-    require_executing_job_timing(job, run)
+    if not require_executing_job_timing(job, run, allow_pending_steps=allow_pending_steps):
+        return None
     return ExecutionJobProof(cast(int, identity), check_run_id, cast(int, runner), runner_name)
 
 
@@ -1703,7 +1735,7 @@ def current_execution_job(
         require(job.get("conclusion") is None and job.get("completed_at") is None,
                 "Pending execution job has a conclusion")
         return None
-    return require_executing_job(job, run, gh.repo, check_run_id)
+    return require_executing_job(job, run, gh.repo, check_run_id, allow_pending_steps=True)
 
 
 def execution_deadline(deadline: float) -> None:

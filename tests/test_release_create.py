@@ -442,7 +442,9 @@ class ExecutingJobConfirmationTests(unittest.TestCase):
     def test_new_job_read_cannot_reuse_previous_execution_or_other_runner(self):
         for change in ({"status": "completed"}, {"status": "queued"}, {"id": 701},
                        {"runner_id": 901}, {"runner_name": "other"}, {"run_attempt": 2},
-                       {"head_sha": "b" * 40}, {"check_run_url": "https://foreign.test/800"}):
+                       {"head_sha": "b" * 40}, {"check_run_url": "https://foreign.test/800"},
+                       {"steps": [{"number": 1, "status": "queued", "conclusion": None,
+                                   "started_at": None, "completed_at": None}]}):
             before = copy.deepcopy(self.job)
             self.job.update(change)
             with self.subTest(change=change), self.assertRaises(rc.ReleaseError):
