@@ -314,6 +314,7 @@
   "scripts/ci.sh",
   "scripts/coverage_reports.py",
   "scripts/download_release_gh.go",
+  "scripts/download_release_gh_test.go",
   "scripts/esp_web_installer.py",
   "scripts/fleet.py",
   "scripts/fuzz_python_preflight.py",

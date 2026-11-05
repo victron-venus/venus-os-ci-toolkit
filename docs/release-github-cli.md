@@ -18,6 +18,15 @@ version, and atomically replaces the selected output only after validation.
 `--check` needs no Go compiler: the exact binary hash identifies the inspected
 Go build and requires the same FIPS runtime setting. Unsupported platforms fail.
 
+The downloader makes at most three top-level GET attempts for HTTP 429, 500,
+502, 503 or 504. One 60-second deadline covers all attempts, redirects, response
+bodies and retry waits. Failed responses close before the next attempt. The
+minimum waits are one and two seconds; a valid `Retry-After` can increase a wait
+only if it fits the remaining deadline. Malformed or excessive values fail.
+Transport, TLS, response-body, size, other HTTP status and later checksum or
+version failures are not retried. Publication writes keep their separate
+single-attempt policy.
+
 `--archive FILE --output PATH` installs an already downloaded archive without
 network access or a Go compiler. The same size, archive hash, native executable
 hash, FIPS runtime setting, version and atomic replacement checks still apply;

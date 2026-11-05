@@ -324,6 +324,18 @@ jobs:
         with:
           go-version: 1.27.3
           cache: false
+      - name: Test bounded release CLI download retries
+        timeout-minutes: 3
+        env:
+          GOTOOLCHAIN: local
+          GO111MODULE: 'off'
+          GOWORK: 'off'
+          GOENV: 'off'
+          CGO_ENABLED: '0'
+          GODEBUG: fips140=on
+          GOMAXPROCS: '2'
+          GOFLAGS: -p=2
+        run: go test -count=1 -timeout=60s scripts/download_release_gh.go scripts/download_release_gh_test.go
       - name: Install the qualified GitHub CLI
         env:
           GODEBUG: fips140=on
