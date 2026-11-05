@@ -121,14 +121,16 @@ def toolchain_changes(original: object, current: object) -> Iterator[tuple[str, 
 
 
 def context(
-    gh: rc.GitHub, channel: str, gate: bool = False
+    gh: rc.GitHub, channel: str, gate: bool = False,
+    execution_proof: list[rc.ExecutionJobProof] | None = None,
 ) -> tuple[dict[str, object], dict[str, object], dict[str, object]]:
     """Reuse the original publisher's execution and source-policy checks."""
     run_id = rc.positive(os.environ.get("GITHUB_RUN_ID"), "run ID")
     attempt = rc.positive(os.environ.get("GITHUB_RUN_ATTEMPT"), "run attempt")
     info = rc.repository_info(gh)
     run = rc.wait_for_executing_run(
-        gh, run_id, channel, info, rc.checked_out_sha(), attempt, gate=gate
+        gh, run_id, channel, info, rc.checked_out_sha(), attempt, gate=gate,
+        execution_proof=execution_proof,
     )
     snapshot = rc.source_policy_snapshot(gh, cast(str, run["head_sha"]))
     rc.require_release_policy(
@@ -159,16 +161,34 @@ def create_marker(repository: str, run: dict[str, object], plan_digest: str, non
 
 def create_confirmation(
     run: dict[str, object], source_ref: tuple[str, object], consumed: bytes,
+    execution_proof: rc.ExecutionJobProof | None = None,
 ) -> Callable[[rc.CreateReadback], None]:
     """Bind one release-create call, without adding any cross-run recovery state."""
 
     def confirm(readback: rc.CreateReadback) -> None:
         current = readback.json(f"actions/runs/{run['id']}/attempts/{run['run_attempt']}")
-        rc.require(isinstance(current, dict) and current.get("status") == "in_progress"
+        rc.require(isinstance(current, dict)
                    and current.get("conclusion") is None
                    and all(type(current.get(key)) is type(run[key]) and current[key] == run[key] for key in
                            ("id", "run_attempt", "head_sha", "path", "event")),
                    "Create readback run identity changed")
+        current = rc.require_active_attempt(current, run)
+        if current.get("status") != "in_progress":
+            rc.require(type(execution_proof) is rc.ExecutionJobProof,
+                       "Create readback lacks a local executing-job proof")
+            proof = cast(rc.ExecutionJobProof, execution_proof)
+            rc.require(type(proof.job_id) is int and proof.job_id > 0
+                       and type(proof.check_run_id) is int and proof.check_run_id > 0,
+                       "Invalid local executing-job proof")
+            rc.validate_run_provenance(
+                readback, current, {"default_branch": run["head_branch"]},
+                cast(str, run["head_sha"]), cast(int, run["run_attempt"]),
+            )
+            rc.require(current.get("run_started_at") == run.get("run_started_at"),
+                       "Create readback attempt start changed")
+            job = readback.json(f"actions/jobs/{proof.job_id}")
+            observed = rc.require_executing_job(job, current, readback.repo, proof.check_run_id)
+            rc.require(observed == proof, "Create readback executing-job identity changed")
         info = readback.json("")
         rc.require(isinstance(info, dict) and isinstance(info.get("default_branch"), str)
                    and f"git/ref/heads/{quote(info['default_branch'], safe='')}" == source_ref[0],
@@ -706,7 +726,8 @@ def publish_versioned(args: argparse.Namespace) -> dict[str, object]:
     plan = version_plan.validate_plan(json.loads(PLAN.read_text(encoding="utf-8")))
     channel = cast(str, plan["channel"])
     gh = StateGitHub(args.repo)
-    info, run, snapshot = context(gh, channel, gate=True)
+    execution_proof: list[rc.ExecutionJobProof] = []
+    info, run, snapshot = context(gh, channel, gate=True, execution_proof=execution_proof)
     policy = cast(dict[str, object], snapshot["data"])
     version_plan.validate_plan(plan, policy, cast(str, run["head_sha"]))
     parent = None
@@ -828,7 +849,9 @@ def publish_versioned(args: argparse.Namespace) -> dict[str, object]:
                        "Automatic publication default source changed; draft left unpublished")
 
         consumed = begin_publication(gh, plan, cast(int, run["id"]), parent)
-        confirm_create = create_confirmation(run, source_ref, consumed)
+        confirm_create = create_confirmation(
+            run, source_ref, consumed, execution_proof[0] if execution_proof else None
+        )
         result = rc._publish_prepared(  # pylint: disable=protected-access
             gh,
             cast(str, plan["tag"]),

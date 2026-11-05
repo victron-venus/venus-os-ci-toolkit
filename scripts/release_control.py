@@ -29,7 +29,7 @@ import zipfile
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import BinaryIO, TypedDict, cast
+from typing import BinaryIO, NamedTuple, TypedDict, cast
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 WORKFLOW = ".github/workflows/release-pipeline.yml"
@@ -87,6 +87,7 @@ API_PATHS = {
         r"actions/runs/[1-9]\d*(?:/artifacts|/attempts/[1-9]\d*/jobs)?",
         r"actions/runs/[1-9]\d*/attempts/[1-9]\d*",
         r"actions/artifacts/[1-9]\d*/zip",
+        r"actions/jobs/[1-9]\d*",
         r"contents/\.release-policy\.json\?ref=[0-9a-f]{40}",
         r"contents/CHANGELOG\.md\?ref=[0-9a-f]{40}",
         r"contents/\.github\?ref=[0-9a-f]{40}",
@@ -1429,7 +1430,7 @@ def check_execution(
 
 
 def validate_run_provenance(
-    gh: GitHub, run: JSONObject, info: JSONObject, sha: str, attempt: int
+    gh: GitHub | CreateReadback, run: JSONObject, info: JSONObject, sha: str, attempt: int
 ) -> None:
     """Check immutable run identity before considering its changing status."""
     require(
@@ -1577,6 +1578,172 @@ def validate_run(
         release_gate_ready(gh, positive(run.get("id"), "run ID"), sha, attempt)
 
 
+class ExecutionJobProof(NamedTuple):
+    """Ephemeral local identity; never copied from or serialized into API metadata."""
+
+    job_id: int
+    check_run_id: int
+    runner_id: int
+    runner_name: str
+
+
+def execution_check_run_id() -> int | None:
+    """Only a workflow step's official job context enables the alternate proof."""
+    value = os.environ.get("RELEASE_EXECUTION_CHECK_RUN_ID", "")
+    if not value:
+        return None
+    require(re.fullmatch(r"[1-9][0-9]*", value, re.ASCII) is not None,
+            "Invalid execution check-run ID")
+    return int(value)
+
+
+def require_active_attempt(current: object, run: JSONObject) -> JSONObject:
+    """Do not let an attempt response replace a conflicting or terminal identity."""
+    require(isinstance(current, dict), "Malformed execution attempt")
+    current = cast(JSONObject, current)
+    for key in ("id", "run_attempt", "head_sha", "path", "event"):
+        require(type(current.get(key)) is type(run[key]) and current[key] == run[key],
+                "Execution attempt identity changed")
+    require(current.get("conclusion") is None and current.get("status") in
+            {"queued", "requested", "pending", "waiting", "in_progress"},
+            "Execution attempt is not active")
+    return current
+
+
+def require_executing_job_timing(job: JSONObject, run: JSONObject) -> None:
+    """Require a current-attempt job and one presently executing, dated step."""
+    boundary = _execution_timestamp(run.get("run_started_at"), "execution attempt start")
+    start = _execution_timestamp(job.get("started_at"), "executing job start")
+    now = datetime.now(timezone.utc)
+    require(boundary <= start <= now, "Executing job predates its attempt or is future-dated")
+    steps = job.get("steps")
+    require(isinstance(steps, list) and bool(steps), "Executing job lacks steps")
+    numbers: set[int] = set()
+    active: list[JSONObject] = []
+    for step in cast(list[object], steps):
+        require(isinstance(step, dict), "Malformed executing job step")
+        step = cast(JSONObject, step)
+        number = step.get("number")
+        require(type(number) is int and number > 0 and number not in numbers,
+                "Invalid or duplicate executing step number")
+        numbers.add(cast(int, number))
+        if step.get("status") == "in_progress":
+            active.append(step)
+    require(len(active) == 1, "Exactly one executing step is required")
+    step = active[0]
+    require(step.get("conclusion") is None and step.get("completed_at") is None,
+            "Executing step already completed")
+    step_start = _execution_timestamp(step.get("started_at"), "executing step start")
+    require(start <= step_start <= now, "Executing step lies outside its current job")
+
+
+def execution_check_url_id(value: object, repository: str) -> int:
+    """Accept only GitHub's exact check route; repository casing is not identity."""
+    require(isinstance(value, str), "Invalid execution check-run URL")
+    match = re.fullmatch(
+        r"https://api\.github\.com/repos/([^/]+/[^/]+)/check-runs/([1-9][0-9]*)",
+        cast(str, value), re.ASCII,
+    )
+    require(match is not None, "Invalid execution check-run URL")
+    assert match is not None
+    require(REPO_RE.fullmatch(match[1]) and match[1].casefold() == repository.casefold(),
+            "Execution check-run repository mismatch")
+    return int(match[2])
+
+
+def require_executing_job(
+    job: object, run: JSONObject, repository: str, check_run_id: int,
+) -> ExecutionJobProof:
+    """Bind a REST job to official check-run context, not display or matrix names."""
+    require(type(check_run_id) is int and check_run_id > 0, "Invalid execution check-run ID")
+    require(isinstance(job, dict), "Malformed executing job")
+    job = cast(JSONObject, job)
+    for field, value in (("run_id", run["id"]), ("run_attempt", run["run_attempt"]),
+                         ("head_sha", run["head_sha"])):
+        require(type(job.get(field)) is type(value) and job[field] == value,
+                "Executing job identity changed")
+    require(execution_check_url_id(job.get("check_run_url"), repository) == check_run_id,
+            "Executing check-run URL changed")
+    require(job.get("status") == "in_progress" and job.get("conclusion") is None
+            and job.get("completed_at") is None, "Current job is not executing")
+    identity, runner = job.get("id"), job.get("runner_id")
+    require(type(identity) is int and identity > 0 and type(runner) is int and runner > 0,
+            "Executing job lacks positive job/runner IDs")
+    runner_name = os.environ.get("RUNNER_NAME", "")
+    require(bool(runner_name) and job.get("runner_name") == runner_name,
+            "Executing job runner mismatch")
+    require_executing_job_timing(job, run)
+    return ExecutionJobProof(cast(int, identity), check_run_id, cast(int, runner), runner_name)
+
+
+def current_execution_job(
+    gh: GitHub, run: JSONObject, check_run_id: int,
+) -> ExecutionJobProof | None:
+    """Select exactly one current job from every page of the exact attempt."""
+    jobs = gh.pages(f"actions/runs/{run['id']}/attempts/{run['run_attempt']}/jobs", "jobs")
+    ids: set[int] = set()
+    matches: list[JSONObject] = []
+    for job in jobs:
+        require(isinstance(job, dict), "Malformed execution job inventory")
+        identity = job.get("id")
+        require(type(identity) is int and identity > 0 and identity not in ids,
+                "Invalid or duplicate execution job ID")
+        ids.add(cast(int, identity))
+        if execution_check_url_id(job.get("check_run_url"), gh.repo) == check_run_id:
+            matches.append(job)
+    require(len(matches) <= 1, "Duplicate current check-run jobs")
+    if not matches:
+        return None
+    job = matches[0]
+    for field, value in (("run_id", run["id"]), ("run_attempt", run["run_attempt"]),
+                         ("head_sha", run["head_sha"])):
+        require(type(job.get(field)) is type(value) and job[field] == value,
+                "Executing job identity changed")
+    if job.get("status") in {"queued", "requested", "pending", "waiting"}:
+        require(job.get("conclusion") is None and job.get("completed_at") is None,
+                "Pending execution job has a conclusion")
+        return None
+    return require_executing_job(job, run, gh.repo, check_run_id)
+
+
+def execution_deadline(deadline: float) -> None:
+    """Do not start another metadata operation or accept results after expiry."""
+    require(time.monotonic() < deadline,
+            f"Publication metadata was not ready within {EXECUTING_RUN_WAIT_SECONDS} seconds")
+
+
+def resolve_execution_run(
+    gh: GitHub, run: JSONObject, check_run_id: int | None, deadline: float, need_proof: bool,
+    channel: str, info: JSONObject,
+) -> tuple[JSONObject, ExecutionJobProof | None, bool]:
+    """Use actual attempt/job observations without changing their returned status."""
+    if check_run_id is None or (run.get("status") == "in_progress" and not need_proof):
+        return run, None, run.get("status") == "in_progress"
+    execution_deadline(deadline)
+    current = gh.api(f"actions/runs/{run['id']}/attempts/{run['run_attempt']}")
+    current = require_active_attempt(current, run)
+    check_execution(gh, cast(int, run["id"]), channel, info, current)
+    validate_run_provenance(gh, current, info,
+                            cast(str, run["head_sha"]), cast(int, run["run_attempt"]))
+    execution_deadline(deadline)
+    if current.get("status") == "in_progress" and not need_proof:
+        return current, None, True
+    proof = current_execution_job(gh, current, check_run_id)
+    execution_deadline(deadline)
+    return current, proof, proof is not None
+
+
+def accepted_execution_run(
+    run: JSONObject, proof: ExecutionJobProof | None,
+    target: list[ExecutionJobProof] | None, deadline: float,
+) -> JSONObject:
+    """Expose local proof only after both execution and prerequisite checks pass."""
+    execution_deadline(deadline)
+    if target is not None and proof is not None:
+        target.append(proof)
+    return run
+
+
 # Execution identity is deliberately checked again on every fresh response.
 # pylint: disable-next=too-many-arguments
 def wait_for_executing_run(
@@ -1587,17 +1754,21 @@ def wait_for_executing_run(
     sha: str,
     attempt: int,
     gate: bool = True,
+    execution_proof: list[ExecutionJobProof] | None = None,
 ) -> JSONObject:
     """Allow five shared minutes for Actions' run and gate metadata to catch up.
 
-    A running job may still be reported as queued or waiting after environment
-    approval. Those states never authorize publication: only a fresh, fully
-    bound in_progress run and successful prerequisite gate can pass. Missing or
-    unfinished gate metadata shares the same deadline; terminal non-success,
-    conflicting identity and duplicate gates fail immediately. Completed RC
-    validation does not wait.
+    A workflow carrying official check-run context may establish execution from
+    a fresh exact-attempt response or its unique currently executing job. Raw API
+    status is never rewritten. Older consumers without this context retain the
+    strict aggregate-status path. All paths require the same prerequisite gate;
+    terminal/conflicting evidence fails immediately, and historical completed-RC
+    validation is unchanged.
     """
     deadline = time.monotonic() + EXECUTING_RUN_WAIT_SECONDS
+    check_run_id = execution_check_run_id()
+    if execution_proof is not None:
+        execution_proof.clear()
     reported_status = None
     while True:
         run = cast(JSONObject, gh.api(f"actions/runs/{run_id}"))
@@ -1608,27 +1779,24 @@ def wait_for_executing_run(
         require(
             run.get("conclusion") is None, "Publication run already has a conclusion"
         )
-        if status == "in_progress" and (
+        require(status in {"queued", "requested", "pending", "waiting", "in_progress"},
+                f"Publication run is not active: {status!r}")
+        run, proof, executing = resolve_execution_run(
+            gh, run, check_run_id, deadline, execution_proof is not None, channel, info
+        )
+        status = run.get("status")
+        if executing and (
             not gate or release_gate_ready(gh, run_id, sha, attempt, allow_pending=True)
         ):
-            require(
-                time.monotonic() < deadline,
-                f"Publication metadata was not ready within {EXECUTING_RUN_WAIT_SECONDS} seconds; "
-                f"run: {run_id}, attempt: {attempt}",
-            )
-            return run
-        require(
-            status in {"queued", "requested", "pending", "waiting", "in_progress"},
-            f"Publication run is not active: {status!r}",
-        )
+            return accepted_execution_run(run, proof, execution_proof, deadline)
         waiting_for = (
             "Release gate metadata"
-            if status == "in_progress"
+            if executing
             else f"aggregate status {status!r}"
         )
         timeout_target = (
             "Release gate did not become successful"
-            if status == "in_progress"
+            if executing
             else "Publication run did not become in_progress"
         )
         remaining = deadline - time.monotonic()

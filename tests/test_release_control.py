@@ -3051,5 +3051,159 @@ class CurrentAttemptFreshnessTests(unittest.TestCase):
                 self.check([self.job | changes])
 
 
+
+
+class CheckRunExecutionTests(unittest.TestCase):
+    """Official check-run identity can resolve stale aggregate status offline."""
+
+    setUp = ExecutingRunStatusTests.setUp
+    advance = ExecutingRunStatusTests.advance
+
+    def execution(self):
+        """Return synthetic same-attempt observations with deliberately distinct IDs."""
+        current = {**run(99, False), "status": "queued",
+                   "run_started_at": "2026-01-01T00:00:00Z"}
+        job = {"id": 700, "run_id": 99, "run_attempt": 1, "head_sha": SHA,
+               "check_run_url": f"https://api.github.com/repos/{REPO}/check-runs/800",
+               "runner_id": 900, "runner_name": "runner-example", "name": "Display (matrix)",
+               "status": "in_progress", "conclusion": None, "completed_at": None,
+               "started_at": "2026-01-01T00:00:01Z", "steps": [
+                   {"number": 1, "status": "in_progress", "conclusion": None,
+                    "started_at": "2026-01-01T00:00:02Z", "completed_at": None}]}
+        self.enterContext(patch.dict(os.environ, {
+            "RELEASE_EXECUTION_CHECK_RUN_ID": "800", "RUNNER_NAME": "runner-example",
+            "GITHUB_JOB": "logical-job-id",}))
+        return current, job
+
+    def wait(self, proof=None, gate=False):
+        """Use the real execution guards and a synthetic API only."""
+        return rc.wait_for_executing_run(
+            self.gh, 99, "stable", self.gh.info, SHA, 1, gate=gate, execution_proof=proof)
+
+    def test_stale_run_returns_raw_status_and_separate_proof(self):
+        current, job = self.execution()
+        proof = []
+        with patch.object(self.gh, "api", return_value=current), \
+                patch.object(self.gh, "pages", return_value=[job]):
+            observed = self.wait(proof)
+        self.assertEqual(observed, current)
+        self.assertEqual(observed["status"], "queued")
+        self.assertEqual(proof, [rc.ExecutionJobProof(700, 800, 900, "runner-example")])
+        self.assertNotIn("_execution_job_id", observed)
+        self.assertEqual(self.gh.writes, [])
+
+    def test_attempt_in_progress_is_used_without_rewriting_aggregate(self):
+        current, _ = self.execution()
+        active = {**current, "status": "in_progress"}
+        with patch.object(self.gh, "api", side_effect=[current, active]), \
+                patch.object(self.gh, "pages") as jobs:
+            observed = self.wait()
+        self.assertIs(observed, active)
+        self.assertEqual(current["status"], "queued")
+        jobs.assert_not_called()
+
+    def test_normal_active_admission_captures_proof_for_later_readback(self):
+        current, job = self.execution()
+        current["status"] = "in_progress"
+        proof = []
+        with patch.object(self.gh, "api", return_value=current), \
+                patch.object(self.gh, "pages", side_effect=[[], [job]]):
+            self.wait(proof)
+        self.assertEqual(proof[0].job_id, 700)
+        self.assertEqual(self.now, 2)
+
+    def test_missing_and_consistent_pending_job_wait_without_authorizing(self):
+        current, job = self.execution()
+        pending = {**job, "status": "queued", "runner_id": 0, "runner_name": ""}
+        proof = []
+        with patch.object(self.gh, "api", return_value=current), \
+                patch.object(self.gh, "pages", side_effect=[[], [pending], [job]]):
+            self.wait(proof)
+        self.assertEqual(self.now, 4)
+        self.assertEqual(len(proof), 1)
+
+    def test_current_job_does_not_replace_the_required_gate(self):
+        current, job = self.execution()
+        with patch.object(self.gh, "api", return_value=current), \
+                patch.object(self.gh, "pages", return_value=[job]), \
+                patch.object(rc, "release_gate_ready", return_value=False), \
+                self.assertRaisesRegex(rc.ReleaseError, "within 300 seconds"):
+            self.wait([], gate=True)
+        self.assertEqual(self.now, 300)
+
+    def test_attempt_terminal_or_identity_conflict_stops_before_jobs(self):
+        current, _ = self.execution()
+        for change in ({"status": "completed"}, {"conclusion": "cancelled"},
+                       {"run_attempt": 2}, {"head_sha": "b" * 40},
+                       {"repository": {"full_name": "other/repository"}}):
+            with self.subTest(change=change), \
+                    patch.object(self.gh, "api", side_effect=[current, {**current, **change}]), \
+                    patch.object(self.gh, "pages") as jobs, \
+                    self.assertRaises(rc.ReleaseError):
+                self.wait([])
+            jobs.assert_not_called()
+
+    def test_late_attempt_or_jobs_cannot_extend_the_same_deadline(self):
+        current, job = self.execution()
+        for late in ("attempt", "jobs"):
+            self.now = 0
+            def read(path):
+                if late == "attempt" and "/attempts/" in path:
+                    self.now = 301
+                return current
+            def pages(*_args):
+                self.now = 301
+                return [job]
+            with self.subTest(late=late), patch.object(self.gh, "api", side_effect=read), \
+                    patch.object(self.gh, "pages", side_effect=pages), \
+                    self.assertRaisesRegex(rc.ReleaseError, "within 300 seconds"):
+                self.wait([])
+
+    def test_hostile_job_identity_status_runner_and_timing_fail_closed(self):
+        current, job = self.execution()
+        changes = [{"id": True}, {"run_id": 100}, {"run_attempt": True},
+                   {"head_sha": "b" * 40}, {"runner_id": 0}, {"runner_name": "other"},
+                   {"check_run_url": "https://foreign.test/check-runs/800"},
+                   {"status": "completed"}, {"conclusion": "failure"},
+                   {"started_at": "2025-12-31T23:59:59Z"}, {"steps": []}]
+        for change in changes:
+            with self.subTest(change=change), self.assertRaises(rc.ReleaseError):
+                rc.require_executing_job({**job, **change}, current, REPO, 800)
+
+    def test_duplicate_id_or_check_identity_is_not_a_pending_job(self):
+        current, job = self.execution()
+        for jobs in ([job, job], [job, {**job, "id": 701}]):
+            with self.subTest(jobs=jobs), patch.object(self.gh, "pages", return_value=jobs), \
+                    self.assertRaises(rc.ReleaseError):
+                rc.current_execution_job(self.gh, current, 800)
+
+    def test_empty_context_keeps_strict_status_and_invalid_id_fails(self):
+        for context in ("", "0", "01", "-1", "1.0", "true"):
+            with self.subTest(context=context), patch.dict(os.environ, {
+                "RELEASE_EXECUTION_CHECK_RUN_ID": context,
+            }):
+                if context:
+                    with self.assertRaises(rc.ReleaseError):
+                        rc.execution_check_run_id()
+                else:
+                    self.assertIsNone(rc.execution_check_run_id())
+
+    def test_repository_case_is_compatible_but_other_url_components_are_strict(self):
+        current, job = self.execution()
+        self.assertEqual(rc.require_executing_job(job, current, REPO.upper(), 800).job_id, 700)
+        for url in (f"http://api.github.com/repos/{REPO}/check-runs/800",
+                    f"https://api.github.com/repos/{REPO}/check-runs/800?extra=1",
+                    f"https://api.github.com/repos/{REPO}/check-runs/800#fragment",
+                    f"https://api.github.com/repos/{REPO}/check-runs/800?",
+                    f"https://api.github.com/repos/{REPO}/check-runs/800#",
+                    f" https://api.github.com/repos/{REPO}/check-runs/800",
+                    f"https://api.github.com/repos/{REPO}/check-runs/800\n",
+                    f"https:\n//api.github.com/repos/{REPO}/check-runs/800",
+                    "https://api.github.com/repos/foreign/repo/check-runs/800",
+                    f"https://user@api.github.com/repos/{REPO}/check-runs/800"):
+            with self.subTest(url=url), self.assertRaises(rc.ReleaseError):
+                rc.require_executing_job({**job, "check_run_url": url}, current, REPO, 800)
+
+
 if __name__ == "__main__":
     unittest.main()

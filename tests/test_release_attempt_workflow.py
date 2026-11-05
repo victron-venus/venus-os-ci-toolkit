@@ -30,6 +30,27 @@ class AttemptWorkflowTests(unittest.TestCase):
             with self.subTest(explanation=explanation):
                 self.assertIn(explanation, guide)
 
+    def test_official_job_identity_is_only_on_release_execution_steps(self):
+        for versioned in (False, True):
+            policy = {"repository": "example/project", "mode": "release",
+                      "validation_workflows": ["ci.yml"]}
+            if versioned:
+                policy["versioning"] = {"schema": 1}
+            workflow = install_release.release(policy)
+            expected = {"prepare", "candidate", "final", "stable"} if versioned else {"candidate", "stable"}
+            observed = set()
+            self.assertNotIn("RELEASE_EXECUTION_CHECK_RUN_ID", workflow.get("env", {}))
+            for name, job in workflow["jobs"].items():
+                self.assertNotIn("RELEASE_EXECUTION_CHECK_RUN_ID", job.get("env", {}))
+                for step in job.get("steps", []):
+                    value = step.get("env", {}).get("RELEASE_EXECUTION_CHECK_RUN_ID")
+                    if value is not None:
+                        self.assertEqual(value, "${{ job.check_run_id }}")
+                        self.assertNotIn(name, observed)
+                        observed.add(name)
+            self.assertEqual(observed, expected)
+
+
     def test_upload_and_download_scope_preserves_other_artifacts_and_is_idempotent(self):
         steps = [
             {"uses": "actions/upload-artifact@pinned", "with": {"name": "release-assets-${{ matrix.os }}"}},
