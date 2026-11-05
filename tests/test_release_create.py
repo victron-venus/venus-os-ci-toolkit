@@ -259,6 +259,60 @@ class ReconciliationTests(unittest.TestCase):
         self.assertEqual(self.confirm.call_count, 2)
         self.assertEqual(self.gh.mock_calls, [])
 
+    def test_release_url_preserves_identity_across_repository_case(self):
+        for label, repo, api_repo in (
+            ('owner-only', 'Example/Project', 'example/Project'),
+            ('repository-only', 'Example/Project', 'Example/project'),
+            ('both', 'Example/Project', 'example/project'),
+            ('exact', 'Example/Project', 'Example/Project'),
+            ('canonical-api-case', REPO, 'Example/Project'),
+        ):
+            with self.subTest(label=label):
+                self.gh.repo = repo
+                self.release['url'] = f'https://api.github.com/repos/{api_repo}/releases/42'
+                self.confirm.reset_mock()
+                self.reader.reset_mock()
+                self.assertEqual(self.reconcile(), self.release)
+                self.assertEqual(self.gh.repo, repo)
+                self.assertEqual(self.confirm.call_count, 2)
+                self.assertEqual(self.gh.mock_calls, [])
+                self.assertEqual([call.args[0] for call in self.reader.json.call_args_list],
+                                 ['releases/42', 'git/ref/tags/v1.2.3-beta.1', 'releases/42'])
+
+    def test_release_url_case_matching_keeps_origin_path_and_id_strict(self):
+        self.gh.repo = 'Example/Project'
+        valid = 'https://api.github.com/repos/example/project/releases/42'
+        invalid = (
+            None, 42, '',
+            valid.replace('https:', 'http:'),
+            valid.replace('api.github.com', 'evil.test'),
+            valid.replace('api.github.com', 'api.github.com.evil.test'),
+            valid.replace('api.github.com', 'user@api.github.com'),
+            valid.replace('api.github.com', 'api.github.com:443'),
+            valid.replace('/repos/', '/Repos/'),
+            valid.replace('/releases/', '/Releases/'),
+            valid.replace('/example/', '/another/'),
+            valid.replace('/project/', '/different/'),
+            valid.replace('/42', '/43'),
+            valid.replace('/42', '/042'),
+            valid.replace('/42', '/%34%32'),
+            valid.replace('/example/', '/%65xample/'),
+            valid.replace('/example/project/', '/example%2Fproject/'),
+            valid.replace('/example/project/', '/example/./project/'),
+            valid.replace('/example/', '/examplе/'),  # Cyrillic final letter is not ASCII case.
+            valid + '/', valid + '?page=1', valid + '#fragment',
+            '\n' + valid, valid.replace('api.github.com', 'api.github.\tcom'),
+        )
+        for url in invalid:
+            with self.subTest(url=url):
+                self.release['url'] = url
+                self.reader.reset_mock()
+                with self.assertRaisesRegex(rc.ReleaseError, 'exact request'):
+                    self.reconcile()
+                self.assertEqual(self.gh.repo, 'Example/Project')
+                self.assertEqual(self.gh.mock_calls, [])
+                self.reader.json.assert_not_called()
+
     def test_identity_and_state_mismatch(self):
         for key, value in [('body', 'older nonce'), ('target_commitish', 'b' * 40),
                            ('draft', False), ('prerelease', False), ('published_at', 'now'),

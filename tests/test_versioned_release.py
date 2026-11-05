@@ -1626,7 +1626,7 @@ class LifecycleTests(unittest.TestCase):  # pylint: disable=too-many-public-meth
             self.assertEqual(self.gh.ledger_writes, writes)
             self.assertEqual(self.gh.writes, [])
 
-    def _release_creation_fixture(self, recover):
+    def _release_creation_fixture(self, recover, api_repo=REPO):
         reader = Mock()
         reader.json.side_effect = lambda path: (
             copy.deepcopy(self.gh.releases[int(path.split('/')[1])])
@@ -1638,17 +1638,17 @@ class LifecycleTests(unittest.TestCase):  # pylint: disable=too-many-public-meth
             if recover:
                 self.gh.releases[result['id']].update(
                     published_at=None, author={'id': 41898282}, assets=[],
-                    url=f"https://api.github.com/repos/{REPO}/releases/{result['id']}",
+                    url=f"https://api.github.com/repos/{api_repo}/releases/{result['id']}",
                 )
                 raise rc.AmbiguousCreate('response lost')
             return result
 
         return reader, create
 
-    def _reject_automatic_source_move_after_upload(self, scheduled, recover, rename=False):
+    def _reject_automatic_source_move_after_upload(self, scheduled, recover, rename=False, api_repo=REPO):
         plan = self.build_schedule() if scheduled else self.automatic_build()
         upload = self.gh.upload
-        reader, create = self._release_creation_fixture(recover)
+        reader, create = self._release_creation_fixture(recover, api_repo)
 
         def move_source(*args, **kwargs):
             result = upload(*args, **kwargs)
@@ -2265,9 +2265,9 @@ class LifecycleTests(unittest.TestCase):  # pylint: disable=too-many-public-meth
         self.assertFalse(self.gh.assets.get(draft['id']))
         self.assertFalse(any(method == 'PATCH' for _, method, _ in self.gh.writes))
 
-    def _reject_tag_move_during_final_source_confirmation(self, recover):
+    def _reject_tag_move_during_final_source_confirmation(self, recover, api_repo=REPO):
         plan = self.automatic_build()
-        reader, create = self._release_creation_fixture(recover)
+        reader, create = self._release_creation_fixture(recover, api_repo)
         api = self.gh.api
         callback_reads = []
 
@@ -2299,6 +2299,42 @@ class LifecycleTests(unittest.TestCase):  # pylint: disable=too-many-public-meth
 
     def test_reconciled_publish_refuses_tag_moved_during_final_source_confirmation(self):
         self._reject_tag_move_during_final_source_confirmation(True)
+
+
+    def test_mixed_case_reconciliation_keeps_manifest_and_one_create(self):
+        lifecycle.prepare(self.args)
+        self.build_current()
+        before = copy.deepcopy(self.gh.__dict__)
+        with patch.object(lifecycle, "datetime") as clock:
+            clock.now.return_value = datetime(2026, 9, 12, tzinfo=timezone.utc)
+            normal = lifecycle.publish_versioned(self.args)
+            expected = rc.EVIDENCE.read_bytes()
+            self.gh.__dict__ = copy.deepcopy(before)
+            reader, create = self._release_creation_fixture(True, 'Example/Project')
+            with (patch.object(self.gh, 'create_release_once', side_effect=create) as called,
+                  patch.object(rc, 'CreateReadback', return_value=reader) as readback):
+                recovered = lifecycle.publish_versioned(self.args)
+            called.assert_called_once()
+            readback.assert_called_once_with(REPO)
+        self.assertEqual(self.gh.repo, REPO)
+        self.assertEqual(recovered, normal)
+        self.assertEqual(rc.EVIDENCE.read_bytes(), expected)
+        self.assertEqual(sum(path == 'releases' and method == 'POST' for path, method, _ in self.gh.writes), 1)
+        self.assertEqual(sum(method == 'PATCH' for _, method, _ in self.gh.writes), 1)
+        self.assertTrue(any(self.gh.assets.values()))
+        release_id = next(r['id'] for r in self.gh.releases.values() if r['tag_name'] == recovered['tag'])
+        self.assertEqual(self.gh.releases[release_id]['url'],
+                         f'https://api.github.com/repos/Example/Project/releases/{release_id}')
+        with self.assertRaisesRegex(rc.ReleaseError, 'publication floor'):
+            lifecycle.publish_versioned(self.args)
+
+    def test_mixed_case_reconciliation_still_checks_final_tag(self):
+        self._reject_tag_move_during_final_source_confirmation(True, 'Example/Project')
+        self.assertEqual(self.gh.repo, REPO)
+
+    def test_mixed_case_reconciliation_still_checks_final_source(self):
+        self._reject_automatic_source_move_after_upload(False, True, api_repo='Example/Project')
+        self.assertEqual(self.gh.repo, REPO)
 
 
 class PreparationTests(unittest.TestCase):

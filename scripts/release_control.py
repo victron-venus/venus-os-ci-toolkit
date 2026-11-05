@@ -2061,6 +2061,18 @@ def publish(
     return _publish_prepared(gh, tag, sha, directory, prerelease, body)
 
 
+def _matches_release_api_url(value: object, repository: str, release_id: int) -> bool:
+    """Match a release endpoint, ignoring case only in its repository identity."""
+    if not isinstance(value, str):
+        return False
+    prefix = "https://api.github.com/repos/"
+    suffix = f"/releases/{release_id}"
+    if not value.startswith(prefix) or not value.endswith(suffix):
+        return False
+    actual_repository = value[len(prefix):-len(suffix)]
+    return bool(REPO_RE.fullmatch(actual_repository)) and actual_repository.casefold() == repository.casefold()
+
+
 def _reconcile_created_release(
     gh: GitHub, payload: JSONObject, confirm: Callable[[CreateReadback], None],
 ) -> JSONObject:
@@ -2080,7 +2092,7 @@ def _reconcile_created_release(
         require(isinstance(value, dict), "Invalid create readback release")
         value = cast(JSONObject, value)
         require(type(value.get("id")) is int and value["id"] == release_id
-                and value.get("url") == f"https://api.github.com/repos/{gh.repo}/releases/{release_id}"
+                and _matches_release_api_url(value.get("url"), gh.repo, release_id)
                 and value.get("published_at") is None and "published_at" in value
                 and value.get("assets") == []
                 and isinstance(value.get("author"), dict)
