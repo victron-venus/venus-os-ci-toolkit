@@ -1,10 +1,10 @@
-# CI dependency updates
+# Dependency updates
 
 GitHub Actions and reusable workflows are maintained by the centrally scheduled
-`Renovate CI dependencies` workflow in this repository. It uses the existing
+`Renovate dependency updates` workflow in this repository. It uses the existing
 organization `BOT_PAT`, an explicit repository allowlist, and `requireConfig:
 required`. Repositories opt in with `renovate.json` extending
-`local>victron-venus/venus-os-ci-toolkit:renovate-ci`.
+`local>victron-venus/venus-os-ci-toolkit:renovate-fleet`.
 
 Each repository receives one `renovate/ci-workflows` PR containing all available
 CI updates. Major, minor, patch and digest updates are grouped together. CodeQL
@@ -34,14 +34,35 @@ The workflow contract now rejects missing or inconsistent CodeQL version
 comments as well as mixed SHAs. Consumers receive this guard when their
 vendored `scripts/workflow_contracts.py` is refreshed from the toolkit.
 
-Runner images and action tool-version inputs are excluded from this migration.
-Existing Dependabot policies for application packages and containers, including
-version exclusions, remain in place. Dependabot's Actions entry has a zero version
-PR limit and an explicit ignore rule, which also suppresses separate security
-update PRs. Merely deleting the entry would not suppress security PRs. GitHub
-vulnerability alerts remain enabled. Renovate's separate vulnerability PR path
-is disabled for this CI-only preset: patched action releases arrive through the
-same daily grouped update and required checks.
+The full-fleet preset extends the original `renovate-ci` preset with native
+application and container managers. Consumers explicitly list their managers
+and preserve project-specific version ceilings, groups and source exclusions.
+The `pep621` manager owns `pyproject.toml` and `uv.lock`. Historical browser
+generations, vendored sources and copied build overlays require their existing
+source-aware update procedures. Runner images, action tool-version inputs and
+Python `requires-python` runtime migrations remain explicit project changes.
+
+Application updates form a separate group, with major updates separated from
+minor/patch updates. Defaults permit two open ordinary PRs and one new ordinary
+PR per hour per repository. Renovate reads GitHub vulnerability alerts for
+security fixes, with one concurrent security PR and no dashboard approval wait.
+CI security fixes remain in the same atomic `renovate/ci-workflows` branch;
+application security fixes retain separate per-package branches. Consumers
+with source-bound or ABI-sensitive exclusions may disable this separate
+security PR lane while retaining scheduled compatible updates and alerts.
+Normal review and required CI still apply; automatic merging is disabled.
+
+Remove `.github/dependabot.yml` (or `.yaml`) after the replacement configuration
+is reviewed, and disable GitHub's **Dependabot security updates** setting. Keep
+the dependency graph and vulnerability alerts enabled, because Renovate reads
+those alerts. Terraform must declare `enabled = false` for security-update
+resources so a later apply cannot restore the old PR producer. Compatible
+review logic for historical Dependabot PRs can remain.
+
+The public runner contains only public repository names. Private consumers and
+the existing `ha-homelab/home-assistant` exception belong to the private runner's
+explicit inventory and visibility preflight. Each repository belongs to exactly
+one runner. Repositories without dependency or workflow inputs need no updater.
 
 ## Operations
 
@@ -101,33 +122,34 @@ Run the offline regression suite with
 `python3 -m unittest discover -s tests -p 'test_renovate_signing.py' -v`.
 It generates disposable keys locally and never needs a repository secret.
 
-To migrate another repository:
+To onboard another full-fleet repository:
 
-1. Add its full name to `renovate-repositories.json`.
-2. Run `python3 scripts/migrate_ci_updates.py /path/to/repository`. The helper
-   adds version comments to bare SHA-pinned workflow references: `# main` for
-   Toolkit workflows and the exact declared release ref from `action-pins.json`
-   for other actions. These comments are required for Renovate to discover
-   digest updates; the SHA and executable YAML values do not change.
-   An existing prose-only comment is preserved after the verified version ref;
-   it is not treated as evidence that an action can already be updated.
-   If a legacy third-party SHA is unknown, migration stops before writing any
-   files. Verify the matching tag (dereferencing annotated tags) against the
-   action's GitHub repository, then pass `--action-versions verified-refs.json`.
-   The JSON format is `{"owner/action": {"40-character-commit-sha": "v1.2.3"}}`.
-   A branch ref is appropriate only when the pin's upstream branch identity was
-   verified (for example, its exact current SHA or the upstream commit metadata).
-   Never infer a release version from a neighboring action or guess `main`.
-3. Review the generated comments against the verified metadata and rerun the
-   helper to confirm there are no further changes.
-4. Ship the current `scripts/workflow_contracts.py` through the required CI gate.
-5. Validate the config with the pinned Renovate config validator, run workflow
-   contracts and actionlint, then merge the migration through the normal gate.
-6. Run a dry sweep followed by a live sweep and inspect the grouped PR.
+1. Audit the default branch and choose the public or private runner. Verify bot
+   access and add the repository to exactly one explicit inventory.
+2. Create `renovate.json` extending `renovate-fleet`, preserving version holds,
+   source exclusions and dependency groups. Explicitly enable required native
+   managers alongside `github-actions`, `custom.regex` and `custom.jsonata`.
+3. Review SHA-pinned workflow references and add missing version comments without
+   changing their executable values. Use the repository's verified action-pin
+   manifest, or verify an upstream tag resolves to that exact commit (including
+   annotated-tag dereferencing). Only use `# main` for a toolkit reference after
+   verifying its branch identity. Preserve existing prose after the version
+   comment. Stop for unknown pins; never guess a version from neighboring steps.
+4. Confirm the workflow-contract guard checks coupled CodeQL and toolkit pins.
+   Validate the configuration with the pinned Renovate validator and run
+   workflow contracts and actionlint for any changed workflow metadata.
+5. Merge the reviewed configuration and inventory through normal repository
+   gates. Run a dry sweep and verify the repository and expected managers.
+6. Remove the old Dependabot YAML, disable Dependabot security updates and run
+   a live sweep. Keep vulnerability alerts and project-specific source policies.
+
+`scripts/migrate_ci_updates.py` is a historical CI-only migration helper. It
+rejects full-fleet configurations and recreates the old Dependabot stub. Do not
+run it during full-fleet onboarding or use it as an annotation-only command.
 
 Do not merge old standalone Dependabot action PRs after migration. Close them
-when their changes are superseded by the grouped Renovate PR. Application
-dependency PRs are unaffected.
+when their changes are superseded by the verified Renovate path. Preserve any
+unique fixes until the replacement covers them.
 
 References: [GitHub Actions manager](https://docs.renovatebot.com/modules/manager/github-actions/)
 and [grouping options](https://docs.renovatebot.com/configuration-options/#groupname).

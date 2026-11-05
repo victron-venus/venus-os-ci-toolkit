@@ -179,7 +179,7 @@ jobs:
           RENOVATE_X_IGNORE_RE2: 'true'
         run: |
           renovate="$RUNNER_TEMP/renovate/node_modules/renovate"
-          node "$renovate/dist/config-validator.js" --strict --no-global renovate-ci.json
+          node "$renovate/dist/config-validator.js" --strict --no-global renovate-ci.json renovate-fleet.json
           node tests/renovate_grouping.mjs "$renovate"
   python-typecheck-contract:
     name: Workflow contracts

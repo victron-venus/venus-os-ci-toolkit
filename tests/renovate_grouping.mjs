@@ -22,7 +22,11 @@ const allowedModules = new Set([
   'config/defaults',
   'config/global',
   'config/utils',
+  'modules/platform/api',
+  'modules/platform/index',
+  'workers/repository/init/vulnerability',
   'modules/manager/github-actions/extract',
+  'modules/manager/pep621/extract',
   'modules/manager/custom/regex/index',
   'modules/manager/custom/jsonata/index',
   'workers/repository/updates/flatten',
@@ -241,3 +245,69 @@ for await (const filename of glob(['.github/workflows/*.{yml,yaml}', 'actions/**
   }
 }
 console.log('Renovate groups CodeQL majors, reusable workflow digests, action patches, generator pins, release policy digests and toolkit runtime inputs into one PR; custom updaters preserve immutable SHAs.');
+
+// Full-fleet ownership must keep the CI unit while exposing real uv/PEP 621 deps.
+const fleetPreset = JSON.parse(await readFile('renovate-fleet.json', 'utf8'));
+const fleetConfig = mergeChildConfig(config, fleetPreset);
+const { extractPackageFile: extractPython } = await moduleAt('modules/manager/pep621/extract');
+const python = await extractPython('[project]\nname = "migration-fixture"\nversion = "1.0.0"\nrequires-python = ">=3.11"\ndependencies = ["httpx==0.28.0"]\n', 'pyproject.toml', fleetConfig);
+assert.ok(python.deps.some((dep) => dep.depName === 'httpx' || dep.packageName === 'httpx'));
+const fleetUpdates = await flattenUpdates(fleetConfig, {
+  'github-actions': [{ packageFile: '.github/workflows/ci.yml', deps: actions }],
+  npm: [{ packageFile: 'package.json', deps: [{ depName: 'fixture-library', datasource: 'npm', currentValue: '1.0.0', updates: [{ updateType: 'patch', newValue: '1.0.1', newMajor: 1 }] }] }],
+});
+const ciUpdates = fleetUpdates.filter((update) => update.manager === 'github-actions');
+const applicationUpdates = fleetUpdates.filter((update) => update.manager === 'npm');
+assert.ok(ciUpdates.length > 0 && applicationUpdates.length > 0);
+assert.ok(ciUpdates.every((update) => update.branchName === 'renovate/ci-workflows'));
+assert.ok(applicationUpdates.every((update) => update.branchName.includes('application-dependencies')));
+assert.ok(applicationUpdates.every((update) => update.branchName !== 'renovate/ci-workflows'));
+assert.ok(fleetUpdates.every((update) => update.automerge === false));
+assert.equal(fleetConfig.vulnerabilityAlerts.enabled, true);
+assert.equal(fleetConfig.vulnerabilityAlerts.dependencyDashboardApproval, false);
+console.log('Full-fleet policy extracts Python application dependencies and keeps application updates separate from atomic CI updates.');
+
+// Advisory rules force their own grouping; CI security fixes must stay atomic.
+const { default: platformApis } = await moduleAt('modules/platform/api');
+const { setPlatformApi } = await moduleAt('modules/platform/index');
+const { detectVulnerabilityAlerts } = await moduleAt('workers/repository/init/vulnerability');
+const advisory = (ecosystem, name, fixed) => ({
+  security_vulnerability: { package: { ecosystem, name }, first_patched_version: { identifier: fixed }, severity: 'high' },
+  security_advisory: { ghsa_id: 'GHSA-test-test-test', identifiers: [], summary: 'Synthetic grouping test', description: 'Synthetic data only', references: [], severity: 'high' },
+});
+platformApis.set('github', { getVulnerabilityAlerts: async () => [
+  advisory('actions', 'example/action', '1.1.0'), advisory('pip', 'example-package', '1.0.1'),
+] });
+setPlatformApi('github');
+const vulnerableAction = {
+  depName: 'example/action', packageName: 'example/action', datasource: 'github-tags', versioning: 'github-actions',
+  currentValue: 'v1.0.0', currentVersion: '1.0.0', currentDigest: old,
+  updates: [{ updateType: 'minor', newValue: 'v1.1.0', newVersion: '1.1.0', newDigest: next, newMajor: 1, newMinor: 1 }],
+};
+const securityPackages = {
+  'github-actions': [{ packageFile: '.github/workflows/ci.yml', deps: [structuredClone(vulnerableAction), {
+    ...structuredClone(vulnerableAction), depName: 'example/ordinary-action', packageName: 'example/ordinary-action',
+    updates: [{ updateType: 'major', newValue: 'v2.0.0', newVersion: '2.0.0', newDigest: next, newMajor: 2, newMinor: 0 }],
+  }] }],
+  'custom.regex': [{ packageFile: '.github/action-pins.json', deps: [structuredClone(vulnerableAction)] }],
+  'custom.jsonata': [{ packageFile: '.github/workflows/ci.yml', deps: [{
+    depName: 'victron-venus/venus-os-ci-toolkit', packageName: 'https://github.com/victron-venus/venus-os-ci-toolkit',
+    datasource: 'git-refs', currentValue: 'main', currentDigest: old,
+    updates: [{ updateType: 'digest', newValue: 'main', newDigest: next }],
+  }] }],
+  pip_requirements: [{ packageFile: 'requirements.txt', deps: [{
+    depName: 'example-package', packageName: 'example-package', datasource: 'pypi', versioning: 'pep440',
+    currentValue: '1.0.0', currentVersion: '1.0.0',
+    updates: [{ updateType: 'patch', newValue: '1.0.1', newVersion: '1.0.1', newMajor: 1, newMinor: 0 }],
+  }] }],
+};
+const advisoryConfig = await detectVulnerabilityAlerts(fleetConfig);
+assert.equal(advisoryConfig.packageRules.filter((rule) => rule.isVulnerabilityAlert).length, 2);
+const securityUpdates = await flattenUpdates(advisoryConfig, securityPackages);
+assert.equal(securityUpdates.length, 5);
+assert.equal(securityUpdates.filter((update) => update.isVulnerabilityAlert).length, 3);
+assert.ok(securityUpdates.filter((update) => update.manager !== 'pip_requirements')
+  .every((update) => update.branchName === 'renovate/ci-workflows'));
+assert.ok(securityUpdates.filter((update) => update.manager === 'pip_requirements')
+  .every((update) => update.branchName === 'renovate/pypi-example-package-vulnerability'));
+console.log('Synthetic advisories preserve atomic CI grouping and separate application security fixes.');
