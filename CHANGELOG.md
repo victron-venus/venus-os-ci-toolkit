@@ -6,6 +6,7 @@
 
 - Allow the reusable browser scope gate ten minutes for a cold Node 22 tool-cache download on private runners. Preserve the pinned runtime, coverage assertions and browser-test timeout.
 
+- Recheck the exact release tag after final confirmation, and match repository-name casing consistently when reconciling an ambiguous release creation.
 - Allow at most three total GitHub CLI artifact download attempts for transient HTTP responses within one 60-second deadline, with bounded backoff and `Retry-After` handling. Preserve HTTPS/FIPS, archive limits, checksum validation and terminal transport/body errors.
 - Simplify the successful-response and transient-status test helpers without changing retry behavior or test assertions.
 
