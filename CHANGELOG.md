@@ -14,6 +14,10 @@
 
 Consumers receive the downloader fix through an explicit reviewed source update. Full current-toolkit adoption retains its qualified Go 1.27.3 runtime; a targeted backport to an older qualified runtime must record that adaptation and pass its own checks. Publishing this source release does not update consumer pins, credentials or deployed runners.
 
+### Security
+
+Download retries apply only to read-only archive GET requests; release-creation writes still occur once. Exact source, tag, ledger, manifest and checksum checks remain required, together with the existing HTTPS/FIPS and archive-size bounds. This release adds no credentials or repository permissions and does not change deployed runners.
+
 ## [0.1.15] - 2026-11-04
 
 ### Added
