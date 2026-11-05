@@ -57,6 +57,7 @@ CHANGE_SCOPE_PATH = "scripts/change_scope.py"
 WORKFLOW_CONTRACTS_PATH = "scripts/workflow_contracts.py"
 RELEASE_CONTROL_PATH = "scripts/release_control.py"
 GITHUB_TOKEN = "${{ github.token }}"
+EXECUTION_CHECK_RUN_ID = "${{ job.check_run_id }}"
 PUBLISH_CANDIDATE_STEP = "Publish checked candidate"
 RELEASE_PIPELINE_NAME = 'release-pipeline.yml'
 FUZZ_RUNNER_PATH = 'scripts/release_fuzz.py'
@@ -1012,6 +1013,7 @@ PY
                     "id": "publication",
                     "env": {
                         **publication_env,
+                        "RELEASE_EXECUTION_CHECK_RUN_ID": EXECUTION_CHECK_RUN_ID,
                         "CHANNEL": "${{ needs.prepare.outputs.channel }}",
                         "VERSION": "${{ needs.prepare.outputs.version }}",
                     },
@@ -1049,6 +1051,7 @@ PY
                     "name": "Promote RC bytes after approval",
                     "env": {
                         **publication_env,
+                        "RELEASE_EXECUTION_CHECK_RUN_ID": EXECUTION_CHECK_RUN_ID,
                         "RC_TAG": "${{ inputs.rc_tag }}",
                     },
                     "run": (
@@ -1213,6 +1216,7 @@ def release(policy):
         'python3 scripts/release_versioned.py prepare --repo "$GITHUB_REPOSITORY"'
     )
     metadata["env"]["GH_TOKEN"] = GITHUB_TOKEN
+    metadata["env"]["RELEASE_EXECUTION_CHECK_RUN_ID"] = EXECUTION_CHECK_RUN_ID
     prepare["steps"].append(
         {
             "name": "Store exact version plan before building",
@@ -2148,6 +2152,20 @@ explicit `change_scope` opt-in does a documentation-only push stop before releas
 preparation, version allocation, artifact builds or publication. This does not
 change the configured nightly policy.
 
+## Live release execution
+
+Release steps pass the official `job.check_run_id` context as
+`RELEASE_EXECUTION_CHECK_RUN_ID`. If aggregate run metadata is delayed, the
+publisher first checks the exact attempt, then may match this identifier to the
+unique attempt job's exact GitHub `check_run_url`. The job must still be executing
+on the current runner with a current-attempt executing step. Display names and
+matrix labels do not identify the job. The shared five-minute deadline and all
+prerequisite gates remain required; terminal or conflicting metadata fails.
+Older workflows and hosts without this context keep the strict aggregate-status
+path. Adopt both the reviewed generated workflow and publisher together.
+Ambiguous-create confirmation uses a fresh bounded job read, never a saved status.
+Completed historical RCs still require successful terminal validation.
+
 ## Local checks
 
 Use Python 3.11+ for the CLI and the project toolchains documented in `scripts/ci.sh`.
@@ -2233,11 +2251,19 @@ and source in every receipt; publication requires the current verified run ident
 The installer scopes build, signing and collection artifact names to that attempt.
 ID-selected candidate downloads require a separate consumer check of receipt
 producer identity and payload digest; the name-scoping helper does not verify them.
-Before publication starts, use **Re-run all jobs** only if the allocator and
-release policy permit reuse of that reservation. Recreate every required input
-in the same attempt; older packages must not fill missing current builds. After
-publication starts, or its result is partial or uncertain, inspect existing tags,
-releases and assets before a policy-authorized new run. Never reset the ledger or
+**Re-run failed jobs** can retain successful checks and packages from an older
+attempt, so it is insufficient when publication requires fresh inputs from the
+current attempt. Before publication starts, read back the release ledger and
+existing tags and releases. If the reservation is still eligible, its build
+number is above the publication floor, and the candidate tag is absent, use
+**Re-run all jobs** on the same run only when the allocator and release policy
+permit it. Recreate every required input in the same attempt; older packages
+must not fill missing current builds.
+
+Once the publication floor has consumed the build number, use a policy-authorized
+new workflow run and reservation. If publication started or its external result
+is partial or uncertain, inspect existing tags, releases and assets first; an
+immutable tag may also require a new base version. Never reset the ledger or
 overwrite published assets. See [publication-phase retry rules](VERSIONING.md#package-identity-across-reruns).
 Update shared fuzz workflow pins with the producer and collector rollout. Local
 offline receipts cannot qualify live publication.
@@ -2248,8 +2274,12 @@ newer automatic replacement run at current HEAD are verified. This does not clai
 that the replacement passed or published. No tag, release or promotion evidence
 is created for that skipped publication, and its reserved number is not reused.
 Missing replacement evidence or API failures remain errors. Manual releases keep
-their existing checks. A race after the final check can still fail publication;
-inspect the error and dispatch a fresh run at current HEAD, never reset the ledger.
+their existing checks. Automatic publication validates the captured default-branch
+source before consuming the reservation, then checks the default branch and source
+again after uploads, immediately before publishing the draft. A detected late
+change leaves the draft unpublished and the consumed reservation intact. The last
+check and GitHub PATCH are not atomic; inspect any error and dispatch a fresh run
+at current HEAD, never reset the ledger.
 
 ## Stable promotion
 

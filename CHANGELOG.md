@@ -4,6 +4,8 @@
 
 ### Fixed
 
+- Bind live release execution to the official current-job check-run identity when aggregate Actions metadata remains queued. Preserve exact attempt/source/runner checks, prerequisite gates, the five-minute deadline and strict completed-RC validation; ambiguous-create readback rechecks the current job independently.
+
 - Allow the reusable browser scope gate ten minutes for a cold Node 22 tool-cache download on private runners. Preserve the pinned runtime, coverage assertions and browser-test timeout.
 
 - Recheck the exact release tag after final confirmation, and match repository-name casing consistently when reconciling an ambiguous release creation.

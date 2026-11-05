@@ -29,6 +29,20 @@ explicit `change_scope` opt-in does a documentation-only push stop before releas
 preparation, version allocation, artifact builds or publication. This does not
 change the configured nightly policy.
 
+## Live release execution
+
+Release steps pass the official `job.check_run_id` context as
+`RELEASE_EXECUTION_CHECK_RUN_ID`. If aggregate run metadata is delayed, the
+publisher first checks the exact attempt, then may match this identifier to the
+unique attempt job's exact GitHub `check_run_url`. The job must still be executing
+on the current runner with a current-attempt executing step. Display names and
+matrix labels do not identify the job. The shared five-minute deadline and all
+prerequisite gates remain required; terminal or conflicting metadata fails.
+Older workflows and hosts without this context keep the strict aggregate-status
+path. Adopt both the reviewed generated workflow and publisher together.
+Ambiguous-create confirmation uses a fresh bounded job read, never a saved status.
+Completed historical RCs still require successful terminal validation.
+
 ## Local checks
 
 Use Python 3.11+ for the CLI and the project toolchains documented in `scripts/ci.sh`.

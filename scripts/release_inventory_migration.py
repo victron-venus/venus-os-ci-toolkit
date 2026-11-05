@@ -148,6 +148,34 @@ AUTOMATIC_SOURCE = {
 }
 
 
+# Preserve live execution proof only when the exact later layer is already present.
+EXECUTION_JOB = {
+    "hunks": [
+        {
+            "before": "\n\ndef context(\n    gh: rc.GitHub, channel: str, gate: bool = False\n) -> tuple[dict[str, object], dict[str, object], dict[str, object]]:\n    \"\"\"Reuse the original publisher's execution and source-policy checks.\"\"\"\n    run_id = rc.positive(os.environ.get(\"GITHUB_RUN_ID\"), \"run ID\")\n    attempt = rc.positive(os.environ.get(\"GITHUB_RUN_ATTEMPT\"), \"run attempt\")\n    info = rc.repository_info(gh)\n    run = rc.wait_for_executing_run(\n        gh, run_id, channel, info, rc.checked_out_sha(), attempt, gate=gate\n    )\n    snapshot = rc.source_policy_snapshot(gh, cast(str, run[\"head_sha\"]))\n    rc.require_release_policy(\n",
+            "after": "\n\ndef context(\n    gh: rc.GitHub, channel: str, gate: bool = False,\n    execution_proof: list[rc.ExecutionJobProof] | None = None,\n) -> tuple[dict[str, object], dict[str, object], dict[str, object]]:\n    \"\"\"Reuse the original publisher's execution and source-policy checks.\"\"\"\n    run_id = rc.positive(os.environ.get(\"GITHUB_RUN_ID\"), \"run ID\")\n    attempt = rc.positive(os.environ.get(\"GITHUB_RUN_ATTEMPT\"), \"run attempt\")\n    info = rc.repository_info(gh)\n    run = rc.wait_for_executing_run(\n        gh, run_id, channel, info, rc.checked_out_sha(), attempt, gate=gate,\n        execution_proof=execution_proof,\n    )\n    snapshot = rc.source_policy_snapshot(gh, cast(str, run[\"head_sha\"]))\n    rc.require_release_policy(\n"
+        },
+        {
+            "before": "\ndef create_confirmation(\n    run: dict[str, object], source_ref: tuple[str, object], consumed: bytes,\n) -> Callable[[rc.CreateReadback], None]:\n    \"\"\"Bind one release-create call, without adding any cross-run recovery state.\"\"\"\n\n    def confirm(readback: rc.CreateReadback) -> None:\n        current = readback.json(f\"actions/runs/{run['id']}/attempts/{run['run_attempt']}\")\n        rc.require(isinstance(current, dict) and current.get(\"status\") == \"in_progress\"\n                   and current.get(\"conclusion\") is None\n                   and all(type(current.get(key)) is type(run[key]) and current[key] == run[key] for key in\n                           (\"id\", \"run_attempt\", \"head_sha\", \"path\", \"event\")),\n                   \"Create readback run identity changed\")\n        info = readback.json(\"\")\n        rc.require(isinstance(info, dict) and isinstance(info.get(\"default_branch\"), str)\n                   and f\"git/ref/heads/{quote(info['default_branch'], safe='')}\" == source_ref[0],\n",
+            "after": "\ndef create_confirmation(\n    run: dict[str, object], source_ref: tuple[str, object], consumed: bytes,\n    execution_proof: rc.ExecutionJobProof | None = None,\n) -> Callable[[rc.CreateReadback], None]:\n    \"\"\"Bind one release-create call, without adding any cross-run recovery state.\"\"\"\n\n    def confirm(readback: rc.CreateReadback) -> None:\n        current = readback.json(f\"actions/runs/{run['id']}/attempts/{run['run_attempt']}\")\n        rc.require(isinstance(current, dict)\n                   and current.get(\"conclusion\") is None\n                   and all(type(current.get(key)) is type(run[key]) and current[key] == run[key] for key in\n                           (\"id\", \"run_attempt\", \"head_sha\", \"path\", \"event\")),\n                   \"Create readback run identity changed\")\n        current = rc.require_active_attempt(current, run)\n        if current.get(\"status\") != \"in_progress\":\n            rc.require(type(execution_proof) is rc.ExecutionJobProof,\n                       \"Create readback lacks a local executing-job proof\")\n            proof = cast(rc.ExecutionJobProof, execution_proof)\n            rc.require(type(proof.job_id) is int and proof.job_id > 0\n                       and type(proof.check_run_id) is int and proof.check_run_id > 0,\n                       \"Invalid local executing-job proof\")\n            rc.validate_run_provenance(\n                readback, current, {\"default_branch\": run[\"head_branch\"]},\n                cast(str, run[\"head_sha\"]), cast(int, run[\"run_attempt\"]),\n            )\n            rc.require(current.get(\"run_started_at\") == run.get(\"run_started_at\"),\n                       \"Create readback attempt start changed\")\n            job = readback.json(f\"actions/jobs/{proof.job_id}\")\n            observed = rc.require_executing_job(job, current, readback.repo, proof.check_run_id)\n            rc.require(observed == proof, \"Create readback executing-job identity changed\")\n        info = readback.json(\"\")\n        rc.require(isinstance(info, dict) and isinstance(info.get(\"default_branch\"), str)\n                   and f\"git/ref/heads/{quote(info['default_branch'], safe='')}\" == source_ref[0],\n"
+        },
+        {
+            "before": "    plan = version_plan.validate_plan(json.loads(PLAN.read_text(encoding=\"utf-8\")))\n    channel = cast(str, plan[\"channel\"])\n    gh = StateGitHub(args.repo)\n    info, run, snapshot = context(gh, channel, gate=True)\n    policy = cast(dict[str, object], snapshot[\"data\"])\n    version_plan.validate_plan(plan, policy, cast(str, run[\"head_sha\"]))\n    parent = None\n",
+            "after": "    plan = version_plan.validate_plan(json.loads(PLAN.read_text(encoding=\"utf-8\")))\n    channel = cast(str, plan[\"channel\"])\n    gh = StateGitHub(args.repo)\n    execution_proof: list[rc.ExecutionJobProof] = []\n    info, run, snapshot = context(gh, channel, gate=True, execution_proof=execution_proof)\n    policy = cast(dict[str, object], snapshot[\"data\"])\n    version_plan.validate_plan(plan, policy, cast(str, run[\"head_sha\"]))\n    parent = None\n"
+        },
+        {
+            "before": "                       \"Automatic publication default source changed; draft left unpublished\")\n\n        consumed = begin_publication(gh, plan, cast(int, run[\"id\"]), parent)\n        confirm_create = create_confirmation(run, source_ref, consumed)\n        result = rc._publish_prepared(  # pylint: disable=protected-access\n            gh,\n            cast(str, plan[\"tag\"]),\n",
+            "after": "                       \"Automatic publication default source changed; draft left unpublished\")\n\n        consumed = begin_publication(gh, plan, cast(int, run[\"id\"]), parent)\n        confirm_create = create_confirmation(\n            run, source_ref, consumed, execution_proof[0] if execution_proof else None\n        )\n        result = rc._publish_prepared(  # pylint: disable=protected-access\n            gh,\n            cast(str, plan[\"tag\"]),\n"
+        }
+    ],
+    "original_to_current": {
+        "19cb27817c0aaf75867cdfba01a72dacb1026f71773bf42acb6527fc8553cb42": "673f336995440c7b1c616322be470945e8d645a5144b102f686e037d6526564d"
+    },
+    "current": [
+        "673f336995440c7b1c616322be470945e8d645a5144b102f686e037d6526564d"
+    ]
+}
+
 def _before_layer(source: str, layer: dict, label: str) -> str:
     """Reverse one exact accepted layer, preserving a vendor header."""
     prefix = "#!/usr/bin/env python3\n" + receipts.HEADER
@@ -165,9 +193,14 @@ def _before_layer(source: str, layer: dict, label: str) -> str:
     return body.replace("#!/usr/bin/env python3\n", prefix, 1) if vendored else body
 
 
+def _before_execution_job(source: str) -> str:
+    """Reverse only the exact later live execution-proof layer."""
+    return _before_layer(source, EXECUTION_JOB, "Execution job")
+
+
 def _before_automatic_source(source: str) -> str:
-    """Reverse only the exact automatic publication source layer."""
-    return _before_layer(source, AUTOMATIC_SOURCE, "Automatic source")
+    """Reverse live execution proof before the automatic-source layer."""
+    return _before_layer(_before_execution_job(source), AUTOMATIC_SOURCE, "Automatic source")
 
 
 def _before_create_identity(source: str) -> str:
@@ -231,6 +264,8 @@ def render(directory: Path) -> dict[str, str]:
                     _, result = receipts.transform(result, name, CREATE_IDENTITY)
                     if _before_automatic_source(source) != source:
                         _, result = receipts.transform(result, name, AUTOMATIC_SOURCE)
+                        if _before_execution_job(source) != source:
+                            _, result = receipts.transform(result, name, EXECUTION_JOB)
         states.add(state)
         if result != source:
             changes[name] = result

@@ -107,6 +107,7 @@ jobs:
         env:
           PUBLICATION_ENABLED: ${{ vars.RELEASE_CHANNELS_ENABLED }}
           GH_TOKEN: ${{ github.token }}
+          RELEASE_EXECUTION_CHECK_RUN_ID: ${{ job.check_run_id }}
       - name: Store exact version plan before building
         if: ${{ steps.metadata.outputs.build == 'true' }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -231,6 +232,7 @@ jobs:
         id: publication
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_EXECUTION_CHECK_RUN_ID: ${{ job.check_run_id }}
           CHANNEL: ${{ needs.prepare.outputs.channel }}
           VERSION: ${{ needs.prepare.outputs.version }}
         run: python3 scripts/release_versioned.py publish --repo "$GITHUB_REPOSITORY" --assets .release-assets
@@ -278,6 +280,7 @@ jobs:
       - name: Promote RC bytes after approval
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_EXECUTION_CHECK_RUN_ID: ${{ job.check_run_id }}
           RC_TAG: ${{ inputs.rc_tag }}
         run: python3 scripts/release_control.py promote --repo "$GITHUB_REPOSITORY" --rc "$RC_TAG" --run-id "$GITHUB_RUN_ID"
   final:
@@ -330,6 +333,7 @@ jobs:
         id: publication
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_EXECUTION_CHECK_RUN_ID: ${{ job.check_run_id }}
           CHANNEL: ${{ needs.prepare.outputs.channel }}
           VERSION: ${{ needs.prepare.outputs.version }}
         run: python3 scripts/release_versioned.py publish --repo "$GITHUB_REPOSITORY" --assets .release-assets

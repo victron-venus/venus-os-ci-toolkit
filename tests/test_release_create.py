@@ -391,5 +391,83 @@ class CreateTransportEnvironmentTests(unittest.TestCase):
             self.assertEqual({key: os.environ[key] for key in inherited}, inherited)
 
 
+
+
+class ExecutingJobConfirmationTests(unittest.TestCase):
+    """Same-call readback must freshly confirm an initially bound running job."""
+
+    def setUp(self):
+        self.enterContext(patch.dict(os.environ, {"RUNNER_NAME": "fixture-runner"}))
+        self.run = {"id": 99, "run_attempt": 1, "head_sha": SHA,
+                    "path": rc.WORKFLOW, "event": "push", "head_branch": "main",
+                    "repository": {"full_name": REPO}, "head_repository": {"full_name": REPO},
+                    "run_started_at": "2026-01-01T00:00:00Z", "status": "in_progress",
+                    "conclusion": None}
+        self.current = {**self.run, "status": "queued"}
+        self.job = {"id": 700, "run_id": 99, "run_attempt": 1, "head_sha": SHA,
+                    "check_run_url": f"https://api.github.com/repos/{REPO}/check-runs/800",
+                    "runner_id": 900, "runner_name": "fixture-runner",
+                    "status": "in_progress", "conclusion": None, "completed_at": None,
+                    "started_at": "2026-01-01T00:00:01Z", "steps": [
+                        {"number": 1, "status": "in_progress", "conclusion": None,
+                         "started_at": "2026-01-01T00:00:02Z", "completed_at": None}]}
+        self.proof = rc.require_executing_job(self.job, self.run, REPO, 800)
+        self.source = {"object": {"sha": SHA}}
+        self.ledger = b'{"consumed":true}'
+        self.reader = Mock(repo=REPO)
+        self.reader.json.side_effect = self.read
+
+    def read(self, path):
+        """Only these exact bounded readback routes are expected."""
+        return {
+            "actions/runs/99/attempts/1": self.current,
+            "actions/jobs/700": self.job,
+            "": {"default_branch": "main"},
+            "git/ref/heads/main": self.source,
+            "contents/release-version-state.json?ref=release-version-state": {
+                "type": "file", "encoding": "base64",
+                "content": base64.b64encode(self.ledger).decode()},
+        }[path]
+
+    def confirm(self, proof):
+        return lifecycle.create_confirmation(
+            self.run, ("git/ref/heads/main", self.source), self.ledger, proof)(self.reader)
+
+    def test_initially_running_attempt_can_be_stale_at_confirmation(self):
+        self.confirm(self.proof)
+        self.assertIn(unittest.mock.call("actions/jobs/700"), self.reader.json.call_args_list)
+        self.assertEqual(self.run["status"], "in_progress")
+        self.assertEqual(self.current["status"], "queued")
+
+    def test_new_job_read_cannot_reuse_previous_execution_or_other_runner(self):
+        for change in ({"status": "completed"}, {"status": "queued"}, {"id": 701},
+                       {"runner_id": 901}, {"runner_name": "other"}, {"run_attempt": 2},
+                       {"head_sha": "b" * 40}, {"check_run_url": "https://foreign.test/800"},
+                       {"steps": [{"number": 1, "status": "queued", "conclusion": None,
+                                   "started_at": None, "completed_at": None}]}):
+            before = copy.deepcopy(self.job)
+            self.job.update(change)
+            with self.subTest(change=change), self.assertRaises(rc.ReleaseError):
+                self.confirm(self.proof)
+            self.job = before
+
+    def test_current_attempt_identity_and_provenance_cannot_change(self):
+        for change in ({"status": "completed"}, {"conclusion": "success"},
+                       {"head_sha": "b" * 40}, {"run_attempt": 2}, {"head_branch": "other"},
+                       {"repository": {"full_name": "foreign/repo"}},
+                       {"run_started_at": "2026-01-01T00:01:00Z"}):
+            before = copy.deepcopy(self.current)
+            self.current.update(change)
+            with self.subTest(change=change), self.assertRaises(rc.ReleaseError):
+                self.confirm(self.proof)
+            self.current = before
+
+    def test_no_api_annotation_or_untyped_record_can_supply_local_authority(self):
+        self.current["_execution_job_id"] = 700
+        for proof in (None, self.proof._asdict(), rc.ExecutionJobProof(True, 800, 900, "fixture-runner")):
+            with self.subTest(proof=proof), self.assertRaises(rc.ReleaseError):
+                self.confirm(proof)
+
+
 if __name__ == '__main__':
     unittest.main()
