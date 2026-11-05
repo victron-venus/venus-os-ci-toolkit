@@ -530,7 +530,8 @@ jobs:
     needs: [change-scope, browser-plan, browser]
     if: ${{ !cancelled() && (inputs.browser-matrix != '[]' || inputs.browser-matrix-file != '') }}
     runs-on: ${{ fromJSON((vars.CI_RUNNER_MODE == 'self-hosted' || vars.CI_RUNNER_MODE == 'k3s') && (((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) || (contains(fromJSON('["push","schedule","workflow_dispatch"]'), github.event_name) && github.ref == format('refs/heads/{0}', github.event.repository.default_branch))) || (vars.CI_HOSTED_RUNNERS_ENABLED == 'false' && github.event.repository.private == true && github.event_name == 'workflow_dispatch')) && (vars.CI_RUNNER_LABELS || '[]') || (vars.CI_HOSTED_RUNNERS_ENABLED == 'false' && '[]' || '["ubuntu-latest"]')) }}
-    timeout-minutes: 5
+    # Allow cold Node tool-cache downloads before the lightweight receipt check.
+    timeout-minutes: 10
     outputs:
       coverage: ${{ steps.verify.outputs.coverage }}
     steps:

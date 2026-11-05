@@ -46,6 +46,11 @@ class BrowserCompatibilityTests(unittest.TestCase):
             "BROWSER_COMMAND": "node scripts/application-acceptance.cjs",
         }
 
+    def test_browser_scope_gate_allows_cold_node_tool_cache_setup(self):
+        self.assertGreaterEqual(
+            int(WORKFLOW["jobs"]["browser-gate"]["timeout-minutes"]), 10
+        )
+
     def execute(self, job, name, **env):
         return subprocess.run(
             ["node", "-e", script(job, name)], cwd=self.root,
