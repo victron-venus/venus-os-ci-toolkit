@@ -110,6 +110,23 @@ CREATE_READBACK = {
     ]
 }
 
+# Preserve the later default-branch guard without installing it in inventory-only mode.
+CREATE_IDENTITY = {
+    "hunks": [
+        {
+            "before": "        rc.require(readback.json(source_ref[0]) == source_ref[1],\n",
+            "after": "        info = readback.json(\"\")\n        rc.require(isinstance(info, dict) and isinstance(info.get(\"default_branch\"), str)\n                   and f\"git/ref/heads/{quote(info['default_branch'], safe='')}\" == source_ref[0],\n                   \"Create readback default branch changed\")\n        rc.require(readback.json(source_ref[0]) == source_ref[1],\n"
+        }
+    ],
+    "original_to_current": {
+        "2d2e1b65544c817107a4d7a5008fcc11335a9408faec4cb159c87d454d58c7dd": "978783bc3465c174f45669fe38568337d8c886161749f8d1c050ab67d8999e9d"
+    },
+    "current": [
+        "978783bc3465c174f45669fe38568337d8c886161749f8d1c050ab67d8999e9d"
+    ]
+}
+
+
 def _before_layer(source: str, layer: dict, label: str) -> str:
     """Reverse one exact accepted layer, preserving a vendor header."""
     prefix = "#!/usr/bin/env python3\n" + receipts.HEADER
@@ -127,9 +144,14 @@ def _before_layer(source: str, layer: dict, label: str) -> str:
     return body.replace("#!/usr/bin/env python3\n", prefix, 1) if vendored else body
 
 
+def _before_create_identity(source: str) -> str:
+    """Reverse only the exact later default-branch identity guard."""
+    return _before_layer(source, CREATE_IDENTITY, "Create identity")
+
+
 def _before_create_readback(source: str) -> str:
-    """Return the exact notes-only publisher when the new layer is recognized."""
-    return _before_layer(source, CREATE_READBACK, "Create readback")
+    """Return the exact notes-only publisher when the new layers are recognized."""
+    return _before_layer(_before_create_identity(source), CREATE_READBACK, "Create readback")
 
 
 def _before_notes_provenance(source: str) -> str:
@@ -179,6 +201,8 @@ def render(directory: Path) -> dict[str, str]:
             _, result = receipts.transform(result, name, NOTES_PROVENANCE)
             if _before_create_readback(source) != source:
                 _, result = receipts.transform(result, name, CREATE_READBACK)
+                if _before_create_identity(source) != source:
+                    _, result = receipts.transform(result, name, CREATE_IDENTITY)
         states.add(state)
         if result != source:
             changes[name] = result

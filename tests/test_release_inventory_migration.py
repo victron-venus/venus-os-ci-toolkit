@@ -261,7 +261,8 @@ class PlanLayerCompatibilityTests(unittest.TestCase):
             receipts.PUBLISHER, migration.CREATE_READBACK,
         )
         self.assertEqual(state, "original")
-        self.assertEqual(result, self.notes_publisher.replace("#!/usr/bin/env python3\n", PREFIX, 1))
+        self.assertEqual(result, migration._before_create_identity(self.notes_publisher).replace(
+            "#!/usr/bin/env python3\n", PREFIX, 1))
 
     def test_inventory_only_preserves_but_does_not_install_create_readback(self):
         notes_only = migration._before_create_readback(self.notes_publisher)
@@ -275,6 +276,35 @@ class PlanLayerCompatibilityTests(unittest.TestCase):
                 self.assertEqual(self.snapshot(), before)
         self.write_state(self.original)
         self.assertNotIn("def create_marker(", migration.render(self.root)[receipts.PUBLISHER])
+
+    def test_create_identity_layer_reverses_exactly_and_preserves_each_version(self):
+        previous = migration._before_create_identity(self.notes_publisher)
+        self.assertEqual(receipts.digest(previous),
+                         "2d2e1b65544c817107a4d7a5008fcc11335a9408faec4cb159c87d454d58c7dd")
+        state, current = receipts.transform(previous.replace("#!/usr/bin/env python3\n", PREFIX, 1),
+                                            receipts.PUBLISHER, migration.CREATE_IDENTITY)
+        self.assertEqual(state, "original")
+        self.assertEqual(current, self.notes_publisher.replace("#!/usr/bin/env python3\n", PREFIX, 1))
+        for publisher in (previous, self.notes_publisher):
+            self.write_state({**self.current, receipts.PUBLISHER: publisher})
+            before = self.snapshot()
+            self.assertEqual(migration.render(self.root), {})
+            self.assertEqual(self.snapshot(), before)
+            self.write_state({**self.casefold, receipts.PUBLISHER: publisher})
+            self.assertEqual(migration.render(self.root), self.expected([migration.PLAN]))
+
+    def test_partial_or_changed_create_identity_is_rejected(self):
+        first = migration.CREATE_IDENTITY["hunks"][0]
+        for publisher in (self.notes_publisher.replace('info = readback.json("")', 'info = {}', 1),
+                          self.notes_publisher.replace(first["after"], first["before"] + first["after"], 1)):
+            self.assertNotEqual(publisher, self.notes_publisher)
+            self.write_state({**self.current, receipts.PUBLISHER: publisher})
+            before = self.snapshot()
+            with self.assertRaisesRegex(ValueError, "Unknown or partially migrated"):
+                migration.render(self.root)
+            self.assertEqual(self.snapshot(), before)
+            with self.assertRaisesRegex(ValueError, "Unknown current"):
+                migration.previous_canonical_source(publisher, receipts.PUBLISHER)
 
     def test_partial_or_changed_create_readback_layer_is_rejected(self):
         first = migration.CREATE_READBACK["hunks"][0]
