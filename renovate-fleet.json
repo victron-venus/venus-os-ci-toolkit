@@ -1,0 +1,31 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": "Reviewed updates for CI, application dependencies and containers.",
+  "extends": ["local>victron-venus/venus-os-ci-toolkit:renovate-ci"],
+  "enabledManagers": ["github-actions", "custom.regex", "custom.jsonata", "npm", "pep621", "pip_requirements", "pip_setup", "poetry", "pip-compile", "dockerfile", "docker-compose", "gomod", "terraform", "gradle", "gradle-wrapper", "swift", "bundler", "cargo"],
+  "prConcurrentLimit": 2,
+  "prHourlyLimit": 1,
+  "vulnerabilityAlerts": {
+    "enabled": true,
+    "dependencyDashboardApproval": false,
+    "prConcurrentLimit": 1
+  },
+  "packageRules": [
+    {
+      "description": "Review application updates separately from the atomic CI update.",
+      "matchManagers": ["npm", "pep621", "pip_requirements", "pip_setup", "poetry", "pip-compile", "dockerfile", "docker-compose", "gomod", "terraform", "gradle", "gradle-wrapper", "swift", "bundler", "cargo"],
+      "groupName": "Application dependencies",
+      "groupSlug": "application-dependencies",
+      "groupSingleUpdates": true,
+      "separateMajorMinor": true,
+      "separateMinorPatch": false,
+      "automerge": false
+    },
+    {
+      "description": "Python runtime migrations require an explicit project change.",
+      "matchManagers": ["pep621"],
+      "matchDepTypes": ["requires-python"],
+      "enabled": false
+    }
+  ]
+}

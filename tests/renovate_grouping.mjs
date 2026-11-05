@@ -23,6 +23,7 @@ const allowedModules = new Set([
   'config/global',
   'config/utils',
   'modules/manager/github-actions/extract',
+  'modules/manager/pep621/extract',
   'modules/manager/custom/regex/index',
   'modules/manager/custom/jsonata/index',
   'workers/repository/updates/flatten',
@@ -241,3 +242,24 @@ for await (const filename of glob(['.github/workflows/*.{yml,yaml}', 'actions/**
   }
 }
 console.log('Renovate groups CodeQL majors, reusable workflow digests, action patches, generator pins, release policy digests and toolkit runtime inputs into one PR; custom updaters preserve immutable SHAs.');
+
+// Full-fleet ownership must keep the CI unit while exposing real uv/PEP 621 deps.
+const fleetPreset = JSON.parse(await readFile('renovate-fleet.json', 'utf8'));
+const fleetConfig = mergeChildConfig(config, fleetPreset);
+const { extractPackageFile: extractPython } = await moduleAt('modules/manager/pep621/extract');
+const python = await extractPython('[project]\nname = "migration-fixture"\nversion = "1.0.0"\nrequires-python = ">=3.11"\ndependencies = ["httpx==0.28.0"]\n', 'pyproject.toml', fleetConfig);
+assert.ok(python.deps.some((dep) => dep.depName === 'httpx' || dep.packageName === 'httpx'));
+const fleetUpdates = await flattenUpdates(fleetConfig, {
+  'github-actions': [{ packageFile: '.github/workflows/ci.yml', deps: actions }],
+  npm: [{ packageFile: 'package.json', deps: [{ depName: 'fixture-library', datasource: 'npm', currentValue: '1.0.0', updates: [{ updateType: 'patch', newValue: '1.0.1', newMajor: 1 }] }] }],
+});
+const ciUpdates = fleetUpdates.filter((update) => update.manager === 'github-actions');
+const applicationUpdates = fleetUpdates.filter((update) => update.manager === 'npm');
+assert.ok(ciUpdates.length > 0 && applicationUpdates.length > 0);
+assert.ok(ciUpdates.every((update) => update.branchName === 'renovate/ci-workflows'));
+assert.ok(applicationUpdates.every((update) => update.branchName.includes('application-dependencies')));
+assert.ok(applicationUpdates.every((update) => update.branchName !== 'renovate/ci-workflows'));
+assert.ok(fleetUpdates.every((update) => update.automerge === false));
+assert.equal(fleetConfig.vulnerabilityAlerts.enabled, true);
+assert.equal(fleetConfig.vulnerabilityAlerts.dependencyDashboardApproval, false);
+console.log('Full-fleet policy extracts Python application dependencies and keeps application updates separate from atomic CI updates.');

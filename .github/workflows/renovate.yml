@@ -1,4 +1,4 @@
-name: Renovate CI dependencies
+name: Renovate dependency updates
 
 on:
   schedule:
@@ -49,7 +49,7 @@ jobs:
           if [ "$DRY_RUN" = "true" ]; then
             echo 'RENOVATE_DRY_RUN=full' >> "$GITHUB_ENV"
           fi
-      - name: Update CI dependencies as one tested unit
+      - name: Update reviewed CI and application dependencies
         uses: renovatebot/github-action@1c0cf989c02653fba0efe7ca5772338860ca71dc # v46.3.12
         with:
           configurationFile: renovate-runner.cjs
