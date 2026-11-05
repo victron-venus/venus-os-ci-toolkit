@@ -16,6 +16,19 @@ that a consumer has passed a complete 35-target run; assess each candidate from
 its own completed workflow and evidence. A smaller local or PR run is not a
 substitute.
 
+## Browser report retention
+
+`browser-success-report-retention-days` optionally reduces successful ordinary
+browser reports to an integer from 1 to 14 days. The default remains 14 days.
+For example, set it to `1` on an ordinary CI caller to reduce accumulated report
+storage. Invalid values fail during browser planning, before the matrix runs.
+Target reports that are failed or cancelled when the upload step runs remain
+at 14 days. A later post-action or downstream gate failure does not retroactively
+extend an uploaded report's retention. When
+`browser-release-channel` is set, both the per-target evidence and the verified
+qualification receipt retain 14 days, including successful targets. Artifact
+names, contents, upload conditions and qualification checks are unchanged.
+
 ## Prepare a consumer
 
 From a reviewed toolkit checkout, prepare the separate browser toolchain locks:

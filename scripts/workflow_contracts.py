@@ -422,7 +422,14 @@ def validate_release_channels(policy, workflows):
     if (
         caller.get("uses") != LOCAL_WORKFLOW_PREFIX + name
         or caller.get("needs") != "prepare"
-        or caller.get("with") != {"channel": "${{ needs.prepare.outputs.channel }}"}
+        or caller.get("with") not in (
+            {"channel": "${{ needs.prepare.outputs.channel }}"},
+            {
+                "channel": "${{ needs.prepare.outputs.channel || "
+                "(github.event_name == 'push' && 'beta' || "
+                "github.event_name == 'schedule' && 'nightly' || inputs.channel) }}"
+            },
+        )
     ):
         raise ValueError("Release validation must consume the prepared channel")
 

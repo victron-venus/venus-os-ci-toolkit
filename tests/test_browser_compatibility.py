@@ -652,6 +652,49 @@ class BrowserCompatibilityTests(unittest.TestCase):
         self.assertEqual(upload["with"]["name"],
                          "${{ inputs.browser-evidence-prefix }}-${{ matrix.id }}-${{ github.run_attempt }}")
 
+    def test_successful_report_retention_is_bounded_before_browser_jobs(self):
+        definition = WORKFLOW["on"]["workflow_call"]["inputs"]["browser-success-report-retention-days"]
+        self.assertEqual(definition["type"], "number")
+        self.assertEqual(definition["default"], "14")
+        for value in ("1", "7", "14"):
+            with self.subTest(value=value):
+                result = self.plan([TARGET], BROWSER_SUCCESS_REPORT_RETENTION_DAYS=value)
+                self.assertEqual(result.returncode, 0, result.stderr)
+        for value in ("", "0", "-1", "15", "1.5", "NaN", "Infinity", "one"):
+            with self.subTest(value=value):
+                (self.root / "output").unlink(missing_ok=True)
+                result = self.plan([TARGET], BROWSER_SUCCESS_REPORT_RETENTION_DAYS=value)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertFalse((self.root / "output").exists())
+
+    def test_only_successful_ordinary_reports_use_shorter_retention(self):
+        upload = next(step for step in WORKFLOW["jobs"]["browser"]["steps"]
+                      if step.get("uses", "").startswith("actions/upload-artifact@"))
+        expression = upload["with"]["retention-days"]
+        self.assertTrue(expression.startswith("${{ ") and expression.endswith(" }}"))
+        expression = expression[4:-3]
+        # Execute the workflow's actual scalar expression; these operators have
+        # the same short-circuit behavior for our string and positive-number inputs.
+        expression = expression.replace("job.status", "status").replace(
+            "inputs.browser-release-channel", "channel").replace(
+            "inputs.browser-success-report-retention-days", "days")
+        cases = [[status, channel, days]
+                 for status in ("success", "failure", "cancelled")
+                 for channel in ("", "nightly", "beta", "rc", "stable")
+                 for days in (1, 14)]
+        program = ("const cases = " + json.dumps(cases) + "; console.log(JSON.stringify("
+                   "cases.map(([status, channel, days]) => (" + expression + "))));")
+        result = subprocess.run(["node", "-e", program], capture_output=True,
+                                text=True, check=False)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout), [
+            days if status == "success" and channel == "" else 14
+            for status, channel, days in cases])
+        self.assertEqual(upload["if"], "${{ always() && steps.lock.outcome == 'success' }}")
+        verdict = next(step for step in WORKFLOW["jobs"]["browser-verdict"]["steps"]
+                       if step.get("uses", "").startswith("actions/upload-artifact@"))
+        self.assertEqual(verdict["with"]["retention-days"], "14")
+
     def test_matrix_file_cannot_escape_checkout(self):
         matrix = self.root / "targets.json"
         matrix.write_text(json.dumps([TARGET]))

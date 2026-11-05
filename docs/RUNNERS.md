@@ -64,6 +64,23 @@ reuse a runner attached to a private infrastructure repository for public code.
 Promotion still enforces the existing source, toolchain and artifact checks; a
 runner change cannot waive release evidence or replace RC bytes.
 
+## Hosted macOS egress-audit coverage
+
+A successful `harden-runner` action does not by itself prove that its macOS
+agent installed or collected egress telemetry. On 4 November 2026, the pinned
+v2.22.3 action (`46b06cea07f9e64621fdf066ba77ac6915163d43`) reported a missing
+`/Library/SystemExtensions/db.plist` while the action and the job concluded
+successfully. The job's source checks remain separate from this missing audit
+coverage; do not describe that execution as agent-audited from its green status.
+
+Record the actual runner image, action pin and agent initialization result from
+the job log before reporting macOS egress-audit coverage. Retain the existing
+pinned action and required checks while following the
+[toolkit tracking issue](https://github.com/victron-venus/venus-os-ci-toolkit/issues/395)
+and the [upstream installation/status defect](https://github.com/step-security/harden-runner/issues/692).
+These reports document the observed limitation; they do not establish an
+installation result for other jobs or platforms.
+
 ## One-time adoption
 
 Consumers pin reusable workflows to reviewed commit SHAs. Merge the toolkit

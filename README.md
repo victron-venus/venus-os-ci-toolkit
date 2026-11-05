@@ -122,6 +122,16 @@ systems, pinned browser generations and Chrome/Edge channels. It keeps a compact
 required subset and an explicit extended tier, records actual runtime versions,
 and preserves native Safari and real-device checks as separate coverage.
 
+The toolkit's native macOS contracts use explicit standard runner labels.
+Python action 3.10/3.14 and the downloaded Python action run on
+`macos-26-intel`, establishing macOS x64 tooling portability. Synthetic secret
+recovery 3.12/3.14 stays on ARM64 `macos-26`: the pinned cryptography package
+[no longer publishes macOS x86_64 wheels](https://cryptography.io/en/latest/changelog/#v49-0-0).
+All five checks remain required, with the same hash-locked dependencies and no
+source-build fallback. These labels do not guarantee runner availability.
+Linux and Windows checks, and the separate native Linux ARM64 source/security
+qualification, remain required; each result covers only its executed architecture.
+
 The reusable `python-ci.yml` accepts `use-uv-lock: true` to install the selected
 Python environment from `uv.lock` with `uv sync --locked --all-extras`. Missing
 or stale locks fail validation. Include enabled tools (`ruff`, `mypy`, `pytest`

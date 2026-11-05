@@ -4,6 +4,9 @@
 
 ### Fixed
 
+- Pin the three native macOS Python-tooling checks to standard macOS 26 Intel runners after repeated ARM64 runner acquisition failures. Keep both secret-recovery checks on explicit macOS 26 ARM64 because the pinned cryptography package no longer publishes Intel wheels. Preserve all five checks, Python versions, assertions and dependency hashes; each result covers only its executed architecture.
+- Run source checks on the trusted default branch after release preparation fails, preserving prepared-channel precedence and keeping publication blocked by the failure.
+- Accept Docker export layers that exactly match the corresponding verified OCI blob, including gzip-compressed layers. Preserve layer order, content digests, exact sizes, configuration checks and archive limits; retain support for uncompressed layers.
 - Validate the complete release-note body, including the exact candidate or final-build provenance, before reserving a sequence or build number. Notes that exceed the UTF-8 byte limit now fail before creating a plan; bodies exactly at the limit remain publishable.
 
 ### Upgrade

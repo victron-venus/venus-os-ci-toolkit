@@ -474,6 +474,7 @@
   "tests/test_native_docker_cgroups.py",
   "tests/test_nightly.py",
   "tests/test_oci_builder.py",
+  "tests/test_oci_export_formats.py",
   "tests/test_oci_number_contract.py",
   "tests/test_oci_promotion.py",
   "tests/test_oci_tools.py",
