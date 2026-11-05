@@ -1,19 +1,59 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "description": "Reviewed updates for CI, application dependencies and containers.",
-  "extends": ["local>victron-venus/venus-os-ci-toolkit:renovate-ci"],
-  "enabledManagers": ["github-actions", "custom.regex", "custom.jsonata", "npm", "pep621", "pip_requirements", "pip_setup", "poetry", "pip-compile", "dockerfile", "docker-compose", "gomod", "terraform", "gradle", "gradle-wrapper", "swift", "bundler", "cargo"],
+  "extends": [
+    "local>victron-venus/venus-os-ci-toolkit:renovate-ci"
+  ],
+  "enabledManagers": [
+    "github-actions",
+    "custom.regex",
+    "custom.jsonata",
+    "npm",
+    "pep621",
+    "pip_requirements",
+    "pip_setup",
+    "poetry",
+    "pip-compile",
+    "dockerfile",
+    "docker-compose",
+    "gomod",
+    "terraform",
+    "gradle",
+    "gradle-wrapper",
+    "swift",
+    "bundler",
+    "cargo"
+  ],
   "prConcurrentLimit": 2,
   "prHourlyLimit": 1,
   "vulnerabilityAlerts": {
     "enabled": true,
     "dependencyDashboardApproval": false,
-    "prConcurrentLimit": 1
+    "prConcurrentLimit": 1,
+    "groupName": "{{#if (or (equals manager \"github-actions\") (equals manager \"custom.regex\") (equals manager \"custom.jsonata\"))}}GitHub Actions and reusable workflows{{else}}Security update: {{{depName}}}{{/if}}",
+    "groupSlug": "{{#if (or (equals manager \"github-actions\") (equals manager \"custom.regex\") (equals manager \"custom.jsonata\"))}}ci-workflows{{else}}{{{datasource}}}-{{{depNameSanitized}}}-vulnerability{{/if}}",
+    "separateMajorMinor": false
   },
   "packageRules": [
     {
       "description": "Review application updates separately from the atomic CI update.",
-      "matchManagers": ["npm", "pep621", "pip_requirements", "pip_setup", "poetry", "pip-compile", "dockerfile", "docker-compose", "gomod", "terraform", "gradle", "gradle-wrapper", "swift", "bundler", "cargo"],
+      "matchManagers": [
+        "npm",
+        "pep621",
+        "pip_requirements",
+        "pip_setup",
+        "poetry",
+        "pip-compile",
+        "dockerfile",
+        "docker-compose",
+        "gomod",
+        "terraform",
+        "gradle",
+        "gradle-wrapper",
+        "swift",
+        "bundler",
+        "cargo"
+      ],
       "groupName": "Application dependencies",
       "groupSlug": "application-dependencies",
       "groupSingleUpdates": true,
@@ -23,8 +63,12 @@
     },
     {
       "description": "Python runtime migrations require an explicit project change.",
-      "matchManagers": ["pep621"],
-      "matchDepTypes": ["requires-python"],
+      "matchManagers": [
+        "pep621"
+      ],
+      "matchDepTypes": [
+        "requires-python"
+      ],
       "enabled": false
     }
   ]
