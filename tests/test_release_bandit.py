@@ -16,6 +16,7 @@ FILES = (
     "scripts/verified_images.py",
     "tests/test_assemble_native_container.py",
     "tests/test_change_scope.py",
+    "tests/test_release_create.py",
     "tests/test_merge_oci_archives.py",
     "tests/test_verified_publication.py",
 )
