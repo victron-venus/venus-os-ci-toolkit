@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.1.15] - 2026-11-04
+
+### Added
+
+- Allow consumers to retain successful ordinary browser reports for 1–14 days. The default remains 14 days; failed jobs and release qualification still retain reports for 14 days.
+
+### Fixed
+
+- Reconcile a lost or ambiguous versioned release-creation response within the original publish call, using an exact random marker and bounded read-only draft checks. Continue the existing manifest and asset-verification flow only when every source, plan, run, ledger and draft identity agrees.
+- Ship the release-creation regression tests in source archives and generated versioned clients. Preserve exact historical inventory-only migrations without installing response reconciliation through that unrelated update path.
+- Report fixed, bounded node-guard failure categories without rendering exception payloads. Preserve the existing refusal, expiry and recovery behavior.
+
+### Changed
+
+- Update reviewed workflow references and the locked Renovate runtime to 44.215.0.
+- Clarify the architecture-specific coverage and outbound-audit limitations of hosted macOS checks.
+
+### Upgrade
+
+Copied versioned release clients need a reviewed generator update from the accepted immutable Toolkit source. Central Renovate updates dependency pins but does not regenerate these Python helpers. Consumer source adoption can proceed from an accepted Git SHA independently of this release tag. Existing in-flight release cutoffs and runtime qualification remain separate.
+
+### Security
+
+Release-creation writes still occur once. Missing, contradictory, duplicated or unrecognized readback fails closed; cross-run draft adoption remains unsupported. Existing tag, ledger, current-source, manifest, upload and final-publication checks remain required. This release does not change credentials, repository permissions or deployed runners.
+
 ## [0.1.14] - 2026-11-04
 
 ### Fixed
