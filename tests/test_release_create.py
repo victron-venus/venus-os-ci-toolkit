@@ -321,7 +321,8 @@ class CreateTransportEnvironmentTests(unittest.TestCase):
     def test_constructor_is_offline_with_inherited_workflow_scope_and_restores_environment(self):
         with patch.dict(os.environ, {
             "RELEASE_REQUIRE_WORKFLOW_SCOPE": "true",
-            "GH_TOKEN": "offline-token-fixture",
+            # Synthetic fixture; subprocess is mocked, never used for authentication.
+            "GH_TOKEN": "offline-token-fixture",  # nosec B105
         }):
             inherited = {key: os.environ[key] for key in ("RELEASE_REQUIRE_WORKFLOW_SCOPE", "GH_TOKEN")}
             fixture = CreateTransportTests(methodName="test_normal_create")
