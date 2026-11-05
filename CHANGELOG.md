@@ -1,10 +1,17 @@
 # Changelog
 
-## [0.1.16] - Unreleased
+## [0.1.16] - 2026-11-05
 
 ### Fixed
 
 - Allow the reusable browser scope gate ten minutes for a cold Node 22 tool-cache download on private runners. Preserve the pinned runtime, coverage assertions and browser-test timeout.
+
+- Allow at most three total GitHub CLI artifact download attempts for transient HTTP responses within one 60-second deadline, with bounded backoff and `Retry-After` handling. Preserve HTTPS/FIPS, archive limits, checksum validation and terminal transport/body errors.
+- Simplify the successful-response and transient-status test helpers without changing retry behavior or test assertions.
+
+### Upgrade
+
+Consumers receive the downloader fix through an explicit reviewed source update. Full current-toolkit adoption retains its qualified Go 1.27.3 runtime; a targeted backport to an older qualified runtime must record that adaptation and pass its own checks. Publishing this source release does not update consumer pins, credentials or deployed runners.
 
 ## [0.1.15] - 2026-11-04
 
