@@ -143,6 +143,8 @@ the tested matrix, not every architecture or future interpreter release.
 
 To update the common tools, edit `actions/setup-python/requirements.in` and
 regenerate the hash lock using the exact command in its header with uv 0.13.4.
+Renovate uses the same input and `requirements-wheels-only.in` policy file to
+update all hashes together; the policy continues to reject source distributions.
 Review all version changes and run the action matrix, the offline path/hash
 regressions and a vulnerability audit of every locked version, including
 platform-specific dependencies. Consumer application locks remain independent.

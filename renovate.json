@@ -10,7 +10,8 @@
     "npm",
     "pip_requirements",
     "gomod",
-    "dockerfile"
+    "dockerfile",
+    "pip-compile"
   ],
   "packageRules": [
     {
@@ -35,7 +36,7 @@
       "separateMinorPatch": false
     },
     {
-      "description": "Regenerate the compiled, binary-only tool lock through its pinned source workflow.",
+      "description": "Keep the compiled common tools owned by pip-compile and regenerate their hashes.",
       "matchManagers": [
         "pip_requirements"
       ],
@@ -54,12 +55,28 @@
     ".github/oci-tools/**",
     "actions/setup-go/tools/**",
     "tools/scorecard-scan/**",
-    "tools/secret_control/**",
-    "actions/setup-python/requirements.txt"
+    "tools/secret_control/**"
   ],
   "pip_requirements": {
     "managerFilePatterns": [
       "/(^|/)requirements[^/]*\\.(txt|pip)$/"
+    ],
+    "ignorePaths": [
+      "**/vendor/**",
+      "**/node_modules/**",
+      "**/fixtures/**",
+      ".github/containers/runner-go-tools/**",
+      ".github/cosign/**",
+      ".github/oci-tools/**",
+      "actions/setup-go/tools/**",
+      "tools/scorecard-scan/**",
+      "tools/secret_control/**",
+      "actions/setup-python/requirements.txt"
+    ]
+  },
+  "pip-compile": {
+    "managerFilePatterns": [
+      "/^actions/setup-python/requirements\\.txt$/"
     ]
   }
 }

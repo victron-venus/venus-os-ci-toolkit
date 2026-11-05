@@ -70,8 +70,25 @@ The sweep runs daily at 09:23 UTC. For a read-only check, dispatch the workflow
 with `dry-run=true` (the manual default). Dispatch with `dry-run=false` for an
 immediate update sweep. Only the default branch may run the privileged job.
 Failures are visible in the workflow run; a missing token fails the job instead
-of silently disabling updates. The runner does not execute dependency lifecycle
-scripts or repository-defined post-upgrade commands.
+of silently disabling updates. Dependency lifecycle scripts, plugins and shell
+execution remain disabled. Post-upgrade tasks can run only the exact reviewed
+generator commands enumerated in `renovate-runner.cjs`.
+
+Some Python consumers export requirements from `uv.lock` or compile a platform
+lock constrained by that export. Their native source update is followed by a
+reviewed `uv export --locked --offline --no-build` or `uv pip compile --no-build`
+command. Export rejects a stale source/lock pair; no command may build source
+distributions. Tasks pin uv 0.13.4, name the exact files allowed into the commit,
+and use `executionMode: update` on the matching source rule. Branch mode can
+lose a task when another dependency leads a mixed update group in Renovate
+44.215.0. Temporary constraint exports are excluded from committed artifacts.
+
+Adding a generator requires reviewing its complete literal command, source
+ownership and output files, testing a changed dependency and stale-input failure,
+and extending the runner allowlist and its negative command-policy tests. A
+consumer must wait for that allowlist to reach the runner default branch before
+enabling its task. Unsupported source builds and local-interpreter contracts
+remain explicit manual boundaries. See [post-upgrade task configuration](https://docs.renovatebot.com/configuration-options/#postupgradetasks).
 
 `BOT_PAT` must permit repository contents and workflow writes (`repo` and
 `workflow` for a classic PAT). The preflight rejects a classic token missing
