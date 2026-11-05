@@ -2265,6 +2265,42 @@ class LifecycleTests(unittest.TestCase):  # pylint: disable=too-many-public-meth
         self.assertFalse(self.gh.assets.get(draft['id']))
         self.assertFalse(any(method == 'PATCH' for _, method, _ in self.gh.writes))
 
+    def _reject_tag_move_during_final_source_confirmation(self, recover):
+        plan = self.automatic_build()
+        reader, create = self._release_creation_fixture(recover)
+        api = self.gh.api
+        callback_reads = []
+
+        def move_tag(path, *args, **kwargs):
+            result = api(path, *args, **kwargs)
+            draft = next((r for r in self.gh.releases.values() if r['tag_name'] == plan['tag']), None)
+            if path == 'git/ref/heads/main' and draft and self.gh.assets[draft['id']]:
+                callback_reads.append(path)
+                self.gh.refs[plan['tag']]['object']['sha'] = 'b' * 40
+            return result
+
+        with (patch.object(self.gh, 'create_release_once', side_effect=create) as called,
+              patch.object(self.gh, 'api', side_effect=move_tag),
+              patch.object(rc, 'CreateReadback', return_value=reader),
+              self.assertRaisesRegex(rc.ReleaseError, 'Tag moved before publication')):
+            lifecycle.publish_versioned(self.args)
+        called.assert_called_once()
+        self.assertEqual(callback_reads, ['git/ref/heads/main'])
+        draft = next(r for r in self.gh.releases.values() if r['tag_name'] == plan['tag'])
+        self.assertTrue(draft['draft'])
+        self.assertTrue(self.gh.assets[draft['id']])
+        self.assertEqual(self.gh.refs[plan['tag']]['object']['sha'], 'b' * 40)
+        self.assertEqual(self.gh.ledger['publication_floor'], plan['build_number'])
+        self.assertEqual(len(self.gh.ledger_writes), 2)
+        self.assertFalse(any(method == 'PATCH' for _, method, _ in self.gh.writes))
+
+    def test_ordinary_publish_refuses_tag_moved_during_final_source_confirmation(self):
+        self._reject_tag_move_during_final_source_confirmation(False)
+
+    def test_reconciled_publish_refuses_tag_moved_during_final_source_confirmation(self):
+        self._reject_tag_move_during_final_source_confirmation(True)
+
+
 class PreparationTests(unittest.TestCase):
     def test_version_order_and_explicit_breaking_intent(self):
         self.assertEqual(
