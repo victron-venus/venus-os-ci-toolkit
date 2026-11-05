@@ -300,7 +300,8 @@ class PlanLayerCompatibilityTests(unittest.TestCase):
         state, current = receipts.transform(previous.replace("#!/usr/bin/env python3\n", PREFIX, 1),
                                             receipts.PUBLISHER, migration.AUTOMATIC_SOURCE)
         self.assertEqual(state, "original")
-        self.assertEqual(current, self.notes_publisher.replace("#!/usr/bin/env python3\n", PREFIX, 1))
+        self.assertEqual(current, migration._before_execution_job(self.notes_publisher).replace(
+            "#!/usr/bin/env python3\n", PREFIX, 1))
         for publisher in (previous, self.notes_publisher):
             self.write_state({**self.current, receipts.PUBLISHER: publisher})
             before = self.snapshot()
@@ -310,6 +311,68 @@ class PlanLayerCompatibilityTests(unittest.TestCase):
             self.assertEqual(migration.render(self.root), self.expected([migration.PLAN]))
         self.write_state(self.original)
         self.assertNotIn("confirm_automatic_source", migration.render(self.root)[receipts.PUBLISHER])
+
+    def test_execution_layer_roundtrips_exact_accepted_source_and_vendor_header(self):
+        previous = migration._before_execution_job(self.notes_publisher)
+        self.assertEqual(receipts.digest(previous),
+                         "19cb27817c0aaf75867cdfba01a72dacb1026f71773bf42acb6527fc8553cb42")
+        self.assertEqual(receipts.digest(self.notes_publisher),
+                         "673f336995440c7b1c616322be470945e8d645a5144b102f686e037d6526564d")
+        self.assertNotIn("ExecutionJobProof", previous)
+        self.assertNotIn("execution_proof", previous)
+        vendored_previous = previous.replace("#!/usr/bin/env python3\n", PREFIX, 1)
+        vendored_current = self.notes_publisher.replace("#!/usr/bin/env python3\n", PREFIX, 1)
+        state, result = receipts.transform(vendored_previous, receipts.PUBLISHER, migration.EXECUTION_JOB)
+        self.assertEqual((state, result), ("original", vendored_current))
+        self.assertEqual(migration._before_execution_job(vendored_current), vendored_previous)
+        self.assertEqual(migration._before_execution_job(previous), previous)
+        self.assertEqual(receipts.transform(result, receipts.PUBLISHER, migration.EXECUTION_JOB),
+                         ("current", result))
+        for source in (previous, self.notes_publisher):
+            self.assertEqual(receipts.digest(migration.previous_canonical_source(source, receipts.PUBLISHER)),
+                             "e27e76d2a6080bb257ce60420cf9ead4a4a86f1b4a86f568225aa6ee9706875e")
+
+    def test_inventory_preserves_execution_layer_without_installing_it(self):
+        previous = migration._before_execution_job(self.notes_publisher)
+        for publisher in (previous, self.notes_publisher):
+            with self.subTest(publisher_hash=receipts.digest(publisher)):
+                self.write_state({**self.current, receipts.PUBLISHER: publisher})
+                before = self.snapshot()
+                self.assertEqual(migration.render(self.root), {})
+                self.assertEqual(self.snapshot(), before)
+                self.write_state({**self.casefold, receipts.PUBLISHER: publisher})
+                before = self.snapshot()
+                changes = migration.render(self.root)
+                self.assertEqual(changes, self.expected([migration.PLAN]))
+                self.assertEqual(self.snapshot(), before)
+                for name, text in changes.items():
+                    (self.root / name).write_text(text)
+                self.assertEqual(migration.render(self.root), {})
+                self.assertEqual((self.root / receipts.PUBLISHER).read_bytes(), before[receipts.PUBLISHER])
+        self.write_state(self.original)
+        publisher = migration.render(self.root)[receipts.PUBLISHER]
+        self.assertEqual(publisher, self.expected([receipts.PUBLISHER])[receipts.PUBLISHER])
+        self.assertNotIn("ExecutionJobProof", publisher)
+        self.assertNotIn("execution_proof", publisher)
+
+    def test_partial_or_tampered_execution_layer_rejects_before_any_write(self):
+        variants = [self.notes_publisher + " "]
+        for hunk in migration.EXECUTION_JOB["hunks"]:
+            variants.append(self.notes_publisher.replace(hunk["after"], hunk["before"], 1))
+        for publisher in variants:
+            with self.subTest(publisher_hash=receipts.digest(publisher)):
+                self.assertNotEqual(publisher, self.notes_publisher)
+                self.write_state({**self.casefold, receipts.PUBLISHER: publisher})
+                before = self.snapshot()
+                with self.assertRaisesRegex(ValueError, "Unknown or partially migrated"):
+                    migration.render(self.root)
+                with self.assertRaisesRegex(ValueError, "Unknown current"):
+                    migration.previous_canonical_source(publisher, receipts.PUBLISHER)
+                with patch.object(sys, "argv", ["install_release.py", str(self.root),
+                                               "--release-inventory-only"]), \
+                        redirect_stderr(io.StringIO()), redirect_stdout(io.StringIO()):
+                    self.assertEqual(installer.main(), 1)
+                self.assertEqual(self.snapshot(), before)
 
     def test_partial_or_unknown_automatic_source_layer_is_rejected(self):
         first = migration.AUTOMATIC_SOURCE["hunks"][0]
