@@ -1650,6 +1650,7 @@ def release_files(directory: Path, policy: dict) -> dict[str, str]:
         for name in (
             "version_plan",
             "versioned_release",
+            "release_create",
             "prepare_version",
             "release_state",
             "version_receipt",

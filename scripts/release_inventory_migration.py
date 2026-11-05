@@ -78,6 +78,38 @@ NOTES_PROVENANCE = {
 }
 
 
+# Recognize response reconciliation without adding it through inventory-only updates.
+CREATE_READBACK = {
+    "hunks": [
+        {
+            "before": "from __future__ import annotations\n\nimport argparse\nimport json\nimport os\nimport re\nimport sys\nimport tempfile\nfrom collections.abc import Iterator\nfrom datetime import datetime, timezone\nfrom pathlib import Path\nfrom typing import cast\n",
+            "after": "from __future__ import annotations\n\nimport argparse\nimport base64\nimport json\nimport os\nimport re\nimport secrets\nimport sys\nimport tempfile\nfrom collections.abc import Callable, Iterator\nfrom datetime import datetime, timezone\nfrom pathlib import Path\nfrom typing import cast\n"
+        },
+        {
+            "before": "    if gate:\n        rc.validate_validation_run(gh, run, cast(dict[str, object], snapshot[\"data\"]), channel)\n    return info, run, snapshot\n\n\n# Keep source, workflow and byte verification together at the trust boundary.\n",
+            "after": "    if gate:\n        rc.validate_validation_run(gh, run, cast(dict[str, object], snapshot[\"data\"]), channel)\n    return info, run, snapshot\n\n\ndef create_marker(repository: str, run: dict[str, object], plan_digest: str, nonce: str) -> str:\n    \"\"\"Reserve the same UTF-8 body space at preparation and actual publication.\"\"\"\n    identity = {\"repository\": repository, \"source\": run[\"head_sha\"],\n                \"run\": run[\"id\"], \"attempt\": run[\"run_attempt\"],\n                \"plan\": plan_digest, \"nonce\": nonce}\n    marker = json.dumps(identity, sort_keys=True, separators=(\",\", \":\"))\n    return \"\\n\\n<!-- release-create \" + marker + \" -->\"\n\n\ndef create_confirmation(\n    run: dict[str, object], source_ref: tuple[str, object], consumed: bytes,\n) -> Callable[[rc.CreateReadback], None]:\n    \"\"\"Bind one release-create call, without adding any cross-run recovery state.\"\"\"\n\n    def confirm(readback: rc.CreateReadback) -> None:\n        current = readback.json(f\"actions/runs/{run['id']}/attempts/{run['run_attempt']}\")\n        rc.require(isinstance(current, dict) and current.get(\"status\") == \"in_progress\"\n                   and current.get(\"conclusion\") is None\n                   and all(type(current.get(key)) is type(run[key]) and current[key] == run[key] for key in\n                           (\"id\", \"run_attempt\", \"head_sha\", \"path\", \"event\")),\n                   \"Create readback run identity changed\")\n        rc.require(readback.json(source_ref[0]) == source_ref[1],\n                   \"Create readback default source changed\")\n        content = readback.json(\"contents/release-version-state.json?ref=release-version-state\")\n        rc.require(isinstance(content, dict) and content.get(\"type\") == \"file\"\n                   and content.get(\"encoding\") == \"base64\" and isinstance(content.get(\"content\"), str),\n                   \"Invalid create readback ledger\")\n        encoded = cast(str, cast(dict[str, object], content)[\"content\"])\n        raw = base64.b64decode(\"\".join(encoded.split()), validate=True)\n        rc.require(raw == consumed, \"Create readback publication ledger changed\")\n\n    return confirm\n\n\n# Keep source, workflow and byte verification together at the trust boundary.\n"
+        },
+        {
+            "before": "            candidate_provenance(\n                gh.repo, channel, cast(str, run[\"head_sha\"]), cast(int, run[\"id\"]),\n                cast(str, parent[\"tag\"]) if parent else None,\n            ),\n        )\n    plan = reserve_plan(\n        gh,\n",
+            "after": "            candidate_provenance(\n                gh.repo, channel, cast(str, run[\"head_sha\"]), cast(int, run[\"id\"]),\n                cast(str, parent[\"tag\"]) if parent else None,\n            ) + create_marker(gh.repo, run, \"0\" * 64, \"0\" * 64),\n        )\n    plan = reserve_plan(\n        gh,\n"
+        },
+        {
+            "before": "            candidate_provenance(\n                gh.repo, channel, cast(str, plan[\"source_sha\"]), cast(int, run[\"id\"]),\n                cast(str, parent[\"tag\"]) if parent else None,\n            ),\n        )\n        rc.EVIDENCE.parent.mkdir(parents=True, exist_ok=True)\n        rc.EVIDENCE.write_bytes(content)\n        begin_publication(gh, plan, cast(int, run[\"id\"]), parent)\n        result = rc._publish_prepared(  # pylint: disable=protected-access\n            gh,\n            cast(str, plan[\"tag\"]),\n",
+            "after": "            candidate_provenance(\n                gh.repo, channel, cast(str, plan[\"source_sha\"]), cast(int, run[\"id\"]),\n                cast(str, parent[\"tag\"]) if parent else None,\n            ) + create_marker(gh.repo, run, version_plan.plan_digest(plan), secrets.token_hex(32)),\n        )\n        rc.EVIDENCE.parent.mkdir(parents=True, exist_ok=True)\n        rc.EVIDENCE.write_bytes(content)\n        source_path = f\"git/ref/heads/{quote(cast(str, info['default_branch']), safe='')}\"\n        source_ref = (source_path, gh.api(source_path))\n        consumed = begin_publication(gh, plan, cast(int, run[\"id\"]), parent)\n        confirm_create = create_confirmation(run, source_ref, consumed)\n        result = rc._publish_prepared(  # pylint: disable=protected-access\n            gh,\n            cast(str, plan[\"tag\"]),\n"
+        },
+        {
+            "before": "            stage,\n            channel != \"stable\",\n            body,\n        )\n    return {\n        \"status\": \"published\",\n",
+            "after": "            stage,\n            channel != \"stable\",\n            body,\n            confirm_create=confirm_create,\n        )\n    return {\n        \"status\": \"published\",\n"
+        }
+    ],
+    "original_to_current": {
+        "579c4409b768f90311a58eb6e9afef2eb423fa4ccdd75f9056e31d0e3497ee99": "2d2e1b65544c817107a4d7a5008fcc11335a9408faec4cb159c87d454d58c7dd"
+    },
+    "current": [
+        "2d2e1b65544c817107a4d7a5008fcc11335a9408faec4cb159c87d454d58c7dd"
+    ]
+}
+
 def _before_layer(source: str, layer: dict, label: str) -> str:
     """Reverse one exact accepted layer, preserving a vendor header."""
     prefix = "#!/usr/bin/env python3\n" + receipts.HEADER
@@ -95,9 +127,14 @@ def _before_layer(source: str, layer: dict, label: str) -> str:
     return body.replace("#!/usr/bin/env python3\n", prefix, 1) if vendored else body
 
 
+def _before_create_readback(source: str) -> str:
+    """Return the exact notes-only publisher when the new layer is recognized."""
+    return _before_layer(source, CREATE_READBACK, "Create readback")
+
+
 def _before_notes_provenance(source: str) -> str:
-    """Unwrap only the exact known publisher layer for the historical oracle."""
-    return _before_layer(source, NOTES_PROVENANCE, "Notes provenance")
+    """Unwrap exact known publisher layers for the unchanged historical oracle."""
+    return _before_layer(_before_create_readback(source), NOTES_PROVENANCE, "Notes provenance")
 
 
 def _before_name_limit(source: str) -> str:
@@ -140,6 +177,8 @@ def render(directory: Path) -> dict[str, str]:
         elif name == receipts.PUBLISHER and prior != source:
             # Preserve a fix already present; this mode does not install it.
             _, result = receipts.transform(result, name, NOTES_PROVENANCE)
+            if _before_create_readback(source) != source:
+                _, result = receipts.transform(result, name, CREATE_READBACK)
         states.add(state)
         if result != source:
             changes[name] = result

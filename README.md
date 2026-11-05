@@ -236,6 +236,22 @@ The check runs again immediately before publication writes. A remaining race or
 permission failure still fails, never resets the ledger and never retries writes;
 inspect it and dispatch a fresh release at current HEAD.
 
+Versioned build publication can reconcile a lost **create-release response**
+within the original call. It sends one POST, then accepts only its exact empty
+draft, bound to a fresh operation marker, source, run, attempt and plan. The
+ordinary manifest, asset verification and publication checks still apply. A
+denial, contradictory readback or failed later upload remains a failure. There
+is no cross-run recovery, write retry, or change to legacy publication and
+byte-promotion paths.
+
+Reconciliation uses complete authenticated release lists, because a tag lookup
+can hide a draft. It permits at most 100 read requests, 64 MiB of accepted
+responses and 180 seconds overall; each read has a 30-second cap and no retry.
+Large or slow histories, and a run status that still reports queued, can safely
+prevent recovery. A release's `created_at` is the commit date, not proof of when
+the POST occurred. See the [GitHub releases API](https://docs.github.com/en/rest/releases/releases?apiVersion=2022-11-28)
+and [GitHub CLI API command](https://cli.github.com/manual/gh_api).
+
 GitHub's `GITHUB_TOKEN` cannot publish a historical source when its workflow files
 have changed relative to the default branch. A reviewed consumer can explicitly
 set `"publication_token_secret": "BOT_PAT"` in `.release-policy.json` and render

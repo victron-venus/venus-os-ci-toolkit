@@ -251,6 +251,46 @@ class PlanLayerCompatibilityTests(unittest.TestCase):
         self.assertEqual(changes[receipts.PUBLISHER], self.expected([receipts.PUBLISHER])[receipts.PUBLISHER])
         self.assertNotIn("def candidate_provenance(", changes[receipts.PUBLISHER])
 
+    def test_create_readback_layer_reverses_to_exact_notes_only_source(self):
+        notes_only = migration._before_create_readback(self.notes_publisher)
+        self.assertEqual(receipts.digest(notes_only),
+                         "579c4409b768f90311a58eb6e9afef2eb423fa4ccdd75f9056e31d0e3497ee99")
+        self.assertNotIn("def create_marker(", notes_only)
+        state, result = receipts.transform(
+            notes_only.replace("#!/usr/bin/env python3\n", PREFIX, 1),
+            receipts.PUBLISHER, migration.CREATE_READBACK,
+        )
+        self.assertEqual(state, "original")
+        self.assertEqual(result, self.notes_publisher.replace("#!/usr/bin/env python3\n", PREFIX, 1))
+
+    def test_inventory_only_preserves_but_does_not_install_create_readback(self):
+        notes_only = migration._before_create_readback(self.notes_publisher)
+        for publisher in (notes_only, self.notes_publisher):
+            with self.subTest(publisher_hash=receipts.digest(publisher)):
+                self.write_state({**self.current, receipts.PUBLISHER: publisher})
+                self.assertEqual(migration.render(self.root), {})
+                self.write_state({**self.casefold, receipts.PUBLISHER: publisher})
+                before = self.snapshot()
+                self.assertEqual(migration.render(self.root), self.expected([migration.PLAN]))
+                self.assertEqual(self.snapshot(), before)
+        self.write_state(self.original)
+        self.assertNotIn("def create_marker(", migration.render(self.root)[receipts.PUBLISHER])
+
+    def test_partial_or_changed_create_readback_layer_is_rejected(self):
+        first = migration.CREATE_READBACK["hunks"][0]
+        partial = self.notes_publisher.replace(first["after"], first["before"], 1)
+        self.assertNotEqual(partial, self.notes_publisher)
+        for publisher in (partial, self.notes_publisher + "# unreviewed readback\n",
+                          self.notes_publisher.replace("def create_marker(", "def modified_marker(", 1)):
+            with self.subTest(publisher_hash=receipts.digest(publisher)):
+                self.write_state({**self.current, receipts.PUBLISHER: publisher})
+                before = self.snapshot()
+                with self.assertRaisesRegex(ValueError, "Unknown or partially migrated"):
+                    migration.render(self.root)
+                self.assertEqual(self.snapshot(), before)
+                with self.assertRaisesRegex(ValueError, "Unknown current"):
+                    migration.previous_canonical_source(publisher, receipts.PUBLISHER)
+
     def test_partial_or_changed_notes_layer_is_not_a_recognized_source(self):
         for source in (self.notes_publisher + "# unreviewed\n",
                        self.notes_publisher.replace("def candidate_provenance(", "def modified_provenance(", 1)):
