@@ -2159,6 +2159,8 @@ def _publish_prepared(
     budget = DownloadBudget(sum(path.stat().st_size for path in expected.values()))
     for item in uploaded:
         verify_uploaded_asset(gh, item, expected[cast(str, item["name"])], budget=budget)
+    if confirm_publish is not None:
+        confirm_publish()
     ref = cast(JSONObject, gh.api(f"git/ref/tags/{quote(tag, safe='')}"))
     require(
         isinstance(ref, dict) and ref.get("ref") == f"refs/tags/{tag}"
@@ -2167,8 +2169,6 @@ def _publish_prepared(
         and cast(JSONObject, ref["object"]).get("sha") == sha,
         "Tag moved before publication; draft left unpublished",
     )
-    if confirm_publish is not None:
-        confirm_publish()
     result = cast(
         JSONObject,
         gh.api(

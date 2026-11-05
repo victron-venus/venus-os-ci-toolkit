@@ -2,6 +2,7 @@
 
 import base64
 import copy
+import os
 # Only CompletedProcess/TimeoutExpired fixtures; every subprocess.run is mocked.
 import subprocess  # nosec B404
 import unittest
@@ -21,6 +22,7 @@ def wire(status, body):
 
 class CreateTransportTests(unittest.TestCase):
     def setUp(self):
+        self.enterContext(patch.dict(os.environ, {"RELEASE_REQUIRE_WORKFLOW_SCOPE": ""}))
         self.gh = rc.GitHub(REPO)
 
     def call(self, status, content=b'{}', code=0, stderr=b''):
@@ -313,6 +315,26 @@ class ConfirmationTests(unittest.TestCase):
         ledger['content'] = base64.b64encode(b'changed').decode()
         with self.assertRaisesRegex(rc.ReleaseError, 'ledger changed'):
             confirm(reader)
+
+
+class CreateTransportEnvironmentTests(unittest.TestCase):
+    def test_constructor_is_offline_with_inherited_workflow_scope_and_restores_environment(self):
+        with patch.dict(os.environ, {
+            "RELEASE_REQUIRE_WORKFLOW_SCOPE": "true",
+            # Synthetic fixture; subprocess is mocked, never used for authentication.
+            "GH_TOKEN": "offline-token-fixture",  # nosec B105
+        }):
+            inherited = {key: os.environ[key] for key in ("RELEASE_REQUIRE_WORKFLOW_SCOPE", "GH_TOKEN")}
+            fixture = CreateTransportTests(methodName="test_normal_create")
+            try:
+                with patch.object(rc.subprocess, "run", side_effect=AssertionError("unexpected permission probe")) as command:
+                    fixture.setUp()
+                    self.assertEqual(os.environ["RELEASE_REQUIRE_WORKFLOW_SCOPE"], "")
+                    self.assertEqual(os.environ["GH_TOKEN"], inherited["GH_TOKEN"])
+                    command.assert_not_called()
+            finally:
+                fixture.doCleanups()
+            self.assertEqual({key: os.environ[key] for key in inherited}, inherited)
 
 
 if __name__ == '__main__':
