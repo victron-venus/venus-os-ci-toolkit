@@ -34,6 +34,27 @@ NETWORK_DEVICES = Path("/sys/class/net")
 SYNC_ERRORS = (OSError, ValueError, KeyError, IndexError, TypeError,
                StopIteration, RuntimeError, subprocess.TimeoutExpired)
 
+SYNC_ERROR_CODES = (
+    (FileNotFoundError, "dependency_missing"),
+    (PermissionError, "permission_denied"),
+    (subprocess.TimeoutExpired, "command_timeout"),
+    (OSError, "os_error"),
+    (ValueError, "invalid_data"),
+    (KeyError, "missing_field"),
+    (IndexError, "invalid_index"),
+    (TypeError, "invalid_type"),
+    (StopIteration, "missing_item"),
+    (RuntimeError, "sync_runtime_error"),
+)
+
+
+def sync_error_code(error):
+    """Classify without formatting exception payloads, paths or class names."""
+    for error_type, code in SYNC_ERROR_CODES:
+        if isinstance(error, error_type):
+            return code
+    return "sync_error"
+
 
 def command(*args, input_text=None):
     """Never use a shell or emit runtime payloads/credentials on failure."""
@@ -311,8 +332,9 @@ class Guard:
                 print("Host listener protection unavailable; stopping listener", flush=True)
                 stop_listener()
                 return
-            except SYNC_ERRORS:
-                print("Node guard unavailable; new workers remain stopped", flush=True)
+            except SYNC_ERRORS as error:
+                print("Node guard unavailable; reason=" + sync_error_code(error) +
+                      "; new workers remain stopped", flush=True)
             time.sleep(self.poll_interval)
 
 

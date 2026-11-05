@@ -89,6 +89,129 @@ class NetworkAdmissionTests(unittest.TestCase):
             self.assertTrue(server.slots.acquire(blocking=False))
 
 
+class SafeFailureCodeTests(unittest.TestCase):
+    @staticmethod
+    def errors():
+        private = 'TOKEN=never-log-this\nhttps://example.invalid/private /private/path ' * 1024
+        return [
+            (FileNotFoundError(2, private, '/private/cni-cache'), 'dependency_missing'),
+            (PermissionError(13, private, '/private/config'), 'permission_denied'),
+            (subprocess.TimeoutExpired(['private-command', private], 15,
+                                       output=private, stderr=private), 'command_timeout'),
+            (OSError(private), 'os_error'),
+            (ValueError(private), 'invalid_data'),
+            (json.JSONDecodeError(private, private, 0), 'invalid_data'),
+            (KeyError(private), 'missing_field'),
+            (IndexError(private), 'invalid_index'),
+            (TypeError(private), 'invalid_type'),
+            (StopIteration(private), 'missing_item'),
+            (RuntimeError(private), 'sync_runtime_error'),
+        ]
+
+    def test_categories_and_subclass_precedence_are_fixed(self):
+        for error, expected in self.errors():
+            with self.subTest(code=expected):
+                self.assertEqual(guard_module.sync_error_code(error), expected)
+
+    def test_unknown_and_hostile_exception_names_or_formatters_are_not_used(self):
+        def forbidden_format(_self):
+            raise AssertionError('exception formatting must never run')
+        for parent, expected in [(RuntimeError, 'sync_runtime_error'), (Exception, 'sync_error')]:
+            error_type = type('TOKEN=hidden\n/private/class', (parent,), {
+                '__str__': forbidden_format, '__repr__': forbidden_format})
+            self.assertEqual(guard_module.sync_error_code(error_type()), expected)
+
+    def test_loop_keeps_refusal_expiry_reset_and_cadence_without_logging_payloads(self):
+        for error, code in self.errors():
+            with self.subTest(code=code):
+                guard = guard_module.Guard({})
+                guard.admitted = {WORKER['ip']: WORKER['uid']}
+                guard.admitted_until = guard.next_discovery = guard.next_firewall = 123
+                stop = Mock()
+                with patch.object(guard, '_sync', side_effect=error) as sync, \
+                        patch.object(guard_module.time, 'sleep', side_effect=KeyboardInterrupt) as sleep, \
+                        patch('sys.stdout', new_callable=io.StringIO) as output:
+                    with self.assertRaises(KeyboardInterrupt):
+                        guard.loop(stop)
+                expected = ('Node guard unavailable; reason=' + code +
+                            '; new workers remain stopped\n')
+                self.assertEqual(output.getvalue(), expected)
+                self.assertLess(len(output.getvalue()), 160)
+                self.assertEqual(guard.admitted, {})
+                self.assertEqual(guard.admitted_until, 0)
+                self.assertEqual(guard.next_discovery, 0)
+                self.assertEqual(guard.next_firewall, 0)
+                sync.assert_called_once_with()
+                sleep.assert_called_once_with(guard.poll_interval)
+                stop.assert_not_called()
+                request = Mock(path='/ready/' + WORKER['uid'],
+                               client_address=(WORKER['ip'], 1234), wfile=io.BytesIO())
+                guard_module.handler(guard).do_GET(request)
+                request.send_response.assert_called_once_with(503)
+                self.assertIs(json.loads(request.wfile.getvalue())['admitted'], False)
+
+    def test_loop_does_not_format_an_exception_when_reporting_it(self):
+        class UnprintableError(RuntimeError):
+            def __str__(self):
+                raise AssertionError('must not stringify exception')
+
+            def __repr__(self):
+                raise AssertionError('must not represent exception')
+
+        guard = guard_module.Guard({})
+        with patch.object(guard, '_sync', side_effect=UnprintableError()), \
+                patch.object(guard_module.time, 'sleep', side_effect=KeyboardInterrupt), \
+                patch('sys.stdout', new_callable=io.StringIO) as output:
+            with self.assertRaises(KeyboardInterrupt):
+                guard.loop(Mock())
+        self.assertEqual(output.getvalue(), 'Node guard unavailable; reason=sync_runtime_error; '
+                         'new workers remain stopped\n')
+
+    def test_recovery_keeps_same_loop_and_does_not_log_success(self):
+        guard = guard_module.Guard({})
+        stop = Mock()
+        with patch.object(guard, '_sync', side_effect=[ValueError('private'), None]) as sync, \
+                patch.object(guard_module.time, 'sleep', side_effect=[None, KeyboardInterrupt]) as sleep, \
+                patch('sys.stdout', new_callable=io.StringIO) as output:
+            with self.assertRaises(KeyboardInterrupt):
+                guard.loop(stop)
+        self.assertEqual(sync.call_count, 2)
+        self.assertEqual([call.args for call in sleep.call_args_list], [(guard.poll_interval,)] * 2)
+        self.assertEqual(output.getvalue(), 'Node guard unavailable; reason=invalid_data; '
+                         'new workers remain stopped\n')
+        stop.assert_not_called()
+
+    def test_listener_failure_still_stops_without_sleep_or_generic_classification(self):
+        guard = guard_module.Guard({})
+        guard.admitted = {WORKER['ip']: WORKER['uid']}
+        guard.admitted_until = 123
+        stop = Mock()
+        with patch.object(guard, '_sync', side_effect=guard_module.ListenerProtectionError('private')), \
+                patch.object(guard_module, 'sync_error_code') as classify, \
+                patch.object(guard_module.time, 'sleep') as sleep, \
+                patch('sys.stdout', new_callable=io.StringIO) as output:
+            guard.loop(stop)
+        self.assertEqual(output.getvalue(), 'Host listener protection unavailable; stopping listener\n')
+        self.assertEqual(guard.admitted, {})
+        self.assertEqual(guard.admitted_until, 0)
+        stop.assert_called_once_with()
+        sleep.assert_not_called()
+        classify.assert_not_called()
+
+    def test_readiness_still_rejects_expired_or_wrong_identity_without_socket(self):
+        for uid, until, expected in [('pod-1', 101, 200), ('pod-1', 100, 503), ('other', 101, 503)]:
+            with self.subTest(uid=uid, expiry=until):
+                guard = guard_module.Guard({})
+                guard.admitted = {WORKER['ip']: WORKER['uid']}
+                guard.admitted_until = until
+                request = Mock(path='/ready/' + uid, client_address=(WORKER['ip'], 1234),
+                               wfile=io.BytesIO())
+                with patch.object(guard_module.time, 'monotonic', return_value=100):
+                    guard_module.handler(guard).do_GET(request)
+                request.send_response.assert_called_once_with(expected)
+                self.assertIs(json.loads(request.wfile.getvalue())['admitted'], expected == 200)
+
+
 class GuardReconciliationTests(unittest.TestCase):
     def setUp(self):
         self.guard = guard_module.Guard({'node_ip': '10.66.10.2', 'dns_ip': '10.43.0.10'})
