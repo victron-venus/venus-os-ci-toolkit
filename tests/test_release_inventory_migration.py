@@ -284,6 +284,22 @@ class PlanLayerCompatibilityTests(unittest.TestCase):
         state, current = receipts.transform(previous.replace("#!/usr/bin/env python3\n", PREFIX, 1),
                                             receipts.PUBLISHER, migration.CREATE_IDENTITY)
         self.assertEqual(state, "original")
+        self.assertEqual(current, migration._before_automatic_source(self.notes_publisher).replace("#!/usr/bin/env python3\n", PREFIX, 1))
+        for publisher in (previous, self.notes_publisher):
+            self.write_state({**self.current, receipts.PUBLISHER: publisher})
+            before = self.snapshot()
+            self.assertEqual(migration.render(self.root), {})
+            self.assertEqual(self.snapshot(), before)
+            self.write_state({**self.casefold, receipts.PUBLISHER: publisher})
+            self.assertEqual(migration.render(self.root), self.expected([migration.PLAN]))
+
+    def test_automatic_source_layer_preserves_old_and_new_without_installing(self):
+        previous = migration._before_automatic_source(self.notes_publisher)
+        self.assertEqual(receipts.digest(previous),
+                         "978783bc3465c174f45669fe38568337d8c886161749f8d1c050ab67d8999e9d")
+        state, current = receipts.transform(previous.replace("#!/usr/bin/env python3\n", PREFIX, 1),
+                                            receipts.PUBLISHER, migration.AUTOMATIC_SOURCE)
+        self.assertEqual(state, "original")
         self.assertEqual(current, self.notes_publisher.replace("#!/usr/bin/env python3\n", PREFIX, 1))
         for publisher in (previous, self.notes_publisher):
             self.write_state({**self.current, receipts.PUBLISHER: publisher})
@@ -292,6 +308,22 @@ class PlanLayerCompatibilityTests(unittest.TestCase):
             self.assertEqual(self.snapshot(), before)
             self.write_state({**self.casefold, receipts.PUBLISHER: publisher})
             self.assertEqual(migration.render(self.root), self.expected([migration.PLAN]))
+        self.write_state(self.original)
+        self.assertNotIn("confirm_automatic_source", migration.render(self.root)[receipts.PUBLISHER])
+
+    def test_partial_or_unknown_automatic_source_layer_is_rejected(self):
+        first = migration.AUTOMATIC_SOURCE["hunks"][0]
+        variants = (self.notes_publisher.replace(first["after"], first["before"], 1),
+                    self.notes_publisher.replace("def confirm_automatic_source()", "def changed_guard()", 1))
+        for publisher in variants:
+            self.assertNotEqual(publisher, self.notes_publisher)
+            self.write_state({**self.current, receipts.PUBLISHER: publisher})
+            before = self.snapshot()
+            with self.assertRaisesRegex(ValueError, "Unknown or partially migrated"):
+                migration.render(self.root)
+            self.assertEqual(self.snapshot(), before)
+            with self.assertRaisesRegex(ValueError, "Unknown current"):
+                migration.previous_canonical_source(publisher, receipts.PUBLISHER)
 
     def test_partial_or_changed_create_identity_is_rejected(self):
         first = migration.CREATE_IDENTITY["hunks"][0]
