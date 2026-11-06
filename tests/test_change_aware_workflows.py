@@ -624,49 +624,48 @@ class GeneratedReleaseScopeExecution(unittest.TestCase):
                 if name == "prepare" or name.startswith("check-"):
                     self.assertTrue(job_runs(job, values), name)
 
-    def test_explicit_empty_scope_enables_builtin_docs_classification(self):
-        """An explicit empty object is an opt-in to the documented default paths."""
-        for renderer in (installer.quality, installer.release):
-            jobs = rendered(renderer(policy(change_scope={})))["jobs"]
-            self.assertEqual(
-                self.scope(jobs["scope"]),
-                {"run": "false", "reason": "documentation-only"},
-            )
+    def test_explicit_scope_reduces_quality_but_preserves_full_release(self):
+        """PR optimization must not turn a successor release into a no-op."""
+        jobs = rendered(installer.quality(policy(change_scope={})))['jobs']
+        self.assertEqual(self.scope(jobs['scope']),
+                         {'run': 'false', 'reason': 'documentation-only'})
+        jobs = rendered(installer.release(policy(change_scope={})))['jobs']
+        self.assertEqual(self.scope(jobs['scope']),
+                         {'run': 'true', 'reason': 'forced'})
 
-    def test_docs_push_stops_before_legacy_resolution_or_versioned_allocation(self):
-        """Prove that a docs push skips every job capable of allocating a version."""
+    def test_docs_push_retains_preparation_and_full_security_qualification(self):
+        """A successor still reaches the existing release engine and real checks."""
         for versioned in (False, True):
             with self.subTest(versioned=versioned):
-                jobs = self.release(versioned)["jobs"]
-                self.assertEqual(next(iter(jobs)), "scope")
-                self.assertEqual(jobs["prepare"]["needs"], "scope")
+                jobs = self.release(versioned)['jobs']
                 values = {
-                    "scope": {"result": "success", "outputs": self.scope(jobs["scope"])}
+                    'scope': {'result': 'success', 'outputs': self.scope(jobs['scope'])}
                 }
-                self.assertEqual(
-                    values["scope"]["outputs"],
-                    {"run": "false", "reason": "documentation-only"},
-                )
-                for name, job in jobs.items():
-                    if name == "scope":
-                        continue
-                    self.assertFalse(
-                        job_runs(
-                            job, values, vars={"RELEASE_CHANNELS_ENABLED": "true"}
-                        ),
-                        name,
-                    )
-                    values[name] = {"result": "skipped", "outputs": {}}
-                metadata = next(
-                    step
-                    for step in jobs["prepare"]["steps"]
-                    if step.get("id") == "metadata"
-                )
-                self.assertIn(
-                    "release_versioned.py prepare" if versioned else "'resolve'",
-                    metadata["run"],
-                )
-                self.assertFalse((self.repo / ".release-plan.json").exists())
+                self.assertEqual(values['scope']['outputs'],
+                                 {'run': 'true', 'reason': 'forced'})
+                self.assertTrue(job_runs(jobs['prepare'], values))
+                values['prepare'] = {'result': 'success', 'outputs': {
+                    'channel': 'beta', 'build': 'true', 'status': 'prepared'}}
+                self.assertTrue(job_runs(jobs['checks'], values))
+                self.assertIs(jobs['checks']['with']['force-full'], True)
+                metadata = next(step for step in jobs['prepare']['steps']
+                                if step.get('id') == 'metadata')
+                self.assertIn('release_versioned.py prepare' if versioned else "'resolve'",
+                              metadata['run'])
+
+    def test_toolkit_release_notes_change_keeps_contract_validation(self):
+        """Declared release notes are parsed input even though they are Markdown."""
+        config = json.loads((ROOT / '.release-policy.json').read_text())
+        notes = self.repo / config['release_notes']
+        notes.parent.mkdir(parents=True, exist_ok=True)
+        notes.write_text('Invalid release notes still require the real parser.\n')
+        head = self.commit()
+        self.event.write_text(json.dumps({'before': self.base, 'after': head}))
+        jobs = rendered(installer.quality(config))['jobs']
+        outputs = self.scope(jobs['scope'])
+        self.assertEqual(outputs['run'], 'true')
+        values = {'scope': {'result': 'success', 'outputs': outputs}}
+        self.assertTrue(job_runs(jobs['release-contracts'], values))
 
     def test_release_qualification_forces_real_checks_even_for_documentation_commit(
         self,
@@ -725,9 +724,12 @@ class GeneratedReleaseScopeExecution(unittest.TestCase):
     def test_required_documentation_override_reaches_prepare(self):
         """Treat documentation declared as a build input as a real release change."""
         config = policy(change_scope={"required_paths": ["README.md"]})
+        quality = rendered(installer.quality(config))["jobs"]
+        self.assertEqual(self.scope(quality["scope"]),
+                         {"run": "true", "reason": "required-path-change"})
         jobs = rendered(installer.release(config))["jobs"]
         outputs = self.scope(jobs["scope"])
-        self.assertEqual(outputs, {"run": "true", "reason": "required-path-change"})
+        self.assertEqual(outputs, {"run": "true", "reason": "forced"})
         self.assertTrue(
             job_runs(
                 jobs["prepare"], {"scope": {"result": "success", "outputs": outputs}}

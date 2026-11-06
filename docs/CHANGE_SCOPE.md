@@ -40,12 +40,16 @@ validators:
 
 These lists contain exact paths, not globs. An added documentation path cannot
 override protected source or fixture locations. Use `required_paths` for prose
-that generates application or deployed content. An always-required validator
+that generates application or deployed content, including a package README or
+the configured release-notes file when release contracts parse it. An always-required validator
 must be named in `validation_workflows` and must genuinely succeed on every run.
 
-A documentation-only push stops before release preparation: it allocates no
-version, builds no artifacts and publishes no candidate. Existing nightly policy
-is unchanged. A reviewed `nightly_cron` policy value (`M H * * *`, UTC) can retain
+Documentation-only PRs can skip expensive validation. Release entry points,
+including main-branch pushes, retain full preparation and qualification. A newer
+release run supersedes an unfinished candidate, so it must remain eligible to
+replace that candidate; it must also run the required main-branch security checks.
+There is currently no documentation-only release fast path. Existing nightly
+policy is unchanged. A reviewed `nightly_cron` policy value (`M H * * *`, UTC) can retain
 an existing daily slot when updating older generated workflows; otherwise the
 usual deterministic schedule applies. Scheduled jobs and manual dispatch always request full validation;
 release callers also pass `force-full: true` to Quality gate, including when the
@@ -106,10 +110,10 @@ python3 scripts/install_release.py /path/to/consumer --change-scope-only --check
 ```
 
 This mode changes only selected scope inputs, validation conditions and the
-final gate proof in the existing workflows. It also enables the release entry
-point to stop before preparation on documentation-only pushes. Actual release
-qualification still passes `force-full: true`; scheduled/manual events remain
-full. Action pins, runner selection, triggers, timeouts, release engines, signing
+final gate proof in the existing workflows. It retains, or repairs,
+`FORCE_FULL: true` in the release entry point while preserving its path inputs.
+Actual release qualification still passes `force-full: true`; main-branch
+release pushes and scheduled/manual events remain full. Action pins, runner selection, triggers, timeouts, release engines, signing
 and publication steps remain untouched. No GitHub settings are changed.
 
 The migration rejects custom/legacy graphs, altered classifier commands,

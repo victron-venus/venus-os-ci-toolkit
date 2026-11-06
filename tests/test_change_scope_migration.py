@@ -59,11 +59,10 @@ class ChangeScopeMigrationTests(unittest.TestCase):
         original = {name: (self.root / name).read_text() for name in
                     (migration.QUALITY, migration.RELEASE, migration.CLASSIFIER, ".release-policy.json")}
         result = self.render()
-        self.assertEqual(set(result), {migration.QUALITY, migration.RELEASE})
+        self.assertEqual(set(result), {migration.QUALITY})
         self.assertEqual({name: (self.root / name).read_text() for name in original}, original)
-        # Release migration changes exactly one scalar in this observed shape.
-        self.assertEqual(result[migration.RELEASE], original[migration.RELEASE].replace(
-            "FORCE_FULL: 'true'", 'FORCE_FULL: "false"', 1))
+        # A safe release entry point is already full and remains byte-identical.
+        self.assertNotIn(migration.RELEASE, result)
         for name, source in result.items():
             self.write(name, source)
         self.assertEqual(self.render(), {})
@@ -79,6 +78,18 @@ class ChangeScopeMigrationTests(unittest.TestCase):
         self.assertNotIn("if", new["jobs"]["check-2"])
         self.assertNotIn("if", new["jobs"]["workflow-contracts"])
         self.assertEqual(new["jobs"]["check-0"]["if"], generator.FULL_SCOPE)
+
+    def test_unsafe_release_shortcut_is_repaired_without_changing_other_inputs(self):
+        original = (self.root / migration.RELEASE).read_text()
+        unsafe = original.replace("FORCE_FULL: 'true'", 'FORCE_FULL: "false"', 1)
+        self.assertNotEqual(unsafe, original)
+        self.write(migration.RELEASE, unsafe)
+        result = self.render()
+        self.assertEqual(result[migration.RELEASE], unsafe.replace(
+            'FORCE_FULL: "false"', 'FORCE_FULL: "true"', 1))
+        for name, source in result.items():
+            self.write(name, source)
+        self.assertEqual(self.render(), {})
 
     def test_actual_gate_rejects_missing_failed_and_unproven_results(self):
         quality = yaml.load(self.render()[migration.QUALITY], Loader=yaml.BaseLoader)
@@ -130,7 +141,7 @@ class ChangeScopeMigrationTests(unittest.TestCase):
         original_q, original_r = self.yaml(migration.QUALITY), self.yaml(migration.RELEASE)
         changes = self.render()
         new_q = yaml.load(changes[migration.QUALITY], Loader=yaml.BaseLoader)
-        new_r = yaml.load(changes[migration.RELEASE], Loader=yaml.BaseLoader)
+        new_r = yaml.load(changes.get(migration.RELEASE, (self.root / migration.RELEASE).read_text()), Loader=yaml.BaseLoader)
         self.assertEqual(new_q["jobs"]["scope"]["if"], original_q["jobs"]["scope"]["if"])
         self.assertEqual(new_q["jobs"]["gate"]["if"], original_q["jobs"]["gate"]["if"])
         self.assertIn("NIGHTLY_CHECKS_ENABLED", new_q["jobs"]["check-2"]["if"])

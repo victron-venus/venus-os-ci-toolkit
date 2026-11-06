@@ -900,6 +900,9 @@ with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
 PY
 """
     release_scope = scope_job(policy)
+    # A newer release run supersedes unfinished candidates. It must remain
+    # eligible to replace them and perform full main-push security checks.
+    release_scope["steps"][-1]["env"]["FORCE_FULL"] = "true"
     release_scope["runs-on"] = runner_labels("release")
     jobs = {
         "scope": release_scope,

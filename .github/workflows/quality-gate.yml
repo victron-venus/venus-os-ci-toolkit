@@ -38,7 +38,7 @@ jobs:
         name: Classify documentation and build inputs
         env:
           DOCUMENTATION_PATHS: '[]'
-          REQUIRED_PATHS: '[]'
+          REQUIRED_PATHS: '["CHANGELOG.md"]'
           FORCE_FULL: ${{ inputs.force-full && 'true' || 'false' }}
         run: |
           args=()

@@ -257,8 +257,9 @@ def migrate_release(editor, policy, generator):
     desired = normalized(generator.release(policy))
     index, _ = scope_step(editor.data, normalized(generator.scope_job(policy)))
     compare_graph(editor.data, desired, release=True)
-    for key in SCOPE_FIELDS:
-        editor.set(("jobs", "scope", "steps", index, "env", key), desired["jobs"]["scope"]["steps"][-1]["env"][key])
+    # Preserve the release engine and its existing path inputs. A docs-only
+    # successor cannot replace an unfinished candidate if preparation is skipped.
+    editor.set(("jobs", "scope", "steps", index, "env", "FORCE_FULL"), "true")
 
 
 def render(directory: Path, generator=None) -> dict[str, str]:
