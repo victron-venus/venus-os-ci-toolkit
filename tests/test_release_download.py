@@ -656,6 +656,14 @@ class PublisherStreamRetryTests(unittest.TestCase):
             "Already prepared source-bound release notes",
         )
 
+    @staticmethod
+    def observe_publisher_stream(gh, command, sink, attempts, budgets):
+        asset_id = int(command[-1].rsplit("/", 1)[1])
+        name = next(item["name"] for item in gh.assets[11] if item["id"] == asset_id)
+        attempts[name] = attempts.get(name, 0) + 1
+        budgets.append(sink.budget)
+        return name, gh.files[asset_id]
+
     def promotion(self):
         """Extend the existing qualified RC fixture to a three-file inventory."""
         gh = self.publisher()
@@ -697,11 +705,7 @@ class PublisherStreamRetryTests(unittest.TestCase):
         verified = {}
 
         def stream(command, sink, **_options):
-            asset_id = int(command[-1].rsplit("/", 1)[1])
-            name = next(item["name"] for item in gh.assets[11] if item["id"] == asset_id)
-            attempts[name] = attempts.get(name, 0) + 1
-            budgets.append(sink.budget)
-            data = gh.files[asset_id]
+            name, data = self.observe_publisher_stream(gh, command, sink, attempts, budgets)
             if name in ("a.bin", "z.bin") and attempts[name] == 1:
                 sink.write(data[:1])
                 return subprocess.CompletedProcess([], 1, b"", b"gh: unexpected end of JSON input")
@@ -764,11 +768,7 @@ class PublisherStreamRetryTests(unittest.TestCase):
         verified = {}
 
         def stream(command, sink, **_options):
-            asset_id = int(command[-1].rsplit("/", 1)[1])
-            name = next(item["name"] for item in gh.assets[11] if item["id"] == asset_id)
-            attempts[name] = attempts.get(name, 0) + 1
-            budgets.append(sink.budget)
-            data = gh.files[asset_id]
+            name, data = self.observe_publisher_stream(gh, command, sink, attempts, budgets)
             sink.write(data)
             # Every attempt starts at offset zero, including full failed bodies.
             self.assertEqual(Path(sink.name).read_bytes(), data)
