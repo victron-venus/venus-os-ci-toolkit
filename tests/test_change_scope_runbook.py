@@ -362,6 +362,13 @@ class RealGitGuardTests(unittest.TestCase):
 
 
 class RunbookWorkflowIntegrationTests(unittest.TestCase):
+    def test_supported_generator_pin_requires_explicit_source_review(self):
+        self.assertEqual(
+            PIN,
+            "523765f36f4909b72e77dff29c073521fdfbf795",
+            "Changing the supported generator requires source review and native validation",
+        )
+
     def documented_test_step(self):
         import yaml
 
