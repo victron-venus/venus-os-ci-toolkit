@@ -30,7 +30,7 @@ export function transformPythonLifecycle(source, helperPath) {
     ],
     [
       '\t\t\t\tif (get(cacheKey) === active) continue;',
-      '\t\t\t\tif (toolName !== "python" && toolName !== "uv" && toolName !== "hashin" && get(cacheKey) === active) continue;',
+      '\t\t\t\tif (toolName !== "python" && toolName !== "uv" && toolName !== "hashin" && toolName !== "golang" && get(cacheKey) === active) continue;',
     ],
     [
       '\t\t\tconst installCommand =',
@@ -38,6 +38,9 @@ export function transformPythonLifecycle(source, helperPath) {
         '\t\t\tif (toolName === "python") installCommands.push("/usr/local/renovate/node " + quote(' +
         JSON.stringify(helperPath) +
         ') + " " + quote(toolVersion));\n' +
+        '\t\t\tif (toolName === "golang") installCommands.push("/usr/local/renovate/node " + quote(' +
+        JSON.stringify(helperPath) +
+        ') + " golang " + quote(toolVersion));\n' +
         '\t\t\tconst installCommand =',
     ],
   ];

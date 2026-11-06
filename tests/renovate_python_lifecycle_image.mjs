@@ -2,10 +2,12 @@
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
+import { createHash } from 'node:crypto';
 import { createServer } from 'node:http';
 import {
   existsSync,
   mkdtempSync,
+  mkdirSync,
   readFileSync,
   realpathSync,
   renameSync,
@@ -118,7 +120,25 @@ function onlyPython(version) {
   assert.equal(python.version, version);
   assert(existsSync(`${toolRoot}/python/${version}/bin/python`));
 }
+async function installGo(version) {
+  const commands = await generateInstallCommands(
+    [{ toolName: 'golang', constraint: version }],
+    true,
+  );
+  assert.deepEqual(commands, [
+    `${node} ${helper} golang ${version}`,
+    `install-tool golang ${version}`,
+  ]);
+  for (const command of commands) run('/bin/bash', ['-e', '-c', command]);
+  const go = inventory().tools.find((tool) => tool.name === 'golang');
+  assert.deepEqual(go.versions, [{ version }]);
+  assert.equal(go.version, version);
+  return commands;
+}
 receipt.initialInventory = inventory();
+const goStarted = performance.now();
+receipt.goInitial = await installGo('1.27.3');
+receipt.goInitialMilliseconds = performance.now() - goStarted;
 // Old -> new -> old covers real removal, leaf reinstallation and memo reuse.
 receipt.initial = await install(A, true, true);
 onlyPython(A);
@@ -339,5 +359,208 @@ try {
 } finally {
   rmSync(scratch, { recursive: true, force: true });
 }
+// Fresh generic projects only: no private repository content or credentials.
+// This tests native artifacts and lifecycle behavior, not the private disk quota.
+receipt.goAndUv = await qualifyGoAndUv();
 receipt.finalInventory = inventory();
 console.log('PRIVATE_PYTHON_LIFECYCLE_RESULT=' + JSON.stringify(receipt));
+
+async function qualifyGoAndUv() {
+  const result = {};
+  const started = performance.now();
+  const before = canonicalInventory(inventory());
+  const blocker = spawn(node, ['-e', 'setInterval(()=>{},1000)'], {
+    stdio: 'ignore',
+  });
+  await once(blocker, 'spawn');
+  try {
+    const commands = await generateInstallCommands(
+      [{ toolName: 'golang', constraint: '1.26.0' }],
+      true,
+    );
+    const failed = spawnSync('/bin/bash', ['-e', '-c', commands[0]], {
+      encoding: 'utf8',
+      timeout: 30000,
+    });
+    assert.notEqual(failed.status, 0);
+    assert.match(failed.stderr, /Unrelated process/);
+    assert.equal(canonicalInventory(inventory()), before);
+  } finally {
+    blocker.kill('SIGTERM');
+    await once(blocker, 'exit');
+  }
+  result.failedPlanRetry = await installGo('1.26.0');
+  assert(!existsSync(`${toolRoot}/golang/1.27.3`));
+  result.back = await installGo('1.27.3');
+  assert(!existsSync(`${toolRoot}/golang/1.26.0`));
+  const inode = statSync(`${toolRoot}/golang/1.27.3`).ino;
+  const warmStarted = performance.now();
+  result.warm = await installGo('1.27.3');
+  result.warmMilliseconds = performance.now() - warmStarted;
+  assert.equal(statSync(`${toolRoot}/golang/1.27.3`).ino, inode);
+  result.transitionsMilliseconds = performance.now() - started;
+  const root = realpathSync(
+    mkdtempSync(join(temporaryRoot, 'renovate-go-uv-')),
+  );
+  try {
+    const initialMod =
+      'module example.invalid/lifecycle-fixture\n\ngo 1.26.0\n';
+    const newMod = initialMod + '\nrequire github.com/google/uuid v1.6.0\n';
+    writeFileSync(join(root, 'go.mod'), initialMod);
+    // An empty tracked sum lets the actual manager return its newly populated file.
+    writeFileSync(join(root, 'go.sum'), '\n');
+    writeFileSync(
+      join(root, 'fixture.go'),
+      'package fixture\nimport _ "github.com/google/uuid"\n',
+    );
+    const specs = [
+      {
+        folder: 'python-one',
+        project: 'lifecycle-one',
+        name: 'idna',
+        version: '3.10',
+      },
+      {
+        folder: 'python-two',
+        project: 'lifecycle-two',
+        name: 'packaging',
+        version: '25.0',
+      },
+    ];
+    for (const spec of specs) {
+      mkdirSync(join(root, spec.folder));
+      const manifest = `[project]\nname = "${spec.project}"\nversion = "0.0.0"\nrequires-python = "==3.13.*"\ndependencies = []\n`;
+      writeFileSync(join(root, spec.folder, 'pyproject.toml'), manifest);
+      writeFileSync(
+        join(root, spec.folder, 'uv.lock'),
+        `version = 1\nrevision = 3\nrequires-python = "==3.13.*"\n\n[[package]]\nname = "${spec.project}"\nversion = "0.0.0"\nsource = { virtual = "." }\n`,
+      );
+    }
+    run('git', ['init', '-b', 'main'], { cwd: root });
+    run('git', ['add', '.'], { cwd: root });
+    run(
+      'git',
+      [
+        '-c',
+        'user.name=Fixture',
+        '-c',
+        'user.email=fixture@example.invalid',
+        '-c',
+        'commit.gpgsign=false',
+        'commit',
+        '-m',
+        'Inert native artifact fixtures',
+      ],
+      { cwd: root },
+    );
+    run('git', ['remote', 'add', 'origin', root], { cwd: root });
+    const { GlobalConfig } = await import(
+      pathToFileURL('/usr/local/renovate/dist/config/global.js')
+    );
+    const { setCustomEnv, setUserEnv } = await import(
+      pathToFileURL('/usr/local/renovate/dist/util/env.js')
+    );
+    const { initRepo, syncGit } = await import(
+      pathToFileURL('/usr/local/renovate/dist/util/git/index.js')
+    );
+    GlobalConfig.set({
+      localDir: root,
+      platform: 'github',
+      binarySource: 'install',
+      cacheDir: join(root, 'cache'),
+      containerbaseDir: containerbaseTemporary,
+      executionTimeout: 3,
+      ignoreScripts: true,
+      allowScripts: false,
+    });
+    setCustomEnv({
+      PATH: process.env.PATH,
+      HOME: '/home/ubuntu',
+      UV_PYTHON_DOWNLOADS: 'never',
+      UV_NO_BUILD: '1',
+      GOTOOLCHAIN: 'local',
+    });
+    setUserEnv({});
+    await initRepo({ url: root, defaultBranch: 'main', currentBranch: 'main' });
+    await syncGit();
+    const { updateArtifacts: updateGo } = await import(
+      pathToFileURL(
+        '/usr/local/renovate/dist/modules/manager/gomod/artifacts.js',
+      )
+    );
+    const goStarted = performance.now();
+    const go = await updateGo({
+      packageFileName: 'go.mod',
+      newPackageFileContent: newMod,
+      updatedDeps: [
+        { depName: 'github.com/google/uuid', newVersion: 'v1.6.0' },
+      ],
+      config: { updateType: 'minor' },
+    });
+    assert(
+      !(go ?? []).some((entry) => entry.artifactError),
+      JSON.stringify(go),
+    );
+    const sum = go?.find((entry) => entry.file?.path === 'go.sum')?.file
+      ?.contents;
+    assert.equal(typeof sum, 'string');
+    assert.match(sum, /github\.com\/google\/uuid v1\.6\.0 h1:/);
+    assert.deepEqual(
+      inventory().tools.find((tool) => tool.name === 'golang').versions,
+      [{ version: '1.26.0' }],
+    );
+    assert(!existsSync(`${toolRoot}/golang/1.27.3`));
+    result.nativeGo = {
+      sha256: createHash('sha256').update(sum).digest('hex'),
+      milliseconds: performance.now() - goStarted,
+    };
+    const { updateArtifacts: updatePython } = await import(
+      pathToFileURL(
+        '/usr/local/renovate/dist/modules/manager/pep621/artifacts.js',
+      )
+    );
+    result.nativeUv = [];
+    for (const spec of specs) {
+      const started = performance.now();
+      const filename = `${spec.folder}/pyproject.toml`;
+      const manifest = readFileSync(join(root, filename), 'utf8').replace(
+        'dependencies = []',
+        `dependencies = ["${spec.name}==${spec.version}"]`,
+      );
+      const updated = await updatePython({
+        packageFileName: filename,
+        newPackageFileContent: manifest,
+        updatedDeps: [
+          { depName: spec.name, packageName: spec.name, datasource: 'pypi' },
+        ],
+        config: { constraints: { python: '3.13.18', uv: '0.13.4' } },
+      });
+      assert(
+        !(updated ?? []).some((entry) => entry.artifactError),
+        JSON.stringify(updated),
+      );
+      const lock = updated?.find(
+        (entry) => entry.file?.path === `${spec.folder}/uv.lock`,
+      )?.file?.contents;
+      assert.equal(typeof lock, 'string');
+      assert(
+        lock.includes(`name = "${spec.name}"\nversion = "${spec.version}"`),
+      );
+      assert.match(lock, /sha256:[a-f0-9]{64}/);
+      onlyPython('3.13.18');
+      assert(!existsSync(`${toolRoot}/python/${A}`));
+      result.nativeUv.push({
+        name: spec.name,
+        sha256: createHash('sha256').update(lock).digest('hex'),
+        milliseconds: performance.now() - started,
+      });
+    }
+    result.uvInventory = inventory().tools.find((tool) => tool.name === 'uv');
+    assert.deepEqual(result.uvInventory.versions, [
+      { version: '0.13.4', parent: { name: 'python', version: '3.13.18' } },
+    ]);
+    return result;
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+}

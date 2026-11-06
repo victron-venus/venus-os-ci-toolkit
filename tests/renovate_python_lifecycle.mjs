@@ -19,6 +19,9 @@ import {
   parseProcStat,
   canonicalPath,
   assertCliVersion,
+  goRemovalPlan,
+  runGoLifecycle,
+  assertGoDirectoryEntries,
 } from '../scripts/prepare-renovate-python.mjs';
 const fixture = () => ({
   tools: [
@@ -40,6 +43,16 @@ const fixture = () => ({
   ],
 });
 const requested = '3.15.2';
+const goFixture = () => ({
+  tools: [
+    {
+      name: 'golang',
+      version: '1.27.3',
+      versions: [{ version: '1.27.3' }, { version: '1.25.4' }],
+    },
+    ...fixture().tools,
+  ],
+});
 function harness(data = fixture()) {
   let state = structuredClone(data);
   const calls = [];
@@ -347,4 +360,131 @@ test('PID reuse, reparenting, unrelated processes and dead ancestors reject eith
     assert.throws(() => assertStableNamespace(processFixture(), changed, 9));
     assert.throws(() => assertStableNamespace(changed, processFixture(), 9));
   }
+});
+
+test('Go transition removes only recorded old Go versions, preserving Python children and Node', () => {
+  const h = harness(goFixture());
+  const result = runGoLifecycle('1.26.0', h.io);
+  assert.deepEqual(result.removed, [
+    { name: 'golang', version: '1.25.4' },
+    { name: 'golang', version: '1.27.3' },
+  ]);
+  assert.deepEqual(h.state, fixture());
+  assert.equal(h.calls.filter((c) => c === 'exclusive').length, 2);
+});
+test('requested installed Go preserves every existing version and has no uninstall', () => {
+  const h = harness(goFixture());
+  assert.equal(
+    runGoLifecycle('1.25.4', h.io).reason,
+    'requested-already-installed',
+  );
+  assert.deepEqual(h.state, goFixture());
+  assert.deepEqual(h.calls, ['paths']);
+});
+test('first Go install has no previous version to uninstall', () => {
+  const h = harness(fixture());
+  assert.equal(runGoLifecycle('1.26.0', h.io).reason, 'no-previous-go');
+  assert.deepEqual(h.state, fixture());
+  assert.deepEqual(h.calls, ['paths']);
+});
+test('any Go child or non-root Go metadata rejects the whole removal plan', () => {
+  const child = goFixture();
+  child.tools.push({
+    name: 'unknown',
+    version: '1.0.0',
+    versions: [
+      { version: '1.0.0', parent: { name: 'golang', version: '1.27.3' } },
+    ],
+  });
+  const h = harness(child);
+  assert.throws(() => runGoLifecycle('1.26.0', h.io), /Go child/);
+  assert.deepEqual(h.calls, []);
+  const parent = goFixture();
+  parent.tools[0].versions[0].parent = { name: 'node', version: '26.13.0' };
+  assert.throws(() => goRemovalPlan(parent, '1.26.0'), /Go parent/);
+  parent.tools[0].type = 'npm';
+  assert.throws(() => goRemovalPlan(parent, '1.26.0'), /Go inventory/);
+});
+test('Go rejects noncanonical, unsafe, unsupported requested and recorded versions', () => {
+  for (const value of [
+    '1.026.0',
+    '1.26.00',
+    '1.8.0',
+    '2.0.0',
+    '1.26',
+    '1.26.0/../x',
+    '1.26.0 --all',
+    '1.26.0\n',
+  ]) {
+    assert.throws(() => goRemovalPlan(goFixture(), value));
+  }
+  const d = goFixture();
+  d.tools[0].versions[1].version = '1.25.04';
+  assert.throws(() => goRemovalPlan(d, '1.26.0'), /Noncanonical/);
+});
+test('Go exact directory membership rejects unknown versions and sidecars before uninstall', () => {
+  assertGoDirectoryEntries(goFixture(), ['1.27.3', '1.25.4']);
+  assertGoDirectoryEntries(fixture(), []);
+  for (const entries of [
+    ['1.27.3'],
+    ['1.27.3', '1.25.4', '1.26.0'],
+    ['1.27.3', '1.25.4', 'env.sh'],
+  ]) {
+    const h = harness(goFixture());
+    h.io.verifyPaths = (_plan, inventory) =>
+      assertGoDirectoryEntries(inventory, entries);
+    assert.throws(() => runGoLifecycle('1.26.0', h.io), /Unrecorded Go paths/);
+    assert.deepEqual(h.calls, []);
+  }
+});
+test('Go path and process failures prevent every uninstall', () => {
+  const h = harness(goFixture());
+  h.io.verifyPaths = () => {
+    throw new Error('Redirected tool path');
+  };
+  assert.throws(() => runGoLifecycle('1.26.0', h.io), /Redirected/);
+  assert.deepEqual(h.calls, []);
+  const p = harness(goFixture());
+  p.io.exclusive = () =>
+    assertAncestorOnly(
+      new Map([
+        [1, { parent: 0, start: '1', state: 'S' }],
+        [2, { parent: 1, start: '2', state: 'R' }],
+        [3, { parent: 1, start: '3', state: 'S' }],
+      ]),
+      2,
+    );
+  assert.throws(() => runGoLifecycle('1.26.0', p.io), /Unrelated/);
+  assert(!p.calls.some((c) => c.includes('@')));
+});
+test('Go rechecks inventory before each removal and rejects late foreign changes', () => {
+  const h = harness(goFixture());
+  let reads = 0;
+  h.io.inventory = () => {
+    const value = structuredClone(h.state);
+    if (++reads === 2) value.tools.pop();
+    return value;
+  };
+  assert.throws(() => runGoLifecycle('1.26.0', h.io), /state changed/);
+  assert(!h.calls.some((c) => c.includes('@')));
+});
+test('Go failed uninstall and unexpected leftover stop before any further version', () => {
+  const failed = harness(goFixture());
+  failed.io.uninstall = () => {
+    throw new Error('official CLI failed');
+  };
+  assert.throws(
+    () => runGoLifecycle('1.26.0', failed.io),
+    /official CLI failed/,
+  );
+  assert.deepEqual(failed.state, goFixture());
+  const leftover = harness(goFixture());
+  leftover.io.assertAbsent = () => {
+    throw new Error('Removed tool path remains');
+  };
+  assert.throws(() => runGoLifecycle('1.26.0', leftover.io), /path remains/);
+  assert.deepEqual(
+    leftover.calls.filter((c) => c.includes('@')),
+    ['golang@1.25.4'],
+  );
 });
