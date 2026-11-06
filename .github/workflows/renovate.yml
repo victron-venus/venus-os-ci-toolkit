@@ -9,6 +9,10 @@ on:
         description: Resolve updates without changing repositories
         type: boolean
         default: true
+      debug:
+        description: Include debug details for diagnosing dependency updates
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -59,5 +63,5 @@ jobs:
           token: ${{ secrets.BOT_PAT }}
           renovate-version: ${{ steps.runtime.outputs.version }}
         env:
-          LOG_LEVEL: info
+          LOG_LEVEL: ${{ inputs.debug && 'debug' || 'info' }}
           RENOVATE_GIT_PRIVATE_KEY: ${{ secrets.RENOVATE_SIGNING_KEY }}
