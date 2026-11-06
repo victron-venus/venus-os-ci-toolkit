@@ -2330,6 +2330,15 @@ The built-in promotion, closed-build resolution, registry publication and
 versioned verification paths
 share a budget derived from their validated manifest. Upload readback uses the
 known local identities and a shared budget for its complete upload inventory.
+Upload readback and promotion source downloads each use an internal allowance
+of three times their total expected inventory size, with at most three GET
+attempts per asset within one shared transfer deadline. Failed prefixes remain
+charged to that allowance; each retry clears only its own staging file and
+resets the per-file hash. Every accepted file must still
+match its expected size and SHA-256. Authentication failures, transfer timeouts,
+and cancellations are not retried, and publication writes are never replayed.
+Operator-supplied budgets and other download paths keep their existing caps:
+a retry stops if the remaining budget cannot fit the complete expected asset.
 A consumer backport must update `release_control.py`, `release_closed.py`,
 `release_versioned.py` and any installed `publish_verified.py` atomically
 with their generated contract tests; the installer ships this complete bundle.

@@ -165,7 +165,7 @@ class GeneratorTest(unittest.TestCase):
                 cwd=root, capture_output=True, text=True, check=False, timeout=30,
             )
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            self.assertIn("Ran 17 tests", result.stderr)
+            self.assertIn("Ran 34 tests", result.stderr)
 
     def test_runner_preflight_is_vendored_without_rewriting_build_adapter(self):
         """Consumers get the helper/tests; owned packaging integration stays explicit."""
