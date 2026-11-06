@@ -255,7 +255,7 @@ native updater, while direct URLs and Git stay blocked and an otherwise active
 lifecycle canary does not run. The existing planner and Python boundary tests
 remain required.
 
-### Private Python tool lifecycle
+### Private Python and Go tool lifecycle
 
 The private runner uses a separate, first `--import` preload for the qualified
 Renovate 44.215.0 command generator. The public runner does not enable it.
@@ -265,12 +265,19 @@ their qualified `uv` 0.13.4 and `hashin` 1.0.5 leaves using explicit, non-recurs
 commands. If the requested Python version already exists, no tool is removed;
 normal containerbase installation reuses and relinks that version.
 
+The same private preload handles a Go version transition before installation.
+If the requested Go version is absent, it removes only recorded obsolete Go
+versions through the official non-recursive CLI. Any Go child tool or unrecorded
+path rejects the entire removal plan. An already installed requested Go version
+is reused without removal. Python, Node, download archives and repository caches
+are not removed by the Go transition.
+
 The helper validates the complete removal plan, fixed canonical tool paths and
 all parent relationships before its first mutation, then rechecks the inventory
 and process namespace before every uninstall. Unknown children, shared child-tool
 parents, symlinks, unexpected state or any process outside its ancestor chain
 stop the artifact update. No process is killed and no repository path is removed.
-Only the private Python/UV/hashin memoization shortcut is bypassed, so failed installs
+Only the private Python/UV/hashin/Go memoization shortcut is bypassed, so failed installs
 and an A-to-B-to-A transition cannot reuse a stale in-memory installed marker.
 Other tool memoization and all existing build and security guards remain active.
 The private hashin installer uses 1.0.5 only when the requested PEP 440 tool
@@ -289,5 +296,8 @@ space for every future tool or repository.
 
 The official-image contract tests the exact combined preload order, actual
 Python/UV/hashin transitions and reuse, unknown-child and process/path rejection, and
-native compiled-lock and hashed-requirements generation afterward. Requalify the module hash, official
+native compiled-lock and hashed-requirements generation afterward. Go transition
+and native artifact checks run in the same official image. Hosted tests establish
+functional behavior; the complete private sweep on its unchanged 3 GiB Docker
+filesystem remains the capacity check. Requalify the module hash, official
 containerbase inventory/layout and these tests before changing either runtime.
