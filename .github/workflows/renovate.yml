@@ -59,7 +59,7 @@ jobs:
           configurationFile: renovate-runner.cjs
           docker-cmd-file: scripts/renovate-security-runner.sh
           # The action mounts the executable at /; its preload and roster are read-only.
-          docker-volumes: /tmp:/tmp;${{ github.workspace }}/renovate-repositories.json:/github-action/renovate-repositories.json:ro;${{ github.workspace }}/scripts/renovate-security-compat.mjs:/renovate-security-compat.mjs:ro;${{ github.workspace }}/scripts/renovate-uv-preflight.mjs:/renovate-uv-preflight.mjs:ro
+          docker-volumes: /tmp:/tmp;${{ github.workspace }}/renovate-repositories.json:/github-action/renovate-repositories.json:ro;${{ github.workspace }}/scripts/renovate-security-compat.mjs:/renovate-security-compat.mjs:ro;${{ github.workspace }}/scripts/renovate-uv-preflight.mjs:/renovate-uv-preflight.mjs:ro;${{ github.workspace }}/scripts/prepare-renovate-npm.mjs:/prepare-renovate-npm.mjs:ro
           token: ${{ secrets.BOT_PAT }}
           renovate-version: ${{ steps.runtime.outputs.version }}
         env:

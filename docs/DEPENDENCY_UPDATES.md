@@ -227,3 +227,30 @@ The offline official-image contract test exercises an inert metadata backend,
 requires the unprotected control to execute it, and requires the guarded path
 to reject it while still generating a hashed wheel lockfile. Requalify all five
 module hashes and these behavior tests before changing the runtime version.
+
+### npm registry bundle compatibility
+
+npm 12.2.2 misclassifies some registry-resolved bundled-dependency archives as
+arbitrary remote URLs during lockfile-only resolution
+([upstream issue 9800](https://github.com/npm/cli/issues/9800)). The runner keeps
+remote and Git dependency sources disabled and lifecycle scripts ignored.
+A sixth hash-verified Renovate module adds a supported post-install pre-command:
+only when the repository's npm requirement admits 12.2.2, it selects that exact
+version and validates the installed containerbase executable paths, package,
+CLI and Arborist source hashes. Node constraints remain unchanged, and a selected
+Node that cannot run the qualified npm is rejected before package resolution.
+
+The read-only helper changes one module inside the ephemeral npm tool cache.
+It copies npm's existing registry-origin/path predicate into the bundled archive
+fetch; direct tarball URLs, including URLs on the registry host, and Git sources
+remain denied. The helper is idempotent and rejects altered modules, unexpected
+launchers and repository-shadowed executables. It does not modify the repository
+or execute its code. Requalify the npm package, helper and sixth Renovate module
+together before changing either pinned runtime.
+
+The official-image contract installs the exact Node/npm toolchain and tests both
+public root and private `/config` read-only helper mounts. A loopback registry
+fixture must fail with the original npm and generate a lock through the guarded
+native updater, while direct URLs and Git stay blocked and an otherwise active
+lifecycle canary does not run. The existing planner and Python boundary tests
+remain required.

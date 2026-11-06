@@ -5,7 +5,7 @@ import { createHash } from 'node:crypto';
 import { readFileSync, realpathSync } from 'node:fs';
 import { registerHooks } from 'node:module';
 import { dirname, isAbsolute, join, sep } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 export { assertStaticUvProject } from './renovate-uv-preflight.mjs';
 
@@ -156,18 +156,67 @@ export function installPythonBuildCompat(packageDirectory) {
   };
 }
 
+const npmModulePath = 'dist/modules/manager/npm/post-update/npm.js';
+const npmModuleHash = '371e7cdb1c03ee0e2734d2dd34c7e1748ddc202be3a98cdd11ab10dd96440fc2';
+export function transformNpmArtifact(source, helperPath) {
+  assert.ok(helperPath.startsWith('/') && !helperPath.includes('\n'), 'Expected absolute trusted helper path');
+  let text = Buffer.from(source).toString('utf8');
+  assert.equal(createHash('sha256').update(text).digest('hex'), npmModuleHash, 'Unreviewed Renovate npm artifact manager');
+  const replacements = [
+    ['\t\tconst supportsPreferDedupeFlag =', '\t\tif (GlobalConfig.get("binarySource") !== "install") throw new Error("Qualified npm generation requires containerbase dynamic install");\n' +
+      '\t\tif (npmToolConstraint.constraint && (!semver.validRange(npmToolConstraint.constraint) || !semver.satisfies("12.2.2", npmToolConstraint.constraint))) throw new Error("Repository npm requirement is incompatible with qualified npm 12.2.2");\n' +
+      '\t\tnpmToolConstraint.constraint = "12.2.2";\n' +
+      '\t\tconst supportsPreferDedupeFlag ='],
+    ['if (!GlobalConfig.get("allowScripts") || config.ignoreScripts) cmdOptions += " --ignore-scripts";', 'cmdOptions += " --ignore-scripts --allow-remote=none --allow-git=none";'],
+    ['\t\t\tcwdFile: lockFileName,\n', '\t\t\tcwdFile: lockFileName,\n' +
+      '\t\t\tpreCommands: ["/usr/local/renovate/node " + quote(' + JSON.stringify(helperPath) + ')],\n' +
+      '\t\t\tenv: { NPM_CONFIG_ALLOW_REMOTE: "none", NPM_CONFIG_ALLOW_GIT: "none", NPM_CONFIG_IGNORE_SCRIPTS: "true", npm_config_allow_remote: "none", npm_config_allow_git: "none", npm_config_ignore_scripts: "true" },\n'],
+  ];
+  for (const [before, after] of replacements) {
+    assert.equal(text.split(before).length, 2, 'Unexpected npm artifact anchor');
+    text = text.replace(before, after);
+  }
+  return text;
+}
+export function installNpmCompat(packageDirectory) {
+  assert.ok(isAbsolute(packageDirectory), 'Renovate package path must be absolute');
+  assert.ok(!packageDirectory.split(sep).includes('..'), 'No path traversal');
+  const helperPath = fileURLToPath(new URL('./prepare-renovate-npm.mjs', import.meta.url));
+  const root = realpathSync(packageDirectory);
+  const metadataPath = join(root, 'package.json');
+  assert.equal(realpathSync(metadataPath), metadataPath, 'Renovate metadata must be canonical');
+  const metadata = JSON.parse(readFileSync(metadataPath, 'utf8'));
+  assert.equal(metadata.name, 'renovate'); assert.equal(metadata.version, '44.215.0');
+  const filename = join(root, npmModulePath);
+  assert.equal(realpathSync(filename), filename);
+  transformNpmArtifact(readFileSync(filename), helperPath);
+  const url = pathToFileURL(filename).href;
+  let applied = false;
+  const hook = registerHooks({ load(target, context, next) {
+    const result = next(target, context);
+    if (target !== url) return result;
+    assert.equal(result.format, 'module'); applied = true;
+    return {...result, source: transformNpmArtifact(result.source, helperPath)};
+  }});
+  return { wasApplied: () => applied, preload: async () => { await import(url); }, deregister: () => hook.deregister() };
+}
+
 // The official image has a fixed, root-owned CLI installation. Tests explicitly
 // install the same hook against their isolated, verified npm installation.
 if (process.argv[1] === '/usr/local/renovate/dist/renovate.js') {
   assert.equal(realpathSync(process.argv[1]), process.argv[1], 'CLI path must be canonical');
   const compatibility = installSecurityCompat(dirname(dirname(process.argv[1])));
   const pythonCompatibility = installPythonBuildCompat(dirname(dirname(process.argv[1])));
+  const npmCompatibility = installNpmCompat(dirname(dirname(process.argv[1])));
   // Importing the planner here guarantees the hook is exercised before the CLI
   // can perform API writes; dependencies are the same official runtime modules.
   await import(pathToFileURL('/usr/local/renovate/dist/workers/repository/updates/generate.js').href);
   assert.ok(compatibility.wasApplied(), 'Security branch compatibility was not loaded');
   await pythonCompatibility.preload();
   assert.ok(pythonCompatibility.wasApplied(), 'Python build boundary was not loaded');
+  await npmCompatibility.preload();
+  assert.ok(npmCompatibility.wasApplied(), 'Npm registry bundle compatibility was not loaded');
+  console.info('Verified Renovate 44.215.0 npm registry bundle compatibility');
   console.info('Verified Renovate 44.215.0 security branch compatibility');
   console.info('Verified Renovate 44.215.0 Python build boundary');
 }
