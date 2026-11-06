@@ -183,6 +183,8 @@ jobs:
           node tests/renovate_grouping.mjs "$renovate"
           node tests/renovate_security_grouping.mjs "$renovate"
           node tests/renovate_uv_preflight.mjs "$renovate"
+      - name: Verify private Python lifecycle safety contracts
+        run: node --test tests/renovate_python_lifecycle.mjs
       - name: Install the reviewed UV for offline build-boundary tests
         uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
@@ -226,6 +228,16 @@ jobs:
                 /usr/local/renovate/node /repo/tests/renovate_npm_bundles.mjs /usr/local/renovate "$1"
               ' _ "$mount_dir/renovate-security-compat.mjs"
           done
+      - name: Verify private Python tool lifecycle in the official image
+        run: |
+          version=$(python3 -c 'import json; print(json.load(open(".github/renovate-runtime.json"))["version"])')
+          container="renovate-python-lifecycle-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          trap 'docker rm -f "$container" >/dev/null 2>&1 || true' EXIT
+          timeout --signal=TERM --kill-after=30s 480s docker run --rm --init --name "$container" --cap-drop ALL --security-opt no-new-privileges \
+            --mount "type=bind,src=$PWD,dst=/repo,readonly" --workdir /repo \
+            --mount "type=bind,src=$PWD/scripts,dst=/config,readonly" \
+            "ghcr.io/renovatebot/renovate:$version" \
+            /usr/local/renovate/node /repo/tests/renovate_python_lifecycle_image.mjs
   python-typecheck-contract:
     name: Workflow contracts
     runs-on: ${{ fromJSON((vars.CI_RUNNER_MODE == 'self-hosted' || vars.CI_RUNNER_MODE == 'k3s') && ((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) || (contains(fromJSON('["push","schedule","workflow_dispatch"]'), github.event_name) && github.ref == format('refs/heads/{0}', github.event.repository.default_branch))) && (vars.CI_RUNNER_LABELS || '[]') || '["ubuntu-latest"]') }}

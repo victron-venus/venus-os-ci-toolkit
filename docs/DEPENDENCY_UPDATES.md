@@ -254,3 +254,40 @@ fixture must fail with the original npm and generate a lock through the guarded
 native updater, while direct URLs and Git stay blocked and an otherwise active
 lifecycle canary does not run. The existing planner and Python boundary tests
 remain required.
+
+### Private Python tool lifecycle
+
+The private runner uses a separate, first `--import` preload for the qualified
+Renovate 44.215.0 command generator. The public runner does not enable it.
+Before installing a different Python version, a fixed helper reads the official
+containerbase JSON inventory. It removes only recorded old Python versions and
+their qualified `uv` 0.13.4 and `hashin` 1.0.5 leaves using explicit, non-recursive official uninstall
+commands. If the requested Python version already exists, no tool is removed;
+normal containerbase installation reuses and relinks that version.
+
+The helper validates the complete removal plan, fixed canonical tool paths and
+all parent relationships before its first mutation, then rechecks the inventory
+and process namespace before every uninstall. Unknown children, shared child-tool
+parents, symlinks, unexpected state or any process outside its ancestor chain
+stop the artifact update. No process is killed and no repository path is removed.
+Only the private Python/UV/hashin memoization shortcut is bypassed, so failed installs
+and an A-to-B-to-A transition cannot reuse a stale in-memory installed marker.
+Other tool memoization and all existing build and security guards remain active.
+The private hashin installer uses 1.0.5 only when the requested PEP 440 tool
+constraint admits it; an incompatible explicit constraint fails closed.
+Scheduling changes such as sleeping to running do not change process identity;
+PID, parent PID and start time must remain stable, with both snapshots requiring
+live ancestors and no unrelated process.
+
+This mode requires an exclusive updater container: do not run `docker exec`
+inside it during a sweep. Observe logs from outside the PID namespace. Two
+process snapshots reject already-present orphans; they are not an atomic lock
+against an external actor starting a new process afterward. The helper's
+120-second monotonic deadline, per-command bounds and existing outer runner
+limits remain in force. Successful cleanup does not itself guarantee enough
+space for every future tool or repository.
+
+The official-image contract tests the exact combined preload order, actual
+Python/UV/hashin transitions and reuse, unknown-child and process/path rejection, and
+native compiled-lock and hashed-requirements generation afterward. Requalify the module hash, official
+containerbase inventory/layout and these tests before changing either runtime.
