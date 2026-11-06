@@ -263,7 +263,7 @@ assert.ok(ciUpdates.every((update) => update.branchName === 'renovate/ci-workflo
 assert.ok(applicationUpdates.every((update) => update.branchName.includes('application-dependencies')));
 assert.ok(applicationUpdates.every((update) => update.branchName !== 'renovate/ci-workflows'));
 assert.ok(fleetUpdates.every((update) => update.automerge === false));
-assert.equal(fleetConfig.vulnerabilityAlerts.enabled, true);
+assert.equal(Object.hasOwn(fleetConfig.vulnerabilityAlerts, 'enabled'), false);
 assert.equal(fleetConfig.vulnerabilityAlerts.dependencyDashboardApproval, false);
 console.log('Full-fleet policy extracts Python application dependencies and keeps application updates separate from atomic CI updates.');
 
@@ -303,7 +303,9 @@ const securityPackages = {
 };
 const advisoryConfig = await detectVulnerabilityAlerts(fleetConfig);
 assert.equal(advisoryConfig.packageRules.filter((rule) => rule.isVulnerabilityAlert).length, 2);
-const securityUpdates = await flattenUpdates(advisoryConfig, securityPackages);
+assert.ok(advisoryConfig.packageRules.filter((rule) => rule.isVulnerabilityAlert)
+  .every((rule) => !Object.hasOwn(rule.force, 'enabled')));
+const securityUpdates = await flattenUpdates(advisoryConfig, structuredClone(securityPackages));
 assert.equal(securityUpdates.length, 5);
 assert.equal(securityUpdates.filter((update) => update.isVulnerabilityAlert).length, 3);
 assert.ok(securityUpdates.filter((update) => update.manager !== 'pip_requirements')
@@ -311,3 +313,18 @@ assert.ok(securityUpdates.filter((update) => update.manager !== 'pip_requirement
 assert.ok(securityUpdates.filter((update) => update.manager === 'pip_requirements')
   .every((update) => update.branchName === 'renovate/pypi-example-package-vulnerability'));
 console.log('Synthetic advisories preserve atomic CI grouping and separate application security fixes.');
+
+// Security detection stays active without forcing disabled consumer dependencies on.
+const heldConfig = mergeChildConfig(fleetConfig, { packageRules: [{
+  matchPackageNames: ['example/action', 'example-package'], enabled: false,
+}] });
+const heldUpdates = await flattenUpdates(await detectVulnerabilityAlerts(heldConfig), structuredClone(securityPackages));
+assert.equal(heldUpdates.length, 2);
+assert.ok(heldUpdates.every((update) => !['example/action', 'example-package'].includes(update.depName)));
+const ciSecurityPackages = Object.fromEntries(Object.entries(structuredClone(securityPackages))
+  .filter(([manager]) => manager !== 'pip_requirements'));
+const ciSecurityUpdates = await flattenUpdates(await detectVulnerabilityAlerts(config), ciSecurityPackages);
+assert.equal(ciSecurityUpdates.length, 4);
+assert.ok(ciSecurityUpdates.some((update) => update.isVulnerabilityAlert));
+assert.ok(ciSecurityUpdates.every((update) => update.branchName === 'renovate/ci-workflows'));
+console.log('Default security detection respects dependency holds and keeps the CI-only preset atomic.');

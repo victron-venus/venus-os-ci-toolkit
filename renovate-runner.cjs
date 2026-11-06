@@ -15,7 +15,8 @@ const postUpgradeCommands = [
   "uv pip compile .github/requirements-fuzz.in --constraint .renovate-constraints.txt --python-version 3.12 --python-platform x86_64-unknown-linux-gnu --no-build --generate-hashes --no-header --no-annotate --output-file .github/requirements-fuzz.txt",
   "uv pip compile .github/requirements-fuzz.in --generate-hashes --python-version 3.12 --python-platform x86_64-unknown-linux-gnu --no-build --output-file .github/requirements-fuzz.txt",
   "uv pip compile recovery/runtime/requirements.in --generate-hashes --python-version 3.14 --python-platform linux --no-build --output-file recovery/runtime/requirements.lock",
-  "uv pip compile requirements-russian-silero.in --generate-hashes --emit-index-url --index-strategy unsafe-best-match --python-version 3.11 --python-platform x86_64-manylinux_2_28 --no-build --output-file requirements-russian-silero.lock"
+  "uv pip compile requirements-russian-silero.in --generate-hashes --emit-index-url --index-strategy unsafe-best-match --python-version 3.11 --python-platform x86_64-manylinux_2_28 --no-build --output-file requirements-russian-silero.lock",
+  "uv pip compile requirements-mercedes.in --no-deps --no-build --generate-hashes --universal --python-version 3.12 --no-annotate --output-file requirements-mercedes.txt"
 ];
 const literalCommand = (command) => '^' + command.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$';
 
