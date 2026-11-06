@@ -47,9 +47,12 @@ minor/patch updates. Defaults permit two open ordinary PRs and one new ordinary
 PR per hour per repository. Renovate reads GitHub vulnerability alerts for
 security fixes, with one concurrent security PR and no dashboard approval wait.
 CI security fixes remain in the same atomic `renovate/ci-workflows` branch;
-application security fixes retain separate per-package branches. Consumers
-with source-bound or ABI-sensitive exclusions may disable this separate
-security PR lane while retaining scheduled compatible updates and alerts.
+application security fixes retain separate per-package branches, unless a
+consumer preserves a required coupled dependency group. Both presets omit
+`vulnerabilityAlerts.enabled`: alert detection is active by default, and
+setting this field to `true` would force-enable dependencies that a consumer
+intentionally disables. Source and ABI compatibility rules therefore also
+apply to security updates; their alerts remain visible for manual remediation.
 Normal review and required CI still apply; automatic merging is disabled.
 
 Remove `.github/dependabot.yml` (or `.yaml`) after the replacement configuration
@@ -70,8 +73,25 @@ The sweep runs daily at 09:23 UTC. For a read-only check, dispatch the workflow
 with `dry-run=true` (the manual default). Dispatch with `dry-run=false` for an
 immediate update sweep. Only the default branch may run the privileged job.
 Failures are visible in the workflow run; a missing token fails the job instead
-of silently disabling updates. The runner does not execute dependency lifecycle
-scripts or repository-defined post-upgrade commands.
+of silently disabling updates. Dependency lifecycle scripts, plugins and shell
+execution remain disabled. Post-upgrade tasks can run only the exact reviewed
+generator commands enumerated in `renovate-runner.cjs`.
+
+Some Python consumers export requirements from `uv.lock` or compile a platform
+lock constrained by that export. Their native source update is followed by a
+reviewed `uv export --locked --offline --no-build` or `uv pip compile --no-build`
+command. Export rejects a stale source/lock pair; no command may build source
+distributions. Tasks pin uv 0.13.4, name the exact files allowed into the commit,
+and use `executionMode: update` on the matching source rule. Branch mode can
+lose a task when another dependency leads a mixed update group in Renovate
+44.215.0. Temporary constraint exports are excluded from committed artifacts.
+
+Adding a generator requires reviewing its complete literal command, source
+ownership and output files, testing a changed dependency and stale-input failure,
+and extending the runner allowlist and its negative command-policy tests. A
+consumer must wait for that allowlist to reach the runner default branch before
+enabling its task. Unsupported source builds and local-interpreter contracts
+remain explicit manual boundaries. See [post-upgrade task configuration](https://docs.renovatebot.com/configuration-options/#postupgradetasks).
 
 `BOT_PAT` must permit repository contents and workflow writes (`repo` and
 `workflow` for a classic PAT). The preflight rejects a classic token missing
@@ -153,3 +173,24 @@ unique fixes until the replacement covers them.
 
 References: [GitHub Actions manager](https://docs.renovatebot.com/modules/manager/github-actions/)
 and [grouping options](https://docs.renovatebot.com/configuration-options/#groupname).
+
+### Security branch compatibility
+
+The two fleet runners use the official Renovate 44.215.0 image with a narrowly
+scoped, in-memory compatibility fix. Its branch planner otherwise takes all
+branch settings from the first alphabetically sorted dependency. A mixed group
+can therefore lose its security priority when the vulnerable dependency sorts
+later. The fix selects a vulnerable member as the branch settings source while
+preserving the entire ordered upgrade list and the existing aggregate review,
+automerge and minimum-group-size rules. Ordinary-only groups are unchanged.
+
+The loader verifies the package version and SHA-256 of the one affected upstream
+module before the CLI can access credentials. Unknown source fails closed; it
+never edits the installed package, loads repository code, or exports Node loader
+flags to package-manager subprocesses. Contract tests exercise native branch
+planning, both directions of the npm/Cargo pair, scheduling and independent
+security limits, plus an isolated official-image smoke test without credentials.
+The runtime version itself requires a reviewed change while this compatibility
+fix is present. To upgrade, reproduce the native tests against the new upstream
+version and either retire the fix or explicitly requalify its one-module hash;
+do not simply advance the runtime pin.

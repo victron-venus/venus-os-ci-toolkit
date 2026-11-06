@@ -27,7 +27,6 @@
   "prConcurrentLimit": 2,
   "prHourlyLimit": 1,
   "vulnerabilityAlerts": {
-    "enabled": true,
     "dependencyDashboardApproval": false,
     "prConcurrentLimit": 1,
     "groupName": "{{#if (or (equals manager \"github-actions\") (equals manager \"custom.regex\") (equals manager \"custom.jsonata\"))}}GitHub Actions and reusable workflows{{else}}Security update: {{{depName}}}{{/if}}",

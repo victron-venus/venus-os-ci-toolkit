@@ -53,8 +53,9 @@ jobs:
         uses: renovatebot/github-action@1c0cf989c02653fba0efe7ca5772338860ca71dc # v46.3.12
         with:
           configurationFile: renovate-runner.cjs
-          # The action mounts only the config file; its adjacent allowlist needs a mount too.
-          docker-volumes: /tmp:/tmp;${{ github.workspace }}/renovate-repositories.json:/github-action/renovate-repositories.json:ro
+          docker-cmd-file: scripts/renovate-security-runner.sh
+          # The action mounts the executable at /; its preload and roster are read-only.
+          docker-volumes: /tmp:/tmp;${{ github.workspace }}/renovate-repositories.json:/github-action/renovate-repositories.json:ro;${{ github.workspace }}/scripts/renovate-security-compat.mjs:/renovate-security-compat.mjs:ro
           token: ${{ secrets.BOT_PAT }}
           renovate-version: ${{ steps.runtime.outputs.version }}
         env:
