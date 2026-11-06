@@ -99,11 +99,11 @@ const { generateInstallCommands } = await import(
 const memory = await import(
   pathToFileURL('/usr/local/renovate/dist/util/cache/memory/index.js')
 );
-process.env.LOG_LEVEL = 'debug';
-const { init: initLogger } = await import(
+const { init: initLogger, levels: loggerLevels } = await import(
   pathToFileURL('/usr/local/renovate/dist/logger/index.js')
 );
 await initLogger();
+loggerLevels('stdout', 'debug');
 memory.init();
 const constraints = (version, uv = true, hashin = false) => [
   { toolName: 'python', constraint: version },
