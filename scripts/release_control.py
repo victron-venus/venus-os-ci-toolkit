@@ -336,6 +336,8 @@ class DownloadBudget:
                 "Release download disk reserve would be exceeded")
 
 
+# Retain the original descriptor identity as well as the transfer accounting.
+# pylint: disable-next=too-many-instance-attributes
 class _AssetWriter:
     """A write-only sink: the subprocess never receives the destination fd."""
 
@@ -344,6 +346,7 @@ class _AssetWriter:
         self.output = output
         self.name = str(destination)
         self.directory = destination.parent
+        self._owned = os.fstat(output.fileno())
         self.expected = expected
         self.budget = budget
         self.size = 0
@@ -369,6 +372,22 @@ class _AssetWriter:
         actual: AssetIdentity = {"size": self.size, "sha256": self.checksum.hexdigest()}
         require(actual == self.expected, "Release asset size or checksum mismatch")
         return actual
+
+    def reset_for_retry(self) -> None:
+        """Discard only our staged bytes; failed transfers still debit the budget."""
+        current = Path(self.name).lstat()
+        opened = os.fstat(self.output.fileno())
+        identity = (self._owned.st_dev, self._owned.st_ino)
+        require(stat.S_ISREG(current.st_mode)
+                and (current.st_dev, current.st_ino) == identity
+                and (opened.st_dev, opened.st_ino) == identity,
+                "Asset destination changed during transfer")
+        # A retry needs room for the whole asset, not just its missing suffix.
+        self.budget.check(self.directory, self.expected["size"])
+        self.output.seek(0)
+        self.output.truncate(0)
+        self.size = 0
+        self.checksum = hashlib.sha256()
 
 
 def download_asset(gh: GitHub, asset_id: object, destination: Path, *,
@@ -402,13 +421,18 @@ def download_asset(gh: GitHub, asset_id: object, destination: Path, *,
         raise
 
 
-def _stream_asset(command: list[str], output: _AssetWriter) -> subprocess.CompletedProcess[bytes]:
+def _stream_asset(command: list[str], output: _AssetWriter, *,
+                  deadline: float | None = None) -> subprocess.CompletedProcess[bytes]:
     """Pump bounded chunks portably, including silent/stderr-heavy transfers."""
+    if deadline is None:
+        deadline = time.monotonic() + ASSET_DOWNLOAD_TIMEOUT
+    output.check()
+    if time.monotonic() >= deadline:
+        raise subprocess.TimeoutExpired(command, ASSET_DOWNLOAD_TIMEOUT)
     process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)  # nosec B603
     require(process.stdout is not None and process.stderr is not None, "Missing transfer pipes")
     events: queue.Queue[tuple[str, bytes | BaseException | None]] = queue.Queue(maxsize=2)
     stopped = threading.Event()
-    deadline = time.monotonic() + ASSET_DOWNLOAD_TIMEOUT
 
     def send(kind: str, value: bytes | BaseException | None) -> None:
         while not stopped.is_set():
@@ -781,6 +805,22 @@ class GitHub:
         )
 
     @classmethod
+    def _transient_asset_failure(cls, result: subprocess.CompletedProcess[bytes]) -> bool:
+        """Allow only complete, non-denial diagnostics from a failed asset GET."""
+        stderr = result.stderr or b""
+        # At the capture limit, a later denial may have been discarded.
+        # Asset timeouts are terminal, including ones reported by gh itself.
+        if (result.returncode != 1 or len(stderr) >= 65536
+                or cls._denied_read_diagnostic(stderr)
+                or re.search(rb"i/o timeout|tls handshake timeout|context deadline exceeded|"
+                             rb"client\.timeout exceeded", stderr.lower())
+                or re.search(rb"\bhttp(?:/[0-9.]+)?[ /:]+4\d\d(?:\D|$)", stderr.lower())):
+            return False
+        return cls._transient_read_failure(result) or bool(re.fullmatch(
+            rb"(?:gh: )?unexpected end of JSON input", stderr.strip()
+        ))
+
+    @classmethod
     def _denied_partial_read(cls, stdout: bytes, stderr: bytes,
                              paginated: bool = False) -> bool:
         """A partial denial blocks retries without proving an optional absence."""
@@ -892,24 +932,43 @@ class GitHub:
         return self.request(path, mode="asset")
 
     def download_asset(self, path: str, output: _AssetWriter) -> None:
-        """Stream an allowlisted asset through an expected-size, budgeted sink."""
+        """Retry whole asset GETs within one deadline and cumulative byte budget."""
         require(
             re.fullmatch(r"releases/assets/[1-9]\d*", path, re.ASCII),
             "Unsupported binary download endpoint",
         )
         require(isinstance(output, _AssetWriter), "Asset downloads require a bounded sink")
         endpoint = f"{self.base}/{path}"
+        # Developer/CI toolchain selected by the invoking operator via PATH.
+        command = [
+            "gh", "api", "--hostname", GITHUB_HOSTNAME, "--method", "GET",
+            "-H", "Accept: application/octet-stream", "--", endpoint,
+        ]
+        deadline = time.monotonic() + ASSET_DOWNLOAD_TIMEOUT
         try:
-            # Developer/CI toolchain selected by the invoking operator via PATH.
-            result = _stream_asset([
-                "gh", "api", "--hostname", GITHUB_HOSTNAME, "--method", "GET",
-                "-H", "Accept: application/octet-stream", "--", endpoint,
-            ], output)
+            for attempt in range(API_READ_ATTEMPTS):
+                if time.monotonic() >= deadline:
+                    raise subprocess.TimeoutExpired(command, ASSET_DOWNLOAD_TIMEOUT)
+                result = _stream_asset(command, output, deadline=deadline)
+                if time.monotonic() >= deadline:
+                    raise subprocess.TimeoutExpired(command, ASSET_DOWNLOAD_TIMEOUT)
+                if (attempt == API_READ_ATTEMPTS - 1
+                        or not self._transient_asset_failure(result)):
+                    self.response(result, f"GET {endpoint}")
+                    return
+                delay = random.uniform(1, 2 ** (attempt + 1))  # nosec B311
+                if delay >= deadline - time.monotonic():
+                    raise subprocess.TimeoutExpired(command, ASSET_DOWNLOAD_TIMEOUT)
+                time.sleep(delay)
+                if time.monotonic() >= deadline:
+                    raise subprocess.TimeoutExpired(command, ASSET_DOWNLOAD_TIMEOUT)
+                # The previous child has been reaped before touching its staging.
+                output.reset_for_retry()
         except subprocess.TimeoutExpired as error:
             raise GitHubError(
                 f"GET {endpoint}: asset download exceeded {ASSET_DOWNLOAD_TIMEOUT} seconds"
             ) from error
-        self.response(result, f"GET {endpoint}")
+        raise AssertionError("Asset GET retry loop must return or raise")
 
     def upload(self, tag: str, path: Path, *, release_id: int) -> None:
         """Upload once to the transaction's known draft, without tag lookup."""
@@ -2369,7 +2428,9 @@ def _publish_prepared(
         and {item.get("name") for item in uploaded} == set(expected),
         "Uploaded asset inventory mismatch; draft left unpublished",
     )
-    budget = DownloadBudget(sum(path.stat().st_size for path in expected.values()))
+    # Each asset can consume at most one full payload per bounded GET attempt.
+    # Failed prefixes remain charged; caller-supplied download caps are unchanged.
+    budget = DownloadBudget(sum(path.stat().st_size for path in expected.values()) * API_READ_ATTEMPTS)
     for item in uploaded:
         verify_uploaded_asset(gh, item, expected[cast(str, item["name"])], budget=budget)
     if confirm_publish is not None:
@@ -2887,7 +2948,9 @@ def promote(args: argparse.Namespace) -> JSONObject:
     check_workflow_publication(gh, cast(str, manifest["source_sha"]))
     with tempfile.TemporaryDirectory(prefix="release-promote-") as temp:
         stage = Path(temp)
-        budget = DownloadBudget(sum(cast(int, item["size"]) for item in expected.values()))
+        # Promotion uses the same bounded whole-asset retry allowance as readback.
+        # Failed prefixes remain charged to this shared inventory budget.
+        budget = DownloadBudget(sum(cast(int, item["size"]) for item in expected.values()) * API_READ_ATTEMPTS)
         for asset in release_assets:
             name = cast(str, asset["name"])
             if name == MANIFEST:
