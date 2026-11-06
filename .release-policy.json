@@ -20,9 +20,12 @@
   "single_entry_ci": true,
   "change_scope": {
     "documentation_paths": [],
-    "required_paths": [],
+    "required_paths": [
+      "CHANGELOG.md"
+    ],
     "always_validate_workflows": [
-      "ci.yml"
+      "ci.yml",
+      "security-required.yml"
     ]
   },
   "artifact_pattern": "release-assets*",

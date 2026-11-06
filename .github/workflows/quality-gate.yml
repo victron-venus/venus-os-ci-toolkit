@@ -38,7 +38,7 @@ jobs:
         name: Classify documentation and build inputs
         env:
           DOCUMENTATION_PATHS: '[]'
-          REQUIRED_PATHS: '[]'
+          REQUIRED_PATHS: '["CHANGELOG.md"]'
           FORCE_FULL: ${{ inputs.force-full && 'true' || 'false' }}
         run: |
           args=()
@@ -62,7 +62,6 @@ jobs:
     needs:
       - scope
       - workflow-contracts
-    if: ${{ needs.scope.outputs.run == 'true' }}
   check-2:
     uses: ./.github/workflows/contract-tests.yml
     permissions:
@@ -97,6 +96,13 @@ jobs:
             .github/requirements-workflow-contracts.txt
       - run: 'python3 -m pip install --require-hashes --only-binary=:all: -r .github/requirements-workflow-contracts.txt'
       - run: python3 scripts/workflow_contracts.py
+      - name: Validate the required source package inventory
+        run: |
+          python3 - <<'PY_INVENTORY'
+          from pathlib import Path
+          from scripts.toolkit_source import inventory
+          inventory(Path.cwd())
+          PY_INVENTORY
       - run: python3 -m unittest discover -s tests -p 'test_workflow_yaml_contracts.py'
       - name: Replay relevant Python fuzz seeds and verify instrumentation
         id: fuzz_preflight
@@ -170,7 +176,7 @@ jobs:
           import json, os
           results = json.loads(os.environ['RESULTS'])
           expected = ['check-0', 'check-1', 'check-2', 'release-contracts', 'scope', 'workflow-contracts']
-          always = ['check-0', 'scope', 'workflow-contracts']
+          always = ['check-0', 'check-1', 'scope', 'workflow-contracts']
           if set(results) != set(expected):
               raise SystemExit('Validation job inventory differs')
           scope = results['scope']

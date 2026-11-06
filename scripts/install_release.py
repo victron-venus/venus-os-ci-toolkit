@@ -900,6 +900,9 @@ with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
 PY
 """
     release_scope = scope_job(policy)
+    # A newer release run supersedes unfinished candidates. It must remain
+    # eligible to replace them and perform full main-push security checks.
+    release_scope["steps"][-1]["env"]["FORCE_FULL"] = "true"
     release_scope["runs-on"] = runner_labels("release")
     jobs = {
         "scope": release_scope,
@@ -2106,6 +2109,12 @@ def prepare_consumer_files(directory: Path, files: dict[str, str]) -> dict[str, 
     return files
 
 
+def render_change_scope(directory: Path) -> dict[str, str]:
+    """Enable reviewed scope routing without updating release engines or pins."""
+    import change_scope_migration  # pylint: disable=import-outside-toplevel
+    return change_scope_migration.render(directory, generator=sys.modules[__name__])
+
+
 def render_runners(directory: Path) -> dict[str, str]:
     """Adopt runner routing without replacing release clients, docs or test commands."""
     policy = json.loads((directory / POLICY_FILE).read_text())
@@ -2147,10 +2156,12 @@ The optional `change_scope` policy provides exact `documentation_paths`, exact
 `required_paths` for documentation used as a build input, and
 `always_validate_workflows` for independently required checks. Documentation paths
 cannot exempt source, tests, fixtures, build configuration or dependencies.
-Manual dispatch, scheduled runs and release qualification remain full. Only with
-explicit `change_scope` opt-in does a documentation-only push stop before release
-preparation, version allocation, artifact builds or publication. This does not
-change the configured nightly policy.
+Documentation-only PRs may skip expensive validation after explicit opt-in.
+Main-branch release pushes, manual dispatch and scheduled runs keep full
+preparation and qualification. A newer automatic run supersedes unfinished
+candidates, so it must remain eligible to replace them and run the required
+security checks. Release-note files parsed by contracts remain required inputs.
+The configured nightly policy is unchanged.
 
 ## Live release execution
 
@@ -2532,6 +2543,10 @@ def main():
     modes.add_argument(
         "--coverage-only", action="store_const", dest="renderer", const=render_coverage,
         help="refresh coverage and CI support only; preserve the existing release engine",
+    )
+    modes.add_argument(
+        "--change-scope-only", action="store_const", dest="renderer", const=render_change_scope,
+        help="apply reviewed documentation scope to known generated workflows only",
     )
     modes.add_argument(
         "--runners-only", action="store_const", dest="renderer", const=render_runners,

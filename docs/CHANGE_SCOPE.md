@@ -40,12 +40,16 @@ validators:
 
 These lists contain exact paths, not globs. An added documentation path cannot
 override protected source or fixture locations. Use `required_paths` for prose
-that generates application or deployed content. An always-required validator
+that generates application or deployed content, including a package README or
+the configured release-notes file when release contracts parse it. An always-required validator
 must be named in `validation_workflows` and must genuinely succeed on every run.
 
-A documentation-only push stops before release preparation: it allocates no
-version, builds no artifacts and publishes no candidate. Existing nightly policy
-is unchanged. A reviewed `nightly_cron` policy value (`M H * * *`, UTC) can retain
+Documentation-only PRs can skip expensive validation. Release entry points,
+including main-branch pushes, retain full preparation and qualification. A newer
+release run supersedes an unfinished candidate, so it must remain eligible to
+replace that candidate; it must also run the required main-branch security checks.
+There is currently no documentation-only release fast path. Existing nightly
+policy is unchanged. A reviewed `nightly_cron` policy value (`M H * * *`, UTC) can retain
 an existing daily slot when updating older generated workflows; otherwise the
 usual deterministic schedule applies. Scheduled jobs and manual dispatch always request full validation;
 release callers also pass `force-full: true` to Quality gate, including when the
@@ -77,8 +81,8 @@ run. After validating equivalent coverage, consolidate legacy required build
 and test job contexts into **CI gate**, which verifies their full-run results
 and authorizes only proven documentation skips. Retain independently required
 security contexts such as CodeQL and Sonar, and keep their real validators active.
-The toolkit itself always runs CodeQL and configuration checks; documentation-only
-changes skip its separate contract-test workflow and Trivy scan.
+The toolkit itself always runs CodeQL, configuration checks and its full-source
+security scan. Documentation-only changes skip its separate contract-test workflow.
 
 ## Maintaining the classifier
 
@@ -87,3 +91,41 @@ The generated workflow includes its source digest. Contract tests check its
 exact embedded source and execute it against temporary consumer repositories.
 Run `scripts/install_release.py CONSUMER` to update generated consumers and use
 `--check` to reject drift. No copied classifier is maintained independently.
+
+## Activate scope in an existing generated consumer
+
+The presence of a classifier or `scope` job does not mean skipping is enabled.
+Without an explicit `change_scope` policy, generated workflows deliberately set
+`FORCE_FULL` to true. Review required checks and secret/documentation validation
+before opting in: workflows that supply those checks belong in
+`always_validate_workflows`. Keep exact `required_paths` for documentation used
+as a build or deployment input.
+
+For an existing, recognized generated graph with the current shared classifier,
+edit the consumer policy, then run:
+
+```sh
+python3 scripts/install_release.py /path/to/consumer --change-scope-only
+python3 scripts/install_release.py /path/to/consumer --change-scope-only --check
+```
+
+This mode changes only selected scope inputs, validation conditions and the
+final gate proof in the existing workflows. It retains, or repairs,
+`FORCE_FULL: true` in the release entry point while preserving its path inputs.
+Actual release qualification still passes `force-full: true`; main-branch
+release pushes and scheduled/manual events remain full. Action pins, runner selection, triggers, timeouts, release engines, signing
+and publication steps remain untouched. No GitHub settings are changed.
+
+The migration rejects custom/legacy graphs, altered classifier commands,
+unrecognized classifier copies and aliases of edited YAML nodes. Review those
+consumers individually; do not bypass the rejection or replace their whole
+release implementation merely to enable documentation routing. After migration,
+verify a documentation-only and a source-change run and retain independent
+security checks. The CI change itself correctly requests full validation.
+
+The toolkit itself keeps its CodeQL and full-source security scanners active on
+documentation changes. This includes secret scanning: prose can contain a secret
+even when no source code changed. The aggregate gate rejects a skipped scanner.
+The lightweight configuration check also validates the existing source package
+inventory, so deleting a required documentation file cannot silently break the
+next source release. Editing its contents still uses the documentation route.
