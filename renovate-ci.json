@@ -5,7 +5,11 @@
   "dependencyDashboard": false,
   "automerge": false,
   "vulnerabilityAlerts": {
-    "enabled": false
+    "dependencyDashboardApproval": false,
+    "prConcurrentLimit": 1,
+    "groupName": "GitHub Actions and reusable workflows",
+    "groupSlug": "ci-workflows",
+    "separateMajorMinor": false
   },
   "prConcurrentLimit": 1,
   "prHourlyLimit": 1,

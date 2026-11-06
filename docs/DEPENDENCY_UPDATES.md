@@ -47,9 +47,12 @@ minor/patch updates. Defaults permit two open ordinary PRs and one new ordinary
 PR per hour per repository. Renovate reads GitHub vulnerability alerts for
 security fixes, with one concurrent security PR and no dashboard approval wait.
 CI security fixes remain in the same atomic `renovate/ci-workflows` branch;
-application security fixes retain separate per-package branches. Consumers
-with source-bound or ABI-sensitive exclusions may disable this separate
-security PR lane while retaining scheduled compatible updates and alerts.
+application security fixes retain separate per-package branches, unless a
+consumer preserves a required coupled dependency group. Both presets omit
+`vulnerabilityAlerts.enabled`: alert detection is active by default, and
+setting this field to `true` would force-enable dependencies that a consumer
+intentionally disables. Source and ABI compatibility rules therefore also
+apply to security updates; their alerts remain visible for manual remediation.
 Normal review and required CI still apply; automatic merging is disabled.
 
 Remove `.github/dependabot.yml` (or `.yaml`) after the replacement configuration

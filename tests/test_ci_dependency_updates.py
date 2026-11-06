@@ -247,6 +247,17 @@ class ActionMetadataMigrationTests(unittest.TestCase):
 
 
 class CoupledWorkflowTests(unittest.TestCase):
+    def test_security_alerts_preserve_consumer_dependency_guards(self):
+        # Renovate copies vulnerabilityAlerts into force after package rules.
+        # Explicit true bypasses consumer guards; false disables all alerts.
+        for name in ("renovate-ci.json", "renovate-fleet.json"):
+            with self.subTest(preset=name):
+                preset = json.loads((ROOT / name).read_text())
+                self.assertNotIn("enabled", preset["vulnerabilityAlerts"])
+        ci = json.loads((ROOT / "renovate-ci.json").read_text())
+        self.assertEqual(ci["vulnerabilityAlerts"]["groupSlug"], "ci-workflows")
+        self.assertFalse(ci["vulnerabilityAlerts"]["separateMajorMinor"])
+
     def test_repository_allowlist_keeps_shared_custom_managers_enabled(self):
         preset = json.loads((ROOT / "renovate-ci.json").read_text())
         repository = json.loads((ROOT / "renovate.json").read_text())
