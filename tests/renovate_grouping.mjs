@@ -32,6 +32,8 @@ const allowedModules = new Set([
   'workers/repository/init/vulnerability',
   'modules/manager/github-actions/extract',
   'modules/manager/pep621/extract',
+  'modules/manager/pip-compile/extract',
+  'workers/repository/process/fetch',
   'modules/manager/custom/regex/index',
   'modules/manager/custom/jsonata/index',
   'workers/repository/updates/flatten',
@@ -279,6 +281,35 @@ const { getRangeStrategy } = await moduleAt('modules/manager/index');
 const { getDatasourceFor } = await moduleAt('modules/datasource/common');
 const { lookupUpdates } = await moduleAt('workers/repository/process/lookup/index');
 const { applyPackageRules } = await moduleAt('util/package-rules/index');
+// The same pyproject runtime field is also extracted through pip-compile.
+// It must stop before release lookup while ordinary package updates stay enabled.
+const { extractPackageFile: extractCompiledPython } = await moduleAt('modules/manager/pip-compile/extract');
+const { fetchUpdates } = await moduleAt('workers/repository/process/fetch');
+const runtimeSource = '[project]\nname = "runtime-policy-fixture"\nversion = "1.0.0"\nrequires-python = "==3.11.*"\ndependencies = ["httpx==0.28.0"]\n';
+const pythonReleases = getDatasourceFor('python-version');
+const originalPythonReleases = pythonReleases.getReleases;
+pythonReleases.getReleases = async () => { throw new Error('A manual Python runtime must not request releases'); };
+try {
+  for (const [manager, extract] of [['pep621', extractPython], ['pip-compile', extractCompiledPython]]) {
+    const managerConfig = getManagerConfig(fleetConfig, manager);
+    const extracted = await extract(runtimeSource, 'pyproject.toml', managerConfig);
+    const runtimeDependency = extracted.deps.find((dep) => dep.depType === 'requires-python');
+    assert.ok(runtimeDependency, manager + ' must exercise the native runtime descriptor');
+    const packages = { [manager]: [{ packageFile: 'pyproject.toml', deps: [{ ...runtimeDependency }] }] };
+    await fetchUpdates(fleetConfig, packages);
+    assert.equal(packages[manager][0].deps[0].skipReason, 'disabled', manager + ' runtime needs explicit review');
+    assert.deepEqual(packages[manager][0].deps[0].updates, []);
+    const application = extracted.deps.find((dep) => dep.depName === 'httpx' || dep.packageName === 'httpx');
+    assert.ok(application);
+    const effectiveApplication = await applyPackageRules({ ...managerConfig, ...application,
+      manager, packageFile: 'pyproject.toml', depName: 'httpx', packageName: 'httpx' }, 'lookup');
+    assert.notEqual(effectiveApplication.enabled, false, manager + ' package updates must remain enabled');
+  }
+} finally {
+  pythonReleases.getReleases = originalPythonReleases;
+}
+console.log('Both native pyproject extractors keep Python runtime changes manual without disabling application updates.');
+
 const lockScratch = await mkdtemp(resolve(tmpdir(), 'renovate-lockfiles-'));
 const pypi = getDatasourceFor('pypi');
 const originalReleases = pypi.getReleases;
