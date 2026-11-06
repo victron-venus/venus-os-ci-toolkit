@@ -19,7 +19,10 @@
   "visibility": "public",
   "single_entry_ci": true,
   "change_scope": {
-    "documentation_paths": [],
+    "documentation_paths": [
+      "GOVERNANCE.md",
+      "TERRAFORM_IMPORT.md"
+    ],
     "required_paths": [
       "CHANGELOG.md"
     ],
