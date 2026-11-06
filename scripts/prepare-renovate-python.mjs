@@ -103,23 +103,7 @@ export function validateInventory(value) {
   }
   return value;
 }
-export function removalPlan(inventory, requested) {
-  requested = qualifiedPythonVersion(requested);
-  validateInventory(inventory);
-  const python = inventory.tools.find((t) => t.name === 'python');
-  if (!python) return { reason: 'no-previous-python', requested, steps: [] };
-  assert(
-    !python.type && python.versions.length <= 8,
-    'Unexpected Python inventory',
-  );
-  for (const v of python.versions)
-    assert(
-      pythonVersion.test(v.version) && !v.parent,
-      'Unqualified Python record',
-    );
-  if (python.versions.some((v) => v.version === requested))
-    return { reason: 'requested-already-installed', requested, steps: [] };
-  const old = new Set(python.versions.map((v) => v.version));
+function childRemovalSteps(inventory, old) {
   const qualifiedChildren = { uv: '0.13.4', hashin: '1.0.5' };
   const children = new Set();
   for (const tool of inventory.tools)
@@ -161,6 +145,26 @@ export function removalPlan(inventory, requested) {
     );
     steps.push({ name, version });
   }
+  return steps;
+}
+export function removalPlan(inventory, requested) {
+  requested = qualifiedPythonVersion(requested);
+  validateInventory(inventory);
+  const python = inventory.tools.find((t) => t.name === 'python');
+  if (!python) return { reason: 'no-previous-python', requested, steps: [] };
+  assert(
+    !python.type && python.versions.length <= 8,
+    'Unexpected Python inventory',
+  );
+  for (const v of python.versions)
+    assert(
+      pythonVersion.test(v.version) && !v.parent,
+      'Unqualified Python record',
+    );
+  if (python.versions.some((v) => v.version === requested))
+    return { reason: 'requested-already-installed', requested, steps: [] };
+  const old = new Set(python.versions.map((v) => v.version));
+  const steps = childRemovalSteps(inventory, old);
   for (const version of [...old].sort((a, b) => a.localeCompare(b)))
     steps.push({ name: 'python', version });
   return { reason: 'replace-obsolete-python', requested, steps };
