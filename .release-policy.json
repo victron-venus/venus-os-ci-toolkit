@@ -22,7 +22,8 @@
     "documentation_paths": [],
     "required_paths": [],
     "always_validate_workflows": [
-      "ci.yml"
+      "ci.yml",
+      "security-required.yml"
     ]
   },
   "artifact_pattern": "release-assets*",

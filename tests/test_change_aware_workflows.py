@@ -832,9 +832,13 @@ class ToolkitValidationPolicy(unittest.TestCase):
             if job.get("uses") == "./.github/workflows/ci.yml"
         )
 
+    def security_job(self):
+        return next(name for name, job in self.jobs.items()
+                    if job.get("uses") == "./.github/workflows/security-required.yml")
+
     def results(self, full=False):
         """Model the expected real toolkit jobs for one scope decision."""
-        always = {"scope", "workflow-contracts", self.codeql}
+        always = {"scope", "workflow-contracts", self.codeql, self.security_job()}
         values = {
             name: {"result": "success" if full or name in always else "skipped"}
             for name in self.jobs
@@ -857,12 +861,14 @@ class ToolkitValidationPolicy(unittest.TestCase):
             timeout=10,
         )
 
-    def test_documentation_runs_codeql_without_contracts_or_trivy(self):
-        """Keep actual CodeQL analysis required while skipping unrelated heavy jobs."""
+    def test_documentation_runs_security_without_heavy_contracts(self):
+        """Keep actual security analysis required while skipping unrelated builds."""
+        policy = json.loads((ROOT / ".release-policy.json").read_text())
+        self.assertIn("security-required.yml", policy["change_scope"]["always_validate_workflows"])
         values = self.results()
         self.assertTrue(job_runs(self.jobs[self.codeql], values))
         self.assertTrue(job_runs(self.jobs["workflow-contracts"], values))
-        for filename in ("contract-tests.yml", "security-required.yml"):
+        for filename in ("contract-tests.yml",):
             jobs = [
                 job
                 for job in self.jobs.values()
@@ -870,6 +876,7 @@ class ToolkitValidationPolicy(unittest.TestCase):
             ]
             self.assertEqual(len(jobs), 1)
             self.assertFalse(job_runs(jobs[0], values))
+        self.assertTrue(job_runs(self.jobs[self.security_job()], values))
         workflow = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
         self.assertEqual(set(workflow["jobs"]), {"analyze", "analyze-go"})
         for job in workflow["jobs"].values():
@@ -882,13 +889,26 @@ class ToolkitValidationPolicy(unittest.TestCase):
         result = self.run_gate(values)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
-    def test_documentation_cannot_skip_or_fail_required_codeql(self):
+    def test_documentation_cannot_skip_or_fail_required_security(self):
         """Reject the missing security result that would leave branch rules pending."""
-        for conclusion in ("skipped", "failure", "cancelled"):
-            with self.subTest(conclusion=conclusion):
-                values = self.results()
-                values[self.codeql]["result"] = conclusion
-                self.assertNotEqual(self.run_gate(values).returncode, 0)
+        for name in (self.codeql, self.security_job()):
+            for conclusion in ("skipped", "failure", "cancelled"):
+                with self.subTest(job=name, conclusion=conclusion):
+                    values = self.results()
+                    values[name]["result"] = conclusion
+                    self.assertNotEqual(self.run_gate(values).returncode, 0)
+
+    def test_nested_security_scan_really_runs_for_documentation(self):
+        directory = ROOT / ".github/workflows"
+        adapter = yaml.load((directory / "security-required.yml").read_text(), Loader=yaml.BaseLoader)
+        reusable = yaml.load((directory / "security-scan.yml").read_text(), Loader=yaml.BaseLoader)
+        job = adapter["jobs"]["trivy"]
+        self.assertEqual(job["uses"], "./.github/workflows/security-scan.yml")
+        inputs = job["with"]
+        self.assertEqual(inputs["run-trivy"], "true")
+        self.assertEqual(inputs["strict-trivy"], "true")
+        default = reusable["on"]["workflow_call"]["inputs"]["force-full"]["default"]
+        self.assertEqual(inputs.get("force-full", default), "true")
 
     def test_full_validation_requires_every_real_validator(self):
         """Full runs cannot silently omit the newly separated contract workflow."""

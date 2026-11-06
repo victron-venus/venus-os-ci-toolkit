@@ -2106,6 +2106,12 @@ def prepare_consumer_files(directory: Path, files: dict[str, str]) -> dict[str, 
     return files
 
 
+def render_change_scope(directory: Path) -> dict[str, str]:
+    """Enable reviewed scope routing without updating release engines or pins."""
+    import change_scope_migration  # pylint: disable=import-outside-toplevel
+    return change_scope_migration.render(directory, generator=sys.modules[__name__])
+
+
 def render_runners(directory: Path) -> dict[str, str]:
     """Adopt runner routing without replacing release clients, docs or test commands."""
     policy = json.loads((directory / POLICY_FILE).read_text())
@@ -2532,6 +2538,10 @@ def main():
     modes.add_argument(
         "--coverage-only", action="store_const", dest="renderer", const=render_coverage,
         help="refresh coverage and CI support only; preserve the existing release engine",
+    )
+    modes.add_argument(
+        "--change-scope-only", action="store_const", dest="renderer", const=render_change_scope,
+        help="apply reviewed documentation scope to known generated workflows only",
     )
     modes.add_argument(
         "--runners-only", action="store_const", dest="renderer", const=render_runners,

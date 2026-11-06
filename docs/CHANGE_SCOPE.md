@@ -87,3 +87,41 @@ The generated workflow includes its source digest. Contract tests check its
 exact embedded source and execute it against temporary consumer repositories.
 Run `scripts/install_release.py CONSUMER` to update generated consumers and use
 `--check` to reject drift. No copied classifier is maintained independently.
+
+## Activate scope in an existing generated consumer
+
+The presence of a classifier or `scope` job does not mean skipping is enabled.
+Without an explicit `change_scope` policy, generated workflows deliberately set
+`FORCE_FULL` to true. Review required checks and secret/documentation validation
+before opting in: workflows that supply those checks belong in
+`always_validate_workflows`. Keep exact `required_paths` for documentation used
+as a build or deployment input.
+
+For an existing, recognized generated graph with the current shared classifier,
+edit the consumer policy, then run:
+
+```sh
+python3 scripts/install_release.py /path/to/consumer --change-scope-only
+python3 scripts/install_release.py /path/to/consumer --change-scope-only --check
+```
+
+This mode changes only selected scope inputs, validation conditions and the
+final gate proof in the existing workflows. It also enables the release entry
+point to stop before preparation on documentation-only pushes. Actual release
+qualification still passes `force-full: true`; scheduled/manual events remain
+full. Action pins, runner selection, triggers, timeouts, release engines, signing
+and publication steps remain untouched. No GitHub settings are changed.
+
+The migration rejects custom/legacy graphs, altered classifier commands,
+unrecognized classifier copies and aliases of edited YAML nodes. Review those
+consumers individually; do not bypass the rejection or replace their whole
+release implementation merely to enable documentation routing. After migration,
+verify a documentation-only and a source-change run and retain independent
+security checks. The CI change itself correctly requests full validation.
+
+The toolkit itself keeps its CodeQL and full-source security scanners active on
+documentation changes. This includes secret scanning: prose can contain a secret
+even when no source code changed. The aggregate gate rejects a skipped scanner.
+The lightweight configuration check also validates the existing source package
+inventory, so deleting a required documentation file cannot silently break the
+next source release. Editing its contents still uses the documentation route.
