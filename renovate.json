@@ -44,6 +44,19 @@
         "actions/setup-python/requirements.txt"
       ],
       "enabled": false
+    },
+    {
+      "description": "Requalify the hash-bound security branch compatibility fix before changing the Renovate runtime.",
+      "matchManagers": [
+        "custom.regex"
+      ],
+      "matchPackageNames": [
+        "renovate"
+      ],
+      "matchFileNames": [
+        ".github/renovate-runtime.json"
+      ],
+      "enabled": false
     }
   ],
   "ignorePaths": [

@@ -173,3 +173,24 @@ unique fixes until the replacement covers them.
 
 References: [GitHub Actions manager](https://docs.renovatebot.com/modules/manager/github-actions/)
 and [grouping options](https://docs.renovatebot.com/configuration-options/#groupname).
+
+### Security branch compatibility
+
+The two fleet runners use the official Renovate 44.215.0 image with a narrowly
+scoped, in-memory compatibility fix. Its branch planner otherwise takes all
+branch settings from the first alphabetically sorted dependency. A mixed group
+can therefore lose its security priority when the vulnerable dependency sorts
+later. The fix selects a vulnerable member as the branch settings source while
+preserving the entire ordered upgrade list and the existing aggregate review,
+automerge and minimum-group-size rules. Ordinary-only groups are unchanged.
+
+The loader verifies the package version and SHA-256 of the one affected upstream
+module before the CLI can access credentials. Unknown source fails closed; it
+never edits the installed package, loads repository code, or exports Node loader
+flags to package-manager subprocesses. Contract tests exercise native branch
+planning, both directions of the npm/Cargo pair, scheduling and independent
+security limits, plus an isolated official-image smoke test without credentials.
+The runtime version itself requires a reviewed change while this compatibility
+fix is present. To upgrade, reproduce the native tests against the new upstream
+version and either retire the fix or explicitly requalify its one-module hash;
+do not simply advance the runtime pin.
