@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
 import { createHash } from 'node:crypto';
+import { isUtf8 } from 'node:buffer';
 import { createServer } from 'node:http';
 import {
   existsSync,
@@ -98,6 +99,11 @@ const { generateInstallCommands } = await import(
 const memory = await import(
   pathToFileURL('/usr/local/renovate/dist/util/cache/memory/index.js')
 );
+process.env.LOG_LEVEL = 'debug';
+const { init: initLogger } = await import(
+  pathToFileURL('/usr/local/renovate/dist/logger/index.js')
+);
+await initLogger();
 memory.init();
 const constraints = (version, uv = true, hashin = false) => [
   { toolName: 'python', constraint: version },
@@ -501,9 +507,10 @@ async function qualifyGoAndUv() {
       !(go ?? []).some((entry) => entry.artifactError),
       JSON.stringify(go),
     );
-    const sum = go?.find((entry) => entry.file?.path === 'go.sum')?.file
-      ?.contents;
-    assert.equal(typeof sum, 'string');
+    const sum = artifactText(
+      go?.find((entry) => entry.file?.path === 'go.sum'),
+      'go.sum',
+    );
     assert.match(sum, /github\.com\/google\/uuid v1\.6\.0 h1:/);
     assert.deepEqual(
       inventory().tools.find((tool) => tool.name === 'golang').versions,
@@ -539,10 +546,11 @@ async function qualifyGoAndUv() {
         !(updated ?? []).some((entry) => entry.artifactError),
         JSON.stringify(updated),
       );
-      const lock = updated?.find(
-        (entry) => entry.file?.path === `${spec.folder}/uv.lock`,
-      )?.file?.contents;
-      assert.equal(typeof lock, 'string');
+      const lockPath = `${spec.folder}/uv.lock`;
+      const lock = artifactText(
+        updated?.find((entry) => entry.file?.path === lockPath),
+        lockPath,
+      );
       assert(
         lock.includes(`name = "${spec.name}"\nversion = "${spec.version}"`),
       );
@@ -563,4 +571,19 @@ async function qualifyGoAndUv() {
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+}
+
+function artifactText(artifact, expectedPath) {
+  assert.equal(artifact?.file?.type, 'addition');
+  assert.equal(artifact.file.path, expectedPath);
+  const contents = artifact.file.contents;
+  assert(
+    typeof contents === 'string' || Buffer.isBuffer(contents),
+    'Unsupported native artifact contents',
+  );
+  if (Buffer.isBuffer(contents)) {
+    assert(isUtf8(contents), 'Native artifact is not valid UTF-8');
+    return contents.toString('utf8');
+  }
+  return contents;
 }
