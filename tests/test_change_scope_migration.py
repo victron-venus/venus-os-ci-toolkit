@@ -4,6 +4,7 @@ The public fixture is victron-venus/dbus-event-log at
 4aeb17e334351e0aaa1b839a33b54a8572a9d531, read from GitHub on 2026-11-06.
 """
 import copy
+import hashlib
 import json
 import os
 import subprocess
@@ -11,6 +12,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import yaml
 
@@ -78,6 +80,43 @@ class ChangeScopeMigrationTests(unittest.TestCase):
         self.assertNotIn("if", new["jobs"]["check-2"])
         self.assertNotIn("if", new["jobs"]["workflow-contracts"])
         self.assertEqual(new["jobs"]["check-0"]["if"], generator.FULL_SCOPE)
+
+    def test_known_classifier_formatting_revision_is_upgraded_once(self):
+        canonical = (self.root / migration.CLASSIFIER).read_text()
+        legacy = canonical.replace("import re\n\n# Subprocess", "import re\n# Subprocess", 1)
+        transition = tuple(hashlib.sha256(source.encode()).hexdigest()
+                           for source in (legacy, canonical))
+        self.assertEqual(transition, migration.CLASSIFIER_FORMAT_UPGRADE)
+        self.write(migration.CLASSIFIER, legacy)
+        before = (self.root / migration.RELEASE).read_bytes()
+        changes = self.render()
+        self.assertEqual(changes[migration.CLASSIFIER], canonical)
+        self.assertNotIn(migration.RELEASE, changes)
+        for name, source in changes.items():
+            self.write(name, source)
+        self.assertEqual(self.render(), {})
+        self.assertEqual((self.root / migration.RELEASE).read_bytes(), before)
+
+    def test_legacy_upgrade_rejects_an_unreviewed_canonical_target(self):
+        canonical = (generator.ROOT / migration.CLASSIFIER).read_text()
+        legacy = canonical.replace("import re\n\n# Subprocess", "import re\n# Subprocess", 1)
+        self.write(migration.CLASSIFIER, generator.consumer_python(legacy))
+        target = self.root / "other-toolkit"
+        (target / "scripts").mkdir(parents=True)
+        (target / migration.CLASSIFIER).write_text(canonical + "\n")
+        with patch.object(generator, "ROOT", target):
+            with self.assertRaisesRegex(ValueError, "classifier revision"):
+                self.render()
+
+    def test_other_classifier_whitespace_or_comments_are_not_accepted(self):
+        canonical = (self.root / migration.CLASSIFIER).read_text()
+        legacy = canonical.replace("import re\n\n# Subprocess", "import re\n# Subprocess", 1)
+        for changed in (legacy + "\n", legacy + "# Local customization\n", canonical + "\n"):
+            with self.subTest(source=changed[-40:]):
+                self.write(migration.CLASSIFIER, changed)
+                with self.assertRaisesRegex(ValueError, "classifier revision"):
+                    self.render()
+                self.assertEqual((self.root / migration.CLASSIFIER).read_text(), changed)
 
     def test_unsafe_release_shortcut_is_repaired_without_changing_other_inputs(self):
         original = (self.root / migration.RELEASE).read_text()
