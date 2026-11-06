@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -23,6 +24,13 @@ def read_snippet():
 
 PIN = re.search(r'test "\$toolkit_head" = ([0-9a-f]{40})', read_snippet()).group(1)
 AVAILABLE = all(shutil.which(command) for command in ("sh", "git", "python3"))
+
+
+def fixture_environment():
+    """Isolate temporary repositories from inherited Git selectors and config."""
+    return {
+        key: value for key, value in os.environ.items() if not key.startswith("GIT_")
+    }
 
 
 @unittest.skipUnless(AVAILABLE, "shell, git and python3 are required")
@@ -62,7 +70,7 @@ case "$*" in *--check) exit 0 ;; *) exit "$TEST_GENERATE_RC" ;; esac
             toolkit = directory / "toolkit"
             toolkit.mkdir()
             env = {
-                **os.environ,
+                **fixture_environment(),
                 "PATH": str(directory) + os.pathsep + os.environ["PATH"],
                 "TEST_REVISION": revision,
                 "TEST_REVISION_RC": str(revision_rc),
@@ -185,7 +193,7 @@ class RealGitGuardTests(unittest.TestCase):
             repo = root / "toolkit"
             repo.mkdir()
             calls = root / "calls"
-            env = {**os.environ, "TEST_CALLS": str(calls)}
+            env = {**fixture_environment(), "TEST_CALLS": str(calls)}
 
             def git(*args):
                 return subprocess.check_output(
@@ -225,6 +233,59 @@ class RealGitGuardTests(unittest.TestCase):
                 calls.read_text().splitlines() if calls.exists() else [],
                 status,
             )
+
+    def test_fixtures_do_not_touch_inherited_outer_repository(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            outer = Path(temporary) / "outer"
+            outer.mkdir()
+            clean_env = fixture_environment()
+
+            def git(*args):
+                return subprocess.check_output(
+                    ["git", "-C", str(outer), *args],
+                    text=True,
+                    stderr=subprocess.DEVNULL,
+                    env=clean_env,
+                )
+
+            git("init", "-q")
+            git("config", "user.name", "Outer fixture")
+            git("config", "user.email", "outer@example.invalid")
+            (outer / "keep.txt").write_text("outer repository must remain unchanged\n")
+            git("add", ".")
+            git("-c", "commit.gpgsign=false", "commit", "-qm", "outer fixture")
+
+            def snapshot():
+                return {
+                    str(path.relative_to(outer)): path.read_bytes()
+                    for path in outer.rglob("*")
+                    if path.is_file()
+                }
+
+            inherited = {
+                "GIT_DIR": str(outer / ".git"),
+                "GIT_WORK_TREE": str(outer),
+                "GIT_INDEX_FILE": str(outer / ".git/index"),
+                "GIT_COMMON_DIR": str(outer / ".git"),
+                "GIT_OBJECT_DIRECTORY": str(outer / ".git/objects"),
+                "GIT_ALTERNATE_OBJECT_DIRECTORIES": str(outer / ".git/objects"),
+                "GIT_PREFIX": "outer-prefix/",
+                "GIT_CONFIG": str(outer / ".git/config"),
+            }
+            before = snapshot()
+            with patch.dict(os.environ, inherited):
+                with patch("subprocess.run", wraps=subprocess.run) as run:
+                    code, calls, status = self.fixture()
+                    fake_code, fake_calls = SafeGeneratorSnippetTests().run_case()
+                self.assertEqual((code, len(calls), status), (0, 2, ""))
+                self.assertEqual((fake_code, len(fake_calls)), (0, 2))
+                for call in run.call_args_list:
+                    self.assertFalse(
+                        any(key.startswith("GIT_") for key in call.kwargs["env"])
+                    )
+                for key, value in inherited.items():
+                    self.assertEqual(os.environ[key], value)
+            self.assertEqual(snapshot(), before)
 
     def test_clean_regular_checkout(self):
         code, calls, status = self.fixture()
@@ -393,6 +454,46 @@ class RunbookWorkflowIntegrationTests(unittest.TestCase):
 
     def test_documented_procedure_is_checked_for_documentation_only_changes(self):
         self.documented_test_step()
+
+    def test_full_generation_retains_toolkit_only_contract_steps(self):
+        import yaml
+
+        sys.path.insert(0, str(ROOT / "scripts"))
+        try:
+            import install_release as generator
+        finally:
+            sys.path.pop(0)
+        policy = json.loads((ROOT / ".release-policy.json").read_text())
+        workflow = generator.quality(policy, ROOT)
+        actual = workflow["jobs"]["workflow-contracts"]
+        stored = yaml.load(
+            (ROOT / ".github/workflows/quality-gate.yml").read_text(),
+            Loader=yaml.BaseLoader,
+        )["jobs"]["workflow-contracts"]
+        names = {
+            "Validate the required source package inventory",
+            "Verify the documented scope regeneration procedure",
+        }
+        self.assertNotIn("if", actual)
+        for name in names:
+            expected_steps = [
+                step for step in stored["steps"] if step.get("name") == name
+            ]
+            actual_steps = [
+                step for step in actual["steps"] if step.get("name") == name
+            ]
+            self.assertEqual(len(expected_steps), 1)
+            self.assertEqual(actual_steps, expected_steps)
+            self.assertNotIn("if", actual_steps[0])
+        with tempfile.TemporaryDirectory() as temporary:
+            for directory in (None, Path(temporary)):
+                with self.subTest(directory=directory):
+                    consumer = generator.workflow_contract_job(directory)
+                    self.assertFalse(
+                        names.intersection(
+                            step.get("name") for step in consumer["steps"]
+                        )
+                    )
 
     def test_scoped_regeneration_preserves_existing_runbook_test_step(self):
         import yaml
