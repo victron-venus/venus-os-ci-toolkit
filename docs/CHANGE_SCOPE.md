@@ -77,8 +77,8 @@ run. After validating equivalent coverage, consolidate legacy required build
 and test job contexts into **CI gate**, which verifies their full-run results
 and authorizes only proven documentation skips. Retain independently required
 security contexts such as CodeQL and Sonar, and keep their real validators active.
-The toolkit itself always runs CodeQL and configuration checks; documentation-only
-changes skip its separate contract-test workflow and Trivy scan.
+The toolkit itself always runs CodeQL, configuration checks and its full-source
+security scan. Documentation-only changes skip its separate contract-test workflow.
 
 ## Maintaining the classifier
 
