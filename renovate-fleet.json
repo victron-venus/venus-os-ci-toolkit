@@ -61,6 +61,13 @@
       "automerge": false
     },
     {
+      "description": "Refresh Python lockfiles within declared dependency ranges.",
+      "matchManagers": [
+        "pep621"
+      ],
+      "rangeStrategy": "update-lockfile"
+    },
+    {
       "description": "Python runtime migrations require an explicit project change.",
       "matchManagers": [
         "pep621"

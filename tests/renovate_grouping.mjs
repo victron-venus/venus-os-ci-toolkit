@@ -1,6 +1,6 @@
 // Exercise the actual pinned Renovate extractor and branch planner, without API writes.
 import assert from 'node:assert/strict';
-import { glob, mkdtemp, readFile, realpath, rm } from 'node:fs/promises';
+import { glob, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { isAbsolute, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -22,6 +22,11 @@ const allowedModules = new Set([
   'config/defaults',
   'config/global',
   'config/utils',
+  'config/index',
+  'modules/manager/index',
+  'modules/datasource/common',
+  'workers/repository/process/lookup/index',
+  'util/package-rules/index',
   'modules/platform/api',
   'modules/platform/index',
   'workers/repository/init/vulnerability',
@@ -266,6 +271,69 @@ assert.ok(fleetUpdates.every((update) => update.automerge === false));
 assert.equal(Object.hasOwn(fleetConfig.vulnerabilityAlerts, 'enabled'), false);
 assert.equal(fleetConfig.vulnerabilityAlerts.dependencyDashboardApproval, false);
 console.log('Full-fleet policy extracts Python application dependencies and keeps application updates separate from atomic CI updates.');
+
+// Lookup must propose a lock-only update even when the newer release already
+// satisfies the manifest. Supplying a prebuilt update would miss this regression.
+const { getManagerConfig } = await moduleAt('config/index');
+const { getRangeStrategy } = await moduleAt('modules/manager/index');
+const { getDatasourceFor } = await moduleAt('modules/datasource/common');
+const { lookupUpdates } = await moduleAt('workers/repository/process/lookup/index');
+const { applyPackageRules } = await moduleAt('util/package-rules/index');
+const lockScratch = await mkdtemp(resolve(tmpdir(), 'renovate-lockfiles-'));
+const pypi = getDatasourceFor('pypi');
+const originalReleases = pypi.getReleases;
+const lockCases = [
+  { name: 'fixture-wide', range: '>=1.0', versions: ['1.0.0', '1.1.0', '1.2.0'] },
+  { name: 'fixture-bounded', range: '~=1.0', versions: ['1.0.0', '1.1.0', '1.2.0', '2.0.0'] },
+  { name: 'fixture-exact', range: '==1.1.0', versions: ['1.1.0', '1.2.0'] },
+  { name: 'fixture-without-lock', range: '>=1.0', versions: ['1.0.0', '1.1.0', '1.2.0'] },
+];
+try {
+  GlobalConfig.set({ localDir: lockScratch, platform: 'github' });
+  pypi.getReleases = async ({ packageName }) => {
+    const fixture = lockCases.find((item) => item.name === packageName);
+    assert.ok(fixture, 'Only synthetic package release metadata may be queried');
+    return { releases: fixture.versions.map((version) => ({ version, releaseTimestamp: '2025-01-01T00:00:00.000Z' })) };
+  };
+  await writeFile(resolve(lockScratch, 'uv.lock'), 'version = 1\nrequires-python = ">=3.11"\n' +
+    lockCases.filter((item) => item.name !== 'fixture-without-lock').map((item) =>
+      `\n[[package]]\nname = "${item.name}"\nversion = "1.1.0"\nsource = { registry = "https://pypi.org/simple" }\n`).join(''));
+  const manifest = '[project]\nname = "lock-fixture"\nversion = "1.0.0"\nrequires-python = ">=3.11"\ndependencies = [' +
+    lockCases.map((item) => JSON.stringify(item.name + item.range)).join(', ') + ']\n';
+  const managerConfig = getManagerConfig(fleetConfig, 'pep621');
+  const extracted = await extractPython(manifest, 'pyproject.toml', managerConfig);
+  for (const fixture of lockCases) {
+    const dependency = extracted.deps.find((item) => item.depName === fixture.name);
+    assert.ok(dependency);
+    assert.equal(dependency.lockedVersion, fixture.name === 'fixture-without-lock' ? undefined : '1.1.0');
+    const candidate = await applyPackageRules({ ...managerConfig, ...dependency,
+      manager: 'pep621', packageFile: 'pyproject.toml', depName: fixture.name, packageName: fixture.name }, 'lookup');
+    assert.equal(getRangeStrategy(candidate), 'update-lockfile');
+    const actual = (await lookupUpdates(structuredClone(candidate))).unwrap();
+    // Lookup applies package rules again per release; override the strategy there
+    // too so the negative control really exercises the previous behavior.
+    const baseline = (await lookupUpdates({ ...structuredClone(candidate), rangeStrategy: 'replace',
+      packageRules: [...structuredClone(candidate.packageRules), { matchPackageNames: [fixture.name], rangeStrategy: 'replace' }],
+    })).unwrap();
+    assert.equal(actual.err, undefined);
+    assert.equal(baseline.err, undefined);
+    const updates = actual.val.updates;
+    if (fixture.name === 'fixture-wide' || fixture.name === 'fixture-bounded') {
+      const withinRange = updates.find((item) => item.newVersion === '1.2.0');
+      assert.ok(withinRange, 'The declared range must not suppress a newer lockfile version');
+      assert.equal(withinRange.newValue, fixture.range);
+      assert.equal(withinRange.isLockfileUpdate, true);
+      assert.ok(!baseline.val.updates.some((item) => item.newVersion === '1.2.0'), JSON.stringify({ fixture, baseline }));
+    }
+    assert.deepEqual(updates.filter((item) => !item.isLockfileUpdate), baseline.val.updates,
+      'Exact pins, absent locks and out-of-range proposals keep replacement behavior');
+  }
+} finally {
+  pypi.getReleases = originalReleases;
+  GlobalConfig.set({ localDir: process.cwd(), platform: 'github' });
+  await rm(lockScratch, { recursive: true, force: true });
+}
+console.log('Native Python lookup refreshes in-range locks without changing manifest bounds; exact and out-of-range updates retain replacement behavior.');
 
 // Advisory rules force their own grouping; CI security fixes must stay atomic.
 const { default: platformApis } = await moduleAt('modules/platform/api');
