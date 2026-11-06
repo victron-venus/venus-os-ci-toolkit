@@ -123,6 +123,12 @@ release implementation merely to enable documentation routing. After migration,
 verify a documentation-only and a source-change run and retain independent
 security checks. The CI change itself correctly requests full validation.
 
+This narrow mode does not rewrite existing consumer documentation. Before
+publishing the migration, update any runbook that says documentation-only main
+pushes skip release preparation. Describe the reduced PR checks, full main-branch
+release qualification and required package/release-note inputs. Review this
+small documentation edit directly; do not regenerate unrelated release files.
+
 The toolkit itself keeps its CodeQL and full-source security scanners active on
 documentation changes. This includes secret scanning: prose can contain a secret
 even when no source code changed. The aggregate gate rejects a skipped scanner.
