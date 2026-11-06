@@ -120,41 +120,46 @@ export function removalPlan(inventory, requested) {
   if (python.versions.some((v) => v.version === requested))
     return { reason: 'requested-already-installed', requested, steps: [] };
   const old = new Set(python.versions.map((v) => v.version));
-  const children = [];
+  const qualifiedChildren = { uv: '0.13.4', hashin: '1.0.5' };
+  const children = new Set();
   for (const tool of inventory.tools)
     for (const v of tool.versions) {
       if (v.parent?.name === 'python') {
         assert(old.has(v.parent.version), 'Unrecorded Python parent');
         assert(
-          tool.name === 'uv' && tool.type === 'pip' && v.version === '0.13.4',
+          Object.hasOwn(qualifiedChildren, tool.name) &&
+            tool.type === 'pip' &&
+            v.version === qualifiedChildren[tool.name],
           'Unknown Python child',
         );
-        children.push(v);
+        children.add(tool.name);
       }
     }
   const steps = [];
-  if (children.length) {
-    const uv = inventory.tools.find((t) => t.name === 'uv');
+  for (const name of ['uv', 'hashin']) {
+    if (!children.has(name)) continue;
+    const child = inventory.tools.find((t) => t.name === name);
+    const version = qualifiedChildren[name];
     assert(
-      uv.version === null || uv.version === '0.13.4',
-      'Unexpected current UV',
+      child.version === null || child.version === version,
+      'Unexpected current qualified child',
     );
     assert(
-      uv.versions.every(
+      child.versions.every(
         (v) =>
-          v.version === '0.13.4' &&
+          v.version === version &&
           v.parent?.name === 'python' &&
           old.has(v.parent.version),
       ),
-      'UV has a preserved or unknown parent',
+      'Qualified child has a preserved or unknown parent',
     );
     assert(
       !inventory.tools.some((t) =>
-        t.versions.some((v) => v.parent?.name === 'uv'),
+        t.versions.some((v) => v.parent?.name === name),
       ),
-      'UV has child tools',
+      'Qualified child has child tools',
     );
-    steps.push({ name: 'uv', version: '0.13.4' });
+    steps.push({ name, version });
   }
   for (const version of [...old].sort((a, b) => a.localeCompare(b)))
     steps.push({ name: 'python', version });
@@ -238,16 +243,21 @@ function procSnapshot() {
     }),
   );
 }
-function exclusiveNamespace() {
-  const first = procSnapshot();
-  assertAncestorOnly(first, process.pid);
-  const second = procSnapshot();
-  assertAncestorOnly(second, process.pid);
+export function assertStableNamespace(first, second, self) {
+  assertAncestorOnly(first, self);
+  assertAncestorOnly(second, self);
+  const identities = (records) =>
+    [...records]
+      .map(([pid, row]) => [pid, row.parent, row.start])
+      .sort((a, b) => a[0] - b[0]);
   assert.deepEqual(
-    [...first].sort((a, b) => a[0] - b[0]),
-    [...second].sort((a, b) => a[0] - b[0]),
+    identities(first),
+    identities(second),
     'Process namespace changed during validation',
   );
+}
+function exclusiveNamespace() {
+  assertStableNamespace(procSnapshot(), procSnapshot(), process.pid);
 }
 export function canonicalPath(path, kind) {
   assert(path.startsWith('/'), 'Absolute path required');
@@ -275,11 +285,15 @@ function verifyFixedRuntime() {
   canonicalPath('/home/ubuntu', 'directory');
 }
 function versionPath(step) {
-  assert(['python', 'uv'].includes(step.name));
+  assert(['python', 'uv', 'hashin'].includes(step.name));
   if (step.name === 'python')
     return toolRoot + '/python/' + qualifiedPythonVersion(step.version);
-  assert.equal(step.version, '0.13.4');
-  return toolRoot + '/uv/0.13.4';
+  if (step.name === 'uv') {
+    assert.equal(step.version, '0.13.4');
+    return toolRoot + '/uv/0.13.4';
+  }
+  assert.equal(step.version, '1.0.5');
+  return toolRoot + '/hashin/1.0.5';
 }
 function verifyPlanPaths(plan, inventory) {
   if (plan.reason === 'requested-already-installed') {
@@ -299,23 +313,26 @@ function verifyPlanPaths(plan, inventory) {
       'Unrecorded Python paths',
     );
   }
-  if (plan.steps.some((s) => s.name === 'uv')) {
+  for (const name of ['uv', 'hashin']) {
+    if (!plan.steps.some((s) => s.name === name)) continue;
+    const root = toolRoot + (name === 'uv' ? '/uv' : '/hashin');
+    const version = name === 'uv' ? '0.13.4' : '1.0.5';
     assert.deepEqual(
-      readdirSync(toolRoot + '/uv').sort((a, b) => a.localeCompare(b)),
-      ['0.13.4'],
-      'Unrecorded UV paths',
+      readdirSync(root).sort((a, b) => a.localeCompare(b)),
+      [version],
+      'Unrecorded qualified child paths',
     );
     const parents = inventory.tools
-      .find((t) => t.name === 'uv')
+      .find((t) => t.name === name)
       .versions.map((v) => v.parent.version)
       .sort((a, b) => a.localeCompare(b));
     assert.deepEqual(
-      readdirSync(toolRoot + '/uv/0.13.4').sort((a, b) => a.localeCompare(b)),
+      readdirSync(root + '/' + version).sort((a, b) => a.localeCompare(b)),
       parents,
-      'Unexpected UV parent paths',
+      'Unexpected qualified child parent paths',
     );
     for (const parent of parents)
-      canonicalPath(toolRoot + '/uv/0.13.4/' + parent, 'directory');
+      canonicalPath(root + '/' + version + '/' + parent, 'directory');
   }
 }
 function absent(path) {

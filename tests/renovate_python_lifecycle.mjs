@@ -15,6 +15,7 @@ import {
   afterRemoval,
   runLifecycle,
   assertAncestorOnly,
+  assertStableNamespace,
   parseProcStat,
   canonicalPath,
   assertCliVersion,
@@ -124,7 +125,7 @@ test('unqualified UV version and UV child rejected', () => {
     version: '1',
     versions: [{ version: '1', parent: { name: 'uv', version: '0.13.4' } }],
   });
-  assert.throws(() => removalPlan(d, requested), /UV has child/);
+  assert.throws(() => removalPlan(d, requested), /Qualified child has child/);
 });
 test('malformed, duplicate, control and path-shaped versions rejected', () => {
   for (const bad of ['../../python', '3.15.2 --all', '3.15.2\n'])
@@ -258,5 +259,92 @@ test('CLI identity accepts the complete official format and rejects any altered 
     '14.64.0 (Node v24.22.2) extra',
   ]) {
     assert.throws(() => assertCliVersion(value), /Unqualified containerbase/);
+  }
+});
+
+const withHashin = () => {
+  const value = fixture();
+  value.tools.push({
+    name: 'hashin',
+    type: 'pip',
+    version: '1.0.5',
+    versions: [
+      { version: '1.0.5', parent: { name: 'python', version: '3.12.16' } },
+      { version: '1.0.5', parent: { name: 'python', version: '3.11.14' } },
+    ],
+  });
+  return value;
+};
+test('qualified hashin and UV leaves are removed before every obsolete Python parent', () => {
+  const h = harness(withHashin());
+  const result = runLifecycle(requested, h.io);
+  assert.deepEqual(result.removed, [
+    { name: 'uv', version: '0.13.4' },
+    { name: 'hashin', version: '1.0.5' },
+    { name: 'python', version: '3.11.14' },
+    { name: 'python', version: '3.12.16' },
+  ]);
+  assert.deepEqual(h.state.tools, [fixture().tools[2]]);
+});
+test('unqualified hashin version, foreign parent and descendants reject the whole plan before mutation', () => {
+  const mutate = [
+    (d) => {
+      d.tools[3].version = '1.0.6';
+      d.tools[3].versions[0].version = '1.0.6';
+    },
+    (d) => {
+      d.tools[3].versions[1].parent = { name: 'node', version: '26.13.0' };
+    },
+    (d) => {
+      d.tools.push({
+        name: 'extra',
+        version: '1',
+        versions: [
+          { version: '1', parent: { name: 'hashin', version: '1.0.5' } },
+        ],
+      });
+    },
+  ];
+  for (const change of mutate) {
+    const d = withHashin();
+    change(d);
+    const h = harness(d);
+    assert.throws(() => runLifecycle(requested, h.io));
+    assert.deepEqual(h.calls, []);
+  }
+});
+const processFixture = () =>
+  new Map([
+    [1, { pid: 1, parent: 0, start: '100', state: 'S' }],
+    [7, { pid: 7, parent: 1, start: '200', state: 'S' }],
+    [9, { pid: 9, parent: 7, start: '300', state: 'R' }],
+  ]);
+test('scheduling state changes preserve stable live process identity', () => {
+  const first = processFixture(),
+    second = processFixture();
+  second.get(7).state = 'R';
+  second.get(9).state = 'S';
+  assert.doesNotThrow(() => assertStableNamespace(first, second, 9));
+});
+test('PID reuse, reparenting, unrelated processes and dead ancestors reject either snapshot', () => {
+  const mutations = [
+    (d) => {
+      d.get(7).start = '201';
+    },
+    (d) => {
+      d.get(9).parent = 1;
+    },
+    (d) => {
+      d.set(11, { pid: 11, parent: 1, start: '400', state: 'S' });
+    },
+    (d) => {
+      d.get(7).state = 'Z';
+    },
+  ];
+  for (const mutate of mutations) {
+    const changed = processFixture();
+    mutate(changed);
+    assert.throws(() => assertStableNamespace(processFixture(), changed, 9));
+    assert.throws(() => assertStableNamespace(changed, processFixture(), 9));
   }
 });

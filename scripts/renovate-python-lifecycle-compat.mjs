@@ -21,8 +21,16 @@ export function transformPythonLifecycle(source, helperPath) {
   );
   const replacements = [
     [
+      '\tlet constraint = toolConstraint.constraint;',
+      '\tlet constraint = toolConstraint.constraint;\n' +
+        '\tif (toolName === "hashin") {\n' +
+        '\t\tif (constraint && (!versioning.isValid(constraint) || !versioning.matches("1.0.5", constraint))) throw new Error("Unqualified private hashin constraint");\n' +
+        '\t\treturn "1.0.5";\n' +
+        '\t}',
+    ],
+    [
       '\t\t\t\tif (get(cacheKey) === active) continue;',
-      '\t\t\t\tif (toolName !== "python" && toolName !== "uv" && get(cacheKey) === active) continue;',
+      '\t\t\t\tif (toolName !== "python" && toolName !== "uv" && toolName !== "hashin" && get(cacheKey) === active) continue;',
     ],
     [
       '\t\t\tconst installCommand =',

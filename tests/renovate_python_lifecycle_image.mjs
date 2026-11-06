@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
+import { createServer } from 'node:http';
 import {
   existsSync,
   mkdtempSync,
@@ -11,6 +12,7 @@ import {
   rmSync,
   statSync,
   symlinkSync,
+  writeFileSync,
 } from 'node:fs';
 import { performance } from 'node:perf_hooks';
 import { tmpdir } from 'node:os';
@@ -95,16 +97,17 @@ const memory = await import(
   pathToFileURL('/usr/local/renovate/dist/util/cache/memory/index.js')
 );
 memory.init();
-const constraints = (version, uv = true) => [
+const constraints = (version, uv = true, hashin = false) => [
   { toolName: 'python', constraint: version },
   ...(uv ? [{ toolName: 'uv', constraint: '0.13.4' }] : []),
+  ...(hashin ? [{ toolName: 'hashin' }] : []),
 ];
-async function install(version, uv = true) {
+async function install(version, uv = true, hashin = false) {
   const commands = await generateInstallCommands(
-    constraints(version, uv),
+    constraints(version, uv, hashin),
     true,
   );
-  assert.equal(commands.length, uv ? 3 : 2);
+  assert.equal(commands.length, 2 + Number(uv) + Number(hashin));
   assert.equal(commands[0], `${node} ${helper} ${version}`);
   for (const command of commands) run('/bin/bash', ['-e', '-c', command]);
   return commands;
@@ -117,11 +120,11 @@ function onlyPython(version) {
 }
 receipt.initialInventory = inventory();
 // Old -> new -> old covers real removal, leaf reinstallation and memo reuse.
-receipt.initial = await install(A);
+receipt.initial = await install(A, true, true);
 onlyPython(A);
 const firstInode = statSync(`${toolRoot}/python/${A}`).ino;
 const start = performance.now();
-receipt.warm = await install(A);
+receipt.warm = await install(A, true, true);
 receipt.warmMilliseconds = performance.now() - start;
 assert.equal(
   statSync(`${toolRoot}/python/${A}`).ino,
@@ -167,10 +170,11 @@ try {
   renameSync(saved, path);
 }
 receipt.redirectedPathRejected = true;
-receipt.new = await install(B);
+receipt.new = await install(B, false);
 onlyPython(B);
 assert(!existsSync(`${toolRoot}/python/${A}`));
-receipt.back = await install(A);
+assert(!inventory().tools.some((t) => ['uv', 'hashin'].includes(t.name)));
+receipt.back = await install(A, true, true);
 onlyPython(A);
 assert(!existsSync(`${toolRoot}/python/${B}`));
 const uv = inventory().tools.find((t) => t.name === 'uv');
@@ -178,6 +182,11 @@ assert.deepEqual(uv.versions, [
   { version: '0.13.4', parent: { name: 'python', version: A } },
 ]);
 receipt.uvReinstalledForCurrentParent = true;
+const hashin = inventory().tools.find((t) => t.name === 'hashin');
+assert.deepEqual(hashin.versions, [
+  { version: '1.0.5', parent: { name: 'python', version: A } },
+]);
+receipt.hashinReinstalledForCurrentParent = true;
 receipt.failedNativePlanRetryReinstalled = true;
 // A real unsupported leaf must stop the complete plan before removing UV.
 run(cli, ['install', 'tool', 'pip-tools', '7.5.1']);
@@ -265,6 +274,68 @@ try {
   assert.match(output, /--hash=sha256:/);
   assert.match(output, /--no-build/);
   receipt.nativeArtifactRegenerated = true;
+  // Exercise the real hashed-requirements manager after child removal/reinstall.
+  // The loopback endpoint returns only synthetic release hashes, never a package.
+  const fileName = 'requirements-hashin.txt';
+  const oldHash = 'a'.repeat(64),
+    newHash = 'b'.repeat(64);
+  const beforeHashin = `lifecycle-fixture==2.0.0 --hash=sha256:${oldHash}\n`;
+  writeFileSync(join(dir, fileName), beforeHashin);
+  let requests = 0;
+  const server = createServer((request, response) => {
+    if (request.url !== '/pypi/lifecycle-fixture/json') {
+      response.writeHead(404);
+      response.end();
+      return;
+    }
+    requests++;
+    response.setHeader('Content-Type', 'application/json');
+    response.end(
+      JSON.stringify({
+        info: { name: 'lifecycle-fixture' },
+        releases: {
+          '2.0.0': [
+            {
+              digests: { sha256: newHash },
+              url: 'http://127.0.0.1/never-download',
+            },
+          ],
+        },
+      }),
+    );
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  try {
+    setCustomEnv({
+      PATH: process.env.PATH,
+      HOME: '/home/ubuntu',
+      INDEX_URL: `http://127.0.0.1:${server.address().port}/`,
+    });
+    const { updateArtifacts: updateHashes } = await import(
+      pathToFileURL(
+        '/usr/local/renovate/dist/modules/manager/pip_requirements/artifacts.js',
+      )
+    );
+    const hashes = await updateHashes({
+      packageFileName: fileName,
+      newPackageFileContent: beforeHashin,
+      updatedDeps: [{ depName: 'lifecycle-fixture' }],
+      config: { constraints: { python: A } },
+    });
+    assert(
+      !(hashes ?? []).some((x) => x.artifactError),
+      JSON.stringify(hashes),
+    );
+    assert.equal(requests, 1);
+    const updated = readFileSync(join(dir, fileName), 'utf8');
+    assert(updated.includes(newHash));
+    assert(!updated.includes(oldHash));
+    receipt.nativeHashinArtifactRegenerated = true;
+  } finally {
+    await new Promise((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve())),
+    );
+  }
 } finally {
   rmSync(scratch, { recursive: true, force: true });
 }
