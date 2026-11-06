@@ -14,6 +14,7 @@ import {
   renameSync,
   rmSync,
   statSync,
+  statfsSync,
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
@@ -116,8 +117,10 @@ async function install(version, uv = true, hashin = false) {
     true,
   );
   assert.equal(commands.length, 2 + Number(uv) + Number(hashin));
-  assert.equal(commands[0], `${node} ${helper} ${version}`);
-  for (const command of commands) run('/bin/bash', ['-e', '-c', command]);
+  assert.equal(commands[0], `${node} ${helper} python-without-go ${version}`);
+  runMeasuredPreparation(commands[0]);
+  for (const command of commands.slice(1))
+    run('/bin/bash', ['-e', '-c', command]);
   return commands;
 }
 function onlyPython(version) {
@@ -147,11 +150,14 @@ receipt.goInitial = await installGo('1.27.3');
 receipt.goInitialMilliseconds = performance.now() - goStarted;
 // Old -> new -> old covers real removal, leaf reinstallation and memo reuse.
 receipt.initial = await install(A, true, true);
+assertGoAbsent();
 onlyPython(A);
 const firstInode = statSync(`${toolRoot}/python/${A}`).ino;
+await installGo('1.27.3');
 const start = performance.now();
 receipt.warm = await install(A, true, true);
 receipt.warmMilliseconds = performance.now() - start;
+assertGoAbsent();
 assert.equal(
   statSync(`${toolRoot}/python/${A}`).ino,
   firstInode,
@@ -442,6 +448,17 @@ async function qualifyGoAndUv() {
         `version = 1\nrevision = 3\nrequires-python = "==3.13.*"\n\n[[package]]\nname = "${spec.project}"\nversion = "0.0.0"\nsource = { virtual = "." }\n`,
       );
     }
+    mkdirSync(join(root, 'javascript'));
+    writeFileSync(
+      join(root, 'javascript/package.json'),
+      JSON.stringify({
+        name: 'lifecycle-npm-fixture',
+        version: '0.0.0',
+        private: true,
+        dependencies: { 'is-number': '7.0.0' },
+        scripts: { postinstall: 'node -e "process.exit(37)"' },
+      }),
+    );
     run('git', ['init', '-b', 'main'], { cwd: root });
     run('git', ['add', '.'], { cwd: root });
     run(
@@ -528,6 +545,8 @@ async function qualifyGoAndUv() {
     );
     result.nativeUv = [];
     for (const spec of specs) {
+      // The second output exercises Go retirement with Python already installed.
+      if (result.nativeUv.length) await installGo('1.26.0');
       const started = performance.now();
       const filename = `${spec.folder}/pyproject.toml`;
       const manifest = readFileSync(join(root, filename), 'utf8').replace(
@@ -556,6 +575,7 @@ async function qualifyGoAndUv() {
       );
       assert.match(lock, /sha256:[a-f0-9]{64}/);
       onlyPython('3.13.18');
+      assertGoAbsent();
       assert(!existsSync(`${toolRoot}/python/${A}`));
       result.nativeUv.push({
         name: spec.name,
@@ -567,6 +587,37 @@ async function qualifyGoAndUv() {
     assert.deepEqual(result.uvInventory.versions, [
       { version: '0.13.4', parent: { name: 'python', version: '3.13.18' } },
     ]);
+    result.nativeNpm = await qualifyNpmAfterPython(root);
+    assertGoAbsent();
+    onlyPython('3.13.18');
+    // Reuse the populated Go cache; do not prune it to make the test pass.
+    writeFileSync(join(root, 'go.sum'), '\n');
+    const repeated = await updateGo({
+      packageFileName: 'go.mod',
+      newPackageFileContent: newMod,
+      updatedDeps: [
+        { depName: 'github.com/google/uuid', newVersion: 'v1.6.0' },
+      ],
+      config: { updateType: 'minor' },
+    });
+    assert(
+      !(repeated ?? []).some((entry) => entry.artifactError),
+      JSON.stringify(repeated),
+    );
+    const repeatedSum = artifactText(
+      repeated?.find((entry) => entry.file?.path === 'go.sum'),
+      'go.sum',
+    );
+    assert.equal(repeatedSum, sum);
+    assert.deepEqual(
+      inventory().tools.find((tool) => tool.name === 'golang').versions,
+      [{ version: '1.26.0' }],
+    );
+    onlyPython('3.13.18');
+    result.nativeGoAfterPythonAndNpm = {
+      sha256: createHash('sha256').update(repeatedSum).digest('hex'),
+      reinstalled: true,
+    };
     return result;
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -586,4 +637,72 @@ function artifactText(artifact, expectedPath) {
     return contents.toString('utf8');
   }
   return contents;
+}
+
+function assertGoAbsent() {
+  assert(!inventory().tools.some((tool) => tool.name === 'golang'));
+  for (const version of ['1.27.3', '1.26.0'])
+    assert(!existsSync(`${toolRoot}/golang/${version}`));
+}
+async function qualifyNpmAfterPython(root) {
+  const { generateLockFile } = await import(
+    pathToFileURL(
+      '/usr/local/renovate/dist/modules/manager/npm/post-update/npm.js',
+    )
+  );
+  const started = performance.now();
+  const result = await generateLockFile(
+    'javascript',
+    {
+      NPM_CONFIG_CACHE: join(root, 'npm-cache'),
+    },
+    'package-lock.json',
+    {
+      constraints: { node: '24.22.2', npm: '12.2.2' },
+      ignoreScripts: true,
+    },
+    [{ depName: 'is-number', newValue: '7.0.0' }],
+  );
+  assert.equal(result.error, false, result.stderr);
+  assert.equal(typeof result.lockFile, 'string');
+  const lock = JSON.parse(result.lockFile);
+  assert.equal(lock.packages['node_modules/is-number'].version, '7.0.0');
+  assert.match(lock.packages['node_modules/is-number'].integrity, /^sha512-/);
+  assert(!existsSync(join(root, 'javascript/node_modules')));
+  return {
+    sha256: createHash('sha256').update(result.lockFile).digest('hex'),
+    milliseconds: performance.now() - started,
+    guarded: true,
+  };
+}
+
+function runMeasuredPreparation(command) {
+  const before = inventory();
+  const go = before.tools.find((tool) => tool.name === 'golang');
+  if (!go) {
+    run('/bin/bash', ['-e', '-c', command]);
+    return;
+  }
+  const goRoot = toolRoot + '/golang';
+  assert.equal(realpathSync(goRoot), goRoot);
+  const allocated = run('/usr/bin/du', ['-sk', goRoot]).match(/^(\d+)\s/);
+  assert(allocated, 'Expected bounded Go tree allocation measurement');
+  const beforeFs = statfsSync(toolRoot);
+  const output = run('/bin/bash', ['-e', '-c', command]);
+  const afterFs = statfsSync(toolRoot);
+  const removed = JSON.parse(output).privatePythonLifecycle.removed;
+  assertGoAbsent();
+  receipt.goRetirementMeasurements ??= [];
+  receipt.goRetirementMeasurements.push({
+    versions: go.versions.map((v) => v.version),
+    retiredTreeAllocatedBytes: Number(allocated[1]) * 1024,
+    freeBytesBefore: beforeFs.bavail * beforeFs.bsize,
+    freeBytesAfter: afterFs.bavail * afterFs.bsize,
+    freeInodesBefore: beforeFs.ffree,
+    freeInodesAfter: afterFs.ffree,
+    removed,
+    onlyGoRemoved: removed.every((step) => step.name === 'golang'),
+    limitation:
+      'Hosted filesystem, not the private 3 GiB quota; tree allocation and observed free-space delta are distinct measurements.',
+  });
 }
