@@ -1,7 +1,7 @@
 // Qualified npm 12.2.2 bundle-fetch compatibility. No repository code is loaded.
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { accessSync, constants, existsSync, closeSync, fstatSync, ftruncateSync, fsyncSync, lstatSync, openSync, readFileSync, realpathSync, writeSync } from 'node:fs';
+import { accessSync, constants, existsSync, closeSync, fstatSync, ftruncateSync, fsyncSync, lstatSync, openSync, readFileSync, readlinkSync, realpathSync, writeSync } from 'node:fs';
 import { join, delimiter, isAbsolute } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -35,8 +35,8 @@ export function transformNpmBundle(source) {
   return result;
 }
 
-// The public CLI accepts no root/path overrides. installRoot is an explicit test seam only.
-export function prepareNpmBundle({ installRoot = '/opt/containerbase', env = process.env } = {}) {
+// The public CLI accepts no path overrides. installRoot/binAlias are explicit test seams only.
+export function prepareNpmBundle({ installRoot = '/opt/containerbase', binAlias = '/usr/local/bin', env = process.env } = {}) {
   assert.equal(realpathSync(installRoot), installRoot, 'Tool installation root must be canonical');
   const canonicalFile = (file, read = true) => {
     assert.equal(realpathSync(file), file, 'Tool file must not redirect through symlinks');
@@ -55,11 +55,22 @@ export function prepareNpmBundle({ installRoot = '/opt/containerbase', env = pro
     }
     return selected;
   };
-  assert.equal(findExecutable('npm'), wrapper, 'Refusing a shadowed npm executable');
-  assert.equal(findExecutable('node'), join(installRoot, 'bin/node'), 'Refusing a shadowed Node executable');
+  const verifyExecutable = (name, label) => {
+    const selected = findExecutable(name);
+    const expected = join(installRoot, 'bin', name);
+    if (selected === expected) return;
+    // containerbase 14.64 links /usr/local/bin to /opt/containerbase/bin.
+    assert.equal(selected, join(binAlias, name), `Refusing a shadowed ${label} executable`);
+    assert.ok(lstatSync(binAlias).isSymbolicLink(), 'Tool bin alias must be a symlink');
+    assert.equal(readlinkSync(binAlias), join(installRoot, 'bin'), 'Unreviewed tool bin alias target');
+    assert.equal(realpathSync(binAlias), join(installRoot, 'bin'), 'Tool bin alias must resolve to the canonical directory');
+    assert.equal(realpathSync(selected), expected, 'Tool bin alias must select the verified wrapper');
+  };
+  verifyExecutable('npm', 'npm');
+  verifyExecutable('node', 'Node');
   const wrapperText = canonicalFile(wrapper).toString('utf8');
-  const escaped = installRoot.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const match = wrapperText.match(new RegExp('^' + escaped + '/tools/npm/12\\.2\\.2/(\\d+\\.\\d+\\.\\d+)/bin/npm "\\$@"$', 'm'));
+  const escaped = installRoot.replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
+  const match = wrapperText.match(new RegExp(String.raw`^${escaped}/tools/npm/12\.2\.2/(\d+\.\d+\.\d+)/bin/npm "\$@"$`, 'm'));
   assert.ok(match, 'Expected the qualified npm version and containerbase layout');
   const nodeVersion = match[1];
   const [major, minor, patch] = nodeVersion.split('.').map(Number);

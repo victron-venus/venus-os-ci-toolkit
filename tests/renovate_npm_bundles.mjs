@@ -68,17 +68,16 @@ export async function runRegistryProof({ before, upgrade, after }) {
     assert.equal(lock.packages['node_modules/' + bundle.name].integrity, tarHash);
     assert.equal(lock.packages['node_modules/' + bundle.name + '/node_modules/' + included.name].inBundle, true);
     results.push('native post-install guard permits the same verified registry bundle');
-    for (const [name, spec, code] of [
-      ['remote', 'https://example.invalid/never-fetch.tgz', /EALLOWREMOTE/],
-      ['registry-url', registry + 'qualified-bundle-fixture/-/qualified-bundle-fixture-1.0.0.tgz', /EALLOWREMOTE/],
-      ['git', 'git+https://github.com/example/never-fetch.git#main', /EALLOWGIT/],
-    ]) {
+    const expectDenied = async (name, spec, code) => {
       const test = fixture(name, { fixture: spec }), count = requests.length;
       const denied = await after(test).then(() => null, (err) => err);
       assert.ok(denied); assert.match(denied.stderr ?? '', code);
       assert.equal(requests.length, count, 'Rejected URL requests: ' + JSON.stringify(requests.slice(count)));
       results.push(`${name} remains denied before fetching`);
-    }
+    };
+    await expectDenied('remote', 'https://example.invalid/never-fetch.tgz', /EALLOWREMOTE/);
+    await expectDenied('registry-url', registry + 'qualified-bundle-fixture/-/qualified-bundle-fixture-1.0.0.tgz', /EALLOWREMOTE/);
+    await expectDenied('git', 'git+https://github.com/example/never-fetch.git#main', /EALLOWGIT/);
     const marker = path.join(root, 'lifecycle-marker');
     const script = `node -e "require('node:fs').writeFileSync('${marker}', 'ran')"`;
     const control = fixture('script-control', {}, { install: script });
@@ -114,11 +113,26 @@ async function toolGuardProof(prepareNpmBundle) {
     fs.mkdirSync(path.join(prefix, 'node_modules/.bin'), { recursive: true });
     fs.symlinkSync('../npm/bin/npm-cli.js', path.join(prefix, 'node_modules/.bin/npm'));
     fs.symlinkSync(path.join(prefix, 'node_modules/.bin'), path.join(prefix, 'bin'));
-    return { installRoot, packageDir, env: { PATH: path.join(installRoot, 'bin') + ':' + process.env.PATH } };
+    return { installRoot, binAlias: path.join(installRoot, 'system-bin'), packageDir, env: { PATH: path.join(installRoot, 'bin') + ':' + process.env.PATH } };
   };
   try {
     const positive = setup('positive'); prepareNpmBundle(positive); prepareNpmBundle(positive);
     results.push('verified cached tools remain idempotent');
+    const alias = setup('bin-alias');
+    fs.symlinkSync(path.join(alias.installRoot, 'bin'), alias.binAlias);
+    alias.env.PATH = alias.binAlias + ':' + alias.env.PATH;
+    prepareNpmBundle(alias); prepareNpmBundle(alias);
+    results.push('the exact system bin directory alias remains idempotent');
+    const wrongAlias = setup('wrong-bin-alias'), wrongTarget = path.join(wrongAlias.installRoot, 'wrong-target');
+    fs.mkdirSync(wrongTarget);
+    for (const tool of ['npm', 'node']) fs.copyFileSync(path.join(wrongAlias.installRoot, 'bin', tool), path.join(wrongTarget, tool));
+    fs.symlinkSync(wrongTarget, wrongAlias.binAlias); wrongAlias.env.PATH = wrongAlias.binAlias + ':' + wrongAlias.env.PATH;
+    assert.throws(() => prepareNpmBundle(wrongAlias), /alias target/);
+    results.push('reject a redirected system bin alias');
+    const arbitraryAlias = setup('arbitrary-bin-alias'), arbitraryPath = path.join(arbitraryAlias.installRoot, 'repository-bin');
+    fs.symlinkSync(path.join(arbitraryAlias.installRoot, 'bin'), arbitraryPath); arbitraryAlias.env.PATH = arbitraryPath + ':' + arbitraryAlias.env.PATH;
+    assert.throws(() => prepareNpmBundle(arbitraryAlias), /shadowed/);
+    results.push('reject an arbitrary PATH alias even to trusted tools');
     for (const file of paths) {
       const fixture = setup('tamper-' + results.length); fs.appendFileSync(path.join(fixture.packageDir, file), '\nchanged');
       assert.throws(() => prepareNpmBundle(fixture), /Unreviewed/); results.push('reject altered ' + file);
@@ -153,7 +167,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     before: (test) => cli(test, true, true),
     after: cli,
     upgrade: async (test) => {
-      GlobalConfig.set({ localDir: test.cwd, cacheDir: path.join(test.cwd, 'renovate-cache'), containerbaseDir: '/tmp/renovate/cache/containerbase', binarySource: 'install', executionTimeout: 2, allowScripts: false });
+      GlobalConfig.set({ localDir: test.cwd, cacheDir: path.join(test.cwd, 'renovate-cache'), containerbaseDir: path.join(test.cwd, 'containerbase-cache'), binarySource: 'install', executionTimeout: 2, allowScripts: false });
       setCustomEnv(test.env);
       const result = await generateLockFile('.', test.env, 'package-lock.json', { constraints: { node: '24.22.2', npm: '>=7' }, ignoreScripts: false }, [{ depName: 'qualified-bundle-fixture', newValue: '1.0.0' }]);
       assert.equal(result.error, false, result.stderr);
