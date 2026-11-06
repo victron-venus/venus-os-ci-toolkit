@@ -70,7 +70,8 @@
     {
       "description": "Python runtime migrations require an explicit project change.",
       "matchManagers": [
-        "pep621"
+        "pep621",
+        "pip-compile"
       ],
       "matchDepTypes": [
         "requires-python"
