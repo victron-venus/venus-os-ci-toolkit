@@ -192,7 +192,7 @@ preserving the entire ordered upgrade list and the existing aggregate review,
 automerge and minimum-group-size rules. Ordinary-only groups are unchanged.
 
 The loader verifies the package version and SHA-256 of the one affected upstream
-module before the CLI can access credentials. Unknown source fails closed; it
+planner module before the CLI can access credentials. Unknown source fails closed; it
 never edits the installed package, loads repository code, or exports Node loader
 flags to package-manager subprocesses. Contract tests exercise native branch
 planning, both directions of the npm/Cargo pair, scheduling and independent
@@ -201,3 +201,29 @@ The runtime version itself requires a reviewed change while this compatibility
 fix is present. To upgrade, reproduce the native tests against the new upstream
 version and either retire the fix or explicitly requalify its one-module hash;
 do not simply advance the runtime pin.
+
+### Python package build boundary
+
+The same loader also verifies four Python manager and post-upgrade modules and appends
+`--no-build` to UV compile and lock commands. The UV compile header parser accepts
+that flag for subsequent runs. Native generation and allowed post-upgrade UV
+commands use the reviewed UV 0.13.4, preserving other tool constraints. Legacy
+pip-tools compilation is not qualified for this runner. `ignoreScripts` and `UV_NO_BUILD` alone do not prevent all metadata
+backend execution in the reviewed Renovate/UV combination.
+
+UV lock resolution can still run a first-party project's metadata backend even
+with `--no-build`. Before invoking it, the runner checks the raw project metadata
+and local file context. Dynamic metadata, workspaces, local editable/directory
+sources and unqualified configuration stop the update with an artifact error.
+Static projects and confined prebuilt wheel sources remain supported. This check
+is separate from third-party source builds, which the CLI flag prohibits.
+
+Existing source-only compiler environments are held as complete source/output
+units in their repository policies; security alerts remain enabled for manual
+remediation. Do not accept resolver downgrades or change package origins to make
+such an environment pass. An existing immutable source archive may use reviewed,
+version-specific static dependency metadata without running its build backend.
+The offline official-image contract test exercises an inert metadata backend,
+requires the unprotected control to execute it, and requires the guarded path
+to reject it while still generating a hashed wheel lockfile. Requalify all five
+module hashes and these behavior tests before changing the runtime version.
