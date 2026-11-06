@@ -42,6 +42,13 @@ generations, vendored sources and copied build overlays require their existing
 source-aware update procedures. Runner images, action tool-version inputs and
 Python `requires-python` runtime migrations remain explicit project changes.
 
+PEP 621 projects with lockfiles use `rangeStrategy: update-lockfile`: when a
+newer dependency fits an existing range such as `>=1.0`, Renovate refreshes the lockfile without
+raising that lower bound. Its default `replace` behavior would otherwise skip
+these in-range updates. Out-of-range updates keep the normal replacement
+behavior and remain subject to each consumer's version bounds and review.
+Coupled exports run after lock-only changes as well as manifest changes.
+
 Application updates form a separate group, with major updates separated from
 minor/patch updates. Defaults permit two open ordinary PRs and one new ordinary
 PR per hour per repository. Renovate reads GitHub vulnerability alerts for
