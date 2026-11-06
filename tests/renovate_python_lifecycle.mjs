@@ -22,6 +22,8 @@ import {
   goRemovalPlan,
   runGoLifecycle,
   assertGoDirectoryEntries,
+  pythonWithoutGoRemovalPlan,
+  runPythonWithoutGoLifecycle,
 } from '../scripts/prepare-renovate-python.mjs';
 const fixture = () => ({
   tools: [
@@ -487,4 +489,133 @@ test('Go failed uninstall and unexpected leftover stop before any further versio
     leftover.calls.filter((c) => c.includes('@')),
     ['golang@1.25.4'],
   );
+});
+
+test('Python-only cold transition retires Go before qualified Python children and preserves Node', () => {
+  const h = harness(goFixture());
+  assert.deepEqual(runPythonWithoutGoLifecycle(requested, h.io).removed, [
+    { name: 'golang', version: '1.25.4' },
+    { name: 'golang', version: '1.27.3' },
+    { name: 'uv', version: '0.13.4' },
+    { name: 'python', version: '3.11.14' },
+    { name: 'python', version: '3.12.16' },
+  ]);
+  assert.deepEqual(h.state.tools, [fixture().tools[2]]);
+});
+test('warm Python still retires Go and retains all Python children and Node', () => {
+  const value = withHashin();
+  value.tools.unshift(goFixture().tools[0]);
+  const h = harness(value);
+  assert.deepEqual(runPythonWithoutGoLifecycle('3.12.16', h.io).removed, [
+    { name: 'golang', version: '1.25.4' },
+    { name: 'golang', version: '1.27.3' },
+  ]);
+  assert.deepEqual(h.state, withHashin());
+});
+test('first Python preparation retires existing Go without requiring an old Python', () => {
+  const h = harness({ tools: [goFixture().tools[0], fixture().tools[2]] });
+  assert.equal(runPythonWithoutGoLifecycle(requested, h.io).removed.length, 2);
+  assert.deepEqual(h.state.tools, [fixture().tools[2]]);
+});
+test('no-Go preparation preserves ordinary Python removal semantics', () => {
+  const h = harness();
+  assert.deepEqual(
+    runPythonWithoutGoLifecycle(requested, h.io).removed,
+    removalPlan(fixture(), requested).steps,
+  );
+  const warm = harness();
+  assert.deepEqual(runPythonWithoutGoLifecycle('3.12.16', warm.io).removed, []);
+  assert.deepEqual(warm.state, fixture());
+});
+test('unknown Go child fails warm and cold Python plans before all mutation', () => {
+  const value = goFixture();
+  value.tools.push({
+    name: 'extra',
+    version: '1.0.0',
+    versions: [
+      { version: '1.0.0', parent: { name: 'golang', version: '1.27.3' } },
+    ],
+  });
+  for (const version of [requested, '3.12.16']) {
+    const h = harness(value);
+    assert.throws(() => runPythonWithoutGoLifecycle(version, h.io), /Go child/);
+    assert.deepEqual(h.calls, []);
+  }
+});
+test('bad later Python child rejects the combined plan before any earlier Go removal', () => {
+  const value = goFixture();
+  value.tools.push({
+    name: 'extra',
+    version: '1.0.0',
+    versions: [
+      { version: '1.0.0', parent: { name: 'python', version: '3.12.16' } },
+    ],
+  });
+  const h = harness(value);
+  assert.throws(
+    () => runPythonWithoutGoLifecycle(requested, h.io),
+    /Unknown Python child/,
+  );
+  assert.deepEqual(h.calls, []);
+});
+test('combined path or process rejection never uninstalls any tool', () => {
+  for (const method of ['verifyPaths', 'exclusive']) {
+    const h = harness(goFixture());
+    h.io[method] = () => {
+      throw new Error('unsafe boundary');
+    };
+    assert.throws(
+      () => runPythonWithoutGoLifecycle(requested, h.io),
+      /unsafe boundary/,
+    );
+    assert.deepEqual(h.state, goFixture());
+    assert(!h.calls.some((c) => c.includes('@')));
+  }
+});
+test('combined plan detects drift and failed official uninstall before proceeding to Python', () => {
+  const h = harness(goFixture());
+  h.io.uninstall = (step) => h.calls.push(step.name + '@' + step.version);
+  assert.throws(
+    () => runPythonWithoutGoLifecycle(requested, h.io),
+    /Unexpected uninstall result/,
+  );
+  assert.deepEqual(
+    h.calls.filter((c) => c.includes('@')),
+    ['golang@1.25.4'],
+  );
+  const drift = harness(goFixture());
+  let reads = 0;
+  drift.io.inventory = () => {
+    const value = structuredClone(drift.state);
+    if (++reads === 2) value.tools.pop();
+    return value;
+  };
+  assert.throws(
+    () => runPythonWithoutGoLifecycle(requested, drift.io),
+    /state changed/,
+  );
+  assert(!drift.calls.some((c) => c.includes('@')));
+});
+test('combined plan rejects malformed recorded Go versions even when Python is warm', () => {
+  const value = goFixture();
+  value.tools[0].versions[0].version = '1.27.03';
+  value.tools[0].version = '1.27.03';
+  assert.throws(
+    () => pythonWithoutGoRemovalPlan(value, '3.12.16'),
+    /Noncanonical/,
+  );
+});
+
+test('orphan Go child rejects Python-only preparation even without a Go record', () => {
+  const value = fixture();
+  value.tools.push({
+    name: 'extra',
+    version: '1.0.0',
+    versions: [
+      { version: '1.0.0', parent: { name: 'golang', version: '1.27.3' } },
+    ],
+  });
+  const h = harness(value);
+  assert.throws(() => runPythonWithoutGoLifecycle('3.12.16', h.io), /Go child/);
+  assert.deepEqual(h.calls, []);
 });

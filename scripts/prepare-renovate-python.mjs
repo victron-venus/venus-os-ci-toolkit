@@ -177,28 +177,48 @@ export function removalPlan(inventory, requested) {
     steps.push({ name: 'python', version });
   return { reason: 'replace-obsolete-python', requested, steps };
 }
-export function goRemovalPlan(inventory, requested) {
-  requested = qualifiedGoVersion(requested);
+function qualifiedGoInventory(inventory) {
   validateInventory(inventory);
   const go = inventory.tools.find((t) => t.name === 'golang');
-  if (!go) return { reason: 'no-previous-go', requested, steps: [] };
+  if (!go) return undefined;
   assert(!go.type && go.versions.length <= 8, 'Unexpected Go inventory');
   for (const version of go.versions) {
     qualifiedGoVersion(version.version);
     assert(!version.parent, 'Unexpected Go parent');
   }
-  if (go.versions.some((v) => v.version === requested))
-    return { reason: 'requested-already-installed', requested, steps: [] };
+  return go;
+}
+function goRemovalSteps(inventory, go) {
   assert(
     !inventory.tools.some((tool) =>
       tool.versions.some((v) => v.parent?.name === 'golang'),
     ),
     'Go child tools are not qualified for removal',
   );
-  const steps = go.versions
+  return (go?.versions ?? [])
     .map((v) => ({ name: 'golang', version: v.version }))
     .sort((a, b) => a.version.localeCompare(b.version));
-  return { reason: 'replace-obsolete-go', requested, steps };
+}
+export function goRemovalPlan(inventory, requested) {
+  requested = qualifiedGoVersion(requested);
+  const go = qualifiedGoInventory(inventory);
+  if (!go) return { reason: 'no-previous-go', requested, steps: [] };
+  if (go.versions.some((v) => v.version === requested))
+    return { reason: 'requested-already-installed', requested, steps: [] };
+  return {
+    reason: 'replace-obsolete-go',
+    requested,
+    steps: goRemovalSteps(inventory, go),
+  };
+}
+export function pythonWithoutGoRemovalPlan(inventory, requested) {
+  const python = removalPlan(inventory, requested);
+  const go = qualifiedGoInventory(inventory);
+  return {
+    reason: 'prepare-python-without-go',
+    requested: python.requested,
+    steps: [...goRemovalSteps(inventory, go), ...python.steps],
+  };
 }
 export function canonicalInventory(inventory) {
   return JSON.stringify(
@@ -406,6 +426,19 @@ function verifyGoPlanPaths(plan, inventory) {
   for (const step of plan.steps)
     canonicalPath(goVersionPath(step), 'directory');
 }
+function verifyPythonWithoutGoPlanPaths(plan, inventory) {
+  const expected = pythonWithoutGoRemovalPlan(inventory, plan.requested);
+  assert.deepEqual(
+    plan.steps,
+    expected.steps,
+    'Cross-tool removal plan changed',
+  );
+  verifyGoPlanPaths(
+    { ...plan, steps: plan.steps.filter((s) => s.name === 'golang') },
+    inventory,
+  );
+  verifyPlanPaths(removalPlan(inventory, plan.requested), inventory);
+}
 function absent(path) {
   try {
     lstatSync(path);
@@ -423,6 +456,11 @@ export function runLifecycle(requested, io) {
 export function runGoLifecycle(requested, io) {
   const initial = structuredClone(validateInventory(io.inventory()));
   const plan = goRemovalPlan(initial, requested);
+  return executePlan(requested, io, initial, plan);
+}
+export function runPythonWithoutGoLifecycle(requested, io) {
+  const initial = structuredClone(validateInventory(io.inventory()));
+  const plan = pythonWithoutGoRemovalPlan(initial, requested);
   return executePlan(requested, io, initial, plan);
 }
 function executePlan(requested, io, initial, plan) {
@@ -458,7 +496,15 @@ function executePlan(requested, io, initial, plan) {
   return { reason: plan.reason, removed };
 }
 function main(requested, tool = 'python') {
-  assert(['python', 'golang'].includes(tool), 'Unexpected lifecycle tool');
+  const handlers = {
+    python: [runLifecycle, verifyPlanPaths],
+    golang: [runGoLifecycle, verifyGoPlanPaths],
+    'python-without-go': [
+      runPythonWithoutGoLifecycle,
+      verifyPythonWithoutGoPlanPaths,
+    ],
+  };
+  assert(Object.hasOwn(handlers, tool), 'Unexpected lifecycle tool');
   verifyFixedRuntime();
   exclusiveNamespace();
   const deadline = performance.now() + 120000;
@@ -481,15 +527,19 @@ function main(requested, tool = 'python') {
     });
   };
   assertCliVersion(call(['--version']));
-  const run = tool === 'golang' ? runGoLifecycle : runLifecycle;
-  const path = tool === 'golang' ? goVersionPath : versionPath;
+  const [run, verifyPaths] = handlers[tool];
   const result = run(requested, {
     inventory: () => JSON.parse(call(['list', 'tools', '--json'])),
-    verifyPaths: tool === 'golang' ? verifyGoPlanPaths : verifyPlanPaths,
+    verifyPaths,
     exclusive: exclusiveNamespace,
     uninstall: (step) => call(['uninstall', 'tool', step.name, step.version]),
     assertAbsent: (step) =>
-      assert(absent(path(step)), 'Removed tool path remains'),
+      assert(
+        absent(
+          step.name === 'golang' ? goVersionPath(step) : versionPath(step),
+        ),
+        'Removed tool path remains',
+      ),
   });
   console.info(
     JSON.stringify(
@@ -504,7 +554,10 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     main(process.argv[2]);
   } else {
     assert.equal(process.argv.length, 4, 'Expected one exact tool version');
-    assert.equal(process.argv[2], 'golang', 'Expected fixed Go mode');
-    main(process.argv[3], 'golang');
+    assert(
+      ['golang', 'python-without-go'].includes(process.argv[2]),
+      'Expected fixed lifecycle mode',
+    );
+    main(process.argv[3], process.argv[2]);
   }
 }

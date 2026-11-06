@@ -262,8 +262,8 @@ Renovate 44.215.0 command generator. The public runner does not enable it.
 Before installing a different Python version, a fixed helper reads the official
 containerbase JSON inventory. It removes only recorded old Python versions and
 their qualified `uv` 0.13.4 and `hashin` 1.0.5 leaves using explicit, non-recursive official uninstall
-commands. If the requested Python version already exists, no tool is removed;
-normal containerbase installation reuses and relinks that version.
+commands. If the requested Python version already exists, its Python tool family
+is preserved; normal containerbase installation reuses and relinks that version.
 
 The same private preload handles a Go version transition before installation.
 If the requested Go version is absent, it removes only recorded obsolete Go
@@ -271,6 +271,17 @@ versions through the official non-recursive CLI. Any Go child tool or unrecorded
 path rejects the entire removal plan. An already installed requested Go version
 is reused without removal. Python, Node, download archives and repository caches
 are not removed by the Go transition.
+
+Before a Python installation or reuse, the private command generator also checks
+the entire execution's requested tool list. If it contains no Go request, the
+same helper retires recorded Go versions first through the official CLI. This
+also applies to a first Python installation and an already installed Python.
+Both orderings of a mixed Go/Python request preserve Go. The combined removal
+plan is validated before any deletion; unknown Go children or paths fail closed.
+Node, npm, download archives and native module caches remain untouched. A later
+Go command installs its requested version again, including an identical version
+whose old in-memory marker remains. This reduces the overlapping tool footprint;
+it does not establish a sufficient disk reserve or a bound on all future peaks.
 
 The helper validates the complete removal plan, fixed canonical tool paths and
 all parent relationships before its first mutation, then rechecks the inventory
@@ -297,7 +308,9 @@ space for every future tool or repository.
 The official-image contract tests the exact combined preload order, actual
 Python/UV/hashin transitions and reuse, unknown-child and process/path rejection, and
 native compiled-lock and hashed-requirements generation afterward. Go transition
-and native artifact checks run in the same official image. Hosted tests establish
+and native artifact checks run in the same official image, including two UV
+outputs, a subsequent guarded npm lock and a later same-version Go reinstall.
+Hosted tests establish
 functional behavior; the complete private sweep on its unchanged 3 GiB Docker
 filesystem remains the capacity check. Requalify the module hash, official
 containerbase inventory/layout and these tests before changing either runtime.

@@ -21,6 +21,11 @@ export function transformPythonLifecycle(source, helperPath) {
   );
   const replacements = [
     [
+      '\t\tconst resolvedTools = {};',
+      '\t\tconst resolvedTools = {};\n' +
+        '\t\tconst privatePythonMode = toolConstraints.some(({ toolName }) => toolName === "golang") ? "" : " python-without-go";',
+    ],
+    [
       '\tlet constraint = toolConstraint.constraint;',
       '\tlet constraint = toolConstraint.constraint;\n' +
         '\tif (toolName === "hashin") {\n' +
@@ -37,7 +42,7 @@ export function transformPythonLifecycle(source, helperPath) {
       '\t\t\tif (toolName === "uv" && toolVersion !== "0.13.4") throw new Error("Unqualified private UV version");\n' +
         '\t\t\tif (toolName === "python") installCommands.push("/usr/local/renovate/node " + quote(' +
         JSON.stringify(helperPath) +
-        ') + " " + quote(toolVersion));\n' +
+        ') + privatePythonMode + " " + quote(toolVersion));\n' +
         '\t\t\tif (toolName === "golang") installCommands.push("/usr/local/renovate/node " + quote(' +
         JSON.stringify(helperPath) +
         ') + " golang " + quote(toolVersion));\n' +
