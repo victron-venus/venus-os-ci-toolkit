@@ -109,8 +109,11 @@ python3 scripts/install_release.py /path/to/consumer --change-scope-only
 python3 scripts/install_release.py /path/to/consumer --change-scope-only --check
 ```
 
-This mode changes only selected scope inputs, validation conditions and the
-final gate proof in the existing workflows. It retains, or repairs,
+This mode changes selected scope inputs, validation conditions and the
+final gate proof in the existing workflows. It can also replace the one known
+classifier copy predating the import-comment spacing correction. Both the old
+and corrected copies are identified by exact SHA-256 digests; other classifier
+changes remain unsupported. It retains, or repairs,
 `FORCE_FULL: true` in the release entry point while preserving its path inputs.
 Actual release qualification still passes `force-full: true`; main-branch
 release pushes and scheduled/manual events remain full. Action pins, runner selection, triggers, timeouts, release engines, signing
