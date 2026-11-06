@@ -104,6 +104,8 @@ jobs:
           inventory(Path.cwd())
           PY_INVENTORY
       - run: python3 -m unittest discover -s tests -p 'test_workflow_yaml_contracts.py'
+      - name: Verify the documented scope regeneration procedure
+        run: python3 -m unittest discover -s tests -p 'test_change_scope_runbook.py' -v
       - name: Replay relevant Python fuzz seeds and verify instrumentation
         id: fuzz_preflight
         if: ${{ github.event.repository.private == false && needs.scope.outputs.run == 'true' }}

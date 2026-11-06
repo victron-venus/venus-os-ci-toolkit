@@ -590,9 +590,10 @@ def validation_job(policy, directory, filename, oidc):
 
 def workflow_contract_job(directory):
     """Run the toolkit's own contracts or the consumer's vendored contract suite."""
+    is_toolkit = directory is not None and directory.resolve() == ROOT.resolve()
     workflow_test_command = (
         "python3 -m unittest discover -s tests -p 'test_workflow_yaml_contracts.py'"
-        if directory is not None and directory.resolve() == ROOT.resolve()
+        if is_toolkit
         else "python3 -m unittest discover -s .github/workflow-tests -p 'test_*.py'"
     )
     job = {
@@ -613,6 +614,20 @@ def workflow_contract_job(directory):
             {"run": workflow_test_command},
         ],
     }
+    if is_toolkit:
+        job["steps"].insert(-1, {
+            "name": "Validate the required source package inventory",
+            "run": "python3 - <<'PY_INVENTORY'\n"
+            "from pathlib import Path\n"
+            "from scripts.toolkit_source import inventory\n"
+            "inventory(Path.cwd())\n"
+            "PY_INVENTORY\n",
+        })
+        job["steps"].append({
+            "name": "Verify the documented scope regeneration procedure",
+            "run": "python3 -m unittest discover -s tests "
+            "-p 'test_change_scope_runbook.py' -v",
+        })
     configure_python_preflight(job, directory)
     return job
 

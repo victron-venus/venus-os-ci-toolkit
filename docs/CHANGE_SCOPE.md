@@ -102,12 +102,7 @@ before opting in: workflows that supply those checks belong in
 as a build or deployment input.
 
 For an existing, recognized generated graph with the current shared classifier,
-edit the consumer policy, then run:
-
-```sh
-python3 scripts/install_release.py /path/to/consumer --change-scope-only
-python3 scripts/install_release.py /path/to/consumer --change-scope-only --check
-```
+edit the consumer policy, then follow the [verified regeneration procedure](#regenerate-documentation-scope-safely).
 
 This mode changes selected scope inputs, validation conditions and the
 final gate proof in the existing workflows. It can also replace the one known
@@ -138,3 +133,57 @@ even when no source code changed. The aggregate gate rejects a skipped scanner.
 The lightweight configuration check also validates the existing source package
 inventory, so deleting a required documentation file cannot silently break the
 next source release. Editing its contents still uses the documentation route.
+
+## Regenerate documentation scope safely
+
+Use this maintained procedure when updating an existing, recognized generated
+consumer. The supported generator is pinned below; a policy's historical
+`toolkit_revision` records provenance and does not select a safe executable.
+Custom and legacy workflow graphs still require individual review when the
+scope-only generator rejects them. Do not replace their release implementation
+to bypass that rejection.
+
+Set `TOOLKIT` to a dedicated, clean checkout of the pinned revision. Run the
+entire block from the **consumer repository root**, using a Python environment
+with the toolkit's hash-locked generator dependencies installed outside that
+checkout. The guard verifies the physical working-tree root, clears inherited
+Git directory/index selectors, and rejects tracked modifications, untracked and
+ignored files, index flags that hide changes, tracked symlinks and submodules.
+Keep virtual environments and caches outside this checkout; `-B` prevents Python
+bytecode from dirtying it. These checks validate Git checkout state and assume
+trusted Git/Python executables and a trusted local account.
+
+<!-- change-scope-safe-regeneration:start -->
+```sh
+(
+  set -eu
+  unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE
+  TOOLKIT=/path/to/fixed/venus-os-ci-toolkit
+  TOOLKIT=$(cd "$TOOLKIT" && pwd -P)
+  toolkit_root=$(git -C "$TOOLKIT" rev-parse --show-toplevel)
+  toolkit_root=$(cd "$toolkit_root" && pwd -P)
+  test "$toolkit_root" = "$TOOLKIT"
+  toolkit_head=$(git -C "$TOOLKIT" rev-parse HEAD)
+  test "$toolkit_head" = 523765f36f4909b72e77dff29c073521fdfbf795
+  toolkit_index_flags=$(git -C "$TOOLKIT" ls-files -v --stage)
+  toolkit_unsafe_entries=$(printf '%s\n' "$toolkit_index_flags" | LC_ALL=C sed -n '/^[a-zS] /p; /^[A-Z] 1[26]0000 /p')
+  test -z "$toolkit_unsafe_entries"
+  toolkit_status=$(git -C "$TOOLKIT" -c core.fsmonitor=false -c core.untrackedCache=false status --porcelain=v1 --untracked-files=all --ignored=matching --ignore-submodules=none)
+  test -z "$toolkit_status"
+  python3 -B "$TOOLKIT/scripts/install_release.py" . --change-scope-only
+  python3 -B "$TOOLKIT/scripts/install_release.py" . --change-scope-only --check
+)
+```
+<!-- change-scope-safe-regeneration:end -->
+
+A failed revision, inventory, cleanliness or generator check stops the subshell;
+the verification command runs only after a successful update. If a guard fails,
+inspect the checkout or prepare a separate clean one. Do not discard local work
+or remove guard clauses merely to continue.
+
+Review the resulting diff and run the consumer's local workflow-contract tests.
+The scoped migration preserves unrelated action pins, release engines and
+publication settings; it also preserves existing custom contract steps. Keep
+release qualification full and verify both documentation-only and source-change
+PR behavior. Consumer runbooks link here so future corrections to this procedure
+do not require copied shell blocks to be maintained across repositories.
