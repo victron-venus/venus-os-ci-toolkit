@@ -182,14 +182,24 @@ jobs:
           node "$renovate/dist/config-validator.js" --strict --no-global renovate-ci.json renovate-fleet.json
           node tests/renovate_grouping.mjs "$renovate"
           node tests/renovate_security_grouping.mjs "$renovate"
+          node tests/renovate_uv_preflight.mjs "$renovate"
+      - name: Install the reviewed UV for offline build-boundary tests
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: '0.13.4'
+          enable-cache: false
       - name: Verify compatibility in the official container without credentials
         run: |
           version=$(python3 -c 'import json; print(json.load(open(".github/renovate-runtime.json"))["version"])')
           docker pull "ghcr.io/renovatebot/renovate:$version"
           docker run --rm --network none --cap-drop ALL --security-opt no-new-privileges \
             --mount "type=bind,src=$PWD,dst=/repo,readonly" --workdir /repo \
+            --mount "type=bind,src=$(command -v uv),dst=/usr/local/bin/uv,readonly" \
             "ghcr.io/renovatebot/renovate:$version" bash -e -c '
+              export PATH="/usr/local/bin:$PATH"
               /usr/local/renovate/node tests/renovate_security_grouping.mjs /usr/local/renovate
+              /usr/local/renovate/node tests/renovate_uv_preflight.mjs /usr/local/renovate
+              /usr/local/renovate/node tests/renovate_python_builds.mjs /usr/local/renovate
               bash scripts/renovate-security-runner.sh --version
             '
   python-typecheck-contract:
