@@ -16,7 +16,18 @@ const installationArg = process.argv[fixtureMode ? 4 : 2];
 assert.equal(process.argv.length, fixtureMode ? 5 : 3, 'Pass exactly one installed Renovate package directory');
 assert.ok(isAbsolute(installationArg), 'Renovate installation must be absolute');
 assert.ok(!installationArg.split(sep).some((part) => part === '.' || part === '..'), 'No installation traversal');
-const installation = await realpath(installationArg);
+// Derive file reads from one of two fixed trusted installation locations,
+// never from the caller-provided path after checking it.
+let installation;
+if (installationArg === '/usr/local/renovate') {
+  installation = '/usr/local/renovate';
+} else {
+  assert.ok(process.env.RUNNER_TEMP && isAbsolute(process.env.RUNNER_TEMP), 'RUNNER_TEMP must be absolute');
+  const runnerTemp = await realpath(process.env.RUNNER_TEMP);
+  installation = resolve(runnerTemp, 'renovate/node_modules/renovate');
+  assert.equal(installationArg, installation, 'Use the fixed RUNNER_TEMP installation');
+}
+assert.equal(await realpath(installation), installation, 'Installation must have a canonical path');
 const targetRelative = 'dist/workers/repository/updates/generate.js';
 const target = join(installation, targetRelative);
 assert.equal(await realpath(target), target, 'Planner module must have a canonical path');
@@ -105,7 +116,7 @@ if (!fixtureMode) {
   let compatibility;
   if (mode === 'patched') {
     const { installSecurityCompat } = await import('../scripts/renovate-security-compat.mjs');
-    compatibility = await installSecurityCompat(installation);
+    compatibility = installSecurityCompat(installation);
   }
   const allowed = new Set([
     'config/defaults', 'config/utils', 'modules/platform/api', 'modules/platform/index',
@@ -136,9 +147,10 @@ if (!fixtureMode) {
     base = mergeChildConfig(base, JSON.parse(await readFile(resolve(file), 'utf8')));
   }
   Object.assign(base, { baseBranch: 'main', semanticCommits: 'disabled', errors: [], warnings: [], repoIsOnboarded: true });
+  const versioningByDatasource = { crate: 'cargo', npm: 'npm', 'github-tags': 'semver' };
   const dependency = (name, datasource = 'github-tags') => ({
     depName: name, packageName: name, currentValue: '2.12.0', currentVersion: '2.12.0', datasource,
-    versioning: datasource === 'crate' ? 'cargo' : datasource === 'npm' ? 'npm' : 'semver',
+    versioning: versioningByDatasource[datasource],
     updates: [{ newValue: '2.12.1', newVersion: '2.12.1', newMajor: 2, updateType: 'patch' }],
   });
   const ciFiles = { 'github-actions': [{ packageFile: '.github/workflows/ci.yml', deps: [dependency('actions/checkout'), dependency('zzz/security-action')] }] };
@@ -163,6 +175,7 @@ if (!fixtureMode) {
     ['foss-npm', foss, fossFiles, 'npm', '@tauri-apps/plugin-updater'],
   ];
   const cases = {};
+  // Run sequentially because each fixture replaces the shared mocked platform's alerts.
   for (const [name, config, files, ecosystem, depName] of fixtures) {
     alerts = depName ? [{ security_vulnerability: { package: { ecosystem, name: depName }, first_patched_version: { identifier: '2.12.1' }, severity: 'high' }, security_advisory: { ghsa_id: 'GHSA-test-test-test', identifiers: [], summary: 'Synthetic', description: 'Synthetic', references: [], severity: 'high' } }] : [];
     const planned = await branchifyUpgrades(await detectVulnerabilityAlerts(config), structuredClone(files));
