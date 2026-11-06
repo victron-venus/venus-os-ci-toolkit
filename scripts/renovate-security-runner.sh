@@ -11,5 +11,5 @@ fi
 compat_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 # Explicit Node flags are not exported into package-manager subprocesses.
 exec /usr/local/renovate/node --use-openssl-ca "${RENOVATE_NODE_ARGS[@]}" \
-  --import "$compat_dir/renovate-security-compat.mjs" \
+  --import "${compat_dir%/}/renovate-security-compat.mjs" \
   /usr/local/renovate/dist/renovate.js "$@"
