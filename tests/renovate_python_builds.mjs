@@ -60,7 +60,7 @@ if (!fixtureMode) {
     assert.equal(results.patched[name].backendExecuted, false, name);
     assert.ok(results.patched[name].artifactErrors > 0, `${name} must fail closed`);
   }
-  for (const name of ['wheel', 'static-project']) {
+  for (const name of ['wheel', 'static-project', 'nested-static-parent']) {
     assert.equal(results.patched[name].backendExecuted, false, name);
     assert.equal(results.patched[name].artifactErrors, 0, name);
   }
@@ -77,6 +77,11 @@ if (!fixtureMode) {
     assert.equal(results.patched[staticProject].outputCreated, true);
     assert.equal(results.patched[staticProject].artifactErrors, 1, 'Preserve the prior error without adding an export error');
   }
+  assert.equal(results.patched['nested-static-parent'].childBackendExecuted, false);
+  assert.equal(results.patched['nested-dynamic-parent'].backendExecuted, false);
+  assert.equal(results.patched['nested-dynamic-parent'].childBackendExecuted, false);
+  assert.ok(results.patched['nested-dynamic-parent'].artifactErrors > 0);
+  assert.match(results.patched['nested-dynamic-parent'].diagnostics[0], /manual qualification:/);
   assert.equal(results.patched['post-static-project'].alternateLocationsRejected, true);
   assert.equal(results.patched.qualifiedToolConstraints, true, 'All native and post commands select qualified UV and preserve Python');
   assert.equal(results.patched.wheel.hashGenerated, true);
@@ -149,10 +154,17 @@ if (!fixtureMode) {
   try {
     const python = run('python3', ['-c', 'import sys; print(sys.executable)']);
     assert.match(run('uv', ['--version']), /^uv 0\.13\.4(?:\s|$)/);
-    for (const name of ['sdist', 'wheel', 'dynamic-project', 'static-project', 'compile-project', 'post-dynamic-project', 'post-static-project', 'post-nested-dynamic-project', 'post-nested-static-project']) {
+    for (const name of ['sdist', 'wheel', 'dynamic-project', 'static-project', 'compile-project', 'post-dynamic-project', 'post-static-project', 'post-nested-dynamic-project', 'post-nested-static-project', 'nested-static-parent', 'nested-dynamic-parent']) {
       const dir = join(scratch, name);
-      const projectDir = name.startsWith('post-nested-') ? join(dir, 'nested/project') : dir;
-      run(python, [join(dirname(self), 'renovate_python_fixtures.py'), projectDir, name]);
+      const nestedParent = name.startsWith('nested-');
+      const projectDir = nestedParent ? join(dir, 'research') : name.startsWith('post-nested-') ? join(dir, 'nested/project') : dir;
+      if (nestedParent) {
+        run(python, [join(dirname(self), 'renovate_python_fixtures.py'), dir,
+          name === 'nested-static-parent' ? 'static-project' : 'dynamic-project']);
+        run(python, [join(dirname(self), 'renovate_python_fixtures.py'), projectDir, 'static-project']);
+      } else {
+        run(python, [join(dirname(self), 'renovate_python_fixtures.py'), projectDir, name]);
+      }
       run('git', ['init', '-b', 'main'], dir);
       run('git', ['add', '.'], dir);
       run('git', ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid',
@@ -199,15 +211,16 @@ if (!fixtureMode) {
         }
         continue;
       }
-      const isProject = ['dynamic-project', 'static-project'].includes(name);
-      const input = name.endsWith('project') ? 'pyproject.toml' : 'requirements.in';
+      const isProject = nestedParent || ['dynamic-project', 'static-project'].includes(name);
+      const input = nestedParent ? 'research/pyproject.toml' : name.endsWith('project') ? 'pyproject.toml' : 'requirements.in';
       const update = isProject ? projectArtifacts : compileArtifacts;
       const args = { packageFileName: input, newPackageFileContent: readFileSync(join(dir, input), 'utf8'),
-        updatedDeps: [], config: { lockFiles: [isProject ? 'uv.lock' : 'requirements.txt'], ignoreScripts: true, constraints: { uv: '99.0.0', python: '>=3.9' } } };
+        updatedDeps: [], config: { lockFiles: [nestedParent ? 'research/uv.lock' : isProject ? 'uv.lock' : 'requirements.txt'], ignoreScripts: true, constraints: { uv: '99.0.0', python: '>=3.9' } } };
       const result = await update(args);
       const receipt = { backendExecuted: existsSync(join(dir, 'backend-executed.txt')),
         artifactErrors: (result ?? []).filter((item) => item.artifactError).length,
         diagnostics: (result ?? []).filter((item) => item.artifactError).map((item) => item.artifactError.stderr) };
+      if (nestedParent) receipt.childBackendExecuted = existsSync(join(projectDir, 'backend-executed.txt'));
       if (name === 'wheel') {
         const first = readFileSync(join(dir, 'requirements.txt'), 'utf8');
         receipt.hashGenerated = /--hash=sha256:/.test(first);
