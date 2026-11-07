@@ -1190,6 +1190,7 @@ class SinglePassReviewedTests(unittest.TestCase):
         jobs=None,
         check_runs=None,
         compare=None,
+        base_refs=None,
         failure=None,
         rejected_merges=(),
     ):
@@ -1197,11 +1198,17 @@ class SinglePassReviewedTests(unittest.TestCase):
         import json  # pylint: disable=import-outside-toplevel
 
         current = {}
-        values = iter(snapshots)
+        values = (
+            {number: iter(items) for number, items in snapshots.items()}
+            if isinstance(snapshots, dict)
+            else iter(snapshots)
+        )
+        branch_refs = iter(base_refs) if base_refs is not None else None
 
         def read_snapshot(*_args, **_kwargs):
             current.clear()
-            current.update(copy.deepcopy(next(values)))
+            sequence = values[int(_args[1])] if isinstance(values, dict) else values
+            current.update(copy.deepcopy(next(sequence)))
             return copy.deepcopy(current)
 
         def transport(*args):
@@ -1214,6 +1221,8 @@ class SinglePassReviewedTests(unittest.TestCase):
             endpoint = next(item for item in args if item.startswith("repos/"))
             if failure and failure in endpoint:
                 raise RuntimeError("API/authentication failed")
+            if endpoint == "repos/example/repo/git/ref/heads/main":
+                return next(branch_refs) if branch_refs is not None else self.BASE
             if "/actions/runs/" in endpoint:
                 number = int(endpoint.rsplit("/", 1)[1])
                 return json.dumps(
@@ -1398,6 +1407,52 @@ class SinglePassReviewedTests(unittest.TestCase):
             sum("/compare/" in " ".join(call.args) for call in self.last_calls), 6
         )
 
+    def test_historical_pr_base_does_not_hide_a_behind_candidate(self):
+        """A green reviewed PR must include actual main, not only its old PR base."""
+        behind = self.ready() | {"mergeStateStatus": "BEHIND"}
+        calls = self.run_once(
+            [behind] * 3,
+            base_refs=["c" * 40],
+            compare=self.BASE,
+        )
+        self.assertFalse(self.merges(calls))
+        comparison = next(call for call in calls if "/compare/" in " ".join(call.args))
+        self.assertIn(f"/compare/{'c' * 40}...{self.HEAD}", comparison.args[1])
+
+    def test_behind_candidate_does_not_fail_or_starve_the_ready_candidate(self):
+        """Expected outdated ancestry is skipped while a later page still merges."""
+        behind = self.ready() | {"mergeStateStatus": "BEHIND"}
+        ready = self.ready() | {"baseRefOid": "c" * 40}
+        calls = self.run_once(
+            {7: [behind] * 3, 8: [ready] * 3},
+            pages=[[self.candidate()], [self.candidate(8)]],
+            base_refs=["c" * 40] * 4,
+            rejected_merges=(7,),
+        )
+        self.assertEqual([call[2] for call in self.merges(calls)], ["8"])
+
+    def test_actual_base_advances_before_final_read_without_changing_pr_base(self):
+        """Three stable PR-base values cannot mask a new default branch commit."""
+        calls = self.run_once(
+            [self.ready()] * 3,
+            base_refs=[self.BASE, self.BASE, "c" * 40],
+        )
+        self.assertFalse(self.merges(calls))
+
+    def test_unstable_own_failed_orchestration_check_does_not_block_ready_source(self):
+        """Provider UNSTABLE is not a substitute for verified product-check state."""
+        ready = self.ready() | {"mergeStateStatus": "UNSTABLE"}
+        ready["statusCheckRollup"][1].update(status="COMPLETED", conclusion="FAILURE")
+        self.assertEqual(len(self.merges(self.run_once([ready] * 3))), 1)
+
+    def test_missing_or_malformed_actual_branch_identity_fails_closed(self):
+        """A denied or incomplete branch-ref response cannot authorize a merge."""
+        for value in ("", "null", "main", "c" * 39):
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(RuntimeError, "default branch identity"):
+                    self.run_once([self.ready()] * 3, base_refs=[value])
+                self.assertFalse(self.merges(self.last_calls))
+
     def test_read_failure_aborts_before_attempting_any_candidate_merge(self):
         """Continuing after write rejection never hides a read or authentication error."""
         snapshots = [self.ready()] * 6
@@ -1487,6 +1542,7 @@ class SinglePassReviewedTests(unittest.TestCase):
             "/pulls?",
             "/actions/runs/",
             "/compare/",
+            "/git/ref/heads/",
             "/actions/jobs/",
             "/check-runs?",
         ):

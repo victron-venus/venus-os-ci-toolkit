@@ -436,7 +436,13 @@ jobs:
                   for key in ('baseRefOid', 'headRefOid'):
                       if re.fullmatch(r'[0-9a-f]{40}', value.get(key, '')) is None:
                           raise RuntimeError('Missing current base or head identity')
-                  base, head = value['baseRefOid'], value['headRefOid']
+                  # PR baseRefOid can remain the historical PR base after main
+                  # advances. Verify ancestry against the actual branch ref.
+                  base = gh('api', f'repos/{repo}/git/ref/heads/{quote(default_branch, safe="")}',
+                            '--jq', '.object.sha')
+                  if re.fullmatch(r'[0-9a-f]{40}', base) is None:
+                      raise RuntimeError('Missing current default branch identity')
+                  head = value['headRefOid']
                   current_base_in_head = gh('api', f'repos/{repo}/compare/{base}...{head}',
                                              '--jq', '.merge_base_commit.sha') == base
                   if not current_base_in_head:
@@ -445,7 +451,7 @@ jobs:
                   value['statusCheckRollup'] = [check for check in value['statusCheckRollup'] or []
                                                if not own_check(check, head)]
                   ready, state = checked_snapshot(value, required, '', True, actions_authors)
-                  return value, ready and current_base_in_head, (base, head, state)
+                  return value, ready and current_base_in_head, (base, value['baseRefOid'], head, state)
 
               pages = json.loads(gh('api', '--paginate', '--slurp',
                                    f'repos/{repo}/pulls?state=open&per_page=100'))
