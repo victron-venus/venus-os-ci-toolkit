@@ -314,23 +314,96 @@ class PlanLayerCompatibilityTests(unittest.TestCase):
 
     def test_execution_layer_roundtrips_exact_accepted_source_and_vendor_header(self):
         previous = migration._before_execution_job(self.notes_publisher)
+        execution_publisher = migration._before_automatic_test_push(self.notes_publisher)
         self.assertEqual(receipts.digest(previous),
                          "19cb27817c0aaf75867cdfba01a72dacb1026f71773bf42acb6527fc8553cb42")
-        self.assertEqual(receipts.digest(self.notes_publisher),
+        self.assertEqual(receipts.digest(execution_publisher),
                          "673f336995440c7b1c616322be470945e8d645a5144b102f686e037d6526564d")
         self.assertNotIn("ExecutionJobProof", previous)
         self.assertNotIn("execution_proof", previous)
         vendored_previous = previous.replace("#!/usr/bin/env python3\n", PREFIX, 1)
-        vendored_current = self.notes_publisher.replace("#!/usr/bin/env python3\n", PREFIX, 1)
+        vendored_current = execution_publisher.replace("#!/usr/bin/env python3\n", PREFIX, 1)
         state, result = receipts.transform(vendored_previous, receipts.PUBLISHER, migration.EXECUTION_JOB)
         self.assertEqual((state, result), ("original", vendored_current))
         self.assertEqual(migration._before_execution_job(vendored_current), vendored_previous)
         self.assertEqual(migration._before_execution_job(previous), previous)
         self.assertEqual(receipts.transform(result, receipts.PUBLISHER, migration.EXECUTION_JOB),
                          ("current", result))
-        for source in (previous, self.notes_publisher):
+        for source in (previous, execution_publisher, self.notes_publisher):
             self.assertEqual(receipts.digest(migration.previous_canonical_source(source, receipts.PUBLISHER)),
                              "e27e76d2a6080bb257ce60420cf9ead4a4a86f1b4a86f568225aa6ee9706875e")
+
+    def test_automatic_test_push_layer_roundtrips_exact_source_and_vendor_header(self):
+        previous = migration._before_automatic_test_push(self.notes_publisher)
+        self.assertEqual(receipts.digest(previous),
+                         "673f336995440c7b1c616322be470945e8d645a5144b102f686e037d6526564d")
+        self.assertEqual(receipts.digest(self.notes_publisher),
+                         "b8eea2626f3cb7b850d0cfa2914bc75c069b3552958cc4eead84abc8c177de10")
+        self.assertNotIn("def automatic_test_push(", previous)
+        vendored_previous = previous.replace("#!/usr/bin/env python3\n", PREFIX, 1)
+        vendored_current = self.notes_publisher.replace("#!/usr/bin/env python3\n", PREFIX, 1)
+        state, result = receipts.transform(vendored_previous, receipts.PUBLISHER,
+                                          migration.AUTOMATIC_TEST_PUSH)
+        self.assertEqual(state, "original")
+        self.assertEqual(result, vendored_current)
+        self.assertEqual(migration._before_automatic_test_push(vendored_current), vendored_previous)
+        self.assertEqual(migration._before_automatic_test_push(previous), previous)
+        self.assertEqual(receipts.transform(result, receipts.PUBLISHER, migration.AUTOMATIC_TEST_PUSH),
+                         ("current", result))
+        for publisher in (previous, self.notes_publisher):
+            self.assertEqual(receipts.digest(migration.previous_canonical_source(publisher, receipts.PUBLISHER)),
+                             "e27e76d2a6080bb257ce60420cf9ead4a4a86f1b4a86f568225aa6ee9706875e")
+
+    def test_inventory_preserves_automatic_test_push_without_installing_it(self):
+        previous = migration._before_automatic_test_push(self.notes_publisher)
+        for publisher in (previous, self.notes_publisher):
+            for state in (self.current, self.v1, self.casefold):
+                with self.subTest(publisher_hash=receipts.digest(publisher),
+                                  plan_hash=receipts.digest(state[migration.PLAN])):
+                    self.write_state({**state, receipts.PUBLISHER: publisher})
+                    before = self.snapshot()
+                    changes = migration.render(self.root)
+                    self.assertEqual(changes, {} if state == self.current else self.expected([migration.PLAN]))
+                    self.assertEqual(self.snapshot(), before)
+                    with patch.object(sys, "argv", ["install_release.py", str(self.root),
+                                                   "--release-inventory-only"]), \
+                            redirect_stderr(io.StringIO()), redirect_stdout(io.StringIO()):
+                        self.assertEqual(installer.main(), 0)
+                    self.assertEqual(migration.render(self.root), {})
+                    self.assertEqual((self.root / receipts.PUBLISHER).read_bytes(), before[receipts.PUBLISHER])
+        self.write_state(self.original)
+        publisher = migration.render(self.root)[receipts.PUBLISHER]
+        self.assertEqual(publisher, self.expected([receipts.PUBLISHER])[receipts.PUBLISHER])
+        self.assertNotIn("automatic_test_push", publisher)
+        self.assertNotIn("source_sha=admission", publisher)
+
+    def test_partial_or_tampered_automatic_test_push_rejects_before_any_write(self):
+        previous = migration._before_automatic_test_push(self.notes_publisher)
+        hunks = migration.AUTOMATIC_TEST_PUSH["hunks"]
+        variants = [self.notes_publisher + "# unreviewed customization\n",
+                    self.notes_publisher.replace('source_sha=admission["before"]',
+                                                 'source_sha=run["head_sha"]', 1)]
+        for selected in range(1, (1 << len(hunks)) - 1):
+            partial = previous
+            for index, hunk in enumerate(hunks):
+                if selected & (1 << index):
+                    partial = partial.replace(hunk["before"], hunk["after"], 1)
+            variants.append(partial)
+        for publisher in variants:
+            with self.subTest(publisher_hash=receipts.digest(publisher)):
+                self.assertNotIn(publisher, (previous, self.notes_publisher))
+                self.assertEqual(migration._before_automatic_test_push(publisher), publisher)
+                self.write_state({**self.casefold, receipts.PUBLISHER: publisher})
+                before = self.snapshot()
+                with self.assertRaisesRegex(ValueError, "Unknown or partially migrated"):
+                    migration.render(self.root)
+                with self.assertRaisesRegex(ValueError, "Unknown current"):
+                    migration.previous_canonical_source(publisher, receipts.PUBLISHER)
+                with patch.object(sys, "argv", ["install_release.py", str(self.root),
+                                               "--release-inventory-only"]), \
+                        redirect_stderr(io.StringIO()), redirect_stdout(io.StringIO()):
+                    self.assertEqual(installer.main(), 1)
+                self.assertEqual(self.snapshot(), before)
 
     def test_inventory_preserves_execution_layer_without_installing_it(self):
         previous = migration._before_execution_job(self.notes_publisher)
