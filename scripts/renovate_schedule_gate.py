@@ -12,7 +12,7 @@ import urllib.request
 from pathlib import Path
 
 PRODUCER_STEP = "Update reviewed CI and application dependencies"
-PRODUCTION_MARKER = "Record successful Renovate production sweep"
+PRODUCTION_MARKER = "Record completion-qualified Renovate production sweep"
 # Covers the 24h self-hosted queue limit, 150m job ceiling and daily cycle.
 HISTORY_HOURS = 72
 MAX_PAGES = 3
@@ -97,7 +97,7 @@ def records(api, path, key):
     raise MetadataError("Actions history exceeds the bounded metadata budget")
 
 
-def decide(event, repository, run_id, branch, api, now, primary_time="09:23", legacy_production=None):
+def decide(event, repository, run_id, branch, api, now, primary_time="09:23"):
     # Dispatch retains its explicit dry-run/production input and never needs history.
     if event == "workflow_dispatch":
         return True, "manual-dispatch"
@@ -152,12 +152,9 @@ def decide(event, repository, run_id, branch, api, now, primary_time="09:23", le
             if not producer or producer[0].get("conclusion") != "success":
                 continue
             marked = bool(marker and marker[0].get("conclusion") == "success")
-            legacy = bool(legacy_production and candidate_id == legacy_production[0]
-                          and candidate.get("head_sha") == legacy_production[1]
-                          and now < legacy_production[2])
-            # Existing scheduled full sweeps predate the marker. Unmarked manual
-            # runs may have been dry runs, except an explicitly reviewed exact run.
-            if not (marked or candidate.get("event") == "schedule" or legacy):
+            # Prior exit-zero schedules/markers predate artifact completion checks.
+            # Only the new source-bound verification marker earns cycle credit.
+            if not marked:
                 continue
             completed = timestamp(producer[0].get("completed_at"))
             if completed > now + dt.timedelta(minutes=5):
@@ -169,20 +166,12 @@ def decide(event, repository, run_id, branch, api, now, primary_time="09:23", le
 
 def main():
     event = os.environ.get("GITHUB_EVENT_NAME", "")
-    legacy = None
-    legacy_id = os.environ.get("RENOVATE_PREVIOUS_PRODUCTION_RUN", "")
-    legacy_head = os.environ.get("RENOVATE_PREVIOUS_PRODUCTION_HEAD", "")
-    legacy_expires = os.environ.get("RENOVATE_PREVIOUS_PRODUCTION_EXPIRES", "")
-    if legacy_id or legacy_head or legacy_expires:
-        if not re.fullmatch(r"[0-9a-f]{40}", legacy_head):
-            raise MetadataError("Invalid reviewed production head")
-        legacy = (positive_id(legacy_id), legacy_head, timestamp(legacy_expires))
     api = None if event == "workflow_dispatch" else GitHub(os.environ.get("GH_TOKEN", ""))
     run, reason = decide(event, os.environ.get("GITHUB_REPOSITORY", ""),
                          os.environ.get("GITHUB_RUN_ID", ""),
                          os.environ.get("GITHUB_REF_NAME", ""), api,
                          dt.datetime.now(dt.timezone.utc),
-                         os.environ.get("RENOVATE_PRIMARY_TIME", ""), legacy)
+                         os.environ.get("RENOVATE_PRIMARY_TIME", ""))
     with Path(os.environ["GITHUB_OUTPUT"]).open("a") as output:
         output.write(f"run={str(run).lower()}\nreason={reason}\n")
     print(f"Renovate schedule decision: {reason}")

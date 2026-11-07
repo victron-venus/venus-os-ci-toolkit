@@ -7,6 +7,8 @@ import { registerHooks } from 'node:module';
 import { dirname, isAbsolute, join, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
+import { activeCompletionCompat } from './renovate-completion-compat.mjs';
+
 export { assertStaticUvProject } from './renovate-uv-preflight.mjs';
 
 const version = '44.215.0';
@@ -205,6 +207,7 @@ export function installNpmCompat(packageDirectory) {
 // install the same hook against their isolated, verified npm installation.
 if (process.argv[1] === '/usr/local/renovate/dist/renovate.js') {
   assert.equal(realpathSync(process.argv[1]), process.argv[1], 'CLI path must be canonical');
+  assert.ok(activeCompletionCompat, 'Completion evidence hook must register before security preload');
   const compatibility = installSecurityCompat(dirname(dirname(process.argv[1])));
   const pythonCompatibility = installPythonBuildCompat(dirname(dirname(process.argv[1])));
   const npmCompatibility = installNpmCompat(dirname(dirname(process.argv[1])));
@@ -212,6 +215,8 @@ if (process.argv[1] === '/usr/local/renovate/dist/renovate.js') {
   // can perform API writes; dependencies are the same official runtime modules.
   await import(pathToFileURL('/usr/local/renovate/dist/workers/repository/updates/generate.js').href);
   assert.ok(compatibility.wasApplied(), 'Security branch compatibility was not loaded');
+  await activeCompletionCompat.preload();
+  assert.ok(activeCompletionCompat.wasApplied(), 'Completion evidence compatibility was not loaded');
   await pythonCompatibility.preload();
   assert.ok(pythonCompatibility.wasApplied(), 'Python build boundary was not loaded');
   await npmCompatibility.preload();
