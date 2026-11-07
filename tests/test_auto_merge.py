@@ -400,12 +400,12 @@ class WithdrawalTests(unittest.TestCase):
         self.assertIn("--disable-auto", calls[-1].args)
 
     def test_new_intent_or_changed_identity_is_never_cancelled(self):
-        """A different head, base, author or native request belongs to a later event."""
+        """A different head, branch, author or native request belongs to a later event."""
         withdrawn = self.withdrawn()
         for change in (
             {"labels": [{"name": "automerge"}]},
             {"headRefOid": "new-head"},
-            {"baseRefOid": "new-base"},
+            {"baseRefOid": None},
             {"baseRefName": "other"},
             {"isCrossRepository": True},
             {"author": {"login": "4alvit"}},
@@ -446,11 +446,20 @@ class WithdrawalTests(unittest.TestCase):
             with self.subTest(event=event):
                 self.assertEqual(len(self.run_workflow([self.withdrawn()], event)), 1)
 
+    def test_default_cleanup_accepts_base_advance_for_the_same_request(self):
+        """The ordinary evaluator also keeps an unchanged withdrawal actionable."""
+        value = self.withdrawn()
+        advanced = value | {"baseRefOid": "advanced-base"}
+        calls = self.run_workflow([value, advanced])
+        self.assertEqual(calls[-1].args, (
+            "pr", "merge", "7", "--repo", "example/repo", "--disable-auto",
+        ))
+
     def test_default_cleanup_requires_complete_matching_event_identity(self):
         """Reject withdrawal payloads that describe a different PR identity."""
         value = self.withdrawn()
         for field, replacement in (
-            ("base", {"sha": "different", "ref": "main", "repo": {"full_name": "example/repo"}}),
+            ("base", {"sha": None, "ref": "main", "repo": {"full_name": "example/repo"}}),
             ("base", {"sha": "base", "ref": "other", "repo": {"full_name": "example/repo"}}),
             ("head", {"sha": "abc", "repo": {"full_name": "contributor/fork"}}),
             ("user", {"login": "4alvit"}),
@@ -693,7 +702,7 @@ class TargetWithdrawalTests(unittest.TestCase):
         value = self.value()
         event = self.event(value)
         changes = (
-            {"headRefOid": "new-head"}, {"baseRefOid": "new-base"},
+            {"headRefOid": "new-head"}, {"baseRefOid": None},
             {"baseRefName": "other"}, {"isCrossRepository": True},
             {"author": {"login": "4alvit"}}, {"labels": [{"name": "automerge"}]},
         )
@@ -709,6 +718,51 @@ class TargetWithdrawalTests(unittest.TestCase):
         for change in ({"number": 8}, {"repository": {"full_name": "other/repo"}},
                        {"action": "labeled", "label": {"name": "bug"}}):
             self.assertEqual(len(self.run_target([], event | change)), 1)
+
+    def test_base_advances_do_not_strand_the_same_withdrawn_request(self):
+        """The base commit may move before either read without replacing the request."""
+        for fork in (False, True):
+            for action, changes in (
+                ("unlabeled", {}),
+                ("converted_to_draft", {"labels": [{"name": "automerge"}], "isDraft": True}),
+                ("edited", {"labels": [{"name": "automerge"}], "baseRefName": "other"}),
+            ):
+                value = self.value(isCrossRepository=fork, **changes)
+                event = self.event(value, action)
+                advanced = value | {"baseRefOid": "advanced-base"}
+                later = value | {"baseRefOid": "later-base"}
+                for snapshots in ([advanced, advanced], [value, advanced], [advanced, later]):
+                    with self.subTest(fork=fork, action=action, snapshots=snapshots):
+                        calls = self.run_target(snapshots, event)
+                        self.assertEqual(calls[-1].args, (
+                            "pr", "merge", "7", "--repo", "example/repo", "--disable-auto",
+                        ))
+                        self.assertEqual(len(calls), 2)
+
+    def test_base_advance_never_owns_a_newer_or_replaced_request(self):
+        """Base movement cannot authorize cancellation of a later manual request."""
+        value = self.value()
+        event = self.event(value)
+        advanced = value | {"baseRefOid": "advanced-base"}
+        for request in (None, {"enabledAt": "2026-10-31T12:01:00Z"},
+                        {"enabledAt": "2026-10-31T12:02:00Z"}, {"enabledAt": None}):
+            with self.subTest(request=request):
+                replaced = advanced | {"autoMergeRequest": request}
+                self.assertEqual(len(self.run_target([replaced], event)), 1)
+                self.assertEqual(len(self.run_target([advanced, replaced], event)), 1)
+
+    def test_base_advance_preserves_identity_and_renewed_eligibility_guards(self):
+        """A moving base never permits a different head, author, branch or opt-in."""
+        value = self.value()
+        event = self.event(value)
+        advanced = value | {"baseRefOid": "advanced-base"}
+        for change in ({"headRefOid": "new-head"}, {"baseRefName": "other"},
+                       {"isCrossRepository": True}, {"author": {"login": "outsider"}},
+                       {"labels": [{"name": "automerge"}]}, {"baseRefOid": None}):
+            with self.subTest(change=change):
+                changed = advanced | change
+                self.assertEqual(len(self.run_target([changed], event)), 1)
+                self.assertEqual(len(self.run_target([advanced, changed], event)), 1)
 
     def test_new_manual_request_after_first_read_is_preserved(self):
         """Do not revoke a replacement request created between metadata reads."""

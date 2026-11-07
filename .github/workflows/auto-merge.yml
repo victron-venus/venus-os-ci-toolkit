@@ -224,9 +224,13 @@ jobs:
           def event_identity_matches(repo, pr, pull):
               base, head = pull.get('base') or {}, pull.get('head') or {}
               head_repo = (head.get('repo') or {}).get('full_name')
+              # A moving commit on the same base branch does not replace an
+              # existing native request. Keep head, branch, repository and author
+              # identity bound; request ordering and a fresh equality check below
+              # still protect later replacement requests.
               return (bool(head_repo) and (base.get('repo') or {}).get('full_name') == repo
                       and bool(head.get('sha')) and pr.get('headRefOid') == head['sha']
-                      and bool(base.get('sha')) and pr.get('baseRefOid') == base['sha']
+                      and bool(base.get('sha')) and bool(pr.get('baseRefOid'))
                       and bool(base.get('ref')) and pr.get('baseRefName') == base['ref']
                       and pr.get('isCrossRepository') is (head_repo != repo)
                       and canonical_author(pr['author']) == (pull.get('user') or {}).get('login'))
@@ -280,11 +284,12 @@ jobs:
                       or canonical_author(pr['author']) not in authors
                       or not withdrawal_intent(repo, number, pr, previous_request, default_branch)):
                   return
-              identity = ('headRefOid', 'baseRefOid', 'baseRefName', 'isCrossRepository')
-              if any(pr.get(key) is None for key in identity):
+              identity = ('headRefOid', 'baseRefName', 'isCrossRepository')
+              if not pr.get('baseRefOid') or any(pr.get(key) is None for key in identity):
                   raise RuntimeError('Cannot verify withdrawn request identity')
               fresh = snapshot(repo, number)
-              if (fresh['state'] != 'OPEN' or eligible(fresh, default_branch, authors)
+              if (fresh['state'] != 'OPEN' or not fresh.get('baseRefOid')
+                      or eligible(fresh, default_branch, authors)
                       or canonical_author(fresh['author']) != canonical_author(pr['author'])
                       or any(fresh.get(key) != pr[key] for key in identity)
                       or fresh.get('autoMergeRequest') != pr['autoMergeRequest']):
