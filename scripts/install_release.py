@@ -12,6 +12,7 @@ keeps rollout independently reviewable; --check detects any vendored drift.
 from __future__ import annotations
 
 import argparse
+import ast
 import copy
 import hashlib
 import io
@@ -34,6 +35,7 @@ import release_receipt_migration  # pylint: disable=wrong-import-position
 import release_inventory_migration  # pylint: disable=wrong-import-position
 import release_attempt_workflow  # pylint: disable=wrong-import-position
 import release_attempt_migration  # pylint: disable=wrong-import-position
+import release_push_scope  # pylint: disable=wrong-import-position
 from workflow_hardening import harden_jobs  # pylint: disable=wrong-import-position
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -379,7 +381,8 @@ def dump(data):
 def scope_policy(policy):
     """Validate explicit documentation exceptions and mandatory validators."""
     config = policy.get("change_scope", {})
-    allowed = {"documentation_paths", "required_paths", "always_validate_workflows"}
+    allowed = {"documentation_paths", "required_paths", "always_validate_workflows",
+               "automatic_release_test_paths"}
     if not isinstance(config, dict) or set(config) - allowed:
         raise ValueError(
             "change_scope must contain only reviewed path and workflow lists"
@@ -406,6 +409,11 @@ def scope_policy(policy):
         policy.get("validation_workflows", [])
     ):
         raise ValueError("always_validate_workflows must name configured validators")
+    if "automatic_release_test_paths" in config:
+        selected = release_push_scope.validate_paths(result["automatic_release_test_paths"])
+        if (policy.get("mode", "release") != "release" or not policy.get("versioning")
+                or selected.intersection(result["required_paths"])):
+            raise ValueError("Automatic release test paths must not replace required paths or validation")
     return result
 
 
@@ -471,6 +479,12 @@ def scope_job(policy, *, force_input=False):
             },
         ],
     }
+
+
+def automatic_push_admission(policy, prepare):
+    """Retain preparation's exact-predecessor proof; scope always stays forced full."""
+    if scope_policy(policy)["automatic_release_test_paths"]:
+        prepare["steps"].append(release_push_scope.receipt_step(UPLOAD))
 
 
 def quality_gate_script(expected, always):
@@ -1249,6 +1263,7 @@ def release(policy):
             },
         }
     )
+    automatic_push_admission(policy, prepare)
     build_condition = "${{ needs.prepare.outputs.build == 'true' }}"
     checks_trusted = (
         f"github.repository == '{policy['repository']}' && "
@@ -1576,6 +1591,19 @@ def release_files(directory: Path, policy: dict) -> dict[str, str]:
     if not (directory / RELEASE_BUILD_PATH).is_file():
         raise ValueError("A real release-build.yml adapter is required")
     files = {".github/workflows/release-pipeline.yml": dump(release(policy))}
+    if scope_policy(policy)["automatic_release_test_paths"]:
+        files["scripts/release_push_scope.py"] = (ROOT / "scripts/release_push_scope.py").read_text()
+        files["docs/automatic-release-test-paths.md"] = (ROOT / "docs/automatic-release-test-paths.md").read_text()
+        files[".github/release-tests/test_release_push_scope.py"] = (
+            (ROOT / "tests/test_release_push_scope.py").read_text().replace(
+                "Path(__file__).resolve().parents[1]", "Path(__file__).resolve().parents[2]"
+            )
+        )
+        files[".github/release-tests/test_release_push_prepare.py"] = (
+            (ROOT / "tests/test_release_push_prepare.py").read_text().replace(
+                "Path(__file__).resolve().parents[1]", "Path(__file__).resolve().parents[2]"
+            )
+        )
     if policy.get("versioning"):
         files.update(attempt_scoped_build_adapters(directory, policy))
     for path in ("scripts/install_release_gh.py", "scripts/download_release_gh.go", ".github/gh/release.json", ".github/gh/LICENSE", "docs/release-github-cli.md"):
@@ -2071,6 +2099,84 @@ def render_release_inventory(directory: Path) -> dict[str, str]:
     return release_inventory_migration.render(directory)
 
 
+def migrate_push_runtime(source):
+    """Replace two known functions only; reject unreviewed consumer runtime drift."""
+    canonical = (ROOT / "scripts/release_versioned.py").read_text()
+    names = {"prepare": "4bba918ca86550fc0285a5c6dae25556df65bef54bd9ab82c77e71aa31dd2fe1",
+             "scheduled_reuse": "c66212797408e7878d4e228e3cce8e75e9038dbe17e006f555a4404383e0c885"}
+    original = {node.name: node for node in ast.parse(source).body if isinstance(node, ast.FunctionDef)}
+    desired = {node.name: node for node in ast.parse(canonical).body if isinstance(node, ast.FunctionDef)}
+    if "automatic_test_push" in original:
+        for name in (*names, "automatic_test_push"):
+            if ast.dump(original[name], include_attributes=False) != ast.dump(desired[name], include_attributes=False):
+                raise ValueError("Push admission runtime differs from canonical functions")
+        return source
+    lines = source.splitlines(keepends=True)
+    for name in sorted(names, key=lambda name: original[name].lineno, reverse=True):
+        node = original[name]
+        if node.decorator_list:
+            raise ValueError("Push admission rejects decorated runtime functions")
+        digest = hashlib.sha256(ast.get_source_segment(source, node).encode()).hexdigest()
+        if digest != names[name]:
+            raise ValueError("Push admission requires reviewed prepare/reuse runtime")
+        replacement = ast.get_source_segment(canonical, desired[name]) + "\n"
+        if name == "prepare":
+            replacement = ast.get_source_segment(canonical, desired["automatic_test_push"]) + "\n\n\n" + replacement
+        lines[node.lineno - 1:node.end_lineno] = [replacement]
+    return "".join(lines)
+
+
+def render_release_push_admission(directory: Path) -> dict[str, str]:
+    """Adopt one prepare proof and receipt without refreshing publisher behavior."""
+    from release_receipt_migration import read_local  # pylint: disable=import-outside-toplevel
+    policy = json.loads(read_local(directory, POLICY_FILE))
+    if not scope_policy(policy)["automatic_release_test_paths"]:
+        raise ValueError("Declare automatic_release_test_paths before admission adoption")
+    if policy.get("ci_execution", "github") != "github" or policy.get("single_entry_ci") is not True:
+        raise ValueError("Admission adoption requires existing hosted single-entry CI")
+    name = WORKFLOWS + "/" + RELEASE_PIPELINE_NAME
+    source = read_local(directory, name)
+    if not source.startswith("# Generated by venus-os-ci-toolkit/scripts/install_release.py;"):
+        raise ValueError("Admission adoption requires the generated release marker")
+    original = yaml.load(source, Loader=WorkflowLoader)  # nosec B506 -- safe duplicate-key loader
+    if original.get("defaults") or any(job.get("defaults") for job in original.get("jobs", {}).values()):
+        raise ValueError("Admission adoption rejects execution overrides")
+    from change_scope_migration import ScalarEditor, normalized  # pylint: disable=import-outside-toplevel
+    editor = ScalarEditor(source, WorkflowLoader)
+    prepare = editor.data.get("jobs", {}).get("prepare", {})
+    if not any(step.get("name") == "Retain test-only push admission" for step in prepare.get("steps", [])):
+        node = editor.node(("jobs", "prepare", "steps"))
+        if not isinstance(node, yaml.SequenceNode) or node.flow_style or not node.value:
+            raise ValueError("Admission requires nonempty block preparation steps")
+        receipt = release_push_scope.receipt_step(UPLOAD)
+        start = source.rfind("\n", 0, node.end_mark.index) + 1
+        fragment = yaml.safe_dump([receipt], sort_keys=False, width=100)
+        replacement = "".join(" " * node.start_mark.column + line + "\n" for line in fragment.splitlines())
+        editor.edits.append((start, start, replacement))
+        editor.expected["jobs"]["prepare"]["steps"].append(normalized(receipt))
+        source = editor.finish(WorkflowLoader)
+    release_push_scope.validate_workflow(policy, yaml.load(source, Loader=yaml.BaseLoader))
+    changed = yaml.load(source, Loader=WorkflowLoader)  # nosec B506
+    for value in (original, changed):
+        steps = value["jobs"]["prepare"]["steps"]
+        steps[:] = [step for step in steps if step.get("name") != "Retain test-only push admission"]
+    if original != changed:
+        raise ValueError("Admission adoption changed unrelated release nodes")
+    files = {name: source, "scripts/release_versioned.py": migrate_push_runtime(read_local(directory, "scripts/release_versioned.py"))}
+    for path in ("scripts/release_push_scope.py", WORKFLOW_CONTRACTS_PATH, "docs/automatic-release-test-paths.md"):
+        files[path] = (ROOT / path).read_text()
+    for name in ("scope", "prepare"):
+        files[f".github/release-tests/test_release_push_{name}.py"] = (
+            (ROOT / f"tests/test_release_push_{name}.py").read_text().replace(
+                "Path(__file__).resolve().parents[1]", "Path(__file__).resolve().parents[2]"
+            )
+        )
+    runtime = files.pop("scripts/release_versioned.py")
+    prepared = prepare_consumer_files(directory, files)
+    prepared["scripts/release_versioned.py"] = runtime
+    return prepared
+
+
 def render(directory: Path) -> dict[str, str]:
     """Validate adapters and assemble generated workflows, clients and operator docs."""
     policy = json.loads((directory / POLICY_FILE).read_text())
@@ -2529,6 +2635,8 @@ References: [GitHub schedules](https://docs.github.com/en/actions/reference/work
                 "new final artifacts after acceptance. The manifest records new hashes and "
                 "`derived_from_rc`. No override or force-tag option exists.",
             )
+    if scope_policy(policy)["automatic_release_test_paths"]:
+        text += "\n" + (ROOT / "docs/automatic-release-test-paths.md").read_text()
     return text
 
 
@@ -2582,6 +2690,10 @@ def main():
     modes.add_argument(
         "--release-inventory-only", action="store_const", dest="renderer", const=render_release_inventory,
         help="enforce declared package receipt inventory without replacing other release tooling",
+    )
+    modes.add_argument(
+        "--release-push-admission-only", action="store_const", dest="renderer", const=render_release_push_admission,
+        help="adopt reviewed automatic test-only push admission without replacing publication jobs",
     )
     args = parser.parse_args()
     try:
