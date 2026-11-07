@@ -4,6 +4,7 @@
   "enabledManagers": ["github-actions", "custom.regex", "custom.jsonata"],
   "dependencyDashboard": false,
   "automerge": false,
+  "addLabels": ["automerge"],
   "vulnerabilityAlerts": {
     "dependencyDashboardApproval": false,
     "prConcurrentLimit": 1,

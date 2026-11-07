@@ -37,6 +37,8 @@ const allowedModules = new Set([
   'modules/manager/custom/regex/index',
   'modules/manager/custom/jsonata/index',
   'workers/repository/updates/flatten',
+  'workers/repository/updates/branchify',
+  'workers/repository/update/pr/labels',
   'workers/repository/update/branch/auto-replace',
 ]);
 async function moduleAt(name) {
@@ -56,6 +58,9 @@ const { extractPackageFile: extractPins } = await moduleAt('modules/manager/cust
 const { extractPackageFile: extractRuntime } = await moduleAt('modules/manager/custom/jsonata/index');
 const { flattenUpdates } = await moduleAt('workers/repository/updates/flatten');
 const { doAutoReplace } = await moduleAt('workers/repository/update/branch/auto-replace');
+const { prepareLabels, shouldUpdateLabels, getChangedLabels } = await moduleAt('workers/repository/update/pr/labels');
+const { setPlatformApi } = await moduleAt('modules/platform/index');
+setPlatformApi('github');
 const preset = JSON.parse(await readFile('renovate-ci.json', 'utf8'));
 const config = mergeChildConfig(getConfig(), {
   ...preset,
@@ -245,6 +250,7 @@ const updates = await flattenUpdates(config, {
 assert.equal(updates.length, actions.length + pins.deps.length + policyPins.deps.length + runtimePins.deps.length);
 assert.deepEqual([...new Set(updates.map((update) => update.branchName))], ['renovate/ci-workflows']);
 assert.ok(updates.every((update) => update.automerge === false));
+assert.ok(updates.every((update) => prepareLabels(update).includes('automerge')));
 for await (const filename of glob(['.github/workflows/*.{yml,yaml}', 'actions/**/action.{yml,yaml}'])) {
   const actual = await extractPackageFile(await readFile(filename, 'utf8'), filename, config);
   for (const dep of actual?.deps ?? []) {
@@ -270,9 +276,40 @@ assert.ok(ciUpdates.every((update) => update.branchName === 'renovate/ci-workflo
 assert.ok(applicationUpdates.every((update) => update.branchName.includes('application-dependencies')));
 assert.ok(applicationUpdates.every((update) => update.branchName !== 'renovate/ci-workflows'));
 assert.ok(fleetUpdates.every((update) => update.automerge === false));
+assert.ok(fleetUpdates.every((update) => prepareLabels(update).includes('automerge')));
 assert.equal(Object.hasOwn(fleetConfig.vulnerabilityAlerts, 'enabled'), false);
 assert.equal(fleetConfig.vulnerabilityAlerts.dependencyDashboardApproval, false);
 console.log('Full-fleet policy extracts Python application dependencies and keeps application updates separate from atomic CI updates.');
+
+// The shared merger, not Renovate itself, owns approval and CI enforcement.
+// Exercise actual grouped branch configuration, including application majors.
+const { branchifyUpgrades } = await moduleAt('workers/repository/updates/branchify');
+const allUpdateTypes = ['major', 'minor', 'patch', 'pin', 'digest'];
+const applicationCases = allUpdateTypes.map((updateType, index) => ({
+  depName: `fixture-${updateType}`, datasource: 'npm', currentValue: '1.0.0',
+  updates: [{ updateType, newValue: updateType === 'major' ? '2.0.0' : `1.1.${index}`, newMajor: updateType === 'major' ? 2 : 1 }],
+}));
+const planned = await branchifyUpgrades({ ...fleetConfig, errors: [], warnings: [] }, {
+  'github-actions': [{ packageFile: '.github/workflows/ci.yml', deps: actions }],
+  npm: [{ packageFile: 'package.json', deps: applicationCases }],
+});
+assert.ok(planned.branches.some((branch) => branch.upgrades.some((update) => update.manager === 'npm' && update.updateType === 'major')));
+for (const branch of planned.branches) {
+  assert.ok(prepareLabels(branch).includes('automerge'), branch.branchName);
+  assert.equal(branch.automerge, false, 'Only the independently reviewed shared workflow may merge');
+}
+
+// A policy change may label an untouched existing PR, but never undo a user's
+// withdrawal or overwrite other manual edits. Missing historical metadata fails closed.
+const configuredLabels = prepareLabels({ ...fleetConfig, labels: ['dependencies'] });
+assert.deepEqual(configuredLabels, ['automerge', 'dependencies']);
+assert.equal(shouldUpdateLabels(['dependencies'], ['dependencies'], configuredLabels), true);
+assert.deepEqual(getChangedLabels(['dependencies'], configuredLabels), [['automerge'], []]);
+assert.equal(shouldUpdateLabels(configuredLabels.slice(), ['dependencies'], configuredLabels.slice()), false);
+assert.equal(shouldUpdateLabels(['dependencies'], ['dependencies', 'manual-hold'], configuredLabels.slice()), false);
+assert.equal(shouldUpdateLabels(undefined, [], configuredLabels.slice()), false);
+assert.equal(shouldUpdateLabels(configuredLabels.slice(), configuredLabels.slice(), configuredLabels.slice()), false);
+console.log('All enabled update types opt into the shared merger; actual Renovate label reconciliation preserves manual withdrawal.');
 
 // Lookup must propose a lock-only update even when the newer release already
 // satisfies the manifest. Supplying a prebuilt update would miss this regression.
@@ -368,7 +405,6 @@ console.log('Native Python lookup refreshes in-range locks without changing mani
 
 // Advisory rules force their own grouping; CI security fixes must stay atomic.
 const { default: platformApis } = await moduleAt('modules/platform/api');
-const { setPlatformApi } = await moduleAt('modules/platform/index');
 const { detectVulnerabilityAlerts } = await moduleAt('workers/repository/init/vulnerability');
 const advisory = (ecosystem, name, fixed) => ({
   security_vulnerability: { package: { ecosystem, name }, first_patched_version: { identifier: fixed }, severity: 'high' },
@@ -407,6 +443,7 @@ assert.ok(advisoryConfig.packageRules.filter((rule) => rule.isVulnerabilityAlert
 const securityUpdates = await flattenUpdates(advisoryConfig, structuredClone(securityPackages));
 assert.equal(securityUpdates.length, 5);
 assert.equal(securityUpdates.filter((update) => update.isVulnerabilityAlert).length, 3);
+assert.ok(securityUpdates.every((update) => prepareLabels(update).includes('automerge')));
 assert.ok(securityUpdates.filter((update) => update.manager !== 'pip_requirements')
   .every((update) => update.branchName === 'renovate/ci-workflows'));
 assert.ok(securityUpdates.filter((update) => update.manager === 'pip_requirements')
