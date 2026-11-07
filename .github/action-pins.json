@@ -26,8 +26,8 @@
   },
   {
     "packageName": "step-security/harden-runner",
-    "version": "v2.22.3",
-    "digest": "46b06cea07f9e64621fdf066ba77ac6915163d43"
+    "version": "v2.22.4",
+    "digest": "1d88384fd173af6ecb012dfd0264a306b711241a"
   },
   {
     "packageName": "sigstore/cosign-installer",
