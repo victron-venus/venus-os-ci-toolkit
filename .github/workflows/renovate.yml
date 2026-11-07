@@ -2,7 +2,8 @@ name: Renovate dependency updates
 
 on:
   schedule:
-    - cron: '23 9 * * *'
+    # One daily backup opportunity; the gate deduplicates successful production.
+    - cron: '23 9,21 * * *'
   workflow_dispatch:
     inputs:
       dry-run:
@@ -16,6 +17,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: renovate-ci-dependencies
@@ -36,12 +38,21 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Check scheduled sweep freshness
+        id: schedule_gate
+        timeout-minutes: 3
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RENOVATE_PRIMARY_TIME: '09:23'
+        run: python3 scripts/renovate_schedule_gate.py
       - name: Check bot workflow permissions and signing configuration
+        if: steps.schedule_gate.outputs.run == 'true'
         env:
           RENOVATE_TOKEN: ${{ secrets.BOT_PAT }}
           RENOVATE_GIT_PRIVATE_KEY: ${{ secrets.RENOVATE_SIGNING_KEY }}
         run: python3 scripts/check_renovate_credentials.py
       - name: Read the tested Renovate version
+        if: steps.schedule_gate.outputs.run == 'true'
         id: runtime
         env:
           DRY_RUN: ${{ inputs.dry-run }}
@@ -54,6 +65,7 @@ jobs:
             echo 'RENOVATE_DRY_RUN=full' >> "$GITHUB_ENV"
           fi
       - name: Update reviewed CI and application dependencies
+        if: steps.schedule_gate.outputs.run == 'true'
         uses: renovatebot/github-action@1c0cf989c02653fba0efe7ca5772338860ca71dc # v46.3.12
         with:
           configurationFile: renovate-runner.cjs
@@ -65,3 +77,6 @@ jobs:
         env:
           LOG_LEVEL: ${{ inputs.debug && 'debug' || 'info' }}
           RENOVATE_GIT_PRIVATE_KEY: ${{ secrets.RENOVATE_SIGNING_KEY }}
+      - name: Record successful Renovate production sweep
+        if: steps.schedule_gate.outputs.run == 'true' && inputs.dry-run != true
+        run: echo 'Renovate production sweep completed successfully.'
