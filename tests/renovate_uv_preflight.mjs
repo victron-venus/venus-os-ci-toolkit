@@ -286,6 +286,69 @@ try {
     },
     true,
   );
+  async function checkNested(label, parentEdit, expected) {
+    await check(label, async (setup) => {
+      const { repo, args, setAfterWrite } = setup;
+      args.packageFileName = 'research/pyproject.toml';
+      args.lockFileName = 'research/uv.lock';
+      setAfterWrite(async () => {
+        await fs.mkdir(repo + '/research');
+        await fs.copyFile(repo + '/pyproject.toml', repo + '/research/pyproject.toml');
+        await fs.copyFile(repo + '/uv.lock', repo + '/research/uv.lock');
+        await fs.writeFile(repo + '/pyproject.toml', base.replace('name="demo"', 'name="parent"'));
+        await fs.writeFile(repo + '/uv.lock', lock.replace('name="demo"', 'name="parent"'));
+        await parentEdit(setup);
+      });
+    }, expected);
+  }
+  await checkNested('nested-static-parent', async () => {}, true);
+  await checkNested('nested-parent-local-dependency', async ({ repo }) =>
+    fs.appendFile(repo + '/pyproject.toml', '\n[project.optional-dependencies]\nx=["local @ ./src"]\n'), false);
+  await checkNested('nested-workspace-parent', async ({ repo }) =>
+    fs.appendFile(repo + '/pyproject.toml', '\n[tool.uv.workspace]\nmembers=["research"]\n'), false);
+  await checkNested('nested-index-parent', async ({ repo }) =>
+    fs.appendFile(repo + '/pyproject.toml', '\n[[tool.uv.index]]\nurl="https://example.invalid/simple"\n'), false);
+  await checkNested('nested-override-parent', async ({ repo }) =>
+    fs.appendFile(repo + '/pyproject.toml', '\n[tool.uv]\noverride-dependencies=["demo==1"]\n'), false);
+  await checkNested('nested-parent-backend-path', async ({ repo }) =>
+    fs.appendFile(repo + '/pyproject.toml', 'backend-path=["."]\n'), false);
+  await checkNested('nested-parent-dynamic-version', async ({ repo }) => {
+    const file = repo + '/pyproject.toml';
+    await fs.writeFile(file, (await fs.readFile(file, 'utf8')).replace('[build-system]', 'dynamic=["version"]\n[build-system]'));
+  }, false);
+  await checkNested('nested-parent-vcs-lock', async ({ repo }) =>
+    fs.appendFile(repo + '/uv.lock', '\n[[package]]\nname="unsafe"\nsource={git="https://example.invalid/repo"}\n'), false);
+  await checkNested('nested-parent-missing-lock', async ({ repo }) => fs.unlink(repo + '/uv.lock'), false);
+  await checkNested('nested-parent-symlink-source', async ({ repo, parent }) => {
+    await fs.rename(repo + '/pyproject.toml', parent + '/redirect.toml');
+    await fs.symlink(parent + '/redirect.toml', repo + '/pyproject.toml');
+  }, false);
+  await checkNested('nested-parent-symlink-lock', async ({ repo, parent }) => {
+    await fs.rename(repo + '/uv.lock', parent + '/redirect.lock');
+    await fs.symlink(parent + '/redirect.lock', repo + '/uv.lock');
+  }, false);
+  await checkNested('nested-parent-oversized', async ({ repo }) =>
+    fs.appendFile(repo + '/pyproject.toml', '#' + 'x'.repeat(1024 * 1024)), false);
+  await checkNested('nested-parent-uv-config', async ({ repo }) => fs.writeFile(repo + '/uv.toml', ''), false);
+  await checkNested('nested-external-project', async ({ parent }) =>
+    fs.writeFile(parent + '/pyproject.toml', base), false);
+  await checkNested('nested-parent-custom-backend', async ({ repo }) => {
+    const file = repo + '/pyproject.toml';
+    await fs.writeFile(file, (await fs.readFile(file, 'utf8')).replace('setuptools.build_meta', 'unsafe.backend'));
+  }, false);
+  async function interposeParent({ repo, args }) {
+    await fs.mkdir(repo + '/middle');
+    await fs.rename(repo + '/research', repo + '/middle/research');
+    await fs.writeFile(repo + '/middle/pyproject.toml', base.replace('name="demo"', 'name="middle"'));
+    await fs.writeFile(repo + '/middle/uv.lock', lock.replace('name="demo"', 'name="middle"'));
+    args.packageFileName = 'middle/research/pyproject.toml';
+    args.lockFileName = 'middle/research/uv.lock';
+  }
+  await checkNested('nested-two-static-parents', interposeParent, true);
+  await checkNested('nested-unsafe-grandparent', async (setup) => {
+    await interposeParent(setup);
+    await fs.appendFile(setup.repo + '/pyproject.toml', '\n[tool.uv.workspace]\nmembers=["middle"]\n');
+  }, false);
   console.log(`${results.length} raw-TOML preflight cases passed`);
 } finally {
   await fs.rm(F, { recursive: true, force: true });

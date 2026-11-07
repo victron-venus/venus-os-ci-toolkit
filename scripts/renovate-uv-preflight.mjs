@@ -1,6 +1,6 @@
 // Inspect raw TOML before native `uv lock`. The CLI separately forbids third-party builds.
 import { lstat as uvLstat, readFile as uvReadFile, realpath as uvRealpath } from 'node:fs/promises';
-import { dirname as uvDirname, isAbsolute as uvIsAbsolute, resolve as uvResolve, sep as uvSep, basename as uvBasename } from 'node:path';
+import { dirname as uvDirname, isAbsolute as uvIsAbsolute, resolve as uvResolve, sep as uvSep, basename as uvBasename, relative as uvRelative } from 'node:path';
 import { fileURLToPath as uvFileURLToPath } from 'node:url';
 
 const uvStandardBackends = new Set(['setuptools.build_meta', 'hatchling.build', 'flit_core.buildapi', 'poetry.core.masonry.api', 'pdm.backend', 'uv_build']);
@@ -36,12 +36,38 @@ export async function assertStaticUvProject({ content, packageFileName, lockFile
   const lockInfo = await uvRegular(lockFile, root);
   if (lockInfo.size > 32 * 1024 * 1024) uvReject('lockfile exceeds inspection limit');
   if (await uvReadFile(projectFile, 'utf8') !== content) uvReject('raw project differs from the file uv will read');
-  // uv discovers parent projects/config files automatically; do not leave any uninspected.
+  // uv discovers parent projects/config files automatically. Qualify each ancestor
+  // inside this repository; external projects and inherited UV settings stay denied.
+  let parentProject;
   for (let current = directory, depth = 0; ; current = uvDirname(current), depth++) {
     if (depth > 128) uvReject('parent context exceeds inspection limit');
     if (await uvExists(uvResolve(current, 'uv.toml'))) uvReject('adjacent or parent uv.toml is not qualified');
-    if (current !== directory && await uvExists(uvResolve(current, 'pyproject.toml'))) uvReject('parent project is not qualified');
+    if (current !== directory && await uvExists(uvResolve(current, 'pyproject.toml'))) {
+      if (current !== root && !current.startsWith(root + uvSep)) uvReject('parent project escapes repository');
+      parentProject ??= uvResolve(current, 'pyproject.toml');
+    }
     if (uvDirname(current) === current) break;
+  }
+  if (parentProject) {
+    const parentInfo = await uvRegular(parentProject, root);
+    if (parentInfo.size > 1024 * 1024) uvReject('parent project exceeds inspection limit');
+    const parentContent = await uvReadFile(parentProject, 'utf8');
+    let parentRaw;
+    try { parentRaw = parseToml(parentContent); } catch { uvReject('parent TOML cannot be parsed'); }
+    // Independent nested projects do not need inherited workspace, index, source,
+    // constraint or path settings. Do not silently accept those configurations.
+    if (!uvObject(parentRaw) || parentRaw.tool?.uv !== undefined) uvReject('parent UV configuration is not qualified');
+    const parentLock = uvResolve(uvDirname(parentProject), 'uv.lock');
+    if (!await uvExists(parentLock)) uvReject('parent lockfile is not qualified');
+    // The nearest ancestor recursively inspects its ancestors exactly once. Apply
+    // the same static metadata, backend, dependency, lockfile and symlink checks.
+    await assertStaticUvProject({
+      content: parentContent,
+      packageFileName: uvRelative(root, parentProject).split(uvSep).join('/'),
+      lockFileName: uvRelative(root, parentLock).split(uvSep).join('/'),
+      repoRoot: root,
+      parseToml,
+    });
   }
   let raw, lock;
   try { raw = parseToml(content); lock = parseToml(await uvReadFile(lockFile, 'utf8')); }
