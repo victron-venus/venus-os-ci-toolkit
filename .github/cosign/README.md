@@ -4,8 +4,8 @@ Upstream: https://github.com/sigstore/cosign
 Source: `11926fa5bbbbde47e88fc006b625a17769b743b2` (v3.1.3).
 License: Apache-2.0; the complete upstream license is retained in `LICENSE`.
 
-These are the upstream module files with x/net upgraded to v0.60.0,
-x/text to v0.42.0, grpc to v1.83.2, klauspost/compress to v1.18.7,
+These are the upstream module files with x/net upgraded to v0.62.0,
+x/text to v0.43.0, grpc to v1.83.2, klauspost/compress to v1.18.7,
 go-chi/chi/v5 to v5.4.0, and go-jose/v4 to v4.1.6
 (including their required transitive updates). The compress update fixes
 CVE-2026-63209; it is the upstream security-only patch release. The chi update
@@ -19,3 +19,7 @@ The go-jose update addresses [GHSA-mgcc-cww5-fp2q](https://github.com/go-jose/go
 The upstream default now rejects JWK RSA moduli larger than 4096 bits; this build
 retains that default. Existing binaries are unchanged until rebuilt from these
 locks and checked through the normal signing qualification.
+
+The x/net update addresses [GO-2026-6860 / CVE-2026-78661](https://pkg.go.dev/vuln/GO-2026-6860),
+which fixes quadratic text coalescing in the HTML parser. Existing binaries
+remain unchanged until rebuilt and qualified.
