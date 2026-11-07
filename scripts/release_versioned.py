@@ -503,8 +503,10 @@ def scheduled_reuse(
     run: dict[str, object],
     snapshot: dict[str, object],
     base: str,
+    *, source_sha: str | None = None,
 ) -> str:
-    """Find proved same-input publication after fresh scheduled checks and builds."""
+    """Prove a publication while guarding the current run against main movement."""
+    source_sha = source_sha or cast(str, run["head_sha"])
     head_path = "git/ref/heads/" + quote(cast(str, info["default_branch"]), safe="")
     if cast(
         dict[str, object], cast(dict[str, object], gh.api(head_path)).get("object", {})
@@ -514,7 +516,7 @@ def scheduled_reuse(
     records = [
         (rc.positive(key, "reserved run"), record["plan"])
         for key, record in ledger["plans"].items()
-        if record["plan"]["source_sha"] == cast(str, run["head_sha"])
+        if record["plan"]["source_sha"] == source_sha
         and record["plan"]["base_version"] == base
         and record["plan"]["policy_sha256"]
         == version_plan.policy_digest(snapshot["data"])
@@ -557,6 +559,35 @@ def candidate_provenance(
         f"Validation: https://github.com/{repository}/actions/runs/{run_id}\n\n"
         f"See `{rc.MANIFEST}` for package hashes and version input evidence."
     )
+
+
+def automatic_test_push(
+    gh: rc.GitHub, info: dict[str, object], run: dict[str, object],
+    snapshot: dict[str, object], base: str,
+) -> dict[str, object] | None:
+    """Skip only after proving the exact predecessor was already fully delivered."""
+    policy = cast(dict[str, object], snapshot["data"])
+    selected = cast(dict[str, object], policy.get("change_scope", {})).get("automatic_release_test_paths")
+    if os.environ.get("GITHUB_EVENT_NAME") != "push" or not selected:
+        return None
+    if __package__:
+        from . import release_push_scope  # pylint: disable=import-outside-toplevel
+    else:
+        import release_push_scope  # pylint: disable=import-outside-toplevel
+    admission = release_push_scope.current_push(Path.cwd(), selected, info["default_branch"])
+    if not admission["test_only"] or admission["after"] != run["head_sha"]:
+        return None
+    try:
+        tag = scheduled_reuse(gh, info, run, snapshot, base, source_sha=admission["before"])
+    except (rc.ReleaseError, ValueError, KeyError, TypeError, OSError):
+        # An unavailable/expired/pending proof must not suppress delivery.
+        return None
+    if not tag:
+        return None
+    admission.update(status="test-only-already-published", published_tag=tag)
+    Path(".release-push-admission.json").write_bytes(rc.json_bytes(admission))
+    return {"channel": "beta", "version": base, "build": "false",
+            "plan_artifact": "", "status": admission["status"]}
 
 
 def prepare(args: argparse.Namespace) -> dict[str, object]:
@@ -632,6 +663,8 @@ def prepare(args: argparse.Namespace) -> dict[str, object]:
     else:
         base = client.resolve_version(policy, cast(str, inputs.get("version", "")))
     version_plan.check_base_versions(Path.cwd(), policy, base)
+    if admitted := automatic_test_push(gh, info, run, snapshot, base):
+        return admitted
     closed = rc.closed_push_cycle(gh, base, cast(str, kind))
     if closed:
         return closed
