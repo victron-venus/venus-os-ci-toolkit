@@ -1,11 +1,10 @@
-// Offline regression tests execute exact upstream 44.215.0 functions in a VM.
+// Offline regression tests import exact upstream 44.215.0 function bodies.
 // Git/platform/manager I/O is stubbed; no producer, credentials or network.
 'use strict';
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
-const vm = require('node:vm');
 const crypto = require('node:crypto');
 const { pathToFileURL } = require('node:url');
 const { test } = require('node:test');
@@ -15,7 +14,28 @@ const verifierPath = process.env.COMPLETION_VERIFIER_FILE || path.join(__dirname
 const { validateRecords } = require(verifierPath);
 const manifest = JSON.parse(fs.readFileSync(path.join(fixture, 'manifest.json'), 'utf8'));
 const digest = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
-const read = relative => fs.readFileSync(path.join(fixture, relative), 'utf8');
+function readFixture(relative, suppliedBytes) {
+  const file = manifest.files.find(entry => entry.path === relative);
+  assert.ok(file, 'Only the reviewed fixture roster may be loaded');
+  const bytes = suppliedBytes ?? fs.readFileSync(path.join(fixture, relative));
+  assert.equal(bytes.length, file.bytes, 'Fixture size differs from reviewed source');
+  assert.equal(digest(bytes), file.sha256, 'Fixture hash differs from reviewed source');
+  return bytes.toString('utf8');
+}
+const read = relative => readFixture(relative);
+// Each body is checked before native import. Only this fixed harness supplies
+// the factory prologue and I/O bindings; no repository content or log is code.
+async function importFixtureFactory(source) {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'completion-module-'));
+  fs.chmodSync(directory, 0o700);
+  try {
+    const filename = path.join(directory, 'fixture.mjs');
+    fs.writeFileSync(filename, source, { mode: 0o600, flag: 'wx' });
+    return await import(pathToFileURL(filename).href);
+  } finally {
+    fs.rmSync(directory, { recursive: true });
+  }
+}
 const strip = source => source.replace(/^import .*;\n/gm, '').replace(/^export .*;\n/gm, '');
 const compatibility = import(pathToFileURL(compatPath).href);
 const branchPath = 'dist/workers/repository/update/branch/index.js';
@@ -27,44 +47,59 @@ const finish = { ...start,msg:'Repository finished',result:'done',status:'activa
 async function branchReplay(transform, failedArtifact) {
   const logs = [];
   const noop = async () => {};
-  const logger = Object.fromEntries(['trace','debug','info','warn','error','fatal'].map(level => [level, (...args) => logs.push({level,args:JSON.parse(JSON.stringify(args))})]));
+  const logger = Object.fromEntries(['trace','debug','info','warn','error','fatal'].map(level => [level, (...args) => logs.push({level,args:structuredClone(args)})]));
   const context = { logger, coerceArray:x=>x==null?[]:Array.isArray(x)?x:[x], isNonEmptyArray:x=>Array.isArray(x)&&x.length>0,
-    scm:{branchExists:async()=>false,checkoutBranch:noop,isBranchConflicted:async()=>false,commitAndPush:()=>{throw Error('Unexpected mutation');}},
+    scm:{branchExists:async()=>false,checkoutBranch:noop,isBranchConflicted:async()=>false,commitAndPush:()=>{throw new Error('Unexpected mutation');}},
     platform:{getBranchPr:async()=>null},emojify:s=>s,prAlreadyExisted:async()=>null,getCount:()=>0,isLimitReached:()=>false,
     isScheduledNow:()=>true,computeInternalChecksStatus:async()=>null,decideBranchReuse:()=>({action:'no-reuse',userRebaseRequested:false}),
     getAdditionalFiles:async()=>({artifactErrors:[],updatedArtifacts:[],artifactNotices:[]}),
     updateActionsLockfile:async()=>({artifactErrors:[],updatedArtifacts:[]}),executePostUpgradeCommands:async()=>null,
     embedChangelogs:noop,bumpVersions:noop,removeMeta:()=>{},compileCommitBody:()=> 'Update lockfile',compileCommitTrailers:()=>[],
-    handleBranchError:error=>{throw error;},GlobalConfig:{get:()=>undefined},ensurePr:()=>{throw Error('Unexpected PR creation');},failedArtifact
+    handleBranchError:error=>{throw error;},GlobalConfig:{get:()=>undefined},ensurePr:()=>{throw new Error('Unexpected PR creation');},failedArtifact
   };
-  vm.createContext(context);
-  vm.runInContext(strip(read('dist/workers/repository/update/branch/get-updated.js')),context);
-  vm.runInContext(`getUpdatedPackageFiles = async () => {
+  const { createFixture } = await importFixtureFactory(`
+export function createFixture(context) {
+  const {logger,coerceArray,isNonEmptyArray,scm,platform,emojify,prAlreadyExisted,
+    getCount,isLimitReached,isScheduledNow,computeInternalChecksStatus,
+    decideBranchReuse,getAdditionalFiles,updateActionsLockfile,
+    executePostUpgradeCommands,embedChangelogs,bumpVersions,removeMeta,
+    compileCommitBody,compileCommitTrailers,handleBranchError,GlobalConfig,
+    ensurePr,failedArtifact} = context;
+${strip(read('dist/workers/repository/update/branch/get-updated.js'))}
+  getUpdatedPackageFiles = async () => {
     const updatedPackageFiles = failedArtifact ? [{path:'fixture.lock'}] : [];
     const removed = removeUnrefreshedLockfileOnlyChanges(updatedPackageFiles,[{isLockfileOnly:true,lockFile:'fixture.lock'}],[]);
     const artifactErrors=[];reportUnrefreshedLockfileOnlyChanges(removed,[],artifactErrors);
     return {updatedPackageFiles,updatedArtifacts:[],artifactErrors,artifactNotices:[]};
-  };`,context);
-  vm.runInContext(strip(read('dist/workers/repository/update/branch/commit.js')),context);
-  vm.runInContext(strip(transform ? transform(read(branchPath),branchPath) : read(branchPath)),context);
-  const result=await context.processBranch({branchName:'renovate/lock-file-maintenance',baseBranch:'main',branchPrefix:'renovate/',branchPrefixOld:'renovate/',
+  };
+${strip(read('dist/workers/repository/update/branch/commit.js'))}
+${strip(transform ? transform(read(branchPath),branchPath) : read(branchPath))}
+  return {processBranch};
+}`);
+  const native = createFixture(context);
+  const result=await native.processBranch({branchName:'renovate/lock-file-maintenance',baseBranch:'main',branchPrefix:'renovate/',branchPrefixOld:'renovate/',
     upgrades:[{}],packageFiles:{},errors:[],warnings:[],updatedPackageFiles:[],updatedArtifacts:[],artifactErrors:[],automerge:false});
   return {result,logs};
 }
 
-function loggerReplay(transform, remap, events) {
+async function loggerReplay(transform, remap, events) {
   const records=[];
   const levels={trace:10,debug:20,info:30,warn:40,error:50,fatal:60};
   const bunyan=Object.fromEntries(Object.entries(levels).map(([level,value])=>[level,(meta,msg)=>{
     // Match the actual installed JSON file stream threshold (proved separately).
-    if(value>=30) records.push({name:'renovate',v:0,time:'2026-11-07T18:00:00.000Z',level:value,...JSON.parse(JSON.stringify(meta)),msg});
+    if(value>=30) records.push({name:'renovate',v:0,time:'2026-11-07T18:00:00.000Z',level:value,...structuredClone(meta),msg});
   }]));
   const once=fn=>fn();
   const context={getRemappedLevel:()=>remap,isString:x=>typeof x==='string',once,reset:()=>{},
     getMessage:(p1,p2)=>typeof p1==='string'?p1:p2,toMeta:p1=>typeof p1==='object'?p1:{},LOGGER_NOT_INITIALIZED:'not-initialized'};
-  vm.createContext(context);
-  vm.runInContext(strip(transform ? transform(read(loggerPath),loggerPath) : read(loggerPath)),context);
-  const logger=new context.RenovateLogger('fixture-context',{repository:repo},bunyan);
+  const { createFixture } = await importFixtureFactory(`
+export function createFixture(context) {
+  const {getRemappedLevel,isString,once,reset,getMessage,toMeta,LOGGER_NOT_INITIALIZED} = context;
+${strip(transform ? transform(read(loggerPath),loggerPath) : read(loggerPath))}
+  return {RenovateLogger};
+}`);
+  const { RenovateLogger } = createFixture(context);
+  const logger=new RenovateLogger('fixture-context',{repository:repo},bunyan);
   for(const [level,meta,msg] of events) logger[level](meta,msg);
   return records;
 }
@@ -73,6 +108,13 @@ function loggerReplay(transform, remap, events) {
   assert.equal(manifest.version,'44.215.0');assert.equal(manifest.license,'AGPL-3.0-only');
   for(const file of manifest.files){const bytes=fs.readFileSync(path.join(fixture,file.path));assert.equal(digest(bytes),file.sha256);assert.equal(bytes.length,file.bytes);}
   assert.equal(JSON.parse(read('package.json.fixture')).version,'44.215.0');assert.match(read('license'),/GNU AFFERO GENERAL PUBLIC LICENSE/);
+ });
+ test('fixture loader rejects altered bytes and noninventory paths before import',()=>{
+  const original=Buffer.from(read(branchPath));
+  const altered=Buffer.from(original);altered[0]^=1;
+  assert.throws(()=>readFixture(branchPath,altered),/Fixture hash differs/);
+  assert.throws(()=>readFixture(branchPath,Buffer.concat([original,Buffer.from('x')])),/Fixture size differs/);
+  assert.throws(()=>readFixture('../unreviewed.js',Buffer.from('throw new Error()')),/reviewed fixture roster/);
  });
  test('actual upstream lockfile-only failure is silently no-work before hook',async()=>{
   const {result,logs}=await branchReplay(null,true);assert.equal(result.result,'no-work');
@@ -90,31 +132,31 @@ function loggerReplay(transform, remap, events) {
   const {transformCompletionModule}=await compatibility;
   for(const transform of [null,transformCompletionModule]){const {result,logs}=await branchReplay(transform,false);assert.equal(result.result,'no-work');assert.equal(logs.filter(x=>['warn','error','fatal'].includes(x.level)).length,0);}
  });
- test('original logger really hides remapped error and lifecycle info at file info threshold',()=>{
-  assert.deepEqual(loggerReplay(null,'debug',[['error',{},'fixture error'],['info',{renovateVersion:'44.215.0'},'Repository started'],['info',{},'Repository finished']]),[]);
+ test('original logger really hides remapped error and lifecycle info at file info threshold',async()=>{
+  assert.deepEqual(await loggerReplay(null,'debug',[['error',{},'fixture error'],['info',{renovateVersion:'44.215.0'},'Repository started'],['info',{},'Repository finished']]),[]);
  });
  test('patched logger preserves error/fatal downgraded to debug or trace',async()=>{
   const {transformCompletionModule}=await compatibility;
   for(const level of ['error','fatal'])for(const remap of ['debug','trace']){
-   const records=loggerReplay(transformCompletionModule,remap,[[level,{},'fixture error']]);assert.equal(records.length,1);assert.ok(records[0].level>=50);
+   const records=await loggerReplay(transformCompletionModule,remap,[[level,{},'fixture error']]);assert.equal(records.length,1);assert.ok(records[0].level>=50);
    assert.throws(()=>validateRecords([start,...records,finish],[repo]),{code:'ERROR_OR_FATAL'});
   }
  });
  test('error/fatal remapped to info retains oldLevel and still rejects',async()=>{
   const {transformCompletionModule}=await compatibility;
-  for(const level of ['error','fatal']){const records=loggerReplay(transformCompletionModule,'info',[[level,{},'fixture error']]);assert.equal(records[0].level,30);assert.equal(records[0].oldLevel,level);assert.throws(()=>validateRecords([start,...records,finish],[repo]),{code:'ERROR_OR_FATAL'});}
+  for(const level of ['error','fatal']){const records=await loggerReplay(transformCompletionModule,'info',[[level,{},'fixture error']]);assert.equal(records[0].level,30);assert.equal(records[0].oldLevel,level);assert.throws(()=>validateRecords([start,...records,finish],[repo]),{code:'ERROR_OR_FATAL'});}
  });
  test('artifact warning cannot be hidden below info by repository remap',async()=>{
   const {transformCompletionModule}=await compatibility;
-  for(const remap of ['trace','debug','info']){const records=loggerReplay(transformCompletionModule,remap,[['warn',{artifactErrorCount:1},'Artifact generation failed before PR decision']]);assert.equal(records.length,1);assert.throws(()=>validateRecords([start,...records,finish],[repo]),{code:'ARTIFACT_ERRORS'});}
+  for(const remap of ['trace','debug','info']){const records=await loggerReplay(transformCompletionModule,remap,[['warn',{artifactErrorCount:1},'Artifact generation failed before PR decision']]);assert.equal(records.length,1);assert.throws(()=>validateRecords([start,...records,finish],[repo]),{code:'ARTIFACT_ERRORS'});}
  });
  test('starts/finishes remapped below info remain visible and complete exact roster',async()=>{
   const {transformCompletionModule}=await compatibility;
-  for(const remap of ['trace','debug']){const records=loggerReplay(transformCompletionModule,remap,[['info',{renovateVersion:'44.215.0'},'Repository started'],['info',{result:'done',status:'activated',enabled:true,onboarded:true,exitCode:0},'Repository finished']]);assert.equal(validateRecords(records,[repo]).finishedCount,1);}
+  for(const remap of ['trace','debug']){const records=await loggerReplay(transformCompletionModule,remap,[['info',{renovateVersion:'44.215.0'},'Repository started'],['info',{result:'done',status:'activated',enabled:true,onboarded:true,exitCode:0},'Repository finished']]);assert.equal(validateRecords(records,[repo]).finishedCount,1);}
  });
  test('ordinary debug/info remaps remain unchanged',async()=>{
   const {transformCompletionModule}=await compatibility;
-  assert.deepEqual(loggerReplay(transformCompletionModule,'debug',[['info',{},'ordinary notice']]),[]);
+  assert.deepEqual(await loggerReplay(transformCompletionModule,'debug',[['info',{},'ordinary notice']]),[]);
  });
  test('wrong hash, already patched bytes and unapproved module fail closed',async()=>{
   const {transformCompletionModule}=await compatibility;
