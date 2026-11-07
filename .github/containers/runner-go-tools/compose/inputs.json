@@ -11,11 +11,11 @@
     "go.sum": "c7958ca4e417c9da1dc013e51923633385fe1e7814f651cdc432719bb0607dd8"
   },
   "fixed_locks": {
-    "go.mod": "4fc4a43a1c6d22f08ceae0ab0cebfb35af6d4c99d1b83a79c749b088b8a7748c",
-    "go.sum": "4fab90ed241d7edaacb92b2c500225d0ad03e2c4e46dffe81011d686d58e9f47"
+    "go.mod": "c15c025920a223d47ce0210c74cc3e3ddc8017c829d283619967c8368b681d4f",
+    "go.sum": "ba1f4d56e139a6ed226bbaf7cebb3828057d67a75fa2fcdbff0be8531dc6a6d5"
   },
   "updates": [
-    "golang.org/x/net@v0.60.0"
+    "golang.org/x/net@v0.62.0"
   ],
   "qualification": "Lock preparation only. Source tests and final image acceptance are separate required gates."
 }

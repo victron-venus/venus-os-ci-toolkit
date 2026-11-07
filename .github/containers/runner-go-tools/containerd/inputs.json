@@ -11,11 +11,11 @@
     "go.sum": "a38ac3f5c1c0a5ea2747e12b57fbd3547703251bfe02e49647939bec8860b4ff"
   },
   "fixed_locks": {
-    "go.mod": "b84a496fed45c7af98d3aa43d9d02011fc20996a1f73251874c2dbe00467222b",
-    "go.sum": "2a52e4bff05042363452e5e5fbef722df9f15856f01dad532f0d67933df49b5b"
+    "go.mod": "8d29cbac04e6dd8383a2c5298d888a7f7bd92f6f9fb6780459c98537449a0159",
+    "go.sum": "9e158789298a6cd353bfdad2f6781a0b7818bec4baf5a242ab893b88df271c8d"
   },
   "updates": [
-    "golang.org/x/net@v0.60.0",
+    "golang.org/x/net@v0.62.0",
     "github.com/cilium/ebpf@v0.22.0",
     "github.com/go-jose/go-jose/v4@v4.1.6"
   ],

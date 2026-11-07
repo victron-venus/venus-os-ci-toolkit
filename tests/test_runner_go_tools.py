@@ -192,8 +192,7 @@ class RunnerGoToolTests(unittest.TestCase):
             self.assertEqual(origin.get('runtime_test_fix'), spec.get('runtime_test_fix'))
             for lock in ('go.mod', 'go.sum'):
                 self.assertEqual(TOOLS.digest(folder / lock), spec['fixed_locks'][lock])
-            net_version = 'v0.62.0' if name == 'buildx' else 'v0.60.0'
-            self.assertIn('golang.org/x/net ' + net_version, (folder / 'go.mod').read_text())
+            self.assertIn('golang.org/x/net v0.62.0', (folder / 'go.mod').read_text())
         self.assertIn('github.com/moby/go-archive v0.3.0',
                       (TOOLS.LOCKS / 'buildx/go.mod').read_text())
         self.assertNotIn('\tgithub.com/docker/docker ', (TOOLS.LOCKS / 'buildx/go.mod').read_text())
