@@ -3,13 +3,13 @@
 
 Only the explicitly reviewed test infrastructure below can avoid an automatic
 release, after a separate exact-source publication proof. All other inputs retain
-the existing full release classifier. This
-module reads immutable Git objects; it never fetches or changes the repository.
+the existing full release classifier. Authenticated preparation calls this
+read-only module and owns the publication proof and fixed receipt destination.
+This module reads immutable Git objects; it never fetches or changes the repository.
 """
 
 from __future__ import annotations
 
-import argparse
 import hashlib
 import json
 import os
@@ -119,6 +119,33 @@ def decision(reason, *, before=None, after=None, raw=None, paths=()):
     }
 
 
+def regular_blob_change(header):
+    """Accept only raw headers proving an ordinary regular-file addition/change."""
+    fields = header.split()
+    if len(fields) != 5:
+        raise ValueError("Invalid raw header")
+    before, after, old_hash, new_hash, status = fields
+    if not all(
+        change_scope.REVISION.fullmatch(value.decode("ascii"))
+        for value in (old_hash, new_hash)
+    ):
+        raise ValueError("Invalid blob identity")
+    zero = b"0" * 40
+    if status == b"A":
+        return (
+            (before, after) == (b":000000", b"100644")
+            and old_hash == zero
+            and new_hash != zero
+        )
+    if status == b"M":
+        return (
+            (before, after) == (b":100644", b"100644")
+            and zero not in (old_hash, new_hash)
+            and old_hash != new_hash
+        )
+    return False
+
+
 def test_paths(raw, allowed_paths):
     """Require a complete nonempty raw diff of ordinary allowlisted A/M files."""
     if not raw or len(raw) > change_scope.MAX_DIFF_BYTES or not raw.endswith(b"\0"):
@@ -127,31 +154,8 @@ def test_paths(raw, allowed_paths):
     if len(records) % 2:
         raise ValueError("Invalid record count")
     paths = set()
-    zero = b"0" * 40
     for position in range(0, len(records), 2):
-        fields = records[position].split()
-        if len(fields) != 5:
-            raise ValueError("Invalid raw header")
-        before, after, old_hash, new_hash, status = fields
-        if not all(
-            change_scope.REVISION.fullmatch(value.decode("ascii"))
-            for value in (old_hash, new_hash)
-        ):
-            raise ValueError("Invalid blob identity")
-        if status == b"A":
-            valid = (
-                (before, after) == (b":000000", b"100644")
-                and old_hash == zero
-                and new_hash != zero
-            )
-        elif status == b"M":
-            valid = (
-                (before, after) == (b":100644", b"100644")
-                and zero not in (old_hash, new_hash)
-                and old_hash != new_hash
-            )
-        else:
-            valid = False
+        valid = regular_blob_change(records[position])
         path = records[position + 1].decode("utf-8")
         if not valid or path not in allowed_paths or path in paths:
             raise ValueError("Not a proven test-only change")
@@ -217,30 +221,3 @@ def current_push(repo, allowed_paths, default_branch):
         allowed_paths,
         default_branch,
     )
-
-
-def main(argv=None):
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--repo", default=".")
-    parser.add_argument("--output", required=True)
-    parser.add_argument("--test-paths-json", default="[]")
-    parser.add_argument("--default-branch", default="main")
-    args = parser.parse_args(argv)
-    try:
-        paths = json.loads(args.test_paths_json)
-    except ValueError:
-        paths = None
-    result = current_push(args.repo, paths, args.default_branch)
-    serialized = json.dumps(result, sort_keys=True) + "\n"
-    Path(args.output).write_text(serialized, encoding="utf-8")
-    print(serialized, end="")
-    if output_path := os.environ.get("GITHUB_OUTPUT"):
-        with Path(output_path).open("a", encoding="utf-8") as stream:
-            stream.write(
-                f"test_only={str(result['test_only']).lower()}\nreason={result['reason']}\n"
-            )
-    return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

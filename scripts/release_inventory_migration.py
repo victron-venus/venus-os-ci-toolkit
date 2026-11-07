@@ -176,6 +176,35 @@ EXECUTION_JOB = {
     ]
 }
 
+
+# Preserve exact automatic test-push admission without installing it in inventory-only mode.
+AUTOMATIC_TEST_PUSH = {
+    "hunks": [
+        {
+            "before": "    run: dict[str, object],\n    snapshot: dict[str, object],\n    base: str,\n) -> str:\n    \"\"\"Find proved same-input publication after fresh scheduled checks and builds.\"\"\"\n    head_path = \"git/ref/heads/\" + quote(cast(str, info[\"default_branch\"]), safe=\"\")\n    if cast(\n        dict[str, object], cast(dict[str, object], gh.api(head_path)).get(\"object\", {})\n",
+            "after": "    run: dict[str, object],\n    snapshot: dict[str, object],\n    base: str,\n    *, source_sha: str | None = None,\n) -> str:\n    \"\"\"Prove a publication while guarding the current run against main movement.\"\"\"\n    source_sha = source_sha or cast(str, run[\"head_sha\"])\n    head_path = \"git/ref/heads/\" + quote(cast(str, info[\"default_branch\"]), safe=\"\")\n    if cast(\n        dict[str, object], cast(dict[str, object], gh.api(head_path)).get(\"object\", {})\n"
+        },
+        {
+            "before": "    records = [\n        (rc.positive(key, \"reserved run\"), record[\"plan\"])\n        for key, record in ledger[\"plans\"].items()\n        if record[\"plan\"][\"source_sha\"] == cast(str, run[\"head_sha\"])\n        and record[\"plan\"][\"base_version\"] == base\n        and record[\"plan\"][\"policy_sha256\"]\n        == version_plan.policy_digest(snapshot[\"data\"])\n",
+            "after": "    records = [\n        (rc.positive(key, \"reserved run\"), record[\"plan\"])\n        for key, record in ledger[\"plans\"].items()\n        if record[\"plan\"][\"source_sha\"] == source_sha\n        and record[\"plan\"][\"base_version\"] == base\n        and record[\"plan\"][\"policy_sha256\"]\n        == version_plan.policy_digest(snapshot[\"data\"])\n"
+        },
+        {
+            "before": "        f\"Validation: https://github.com/{repository}/actions/runs/{run_id}\\n\\n\"\n        f\"See `{rc.MANIFEST}` for package hashes and version input evidence.\"\n    )\n\n\ndef prepare(args: argparse.Namespace) -> dict[str, object]:\n",
+            "after": "        f\"Validation: https://github.com/{repository}/actions/runs/{run_id}\\n\\n\"\n        f\"See `{rc.MANIFEST}` for package hashes and version input evidence.\"\n    )\n\n\ndef automatic_test_push(\n    gh: rc.GitHub, info: dict[str, object], run: dict[str, object],\n    snapshot: dict[str, object], base: str,\n) -> dict[str, object] | None:\n    \"\"\"Skip only after proving the exact predecessor was already fully delivered.\"\"\"\n    policy = cast(dict[str, object], snapshot[\"data\"])\n    selected = cast(dict[str, object], policy.get(\"change_scope\", {})).get(\"automatic_release_test_paths\")\n    if os.environ.get(\"GITHUB_EVENT_NAME\") != \"push\" or not selected:\n        return None\n    if __package__:\n        from . import release_push_scope  # pylint: disable=import-outside-toplevel\n    else:\n        import release_push_scope  # pylint: disable=import-outside-toplevel\n    admission = release_push_scope.current_push(Path.cwd(), selected, info[\"default_branch\"])\n    if not admission[\"test_only\"] or admission[\"after\"] != run[\"head_sha\"]:\n        return None\n    try:\n        tag = scheduled_reuse(gh, info, run, snapshot, base, source_sha=admission[\"before\"])\n    except (rc.ReleaseError, ValueError, KeyError, TypeError, OSError):\n        # An unavailable/expired/pending proof must not suppress delivery.\n        return None\n    if not tag:\n        return None\n    admission.update(status=\"test-only-already-published\", published_tag=tag)\n    Path(\".release-push-admission.json\").write_bytes(rc.json_bytes(admission))\n    return {\"channel\": \"beta\", \"version\": base, \"build\": \"false\",\n            \"plan_artifact\": \"\", \"status\": admission[\"status\"]}\n\n\ndef prepare(args: argparse.Namespace) -> dict[str, object]:\n"
+        },
+        {
+            "before": "    else:\n        base = client.resolve_version(policy, cast(str, inputs.get(\"version\", \"\")))\n    version_plan.check_base_versions(Path.cwd(), policy, base)\n    closed = rc.closed_push_cycle(gh, base, cast(str, kind))\n    if closed:\n        return closed\n",
+            "after": "    else:\n        base = client.resolve_version(policy, cast(str, inputs.get(\"version\", \"\")))\n    version_plan.check_base_versions(Path.cwd(), policy, base)\n    if admitted := automatic_test_push(gh, info, run, snapshot, base):\n        return admitted\n    closed = rc.closed_push_cycle(gh, base, cast(str, kind))\n    if closed:\n        return closed\n"
+        }
+    ],
+    "original_to_current": {
+        "673f336995440c7b1c616322be470945e8d645a5144b102f686e037d6526564d": "b8eea2626f3cb7b850d0cfa2914bc75c069b3552958cc4eead84abc8c177de10"
+    },
+    "current": [
+        "b8eea2626f3cb7b850d0cfa2914bc75c069b3552958cc4eead84abc8c177de10"
+    ]
+}
+
 def _before_layer(source: str, layer: dict, label: str) -> str:
     """Reverse one exact accepted layer, preserving a vendor header."""
     prefix = "#!/usr/bin/env python3\n" + receipts.HEADER
@@ -193,9 +222,14 @@ def _before_layer(source: str, layer: dict, label: str) -> str:
     return body.replace("#!/usr/bin/env python3\n", prefix, 1) if vendored else body
 
 
+def _before_automatic_test_push(source: str) -> str:
+    """Reverse only the exact later automatic test-push admission layer."""
+    return _before_layer(source, AUTOMATIC_TEST_PUSH, "Automatic test push")
+
+
 def _before_execution_job(source: str) -> str:
-    """Reverse only the exact later live execution-proof layer."""
-    return _before_layer(source, EXECUTION_JOB, "Execution job")
+    """Reverse automatic test-push admission before the live execution-proof layer."""
+    return _before_layer(_before_automatic_test_push(source), EXECUTION_JOB, "Execution job")
 
 
 def _before_automatic_source(source: str) -> str:
@@ -266,6 +300,8 @@ def render(directory: Path) -> dict[str, str]:
                         _, result = receipts.transform(result, name, AUTOMATIC_SOURCE)
                         if _before_execution_job(source) != source:
                             _, result = receipts.transform(result, name, EXECUTION_JOB)
+            if _before_automatic_test_push(source) != source:
+                _, result = receipts.transform(result, name, AUTOMATIC_TEST_PUSH)
         states.add(state)
         if result != source:
             changes[name] = result

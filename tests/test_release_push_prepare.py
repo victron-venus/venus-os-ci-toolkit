@@ -42,7 +42,8 @@ class PreparationAdmissionTests(unittest.TestCase):
             return b"false"
         if operation == "commit-type":
             return b"commit"
-        assert operation == "diff" and revision == f"{BEFORE}..{AFTER}"
+        assert operation == "diff"
+        assert revision == f"{BEFORE}..{AFTER}"
         return f":100644 100644 {'c' * 40} {'d' * 40} M\0{PATHS[0]}\0".encode()
 
     def start_push(self, before=BEFORE, kind="push"):

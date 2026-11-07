@@ -1,8 +1,7 @@
 """Prove the narrow main-push exception without weakening release validation."""
 
-import contextlib
+import hashlib
 import importlib.util
-import io
 import json
 import os
 import subprocess
@@ -217,7 +216,7 @@ class ClassifierTests(unittest.TestCase):
                     SCOPE.classify("unused", "push", event(), HEAD, PATHS)["test_only"]
                 )
 
-    def test_cli_retains_one_bounded_receipt_and_exact_output_without_event_secrets(
+    def test_current_push_returns_bounded_admission_without_event_secrets(
         self,
     ):
         with tempfile.TemporaryDirectory() as directory:
@@ -239,28 +238,67 @@ class ClassifierTests(unittest.TestCase):
                     "git",
                     side_effect=[b"false", b"commit", b"commit", raw],
                 ),
-                contextlib.redirect_stdout(io.StringIO()) as stdout,
             ):
-                self.assertEqual(
-                    SCOPE.main(
-                        [
-                            "--output",
-                            str(root / "receipt.json"),
-                            "--test-paths-json",
-                            json.dumps(PATHS),
-                        ]
-                    ),
-                    0,
-                )
-            receipt = (root / "receipt.json").read_text()
-            self.assertEqual(stdout.getvalue(), receipt)
-            self.assertEqual(json.loads(receipt)["test_paths"], PATHS)
+                result = SCOPE.current_push(root, PATHS, "main")
             self.assertEqual(
-                (root / "outputs").read_text(),
-                "test_only=true\nreason=test-infrastructure-only\n",
+                result,
+                {
+                    "schema": 1,
+                    "test_only": True,
+                    "reason": "test-infrastructure-only",
+                    "before": BASE,
+                    "after": HEAD,
+                    "diff_sha256": hashlib.sha256(raw).hexdigest(),
+                    "test_paths": PATHS,
+                },
             )
+            receipt = json.dumps(result)
+            self.assertLess(len(receipt), 1024)
             self.assertNotIn("private.invalid", receipt)
             self.assertNotIn("secret", receipt)
+            self.assertEqual(list(root.iterdir()), [root / "event.json"])
+
+    def test_current_push_unreadable_malformed_and_oversized_events_stay_full(self):
+        with tempfile.TemporaryDirectory() as directory:
+            event_path = Path(directory) / "event.json"
+            env = {
+                "GITHUB_EVENT_PATH": str(event_path),
+                "GITHUB_EVENT_NAME": "push",
+                "GITHUB_SHA": HEAD,
+            }
+            for content in (None, b"{", b"\xff", b"[]", json.dumps(event()).encode().ljust(1025)):
+                if content is not None:
+                    event_path.write_bytes(content)
+                with (
+                    self.subTest(content=content),
+                    patch.dict(os.environ, env, clear=True),
+                    patch.object(SCOPE.change_scope, "MAX_DIFF_BYTES", 1024),
+                    patch.object(SCOPE.change_scope, "git") as git,
+                ):
+                    result = SCOPE.current_push(directory, PATHS, "main")
+                    self.assertFalse(result["test_only"])
+                    self.assertEqual(result["reason"], "invalid-event")
+                    git.assert_not_called()
+
+    def test_current_push_accepts_event_at_size_limit(self):
+        with tempfile.TemporaryDirectory() as directory:
+            event_path = Path(directory) / "event.json"
+            event_path.write_bytes(json.dumps(event()).encode().ljust(1024))
+            env = {
+                "GITHUB_EVENT_PATH": str(event_path),
+                "GITHUB_EVENT_NAME": "push",
+                "GITHUB_SHA": HEAD,
+            }
+            with (
+                patch.dict(os.environ, env, clear=True),
+                patch.object(SCOPE.change_scope, "MAX_DIFF_BYTES", 1024),
+                patch.object(
+                    SCOPE.change_scope,
+                    "git",
+                    side_effect=[b"false", b"commit", b"commit", record(PATHS[0])],
+                ),
+            ):
+                self.assertTrue(SCOPE.current_push(directory, PATHS, "main")["test_only"])
 
 
 class CompleteGitRangeTests(unittest.TestCase):
