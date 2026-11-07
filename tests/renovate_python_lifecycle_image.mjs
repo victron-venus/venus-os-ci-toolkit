@@ -29,6 +29,7 @@ assert.equal(realpathSync('/config'), '/config');
 const cli = '/usr/local/containerbase/bin/containerbase-cli';
 const node = '/usr/local/renovate/node';
 const helper = '/config/prepare-renovate-python.mjs';
+const completion = '/config/renovate-completion-compat.mjs';
 const lifecycle = '/config/renovate-python-lifecycle-compat.mjs';
 const security = '/config/renovate-security-compat.mjs';
 const A = '3.12.16',
@@ -55,6 +56,8 @@ const receipt = {};
 // Exercise the exact production import order at the real CLI entry point.
 const startup = run(node, [
   '--use-openssl-ca',
+  '--import',
+  completion,
   '--import',
   lifecycle,
   '--import',

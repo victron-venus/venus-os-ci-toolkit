@@ -71,12 +71,12 @@ jobs:
           configurationFile: renovate-runner.cjs
           docker-cmd-file: scripts/renovate-security-runner.sh
           # The action mounts the executable at /; its preload and roster are read-only.
-          docker-volumes: /tmp:/tmp;${{ github.workspace }}/renovate-repositories.json:/github-action/renovate-repositories.json:ro;${{ github.workspace }}/scripts/renovate-security-compat.mjs:/renovate-security-compat.mjs:ro;${{ github.workspace }}/scripts/renovate-uv-preflight.mjs:/renovate-uv-preflight.mjs:ro;${{ github.workspace }}/scripts/prepare-renovate-npm.mjs:/prepare-renovate-npm.mjs:ro
+          docker-volumes: /tmp:/tmp;${{ github.workspace }}/renovate-repositories.json:/github-action/renovate-repositories.json:ro;${{ github.workspace }}/scripts/renovate-security-compat.mjs:/renovate-security-compat.mjs:ro;${{ github.workspace }}/scripts/renovate-completion-compat.mjs:/renovate-completion-compat.mjs:ro;${{ github.workspace }}/scripts/verify-renovate-completion.cjs:/verify-renovate-completion.cjs:ro;${{ github.workspace }}/scripts/renovate-uv-preflight.mjs:/renovate-uv-preflight.mjs:ro;${{ github.workspace }}/scripts/prepare-renovate-npm.mjs:/prepare-renovate-npm.mjs:ro
           token: ${{ secrets.BOT_PAT }}
           renovate-version: ${{ steps.runtime.outputs.version }}
         env:
           LOG_LEVEL: ${{ inputs.debug && 'debug' || 'info' }}
           RENOVATE_GIT_PRIVATE_KEY: ${{ secrets.RENOVATE_SIGNING_KEY }}
-      - name: Record successful Renovate production sweep
+      - name: Record completion-qualified Renovate production sweep
         if: steps.schedule_gate.outputs.run == 'true' && inputs.dry-run != true
-        run: echo 'Renovate production sweep completed successfully.'
+        run: echo 'Renovate production completed with verified roster and artifact evidence.'

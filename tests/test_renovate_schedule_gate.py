@@ -23,7 +23,7 @@ def run(**changes):
     return value
 
 
-def job(marked=False, producer="success", completed=None):
+def job(marked=True, producer="success", completed=None):
     steps = [dict(name=gate.PRODUCER_STEP, conclusion=producer, completed_at=completed or iso(2))]
     if marked:
         steps.append(dict(name=gate.PRODUCTION_MARKER, conclusion="success"))
@@ -48,8 +48,8 @@ class API:
 
 
 class ScheduleGateTests(unittest.TestCase):
-    def decide(self, api, legacy=None):
-        return gate.decide("schedule", "owner/repo", 20, "main", api, NOW, "09:23", legacy)
+    def decide(self, api):
+        return gate.decide("schedule", "owner/repo", 20, "main", api, NOW, "09:23")
 
     def test_manual_dispatch_bypasses_api_for_dry_or_production(self):
         self.assertEqual(gate.decide("workflow_dispatch", "", "", "", None, NOW), (True, "manual-dispatch"))
@@ -60,24 +60,26 @@ class ScheduleGateTests(unittest.TestCase):
     def test_old_success_does_not_suppress(self):
         self.assertTrue(self.decide(API([run(updated_at=iso(21))], [job()]))[0])
 
-    def test_fresh_scheduled_production_before_marker_suppresses(self):
-        self.assertEqual(self.decide(API([run()], [job()])), (False, "production-in-current-cycle:10"))
+    def test_fresh_scheduled_exit_zero_without_qualified_marker_never_suppresses(self):
+        self.assertTrue(self.decide(API([run()], [job(marked=False)]))[0])
 
     def test_manual_dry_run_without_marker_never_satisfies(self):
-        self.assertTrue(self.decide(API([run(event="workflow_dispatch")], [job()]))[0])
+        self.assertTrue(self.decide(API([run(event="workflow_dispatch")], [job(marked=False)]))[0])
 
     def test_marked_manual_production_satisfies(self):
         self.assertFalse(self.decide(API([run(event="workflow_dispatch")], [job(marked=True)]))[0])
 
-    def test_reviewed_bridge_requires_exact_run_and_head(self):
-        previous = run(event="workflow_dispatch")
-        self.assertFalse(self.decide(API([previous], [job()]), (10, "a" * 40, NOW + dt.timedelta(hours=1)))[0])
-        self.assertTrue(self.decide(API([previous], [job()]), (11, "a" * 40, NOW + dt.timedelta(hours=1)))[0])
-        self.assertTrue(self.decide(API([previous], [job()]), (10, "b" * 40, NOW + dt.timedelta(hours=1)))[0])
+    def test_prior_exit_zero_marker_cannot_hide_silent_artifact_failure(self):
+        for event in ("schedule", "workflow_dispatch"):
+            value = job(marked=False)
+            value["steps"].append(dict(name="Record successful Renovate production sweep", conclusion="success"))
+            self.assertTrue(self.decide(API([run(event=event)], [value]))[0])
 
-    def test_expired_reviewed_bridge_never_satisfies(self):
-        self.assertTrue(self.decide(API([run(event="workflow_dispatch")], [job()]),
-                                   (10, "a" * 40, NOW))[0])
+    def test_only_successful_qualified_marker_satisfies(self):
+        for conclusion in ("failure", "skipped", "cancelled", None):
+            value = job()
+            value["steps"][-1]["conclusion"] = conclusion
+            self.assertTrue(self.decide(API([run()], [value]))[0])
 
     def test_previous_day_delayed_production_does_not_skip_primary(self):
         now = dt.datetime(2026, 11, 8, 9, 23, tzinfo=dt.timezone.utc)
@@ -146,7 +148,7 @@ class ScheduleGateTests(unittest.TestCase):
 
     def test_candidate_job_lookups_are_bounded(self):
         with self.assertRaises(gate.MetadataError):
-            self.decide(API([run(id=i, event="workflow_dispatch") for i in range(30, 50)], [job()]))
+            self.decide(API([run(id=i, event="workflow_dispatch") for i in range(30, 50)], [job(marked=False)]))
 
     def test_attempt_specific_jobs_are_used(self):
         api = API([run(run_attempt=3)], [job()])

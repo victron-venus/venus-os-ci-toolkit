@@ -183,6 +183,7 @@ jobs:
           node tests/renovate_grouping.mjs "$renovate"
           node tests/renovate_security_grouping.mjs "$renovate"
           node tests/renovate_uv_preflight.mjs "$renovate"
+          node --test scripts/test-renovate-completion.cjs scripts/test-renovate-completion-native.cjs
       - name: Verify private Python lifecycle safety contracts
         run: node --test tests/renovate_python_lifecycle.mjs
       - name: Install the reviewed UV for offline build-boundary tests
@@ -210,6 +211,8 @@ jobs:
           docker run --rm --network none --cap-drop ALL --security-opt no-new-privileges \
             --mount "type=bind,src=$PWD/scripts/renovate-security-runner.sh,dst=/renovate-security-runner.sh,readonly" \
             --mount "type=bind,src=$PWD/scripts/renovate-security-compat.mjs,dst=/renovate-security-compat.mjs,readonly" \
+            --mount "type=bind,src=$PWD/scripts/renovate-completion-compat.mjs,dst=/renovate-completion-compat.mjs,readonly" \
+            --mount "type=bind,src=$PWD/scripts/verify-renovate-completion.cjs,dst=/verify-renovate-completion.cjs,readonly" \
             --mount "type=bind,src=$PWD/scripts/renovate-uv-preflight.mjs,dst=/renovate-uv-preflight.mjs,readonly" \
             --mount "type=bind,src=$PWD/scripts/prepare-renovate-npm.mjs,dst=/prepare-renovate-npm.mjs,readonly" \
             "ghcr.io/renovatebot/renovate:$version" /renovate-security-runner.sh --version
@@ -220,6 +223,7 @@ jobs:
             docker run --rm --cap-drop ALL --security-opt no-new-privileges \
               --mount "type=bind,src=$PWD,dst=/repo,readonly" --workdir /repo \
               --mount "type=bind,src=$PWD/scripts/renovate-security-compat.mjs,dst=$mount_dir/renovate-security-compat.mjs,readonly" \
+              --mount "type=bind,src=$PWD/scripts/renovate-completion-compat.mjs,dst=$mount_dir/renovate-completion-compat.mjs,readonly" \
               --mount "type=bind,src=$PWD/scripts/renovate-uv-preflight.mjs,dst=$mount_dir/renovate-uv-preflight.mjs,readonly" \
               --mount "type=bind,src=$PWD/scripts/prepare-renovate-npm.mjs,dst=$mount_dir/prepare-renovate-npm.mjs,readonly" \
               "ghcr.io/renovatebot/renovate:$version" bash -e -c '
