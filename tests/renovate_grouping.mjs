@@ -239,6 +239,103 @@ for (const content of [
   runtimeWorkflow.replaceAll('victron-venus/venus-os-ci-toolkit/', 'another/team/'),
   'jobs: {caller: {with: {toolkit-ref: "' + old + '"}}}',
 ]) assert.equal(await extractRuntime(content, runtimeFile, runtimeManager), null);
+// Keep qualified vendor delivery inputs and explicitly marked contract pins
+// in the same native Renovate update as their immutable workflow references.
+const revisionManager = preset.customManagers.find((manager) =>
+  manager.customType === 'jsonata' && manager.matchStrings.some((value) => value.includes('toolkit-revision')));
+const contractManager = preset.customManagers.find((manager) =>
+  manager.customType === 'regex' && manager.matchStrings.some((value) => value.includes('renovate: toolkit-reference')));
+assert.ok(revisionManager);
+assert.ok(contractManager);
+const revisionFile = '.github/workflows/core.yml';
+const revisionWorkflow = `jobs:
+  deliver:
+    uses: victron-venus/venus-os-ci-toolkit/.github/workflows/vendor-update.yml@${old} # main
+    with:
+      toolkit-revision: '${old}' # qualified delivery
+      unrelated-ref: '${old}'
+  foreign:
+    uses: another/team/.github/workflows/vendor-update.yml@${old}
+    with:
+      toolkit-revision: '${old}'
+  example:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          toolkit-revision: '${old}'
+`;
+const contractFile = 'tests/test_metadata_automation.py';
+const contractSource = `# renovate: toolkit-reference
+TOOLKIT_REF = "${old}"
+UNRELATED_REF = "${old}"
+`;
+const revisionPins = await extractRuntime(revisionWorkflow, revisionFile, revisionManager);
+const contractPins = extractPins(contractSource, contractFile, contractManager);
+for (const result of [revisionPins, contractPins]) {
+  assert.equal(result.deps.length, 1);
+  const dep = result.deps[0];
+  assert.equal(dep.currentDigest, old);
+  assert.equal(dep.currentValue, 'main');
+  assert.equal(dep.depName, 'victron-venus/venus-os-ci-toolkit');
+  assert.equal(dep.datasource, 'git-refs');
+  dep.updates = [{ updateType: 'digest', newValue: 'main', newDigest: next }];
+}
+const coupledScratch = await mkdtemp(resolve(tmpdir(), 'renovate-coupled-inputs-'));
+try {
+  GlobalConfig.set({ localDir: coupledScratch, platform: 'github' });
+  const variants = [
+    [revisionManager, extractRuntime, 'jsonata', revisionFile, revisionWorkflow,
+      revisionWorkflow.replace(`toolkit-revision: '${old}' # qualified delivery`, `toolkit-revision: '${next}' # qualified delivery`)],
+    [contractManager, extractPins, 'regex', contractFile, contractSource,
+      contractSource.replace(`TOOLKIT_REF = "${old}"`, `TOOLKIT_REF = "${next}"`)],
+  ];
+  const jsSource = contractSource.replace('# renovate:', '// renovate:').replace('TOOLKIT_REF =', 'const TOOLKIT_REF =').replace(`"${old}"\n`, `"${old}";\n`);
+  variants.push([contractManager, extractPins, 'regex', 'scripts/check-contracts.mjs', jsSource,
+    jsSource.replace(`TOOLKIT_REF = "${old}"`, `TOOLKIT_REF = "${next}"`)]);
+  for (const [managerConfig, extractor, manager, packageFile, content, expected] of variants) {
+    for (const transform of [(value) => value, (value) => value.replaceAll('\n', '\r\n'), (value) => value.trimEnd()]) {
+      const before = transform(content);
+      const extractedPins = await extractor(before, packageFile, managerConfig);
+      assert.equal(extractedPins.deps.length, 1);
+      const updated = await doAutoReplace({
+        ...config, ...managerConfig, ...extractedPins, ...extractedPins.deps[0], manager,
+        packageFile, depIndex: 0, newValue: 'main', newDigest: next, updateType: 'digest',
+      }, before, false);
+      assert.equal(updated, transform(expected));
+      assert.equal((await extractor(updated, packageFile, managerConfig)).deps[0].currentDigest, next);
+    }
+  }
+} finally {
+  GlobalConfig.set({ localDir: process.cwd(), platform: 'github' });
+  await rm(coupledScratch, { recursive: true, force: true });
+}
+for (const content of [
+  revisionWorkflow.replaceAll(old, 'main'),
+  revisionWorkflow.replaceAll(old, old + 'a'),
+  revisionWorkflow.replaceAll('victron-venus/venus-os-ci-toolkit/', 'another/team/'),
+  revisionWorkflow.replaceAll('workflows/vendor-update.yml@', 'workflows/other.yml@'),
+  'jobs: {caller: {with: {toolkit-revision: "' + old + '"}}}',
+]) assert.equal(await extractRuntime(content, revisionFile, revisionManager), null);
+for (const content of [
+  contractSource.replace('# renovate: toolkit-reference\n', ''),
+  contractSource.replace('toolkit-reference', 'another-reference'),
+  contractSource.replace('TOOLKIT_REF =', 'OTHER_REF ='),
+  contractSource.replaceAll(old, 'main'),
+  contractSource.replaceAll(old, old + 'a'),
+  contractSource.replace('# renovate:', 'x# renovate:'),
+]) assert.equal(extractPins(content, contractFile, contractManager), null);
+const coupledUpdates = await flattenUpdates(config, {
+  'github-actions': [{ packageFile: revisionFile, deps: (await extractPackageFile(revisionWorkflow, revisionFile, config)).deps
+    .filter((dep) => dep.depName === 'victron-venus/venus-os-ci-toolkit')
+    .map((dep) => ({ ...dep, updates: [{ updateType: 'digest', newValue: 'main', newDigest: next }] })) }],
+  regex: [{ packageFile: contractFile, deps: contractPins.deps }],
+  jsonata: [{ packageFile: revisionFile, deps: revisionPins.deps }],
+});
+assert.equal(coupledUpdates.length, 3);
+assert.deepEqual([...new Set(coupledUpdates.map((update) => update.branchName))], ['renovate/ci-workflows']);
+assert.ok(coupledUpdates.every((update) => update.automerge === false && prepareLabels(update).includes('automerge')));
+console.log('Coupled toolkit delivery and explicit contract pins: native extraction, replacement, negative controls and atomic CI grouping passed.');
+
 const updates = await flattenUpdates(config, {
   'github-actions': [{ packageFile: '.github/workflows/ci.yml', deps: actions }],
   regex: [
