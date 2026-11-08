@@ -73,8 +73,6 @@
   "victron-venus/integration-tests",
   "victron-venus/inverter-climate",
   "victron-venus/inverter-control",
-  "victron-venus/inverter-dashboard",
-  "victron-venus/inverter-dashboard-go",
   "victron-venus/inverter-dashboard-vue",
   "victron-venus/inverter-desktop",
   "victron-venus/inverter-gateway",
