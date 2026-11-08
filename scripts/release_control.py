@@ -1073,6 +1073,20 @@ def require_fuzzing_policy(policy: JSONObject) -> None:
         raise ReleaseError(str(error)) from error
 
 
+def compact_stable_distribution(policy: JSONObject) -> bool:
+    """Enable only the reviewed unsigned promote-bytes distribution mode."""
+    if "stable_distribution" not in policy:
+        return False
+    require(policy["stable_distribution"] == "rc-payloads-v1",
+            "Unsupported stable_distribution; expected rc-payloads-v1")
+    require(not RELEASE_SIGNATURES_REQUIRED and not policy.get("sign_releases"),
+            "Compact distribution does not support full-inventory release signing")
+    require(isinstance(policy.get("versioning"), dict)
+            and cast(JSONObject, policy["versioning"]).get("promotion") == "promote-bytes",
+            "Compact distribution requires promote-bytes versioning")
+    return True
+
+
 def require_release_policy(policy: object, repo: str, qualified: bool) -> None:
     """Check policy identity, release mode, and required eligibility blockers."""
     require(isinstance(policy, dict), "Source release policy must be an object")
@@ -1083,6 +1097,7 @@ def require_release_policy(policy: object, repo: str, qualified: bool) -> None:
         "Source policy repository mismatch",
     )
     require(policy.get("mode") == "release", "Source policy mode must be release")
+    compact_stable_distribution(policy)
     require_fuzzing_policy(policy)
     if "channel_validation_workflows" in policy:
         if __package__:
@@ -2850,6 +2865,47 @@ def require_reviewers(gh: GitHub) -> None:
     )
 
 
+def prepare_stable_distribution(stage: Path, output: Path, manifest: JSONObject, raw: bytes) -> None:
+    """Verify all retained RC evidence before copying the exact shipped subset."""
+    # Optional imports keep legacy consumers compatible without the new helper.
+    # pylint: disable=import-outside-toplevel
+    if __package__:
+        from .release_distribution import stable_distribution
+        from .release_fuzz import split_receipts
+        from .version_receipt import producer_identity, verify_declared_artifacts, verify_receipts, verify_required_build_receipts
+    else:
+        from release_distribution import stable_distribution
+        from release_fuzz import split_receipts
+        from version_receipt import producer_identity, verify_declared_artifacts, verify_receipts, verify_required_build_receipts
+    policy = cast(JSONObject, cast(JSONObject, manifest["source_policy"])["data"])
+    plan = cast(JSONObject, manifest.get("version_plan"))
+    require(isinstance(plan, dict), "Compact distribution requires a frozen version plan")
+    require(not policy.get("sign_releases"),
+            "Compact distribution does not support full-inventory release signing")
+    require(output.is_dir() and not output.is_symlink() and not any(output.iterdir()),
+            "Distribution staging must be an empty owned directory")
+    try:
+        receipts = verify_receipts(stage, plan, cast(list[JSONObject], manifest["assets"]), policy,
+                                  producer_identity(manifest["repository"], manifest["run_id"],
+                                                    manifest["run_attempt"], manifest["source_sha"]))
+        build, validation = split_receipts(receipts) if "fuzzing" in policy else (receipts, [])
+        verify_required_build_receipts(build, policy)
+        require(manifest.get("build_receipts") == [
+            {"name": item["name"], "sha256": item["sha256"]} for item in build
+        ], "RC build receipt evidence differs")
+        require(manifest.get("validation_receipts", []) == [
+            {"name": item["name"], "sha256": item["sha256"]} for item in validation
+        ], "RC validation receipt evidence differs")
+        require(verify_declared_artifacts(stage, policy, plan) == manifest.get("package_versions"),
+                "RC package metadata differs")
+        compact = stable_distribution(manifest, raw)
+    except (ValueError, KeyError, TypeError) as error:
+        raise ReleaseError(str(error)) from error
+    for asset in compact["assets"]:
+        shutil.copyfile(stage / asset["name"], output / asset["name"])
+    (output / MANIFEST).write_bytes(json_bytes(compact))
+
+
 # Preserve the ordered security checks and staged bytes within one transaction.
 # pylint: disable-next=too-many-locals,too-many-statements
 def promote(args: argparse.Namespace) -> JSONObject:
@@ -2889,6 +2945,13 @@ def promote(args: argparse.Namespace) -> JSONObject:
     require_release_policy(
         cast(JSONObject, policy_snapshot["data"]), gh.repo, qualified=True
     )
+    driver_sha = checked_out_sha()
+    driver_policy = (policy_snapshot if driver_sha == manifest["source_sha"] else
+                     source_policy_snapshot(gh, driver_sha))
+    require_release_policy(driver_policy["data"], gh.repo, qualified=True)
+    compact = compact_stable_distribution(cast(JSONObject, driver_policy["data"]))
+    require(not compact or not cast(JSONObject, policy_snapshot["data"]).get("sign_releases"),
+            "Compact distribution does not support full-inventory release signing")
     require_current_fuzzing(gh, cast(JSONObject, policy_snapshot["data"]), checked_out_sha())
     require(
         cast(
@@ -2946,7 +3009,8 @@ def promote(args: argparse.Namespace) -> JSONObject:
         "Candidate assets differ from manifest inventory",
     )
     check_workflow_publication(gh, cast(str, manifest["source_sha"]))
-    with tempfile.TemporaryDirectory(prefix="release-promote-") as temp:
+    with (tempfile.TemporaryDirectory(prefix="release-promote-") as temp,
+          tempfile.TemporaryDirectory(prefix="release-distribution-") as distribution_temp):
         stage = Path(temp)
         # Promotion uses the same bounded whole-asset retry allowance as readback.
         # Failed prefixes remain charged to this shared inventory budget.
@@ -2954,7 +3018,10 @@ def promote(args: argparse.Namespace) -> JSONObject:
         for asset in release_assets:
             name = cast(str, asset["name"])
             if name == MANIFEST:
-                (stage / name).write_bytes(raw)
+                # Package metadata selectors see precisely the RC payload inventory.
+                # The generated root manifest was absent from the original build.
+                if not compact:
+                    (stage / name).write_bytes(raw)
                 identity: AssetIdentity = {"size": len(raw), "sha256": digest(raw)}
             else:
                 identity = download_asset(
@@ -2978,6 +3045,12 @@ def promote(args: argparse.Namespace) -> JSONObject:
             "Candidate changed during verification",
         )
         verify_required_signatures(stage, gh.repo, cast(str, manifest["source_sha"]))
+        publish_stage = stage
+        if compact:
+            publish_stage = Path(distribution_temp)
+            prepare_stable_distribution(stage, publish_stage, manifest, raw)
+            require(snapshot_identity(release_snapshot(gh, args.rc)) == snapshot_identity(initial),
+                    "Candidate changed during distribution verification")
         # Recheck mutable authorization/provenance just before the first write.
         latest_run = cast(JSONObject, gh.api(f"actions/runs/{manifest['run_id']}"))
         validate_validation_run(gh, latest_run, cast(JSONObject, policy_snapshot["data"]), "rc")
@@ -2999,7 +3072,11 @@ def promote(args: argparse.Namespace) -> JSONObject:
             f"Source: `{manifest['source_sha']}`\n\n"
             f"Validation: https://github.com/{gh.repo}/actions/runs/{manifest['run_id']}\n\n"
             f"Promotion: https://github.com/{gh.repo}/actions/runs/{current_id}\n\n"
-            f"Assets and `{MANIFEST}` are byte-for-byte copies of the verified release candidate.",
+            + ("Shipped payloads are byte-for-byte copies of the verified release candidate. "
+             f"Build and validation evidence remains in [{args.rc}]({candidate_release['html_url']}); "
+             f"`{MANIFEST}` records its exact manifest hash and the shipped payload inventory."
+             if compact else
+             f"Assets and `{MANIFEST}` are byte-for-byte copies of the verified release candidate."),
         )
         if manifest.get("version_plan"):
             verify_promotion_order(gh, cast(JSONObject, manifest["version_plan"]))
@@ -3019,7 +3096,7 @@ def promote(args: argparse.Namespace) -> JSONObject:
             gh,
             tag,
             cast(str, manifest["source_sha"]),
-            stage,
+            publish_stage,
             False,
             body,
         )
