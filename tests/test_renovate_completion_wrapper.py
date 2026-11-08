@@ -15,7 +15,7 @@ NODE = shutil.which("node")
 
 class CompletionWrapperTests(unittest.TestCase):
     def setUp(self):
-        temporary = tempfile.TemporaryDirectory(prefix="renovate-wrapper-test-")
+        temporary = tempfile.TemporaryDirectory(prefix="renovate-wrapper-test-", dir="/tmp")
         self.addCleanup(temporary.cleanup)
         self.work = Path(temporary.name)
         self.roster = self.work / "roster.json"
@@ -25,12 +25,17 @@ class CompletionWrapperTests(unittest.TestCase):
             "#!/usr/bin/env python3\n"
             "import json,os,pathlib,signal,sys,time\n"
             "args=sys.argv[1:]\n"
+            "if args[0]=='-e':os.execv(os.environ['REAL_NODE'],[os.environ['REAL_NODE'],*args])\n"
             "if args[0].endswith('verify-renovate-completion.cjs'):\n"
             " os.execv(os.environ['REAL_NODE'],[os.environ['REAL_NODE'],*args])\n"
             "if args[-1] in ('--version','--help'):\n"
             " print('44.215.0');sys.exit(0)\n"
             "log=pathlib.Path(os.environ['LOG_FILE'])\n"
             "assert log.parent.stat().st_mode & 0o777 == 0o700\n"
+            "assert str(log)==str(log).lower()\n"
+            "assert os.environ['RENOVATE_LOG_FILE']==str(log)\n"
+            "assert os.environ['RENOVATE_LOG_FILE_FORMAT']=='json'\n"
+            "assert os.environ['RENOVATE_LOG_FILE_LEVEL']=='info'\n"
             "assert os.environ['LOG_FILE_FORMAT']=='json'\n"
             "assert os.environ['LOG_FILE_LEVEL']=='info'\n"
             "assert 'NODE_OPTIONS' not in os.environ\n"
@@ -61,7 +66,7 @@ class CompletionWrapperTests(unittest.TestCase):
         # shell; its process, verification, mode, signal and cleanup logic runs.
         source = source.replace("/usr/local/renovate/node", str(self.fake))
         source = source.replace("/github-action/renovate-repositories.json", str(self.roster))
-        source = source.replace("/tmp/renovate-completion.XXXXXXXX", str(self.work / "evidence.XXXXXXXX"))
+        source = source.replace("/tmp/renovate-completion.", str(self.work / "evidence."))
         source = source.replace("${compat_dir%/}/verify-renovate-completion.cjs", str(ROOT / "scripts/verify-renovate-completion.cjs"))
         self.wrapper = self.work / "runner.sh"
         self.wrapper.write_text(source)
@@ -87,6 +92,28 @@ class CompletionWrapperTests(unittest.TestCase):
         receipt = json.loads(result.stdout)
         self.assertTrue(receipt["qualified"])
         self.assertEqual(receipt["finishedCount"], 2)
+
+    def test_higher_precedence_aliases_cannot_redirect_or_suppress_evidence(self):
+        self.env.update(RENOVATE_LOG_FILE=str(self.work / "unowned.jsonl"),
+                        RENOVATE_LOG_FILE_FORMAT="pretty", RENOVATE_LOG_FILE_LEVEL="fatal")
+        result = self.run_wrapper()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(json.loads(result.stdout)["qualified"])
+        self.assertFalse((self.work / "unowned.jsonl").exists())
+
+    def test_directory_collision_fails_without_reusing_or_deleting_existing_data(self):
+        collision = self.work / ("evidence." + "07" * 16)
+        collision.mkdir(mode=0o700)
+        sentinel = collision / "foreign"
+        sentinel.write_text("preserve")
+        self.wrapper.write_text(self.wrapper.read_text().replace(
+            'crypto.randomBytes(16)', 'Buffer.alloc(16, 7)'))
+        result = subprocess.run(["bash", str(self.wrapper)], env=self.env,
+                                text=True, capture_output=True, timeout=5)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("EEXIST", result.stderr)
+        self.assertEqual(sentinel.read_text(), "preserve")
+        self.assertFalse((self.work / "child-pid").exists())
 
     def test_incomplete_or_failed_artifact_cannot_become_successful_action(self):
         for mode, code in [("incomplete", "INCOMPLETE_ROSTER"), ("artifact", "ARTIFACT_ERRORS"),

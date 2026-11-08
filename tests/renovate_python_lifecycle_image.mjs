@@ -77,6 +77,9 @@ for (const marker of [
     marker,
   );
 receipt.combinedCliPreload = true;
+receipt.nativeCompletionPath = JSON.parse(
+  run(node, ['/repo/tests/renovate_completion_image.mjs']),
+);
 const { installPythonLifecycleCompat } = await import(pathToFileURL(lifecycle));
 const guard = installPythonLifecycleCompat('/usr/local/renovate');
 await guard.preload();
