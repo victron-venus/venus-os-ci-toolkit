@@ -36,6 +36,9 @@ def own_check():
 def pr(author="californiantiramisu", head="abc", state="SUCCESS"):
     """Create a PR response containing a genuine independent check."""
     return {
+        "number": 7,
+        "headRefName": "renovate/ci-workflows",
+        "headRepository": {"id": "R_example", "nameWithOwner": "example/repo"},
         "state": "OPEN",
         "isDraft": False,
         "author": {"login": author},
@@ -72,6 +75,12 @@ class AutoMergeTests(unittest.TestCase):
         # Load repository-owned definitions; main runs only after API mocks are installed.
         # pylint: disable-next=exec-used
         exec(compile(SOURCE, str(WORKFLOW), "exec"), self.code)  # noqa: S102
+        # Existing decision/race cases mock this new account metadata boundary;
+        # MergeAuthorIdentityTests separately execute the actual identity reader.
+        self.real_merge_author_email = self.code["merge_author_email"]
+        self.code["merge_author_email"] = unittest.mock.Mock(
+            return_value="123456+merge-account@users.noreply.github.com"
+        )
         self.environment = {
             "GH_TOKEN": "test-token",
             "GITHUB_REPOSITORY": "example/repo",
@@ -304,7 +313,8 @@ def removal_event():
         "repository": {"full_name": "example/repo"},
         "number": 7,
         "pull_request": {
-            "head": {"sha": "abc", "repo": {"full_name": "example/repo"}},
+            "head": {"sha": "abc", "ref": "renovate/ci-workflows",
+                     "repo": {"full_name": "example/repo", "node_id": "R_example"}},
             "base": {"sha": "base", "ref": "main", "repo": {"full_name": "example/repo"}},
             "user": {"login": "californiantiramisu"},
             "updated_at": "2026-10-31T12:01:00Z",
@@ -345,6 +355,11 @@ class WithdrawalTests(unittest.TestCase):
             with self.subTest(change=change):
                 event = removal_event()
                 event["pull_request"]["base"]["ref"] = withdrawn["baseRefName"]
+                if change.get("isDraft"):
+                    event["action"] = "converted_to_draft"
+                elif change.get("baseRefName"):
+                    event["action"] = "edited"
+                    event["changes"] = {"base": {"ref": {"from": "main"}}}
                 calls = self.run_workflow([withdrawn, copy.deepcopy(withdrawn)], event=event)
                 self.assertEqual(
                     calls[-1].args,
@@ -400,11 +415,11 @@ class WithdrawalTests(unittest.TestCase):
         self.assertIn("--disable-auto", calls[-1].args)
 
     def test_new_intent_or_changed_identity_is_never_cancelled(self):
-        """A different head, branch, author or native request belongs to a later event."""
+        """A different source ref, base branch, author or request belongs to a later event."""
         withdrawn = self.withdrawn()
         for change in (
             {"labels": [{"name": "automerge"}]},
-            {"headRefOid": "new-head"},
+            {"headRefName": "different-branch"},
             {"baseRefOid": None},
             {"baseRefName": "other"},
             {"isCrossRepository": True},
@@ -489,7 +504,7 @@ class WithdrawalTests(unittest.TestCase):
                     )
                 )
         event = removal_event()
-        event["pull_request"]["head"]["sha"] = "other-head"
+        event["pull_request"]["head"]["ref"] = "other-branch"
         self.assertEqual(len(self.run_workflow([self.withdrawn()], event)), 1)
 
 
@@ -626,7 +641,10 @@ class TargetWithdrawalTests(unittest.TestCase):
     @staticmethod
     def value(**changes):
         """Build a ready PR with an existing request and its opt-in label removed."""
-        return pr() | {"labels": [], "autoMergeRequest": existing_request()} | changes
+        value = pr() | {"labels": [], "autoMergeRequest": existing_request()} | changes
+        if value["isCrossRepository"]:
+            value["headRepository"] = {"id": "R_fork", "nameWithOwner": "contributor/fork"}
+        return value
 
     @staticmethod
     def event(value, action="unlabeled"):
@@ -636,8 +654,9 @@ class TargetWithdrawalTests(unittest.TestCase):
             "repository": {"full_name": "example/repo"},
             "changes": {"base": {"ref": {"from": "main"}}},
             "pull_request": {
-                "head": {"sha": value["headRefOid"], "repo": {"full_name":
-                    "contributor/fork" if value["isCrossRepository"] else "example/repo"}},
+                "head": {"sha": value["headRefOid"], "ref": value["headRefName"],
+                         "repo": {"full_name": value["headRepository"]["nameWithOwner"],
+                                  "node_id": value["headRepository"]["id"]}},
                 "base": {"sha": value["baseRefOid"], "ref": value["baseRefName"],
                          "repo": {"full_name": "example/repo"}},
                 "user": {"login": value["author"]["login"]},
@@ -702,7 +721,7 @@ class TargetWithdrawalTests(unittest.TestCase):
         value = self.value()
         event = self.event(value)
         changes = (
-            {"headRefOid": "new-head"}, {"baseRefOid": None},
+            {"headRefName": "different-branch"}, {"baseRefOid": None},
             {"baseRefName": "other"}, {"isCrossRepository": True},
             {"author": {"login": "4alvit"}}, {"labels": [{"name": "automerge"}]},
         )
@@ -752,11 +771,11 @@ class TargetWithdrawalTests(unittest.TestCase):
                 self.assertEqual(len(self.run_target([advanced, replaced], event)), 1)
 
     def test_base_advance_preserves_identity_and_renewed_eligibility_guards(self):
-        """A moving base never permits a different head, author, branch or opt-in."""
+        """A moving base never permits a different source ref, author, branch or opt-in."""
         value = self.value()
         event = self.event(value)
         advanced = value | {"baseRefOid": "advanced-base"}
-        for change in ({"headRefOid": "new-head"}, {"baseRefName": "other"},
+        for change in ({"headRefName": "different-branch"}, {"baseRefName": "other"},
                        {"isCrossRepository": True}, {"author": {"login": "outsider"}},
                        {"labels": [{"name": "automerge"}]}, {"baseRefOid": None}):
             with self.subTest(change=change):
@@ -1937,3 +1956,223 @@ class DisabledNativeCapabilityTests(unittest.TestCase):
                 merge_error=RuntimeError("ambiguous response"),
             )
         self.assertEqual(len(self.merge_calls()), 1)
+
+
+class MergeAuthorIdentityTests(unittest.TestCase):
+    """Authenticate the merge author without relying on personal email settings."""
+
+    setUp = AutoMergeTests.setUp
+
+    def test_authenticated_account_not_public_email_or_event_actor(self):
+        account = {"id": 123456, "login": "merge-account", "type": "User",
+                   "email": "private@example.invalid"}
+        transport = unittest.mock.Mock(return_value=json.dumps(account))
+        with patch.dict(self.code, {"gh": transport}):
+            self.assertEqual(self.real_merge_author_email(),
+                             "123456+merge-account@users.noreply.github.com")
+        transport.assert_called_once_with("api", "user", "--jq", "{id,login,type}")
+
+    def test_missing_malformed_or_nonuser_identity_fails_closed(self):
+        for value in [None, [], {}, {"id": True, "login": "actor", "type": "User"},
+                      {"id": 0, "login": "actor", "type": "User"},
+                      {"id": "12", "login": "actor", "type": "User"},
+                      {"id": 12, "login": "actor", "type": "Bot"},
+                      {"id": 12, "login": "--actor", "type": "User"},
+                      {"id": 12, "login": "actor@invalid", "type": "User"},
+                      {"id": 12, "login": "actor\n", "type": "User"}]:
+            with self.subTest(value=value), patch.dict(
+                self.code, {"gh": unittest.mock.Mock(return_value=json.dumps(value))}
+            ), self.assertRaisesRegex(RuntimeError, "authenticated merge author"):
+                self.real_merge_author_email()
+
+    def test_unavailable_account_never_reaches_merge(self):
+        def transport(*args):
+            if args[:2] == ("api", "user"):
+                raise self.code["subprocess"].CalledProcessError(1, ["gh", "api", "user"])
+            return "true" if args[-1] == ".allow_auto_merge" else "main"
+        mocked = unittest.mock.Mock(side_effect=transport)
+        with patch.dict(os.environ, self.environment), patch.dict(self.code, {
+            "gh": mocked, "snapshot": unittest.mock.Mock(side_effect=[pr(), pr(), pr()]),
+            "merge_author_email": self.real_merge_author_email,
+        }), patch("time.sleep"), patch("time.monotonic", return_value=0), self.assertRaises(
+            self.code["subprocess"].CalledProcessError
+        ):
+            self.code["main"]()
+        self.assertFalse(any(c.args[:2] == ("pr", "merge") for c in mocked.call_args_list))
+
+    def test_email_rejection_never_retries_with_personal_default(self):
+        def transport(*args):
+            if args[:2] == ("api", "user"):
+                return json.dumps({"id": 123456, "login": "merge-account", "type": "User"})
+            if args[:2] == ("pr", "merge"):
+                raise self.code["subprocess"].CalledProcessError(1, ["gh", "pr", "merge"])
+            return "true" if args[-1] == ".allow_auto_merge" else "main"
+        mocked = unittest.mock.Mock(side_effect=transport)
+        with patch.dict(os.environ, self.environment), patch.dict(self.code, {
+            "gh": mocked, "snapshot": unittest.mock.Mock(side_effect=[pr(), pr(), pr()]),
+            "merge_author_email": self.real_merge_author_email,
+        }), patch("time.sleep"), patch("time.monotonic", return_value=0), self.assertRaises(
+            self.code["subprocess"].CalledProcessError
+        ):
+            self.code["main"]()
+        merges = [c.args for c in mocked.call_args_list if c.args[:2] == ("pr", "merge")]
+        self.assertEqual(len(merges), 1)
+        self.assertIn("--author-email", merges[0])
+        self.assertIn("123456+merge-account@users.noreply.github.com", merges[0])
+        self.assertEqual(merges[0][-2:], ("--match-head-commit", "abc"))
+
+    def test_every_positive_actuator_binds_author_and_head_but_withdrawal_does_not(self):
+        calls = [node for node in ast.walk(ast.parse(SOURCE))
+                 if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                 and node.func.id == "gh" and len(node.args) >= 2
+                 and all(isinstance(node.args[i], ast.Constant)
+                         and node.args[i].value == value for i, value in enumerate(("pr", "merge")))]
+        positive = []
+        for call in calls:
+            strings = [a.value for a in call.args if isinstance(a, ast.Constant)]
+            if "--disable-auto" in strings:
+                self.assertNotIn("--author-email", strings)
+            else:
+                positive.append(call)
+                self.assertIn("--author-email", strings)
+                self.assertIn("--match-head-commit", strings)
+                self.assertNotIn("--admin", strings)
+                self.assertTrue(any(isinstance(a, ast.Call) and isinstance(a.func, ast.Name)
+                                    and a.func.id == "merge_author_email" for a in call.args))
+        self.assertEqual(len(positive), 3)
+
+    def test_real_modes_keep_explicit_author(self):
+        ordinary = AutoMergeTests(); ordinary.setUp()
+        native = NativeAutoMergeTests(); native.setUp()
+        reviewed = ReviewedMergeTests(); reviewed.setUp()
+        single = SinglePassReviewedTests(); single.setUp()
+        ready = reviewed.reviewed()
+        ready_single = single.ready()
+        cases = [ordinary.run_workflow([pr(), pr(), pr()]),
+                 native.run_native([pr(), pr()]),
+                 reviewed.run_reviewed([ready, ready, ready]),
+                 single.run_once([ready_single, ready_single, ready_single])]
+        for calls in cases:
+            merges = [c.args for c in calls if c.args[:2] == ("pr", "merge")]
+            self.assertEqual(len(merges), 1)
+            self.assertIn("--author-email", merges[0])
+            self.assertIn("123456+merge-account@users.noreply.github.com", merges[0])
+            self.assertEqual(merges[0][-2], "--match-head-commit")
+
+
+class WithdrawalHeadAdvanceTests(unittest.TestCase):
+    """Execute the actual cancellation paths across commits, never live mutations."""
+
+    setUp = AutoMergeTests.setUp
+    run_target = TargetWithdrawalTests.run_target
+    run_native = NativeAutoMergeTests.run_native
+    run_workflow = WithdrawalTests.run_workflow
+
+    @staticmethod
+    def value(head="abc", **changes):
+        return pr(head=head) | {"labels": [], "autoMergeRequest": existing_request()} | changes
+
+    def assert_cancel_only(self, calls):
+        mutations = [call.args for call in calls if call.args[:2] == ("pr", "merge")]
+        self.assertEqual(mutations, [("pr", "merge", "7", "--repo", "example/repo", "--disable-auto")])
+
+    def test_original_event_survives_head_changes_before_and_between_reads(self):
+        """The original unlabel event owns the same request on the same branch."""
+        for values in ([self.value("new"), self.value("new")],
+                       [self.value(), self.value("new")],
+                       [self.value("new"), self.value("newer")]):
+            with self.subTest(heads=[value["headRefOid"] for value in values]):
+                self.assert_cancel_only(self.run_target(values, removal_event()))
+                self.assert_cancel_only(self.run_workflow(values))
+                with event_environment(removal_event()) as environment:
+                    self.assert_cancel_only(self.run_native(values, environment=environment))
+
+    def test_surviving_waiter_owns_same_request_after_push_at_both_observations(self):
+        """A prior eligible observation binds the request without freezing its commit."""
+        for changes in ({"labels": []}, {"isDraft": True}, {"baseRefName": "other"}):
+            opted = pr(state="PENDING") | {"autoMergeRequest": existing_request()}
+            withdrawn = pr(head="new") | {"autoMergeRequest": existing_request()} | changes
+            with self.subTest(changes=changes):
+                self.assert_cancel_only(self.run_workflow(
+                    [opted, withdrawn, withdrawn], removal_event() | {"action": "opened"}))
+                ready = opted | {"statusCheckRollup": pr()["statusCheckRollup"]}
+                self.assert_cancel_only(self.run_workflow(
+                    [ready, ready, withdrawn, withdrawn], removal_event() | {"action": "opened"}))
+                with event_environment(removal_event() | {"action": "opened"}) as environment:
+                    self.assert_cancel_only(self.run_native([opted, withdrawn, withdrawn], environment=environment))
+
+    def test_synchronize_alone_cannot_claim_unobserved_manual_request(self):
+        """The replacement event is not a substitute for surviving withdrawal routing."""
+        event = removal_event() | {"action": "synchronize"}
+        event["pull_request"]["head"]["sha"] = "new"
+        values = [self.value("new"), self.value("new")]
+        self.assertFalse(any("--disable-auto" in call.args for call in self.run_target(values, event)))
+        self.assertFalse(any("--disable-auto" in call.args for call in self.run_workflow(values, event)))
+
+    def test_changed_stable_identity_and_missing_fields_refuse_cancellation(self):
+        """A known request cannot cross PRs, repository nodes, refs, authors or unknown metadata."""
+        for changes in ({"number": 8}, {"number": None}, {"headRefName": "other"},
+                        {"headRefName": None}, {"headRefOid": None}, {"baseRefOid": None},
+                        {"baseRefName": "other"}, {"author": {"login": "4alvit"}},
+                        {"headRepository": {"id": "R_recreated", "nameWithOwner": "example/repo"}},
+                        {"headRepository": {"id": "R_example", "nameWithOwner": "other/repo"}},
+                        {"headRepository": None}, {"isCrossRepository": None}):
+            with self.subTest(changes=changes):
+                changed = self.value("new", **changes)
+                for values in ([changed], [self.value(), changed]):
+                    self.assertFalse(any("--disable-auto" in call.args for call in self.run_target(values, removal_event())))
+
+    def test_renewed_event_intent_is_preserved_even_if_other_reason_is_ineligible(self):
+        """Restoring the event's withdrawn condition cannot transfer ownership to another reason."""
+        restored = self.value("new", labels=[{"name": "automerge"}], isDraft=True)
+        self.assertFalse(any("--disable-auto" in call.args for call in self.run_target([restored], removal_event())))
+        for action, initial, changed in (
+            ("unlabeled", self.value(), restored),
+            ("converted_to_draft", self.value(labels=[{"name": "automerge"}], isDraft=True),
+             self.value("new", labels=[{"name": "automerge"}], isDraft=False, baseRefName="other")),
+            ("edited", self.value(labels=[{"name": "automerge"}], baseRefName="other"),
+             self.value("new", labels=[{"name": "automerge"}], baseRefName="main", isDraft=True)),
+        ):
+            with self.subTest(action=action):
+                event = TargetWithdrawalTests.event(initial, action)
+                self.assertFalse(any("--disable-auto" in call.args for call in self.run_target([initial, changed], event)))
+        original_draft = self.value(labels=[{"name": "automerge"}], isDraft=True)
+        restored_draft = self.value("new", labels=[{"name": "automerge"}], isDraft=False)
+        self.assertFalse(any("--disable-auto" in call.args for call in self.run_target(
+            [restored_draft], TargetWithdrawalTests.event(original_draft, "converted_to_draft"))))
+
+    def test_replacement_and_ambiguous_time_survive_commit_advancement(self):
+        """Neither an event nor an observed request can claim a replacement or unknown time."""
+        for request in (None, {"enabledAt": "2026-10-31T12:01:00Z"},
+                        {"enabledAt": "2026-10-31T12:02:00Z"}, {"enabledAt": None},
+                        {"enabledAt": "2026-10-31T12:00:00"},
+                        existing_request() | {"enabledBy": {"login": "manual-replacement"}}):
+            current = self.value("new", autoMergeRequest=request)
+            with self.subTest(request=request):
+                # A fresh replacement between reads always stays untouched.
+                self.assertFalse(any("--disable-auto" in call.args for call in self.run_target(
+                    [self.value(), current], removal_event())))
+                opted = pr(state="PENDING") | {"autoMergeRequest": existing_request()}
+                self.assertFalse(any("--disable-auto" in call.args for call in self.run_workflow(
+                    [opted, current], removal_event() | {"action": "opened"})))
+
+    def test_missing_event_ref_repository_node_author_or_time_refuses(self):
+        """Commit advancement does not make partial old webhook identity trustworthy."""
+        for path in (("head", "ref"), ("head", "repo", "node_id"),
+                     ("head", "repo", "full_name"), ("user", "login"), ("updated_at",)):
+            event = removal_event()
+            parent = event["pull_request"]
+            for key in path[:-1]:
+                parent = parent[key]
+            parent.pop(path[-1])
+            with self.subTest(path=path):
+                self.assertFalse(any("--disable-auto" in call.args for call in self.run_target(
+                    [self.value("new")], event)))
+
+    def test_positive_native_head_race_still_refuses_and_current_head_stays_bound(self):
+        """Cancellation's branch identity never weakens positive exact-head admission."""
+        calls = self.run_native([pr(), pr(head="new")])
+        self.assertFalse(any(call.args[:2] == ("pr", "merge") for call in calls))
+        calls = self.run_native([pr(head="new"), pr(head="new")])
+        self.assertEqual(calls[-1].args[-2:], ("--match-head-commit", "new"))
+        self.assertIn("--author-email", calls[-1].args)
