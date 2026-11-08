@@ -3020,7 +3020,7 @@ def promote(args: argparse.Namespace) -> JSONObject:
     )
     check_workflow_publication(gh, cast(str, manifest["source_sha"]))
     with (tempfile.TemporaryDirectory(prefix="release-promote-") as temp,
-          tempfile.TemporaryDirectory(prefix="release-distribution-") as distribution_temp):
+          tempfile.TemporaryDirectory(prefix="release-promote-distribution-") as distribution_temp):
         stage = Path(temp)
         # Promotion uses the same bounded whole-asset retry allowance as readback.
         # Failed prefixes remain charged to this shared inventory budget.

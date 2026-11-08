@@ -1933,6 +1933,17 @@ class LifecycleTests(unittest.TestCase):  # pylint: disable=too-many-public-meth
         with self.assertRaisesRegex(rc.ReleaseError, "Only release candidates"):
             rc.validate_manifest(encoded, REPO, "v1.2.3")
 
+    def test_final_build_preparation_accepts_authenticated_preproducer_receipt(self):
+        candidate, _, manifest = self.release_run("rc", 100)
+        raw = rewrite_retained_receipt(self, manifest, lambda value: value.pop("producer"))
+        self.start_run("stable", 101, candidate["tag"])
+        prepared = lifecycle.prepare(self.args)
+        self.assertEqual(prepared["build"], "true")
+        entry = self.gh.ledger["plans"]["101"]
+        self.assertEqual(entry["parent"], {
+            "tag": candidate["tag"], "manifest_sha256": rc.digest(raw),
+            "source_sha": SHA, "run_id": 100})
+
     def test_final_build_rejects_legacy_rc_before_allocating(self):
         self.start_run("stable", 100, legacy_tests.RC_TAG)
         # Model the real migration: legacy RC exists at old source SHA, while the
@@ -2354,6 +2365,31 @@ class PreparationTests(unittest.TestCase):
 
 
 
+def rewrite_retained_receipt(fixture, manifest, mutate):
+    """Bind a historical receipt shape into its real synthetic immutable evidence."""
+    gh = fixture.gh
+    assets = gh.assets[next(key for key, value in gh.releases.items()
+                           if value["tag_name"] == manifest["tag"])]
+    asset = next(item for item in assets if item["name"] == "release-inputs-linux.json")
+    receipt_data = json.loads(gh.files[asset["id"]])
+    mutate(receipt_data)
+    raw = rc.json_bytes(receipt_data)
+    gh.files[asset["id"]] = raw
+    asset.update(size=len(raw), digest="sha256:" + rc.digest(raw))
+    for item in manifest["assets"]:
+        if item["name"] == asset["name"]:
+            item.update(size=len(raw), sha256=rc.digest(raw))
+    for item in manifest["build_receipts"]:
+        if item["name"] == asset["name"]:
+            item["sha256"] = rc.digest(raw)
+    manifest_raw = rc.json_bytes(manifest)
+    declaration = next(item for item in assets if item["name"] == rc.MANIFEST)
+    gh.files[declaration["id"]] = manifest_raw
+    declaration.update(size=len(manifest_raw), digest="sha256:" + rc.digest(manifest_raw))
+    gh.save_completed_evidence(manifest_raw)
+    return manifest_raw
+
+
 def compact_published_fixture(fixture, rc_tag=None):
     """Model GitHub's published projection; consumer tests do not run promotion."""
     from release_distribution import stable_distribution
@@ -2398,6 +2434,27 @@ class CompactConsumerTests(unittest.TestCase):
     def verify(self, stage=None):
         return lifecycle.read_verified_distribution(self.gh, self.compact["tag"], rc.json_bytes(self.compact), stage=stage)
 
+    def test_legacy_wrapper_streams_preproducer_receipt_but_strict_paths_reject_it(self):
+        rewrite_retained_receipt(self.fixture, self.manifest, lambda value: value.pop("producer"))
+        self.manifest, self.raw, self.compact, self.stable_id = compact_published_fixture(self.fixture)
+        staged = []
+        def transfer(path, output):
+            destination = Path(output.name)
+            self.assertEqual(list(destination.parent.iterdir()), [destination])
+            output.write(self.gh.files[int(path.rsplit("/", 1)[-1])])
+            staged.append(destination)
+        with patch.object(self.gh, "download_asset", side_effect=transfer):
+            manifest, proof = lifecycle.verified_rc(self.gh, self.manifest["tag"], self.gh.info, self.gh.runs[99])
+        self.assertEqual(manifest, self.manifest)
+        self.assertEqual(proof, {key: value for key, value in self.compact["rc_evidence"].items()
+                                 if key != "run_attempt"})
+        self.assertEqual(len(staged), len(self.manifest["assets"]))
+        self.assertTrue(all(not path.exists() and not path.parent.exists() for path in staged))
+        for strict in (lambda: lifecycle.read_verified_rc(self.gh, self.manifest["tag"]), self.verify):
+            with self.subTest(resolver=strict), self.assertRaisesRegex(ValueError, "current package producer identity"):
+                strict()
+        self.assertEqual(self.gh.writes, [])
+
     def test_read_only_resolver_has_real_rc_proof_and_full_retained_stage(self):
         directory = self.fixture.root / "retained"
         directory.mkdir()
@@ -2407,6 +2464,34 @@ class CompactConsumerTests(unittest.TestCase):
                                  "source_sha": SHA, "run_id": 100, "run_attempt": 1})
         self.assertEqual({path.name for path in directory.iterdir()}, {item["name"] for item in manifest["assets"]})
         self.assertEqual(self.gh.writes, [])
+
+    def test_empty_payload_is_verified_and_staged_byte_for_byte(self):
+        self.gh.releases.pop(self.stable_id)
+        self.gh.assets.pop(self.stable_id)
+        self.gh.refs.pop(self.compact["tag"])
+        original = self.fixture.build_current
+        def build_with_empty_payload():
+            plan = original()
+            assets = Path(self.fixture.args.assets)
+            (assets / "release-inputs-linux.json").unlink()
+            (assets / "empty.txt").write_bytes(b"")
+            receipt.create_receipt(lifecycle.PLAN, self.fixture.root / ".release-inputs.json",
+                                   assets, assets / "release-inputs-linux.json")
+            return plan
+        with patch.object(self.fixture, "build_current", side_effect=build_with_empty_payload):
+            self.fixture.release_run("rc", 102)
+        self.gh.jobs_by_run[102] = copy.deepcopy(self.gh.jobs_by_run[100])
+        for release_assets in self.gh.assets.values():
+            for item in release_assets:
+                item["digest"] = "sha256:" + rc.digest(self.gh.files[item["id"]])
+        self.manifest, self.raw, self.compact, self.stable_id = compact_published_fixture(self.fixture)
+        stage = self.fixture.root / "empty-payload-stage"
+        stage.mkdir()
+        self.verify(stage)
+        self.assertTrue((stage / "empty.txt").is_file())
+        self.assertEqual((stage / "empty.txt").read_bytes(), b"")
+        self.assertIn({"name": "empty.txt", "size": 0, "sha256": rc.digest(b"")}, self.compact["assets"])
+        self.assertEqual({path.name for path in stage.iterdir()}, {"app.json", "empty.txt"})
 
     def test_compact_stages_only_shipped_bytes_without_current_run_or_policy_flag(self):
         directory = self.fixture.root / "shipped"

@@ -172,7 +172,8 @@ class PlanLayerCompatibilityTests(unittest.TestCase):
     def setUp(self):
         """Freeze real canonical states, including the literal accepted v1 plan hash."""
         self.current = {name: (ROOT / name).read_text() for name in migration.FILES}
-        self.compact_publisher = self.current[receipts.PUBLISHER]
+        self.compat_publisher = self.current[receipts.PUBLISHER]
+        self.compact_publisher = migration._before_legacy_rc_compatibility(self.compat_publisher)
         self.notes_publisher = migration._before_compact_distribution(self.compact_publisher)
         # Inventory-only upgrades retain their literal pre-notes publisher scope.
         self.current[receipts.PUBLISHER] = migration._before_notes_provenance(self.notes_publisher)
@@ -392,6 +393,46 @@ class PlanLayerCompatibilityTests(unittest.TestCase):
         for publisher in variants:
             with self.subTest(publisher_hash=receipts.digest(publisher)):
                 self.assertEqual(migration._before_compact_distribution(publisher), publisher)
+                self.write_state({**self.casefold, receipts.PUBLISHER: publisher})
+                before = self.snapshot()
+                with self.assertRaisesRegex(ValueError, "Unknown or partially migrated"):
+                    migration.render(self.root)
+                with self.assertRaisesRegex(ValueError, "Unknown current"):
+                    migration.previous_canonical_source(publisher, receipts.PUBLISHER)
+                self.assertEqual(self.snapshot(), before)
+
+    def test_legacy_rc_compatibility_layer_preserves_compact_oracle_and_header(self):
+        self.assertEqual(receipts.digest(self.compat_publisher),
+                         "9d8957d25de18740c016da30774a47b7e2dc934a4d2d7bde96c4cdf8017908d8")
+        previous = self.compact_publisher.replace("#!/usr/bin/env python3\n", PREFIX, 1)
+        current = self.compat_publisher.replace("#!/usr/bin/env python3\n", PREFIX, 1)
+        self.assertEqual(receipts.transform(previous, receipts.PUBLISHER, migration.LEGACY_RC_COMPATIBILITY),
+                         ("original", current))
+        self.assertEqual(migration._before_legacy_rc_compatibility(current), previous)
+        self.assertEqual(receipts.transform(current, receipts.PUBLISHER, migration.LEGACY_RC_COMPATIBILITY),
+                         ("current", current))
+        self.assertEqual(migration._before_legacy_rc_compatibility(previous), previous)
+        for source in (self.compact_publisher, self.compat_publisher):
+            self.assertEqual(receipts.digest(migration.previous_canonical_source(source, receipts.PUBLISHER)),
+                             "e27e76d2a6080bb257ce60420cf9ead4a4a86f1b4a86f568225aa6ee9706875e")
+
+    def test_inventory_preserves_legacy_rc_compatibility_without_installing_it(self):
+        for publisher in (self.compact_publisher, self.compat_publisher):
+            for state in (self.current, self.v1, self.casefold):
+                with self.subTest(publisher_hash=receipts.digest(publisher)):
+                    self.write_state({**state, receipts.PUBLISHER: publisher})
+                    before = self.snapshot()
+                    self.assertEqual(migration.render(self.root),
+                                     {} if state == self.current else self.expected([migration.PLAN]))
+                    self.assertEqual(self.snapshot(), before)
+
+    def test_unknown_and_partial_legacy_rc_compatibility_fail_without_writes(self):
+        variants = [self.compat_publisher + "# unreviewed customization\n"]
+        for hunk in migration.LEGACY_RC_COMPATIBILITY["hunks"]:
+            variants.append(self.compact_publisher.replace(hunk["before"], hunk["after"], 1))
+        for publisher in variants:
+            with self.subTest(publisher_hash=receipts.digest(publisher)):
+                self.assertEqual(migration._before_legacy_rc_compatibility(publisher), publisher)
                 self.write_state({**self.casefold, receipts.PUBLISHER: publisher})
                 before = self.snapshot()
                 with self.assertRaisesRegex(ValueError, "Unknown or partially migrated"):

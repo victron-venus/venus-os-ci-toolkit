@@ -243,6 +243,27 @@ COMPACT_DISTRIBUTION = {
 }
 
 
+# Preserve the later dispatch-wrapper compatibility fix only when already installed.
+LEGACY_RC_COMPATIBILITY = {
+    "hunks": [
+        {
+            "before": "    if stage is not None:\n        rc.require(stage.is_dir() and not stage.is_symlink() and not any(stage.iterdir()),\n                   \"RC staging must be an empty owned directory\")\n    retained = stage is not None or bool(manifest.get(\"version_plan\"))\n    with (nullcontext(str(stage)) if stage is not None else\n          tempfile.TemporaryDirectory(prefix=\"verified-rc-\")) as temp:\n        directory = Path(temp)\n",
+            "after": "    if stage is not None:\n        rc.require(stage.is_dir() and not stage.is_symlink() and not any(stage.iterdir()),\n                   \"RC staging must be an empty owned directory\")\n    # The dispatch wrapper must keep accepting RC receipts from before producer\n    # identities were introduced. Only the new read-only resolver revalidates\n    # their complete semantic contract; the wrapper streams authenticated bytes.\n    retained = stage is not None or (current_run is None and bool(manifest.get(\"version_plan\")))\n    with (nullcontext(str(stage)) if stage is not None else\n          tempfile.TemporaryDirectory(prefix=\"verified-rc-\")) as temp:\n        directory = Path(temp)\n"
+        },
+        {
+            "before": "                and identity[\"sha256\"] == declaration[\"sha256\"],\n                f\"RC payload checksum mismatch: {item['name']}\",\n            )\n        if manifest.get(\"version_plan\"):\n            policy = cast(dict[str, object], source_policy[\"data\"])\n            plan = cast(dict[str, object], manifest[\"version_plan\"])\n            receipts = verify_receipts(\n",
+            "after": "                and identity[\"sha256\"] == declaration[\"sha256\"],\n                f\"RC payload checksum mismatch: {item['name']}\",\n            )\n        if current_run is None and manifest.get(\"version_plan\"):\n            policy = cast(dict[str, object], source_policy[\"data\"])\n            plan = cast(dict[str, object], manifest[\"version_plan\"])\n            receipts = verify_receipts(\n"
+        }
+    ],
+    "original_to_current": {
+        "999072e1cec48cc463ea34045b2983113a1e7731b459912e6d37b1f600f6224c": "9d8957d25de18740c016da30774a47b7e2dc934a4d2d7bde96c4cdf8017908d8"
+    },
+    "current": [
+        "9d8957d25de18740c016da30774a47b7e2dc934a4d2d7bde96c4cdf8017908d8"
+    ]
+}
+
+
 def _before_layer(source: str, layer: dict, label: str) -> str:
     """Reverse one exact accepted layer, preserving a vendor header."""
     prefix = "#!/usr/bin/env python3\n" + receipts.HEADER
@@ -260,9 +281,15 @@ def _before_layer(source: str, layer: dict, label: str) -> str:
     return body.replace("#!/usr/bin/env python3\n", prefix, 1) if vendored else body
 
 
+def _before_legacy_rc_compatibility(source: str) -> str:
+    """Reverse only the exact dispatch-wrapper compatibility correction."""
+    return _before_layer(source, LEGACY_RC_COMPATIBILITY, "Legacy RC compatibility")
+
+
 def _before_compact_distribution(source: str) -> str:
     """Reverse only the exact compact reader layer; never accept partial shapes."""
-    return _before_layer(source, COMPACT_DISTRIBUTION, "Compact distribution")
+    return _before_layer(_before_legacy_rc_compatibility(source), COMPACT_DISTRIBUTION,
+                         "Compact distribution")
 
 
 def _before_automatic_test_push(source: str) -> str:
@@ -348,6 +375,8 @@ def render(directory: Path) -> dict[str, str]:
                 _, result = receipts.transform(result, name, AUTOMATIC_TEST_PUSH)
             if _before_compact_distribution(source) != source:
                 _, result = receipts.transform(result, name, COMPACT_DISTRIBUTION)
+            if _before_legacy_rc_compatibility(source) != source:
+                _, result = receipts.transform(result, name, LEGACY_RC_COMPATIBILITY)
         states.add(state)
         if result != source:
             changes[name] = result

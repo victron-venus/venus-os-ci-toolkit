@@ -80,7 +80,7 @@ def _assets(assets: object, *, closed: bool = True) -> list[dict]:
                  "Unsafe distribution asset name")
         _require(name.casefold() not in names, "Duplicate distribution asset name")
         names.add(name.casefold())
-        _require(type(item["size"]) is int and item["size"] > 0,
+        _require(type(item["size"]) is int and item["size"] >= 0,
                  "Invalid distribution asset size")
         _require(_matches(SHA256, item["sha256"]), "Invalid distribution asset checksum")
     return assets

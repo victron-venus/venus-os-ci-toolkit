@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import subprocess
 import sys
 import unittest
 from unittest.mock import patch
@@ -95,7 +96,7 @@ class DistributionSchemaTests(unittest.TestCase):
         for raw in (duplicate, b"{}" * distribution.MAX_BYTES, b'{"schema": NaN}', b"[]"):
             with self.subTest(size=len(raw)), self.assertRaises(ValueError):
                 distribution.parse_distribution(raw, "owner/player", "v1.2.3")
-        for key, value in (("size", True), ("size", 0), ("size", -1),
+        for key, value in (("size", True), ("size", -1),
                            ("name", "../file"), ("name", "release-manifest.json"),
                            ("sha256", "0" * 63), ("extra", "no")):
             altered = deepcopy(self.compact)
@@ -105,6 +106,13 @@ class DistributionSchemaTests(unittest.TestCase):
         self.compact["assets"].append(deepcopy(self.compact["assets"][0]))
         with self.assertRaises(ValueError):
             distribution.parse_distribution(encoded(self.compact), "owner/player", "v1.2.3")
+
+    def test_zero_byte_payload_retains_its_exact_identity(self):
+        empty = {"name": "empty-marker", "size": 0, "sha256": hashlib.sha256(b"").hexdigest()}
+        self.rc["assets"].append(empty)
+        compact = distribution.stable_distribution(self.rc, encoded(self.rc))
+        self.assertIn(empty, compact["assets"])
+        self.assertEqual(distribution.parse_distribution(encoded(compact), "owner/player", "v1.2.3"), compact)
 
     def test_missing_receipt_and_unbound_fuzz_cannot_be_silently_removed(self):
         for edit in (lambda x: x["build_receipts"].clear(),
@@ -136,10 +144,13 @@ class CompactPromotionTests(unittest.TestCase):
 
     def build_current(self):
         plan = versioned.LifecycleTests.build_current(self)
-        if getattr(self, "manifest_payload", False):
+        if getattr(self, "manifest_payload", False) or getattr(self, "empty_payload", False):
             assets = Path(self.args.assets)
             (assets / "release-inputs-linux.json").unlink()
-            (assets / "app.json").rename(assets / "app-manifest.json")
+            if getattr(self, "manifest_payload", False):
+                (assets / "app.json").rename(assets / "app-manifest.json")
+            if getattr(self, "empty_payload", False):
+                (assets / "empty-marker").write_bytes(b"")
             versioned.receipt.create_receipt(versioned.lifecycle.PLAN,
                                             self.root / ".release-inputs.json", assets,
                                             assets / "release-inputs-linux.json")
@@ -216,6 +227,37 @@ class CompactPromotionTests(unittest.TestCase):
         with patch.object(builtins, "__import__", side_effect=reject_optional):
             _, files = self.promoted_files(args)
         self.assertEqual(set(files), {"app.json", rc.MANIFEST})
+
+    def test_projection_uses_the_real_uploader_private_staging_boundary(self):
+        published, _, _, _ = self.accepted_rc()
+        args = self.driver(published["tag"], stable_distribution=distribution.KIND)
+        real_client = rc.GitHub(versioned.REPO)
+        fake_upload = self.gh.upload
+
+        def transport(argv, **_kwargs):
+            path = Path(argv[argv.index("--input") + 1])
+            self.assertTrue(path.parent.name.startswith("release-promote-distribution-"))
+            response = {"id": 900, "name": path.name, "state": "uploaded", "size": path.stat().st_size}
+            return subprocess.CompletedProcess(argv, 0, b"HTTP/2.0 201 Created\r\n\r\n" + encoded(response), b"")
+
+        def admitted_upload(tag, path, *, release_id):
+            real_client.upload(tag, path, release_id=release_id)
+            fake_upload(tag, path, release_id=release_id)
+
+        with patch.object(rc.subprocess, "run", side_effect=transport) as requests, patch.object(
+            self.gh, "upload", side_effect=admitted_upload
+        ):
+            _, files = self.promoted_files(args)
+        self.assertEqual(requests.call_count, len(files))
+
+    def test_zero_byte_rc_payload_is_published_without_omission_or_rewriting(self):
+        self.empty_payload = True
+        published, _, manifest, raw = self.accepted_rc()
+        _, files = self.promoted_files(self.driver(published["tag"], stable_distribution=distribution.KIND))
+        self.assertEqual(files["empty-marker"], b"")
+        compact = json.loads(files[rc.MANIFEST])
+        distribution.verify_distribution(compact, manifest, raw)
+        self.assertIn({"name": "empty-marker", "size": 0, "sha256": rc.digest(b"")}, compact["assets"])
 
     def test_unknown_mode_and_inventory_signing_reject_before_allocation_or_upload(self):
         published, _, _, _ = self.accepted_rc()

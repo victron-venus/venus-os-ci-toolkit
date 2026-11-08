@@ -275,7 +275,10 @@ def _read_verified_rc(
     if stage is not None:
         rc.require(stage.is_dir() and not stage.is_symlink() and not any(stage.iterdir()),
                    "RC staging must be an empty owned directory")
-    retained = stage is not None or bool(manifest.get("version_plan"))
+    # The dispatch wrapper must keep accepting RC receipts from before producer
+    # identities were introduced. Only the new read-only resolver revalidates
+    # their complete semantic contract; the wrapper streams authenticated bytes.
+    retained = stage is not None or (current_run is None and bool(manifest.get("version_plan")))
     with (nullcontext(str(stage)) if stage is not None else
           tempfile.TemporaryDirectory(prefix="verified-rc-")) as temp:
         directory = Path(temp)
@@ -299,7 +302,7 @@ def _read_verified_rc(
                 and identity["sha256"] == declaration["sha256"],
                 f"RC payload checksum mismatch: {item['name']}",
             )
-        if manifest.get("version_plan"):
+        if current_run is None and manifest.get("version_plan"):
             policy = cast(dict[str, object], source_policy["data"])
             plan = cast(dict[str, object], manifest["version_plan"])
             receipts = verify_receipts(
