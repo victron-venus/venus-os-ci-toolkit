@@ -63,6 +63,9 @@ def evaluate(expression, context):
             return not visit(node.operand)
         if isinstance(node, ast.Compare) and len(node.ops) == 1:
             left, right = visit(node.left), visit(node.comparators[0])
+            # GitHub Actions compares strings without regard to case.
+            if isinstance(left, str) and isinstance(right, str):
+                left, right = left.lower(), right.lower()
             if isinstance(node.ops[0], ast.Eq):
                 return left == right
             if isinstance(node.ops[0], ast.NotEq):
@@ -162,7 +165,10 @@ class MetadataEventsTests(unittest.TestCase):
                     context("edited", {"base": {"ref": {"from": "other"}}}),
                 )
                 self.assertEqual(active, pending)
-                self.assertEqual(active, retargeted)
+                if name in (".github/workflows/auto-merge-prs.yml", "docs/examples/auto-merge.yml"):
+                    self.assertNotEqual(active, retargeted)
+                else:
+                    self.assertEqual(active, retargeted)
                 self.assertNotIn(ignored, (active, pending))
                 self.assertNotEqual(ignored, next_ignored)
                 expected_cancel = "false" if name in (
@@ -292,6 +298,85 @@ class WithdrawalSequenceTests(unittest.TestCase):
             with self.subTest(original=original), event_environment(event) as env:
                 calls = runtime.run_workflow([observed, current, current], env | modes)
                 self.assertFalse(any("merge" in call.args for call in calls))
+
+    def test_case_only_retargets_survive_and_revoke_from_default_context(self):
+        """Exercise the actual selected modes with Actions case-insensitive comparison."""
+        from test_auto_merge import TargetWithdrawalTests
+
+        self.assertTrue(evaluate("'Main' == 'main'", {}))
+        self.assertFalse(evaluate("'Main' != 'main'", {}))
+        for name in ("docs/examples/auto-merge.yml", ".github/workflows/auto-merge-prs.yml"):
+            workflow = definition(name)
+            for base in ("Main", "MAIN", "other"):
+                changed = context("edited", {"base": {"ref": {"from": "main"}}}, run="20")
+                pull = changed["github"]["event"]["pull_request"]
+                pull["base"]["ref"] = base
+                pull["head"]["repo"]["full_name"] = "example/repo"
+                later = [context("synchronize", run="21"), context("edited", run="22")]
+                with self.subTest(workflow=name, base=base):
+                    self.assertTrue(all(group(workflow, changed) != group(workflow, item) for item in later))
+                    jobs = [job for job in workflow["jobs"].values() if evaluate(job["if"], changed)]
+                    self.assertEqual(len(jobs), 1)
+                    inputs = jobs[0].get("with", {})
+                    modes = {}
+                    for key in ("withdrawal-only", "native-auto-merge"):
+                        value = inputs.get(key, "false")
+                        enabled = evaluate(value, changed) if value.startswith("${{") else value == "true"
+                        modes[key.replace("-", "_").upper()] = str(bool(enabled)).lower()
+                    runtime = TargetWithdrawalTests()
+                    runtime.setUp()
+                    value = runtime.value(baseRefName=base, labels=[{"name": "automerge"}])
+                    event = runtime.event(value, "edited")
+                    calls = runtime.run_target([value, dict(value)], event, **modes)
+                    mutations = [call for call in calls if "merge" in call.args]
+                    self.assertEqual(len(mutations), 1)
+                    self.assertIn("--disable-auto", mutations[0].args)
+
+    def test_docs_case_only_fork_routes_preserve_request_ownership(self):
+        """Both selected fork routes revoke only the existing off-default request."""
+        from test_auto_merge import TargetWithdrawalTests
+
+        workflow = definition("docs/examples/auto-merge.yml")
+        for base in ("Main", "MAIN"):
+            changed = context("edited", {"base": {"ref": {"from": "main"}}})
+            changed["github"]["event"]["pull_request"]["base"]["ref"] = base
+            jobs = [job for job in workflow["jobs"].values() if evaluate(job["if"], changed)]
+            self.assertEqual(len(jobs), 2)
+            for job in jobs:
+                modes = {}
+                for key in ("withdrawal-only", "native-auto-merge"):
+                    value = job.get("with", {}).get(key, "false")
+                    enabled = evaluate(value, changed) if value.startswith("${{") else value == "true"
+                    modes[key.replace("-", "_").upper()] = str(bool(enabled)).lower()
+                for request in ("existing", "absent", "newer-manual"):
+                    runtime = TargetWithdrawalTests()
+                    runtime.setUp()
+                    value = runtime.value(baseRefName=base, isCrossRepository=True, labels=[{"name": "automerge"}])
+                    event = runtime.event(value, "edited")
+                    if request == "absent":
+                        value["autoMergeRequest"] = None
+                    elif request == "newer-manual":
+                        value["autoMergeRequest"] = {"enabledAt": "2026-10-31T12:02:00Z"}
+                    with self.subTest(base=base, modes=modes, request=request):
+                        calls = runtime.run_target([value, dict(value)], event, **modes)
+                        mutations = [call.args for call in calls if call.args[:2] == ("pr", "merge")]
+                        expected = [("pr", "merge", "7", "--repo", "example/repo", "--disable-auto")]
+                        self.assertEqual(mutations, expected if request == "existing" else [])
+
+    def test_return_to_default_has_its_own_queue_without_withdrawal(self):
+        """An independent base-event slot must not itself authorize cancellation."""
+        from test_auto_merge import TargetWithdrawalTests
+
+        for name in ("docs/examples/auto-merge.yml", ".github/workflows/auto-merge-prs.yml"):
+            workflow = definition(name)
+            returned = context("edited", {"base": {"ref": {"from": "Main"}}}, run="30")
+            with self.subTest(workflow=name):
+                self.assertNotEqual(group(workflow, returned), group(workflow, context("synchronize", run="31")))
+        runtime = TargetWithdrawalTests()
+        runtime.setUp()
+        value = runtime.value(baseRefName="main", labels=[{"name": "automerge"}])
+        event = runtime.event(value, "edited")
+        self.assertFalse(any("merge" in call.args for call in runtime.run_target([value], event)))
 
     def test_toolkit_caller_retains_positive_native_mode_after_return_to_default(self):
         """Treat returning to the default branch as a positive native evaluation."""

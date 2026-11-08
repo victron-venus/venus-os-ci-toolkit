@@ -628,7 +628,12 @@ class CallerWithdrawalTests(unittest.TestCase):
                           "github.event.pull_request.user.login": author}
                 with self.subTest(values=values):
                     self.assertTrue(self.reachable(**values))
-                    self.assertFalse(self.reachable("withdraw-auto-merge", **values))
+                    # All base edits select cleanup; the real implementation
+                    # rejects cancellation after a return to the default branch.
+                    self.assertEqual(
+                        self.reachable("withdraw-auto-merge", **values),
+                        action == "edited" and event == "pull_request_target",
+                    )
                     if event == "pull_request_target":
                         self.assertFalse(self.reachable(**(values | {"github.event.pull_request.base.ref": "other"})))
 
