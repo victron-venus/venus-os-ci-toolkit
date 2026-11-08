@@ -20,7 +20,16 @@ run_renovate() {
 if [[ $# -eq 1 && ( "$1" == --version || "$1" == --help ) ]]; then
   run_renovate "$@"
 fi
-completion_dir=$(umask 077; mktemp -d /tmp/renovate-completion.XXXXXXXX)
+# Native44.215 logger lowercases LOG_FILE. Use an exclusively created lowercase
+# path; normalizing a previously created mixed-case directory is unsafe.
+completion_dir=$(/usr/local/renovate/node -e '
+  const fs = require("node:fs");
+  const crypto = require("node:crypto");
+  const directory = "/tmp/renovate-completion." + crypto.randomBytes(16).toString("hex");
+  process.umask(0o077);
+  fs.mkdirSync(directory, { mode: 0o700, recursive: false });
+  process.stdout.write(directory);
+')
 renovate_pid=''
 cleanup_completion() {
   rm -f -- "$completion_dir/run.jsonl"
@@ -36,9 +45,11 @@ terminate_renovate() {
 trap cleanup_completion EXIT
 trap 'terminate_renovate TERM 143' TERM
 trap 'terminate_renovate INT 130' INT
-export LOG_FILE="$completion_dir/run.jsonl"
-export LOG_FILE_FORMAT=json
-export LOG_FILE_LEVEL=info
+# RENOVATE_ aliases have higher native precedence. Own both names so inherited
+# settings cannot redirect or suppress the completion evidence.
+export LOG_FILE="$completion_dir/run.jsonl" RENOVATE_LOG_FILE="$completion_dir/run.jsonl"
+export LOG_FILE_FORMAT=json RENOVATE_LOG_FILE_FORMAT=json
+export LOG_FILE_LEVEL=info RENOVATE_LOG_FILE_LEVEL=info
 # The workflow alone selects dry-run mode. Unexpected CLI overrides cannot
 # return success and accidentally earn a production marker.
 for argument in "$@"; do
