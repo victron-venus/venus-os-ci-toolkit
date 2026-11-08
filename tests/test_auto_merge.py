@@ -81,6 +81,14 @@ class AutoMergeTests(unittest.TestCase):
         self.code["merge_author_email"] = unittest.mock.Mock(
             return_value="123456+merge-account@users.noreply.github.com"
         )
+        self.real_request_native = self.code["request_native_with_cleanup"]
+        # Existing decision tests isolate the new mutation/acknowledgement boundary.
+        # NativeRequestReconciliationTests exercises the actual helper and transport.
+        def native_transport_stub(repo, number, observed, _default, _authors, method):
+            return self.code["gh"]("pr", "merge", number, "--repo", repo, "--auto", f"--{method}",
+                                   *self.code["merge_author_options"](native=True),
+                                   "--match-head-commit", observed["headRefOid"])
+        self.code["request_native_with_cleanup"] = native_transport_stub
         self.environment = {
             "GH_TOKEN": "test-token",
             "GITHUB_REPOSITORY": "example/repo",
@@ -896,6 +904,248 @@ class BotAuthorTests(unittest.TestCase):
             with self.subTest(login=login):
                 response = pr() | {"author": {"login": login, "is_bot": True}}
                 self.assertEqual(len(self.run_workflow([response])), 1)
+
+
+class NativeRequestReconciliationTests(unittest.TestCase):
+    """Run both real entry points and actual JSON transport with bounded interleavings."""
+
+    setUp = AutoMergeTests.setUp
+
+    @staticmethod
+    def request(login="californiantiramisu", stamp="2026-11-08T12:20:01Z"):
+        return {"enabledAt": stamp, "enabledBy": {"id": "U_bot", "login": login},
+                "mergeMethod": "SQUASH", "authorEmail": None,
+                "commitHeadline": "dependency update", "commitBody": ""}
+
+    def run_case(self, *, explicit=True, withdrawal=None, status="BLOCKED", queued=False,
+                 preexisting=False, before=None, after=None, final=None,
+                 ack=None, error=False, account=None, account_error=False):
+        self.current = pr() | {"id": "PR_fixture", "autoMergeRequest": None,
+                               "mergeStateStatus": status, "isMergeQueueEnabled": queued}
+        if preexisting:
+            self.current["autoMergeRequest"] = self.request("manual-author")
+        self.commands, self.snapshots = [], []
+        self.enables = self.disables = self.direct = 0
+        self.withdrawal_finished_before_enable = False
+
+        def snapshot(*_args, **_kwargs):
+            if before and not self.enables:
+                before(self.current)
+            if final and self.enables and sum(bool(x.get("autoMergeRequest")) for x in self.snapshots):
+                final(self.current)
+            result = copy.deepcopy(self.current)
+            self.snapshots.append(result)
+            return result
+
+        def transport(command, **kwargs):
+            self.assertIs(kwargs.get("text"), True)
+            self.assertEqual(command[0], "gh")
+            self.commands.append(command)
+            args = command[1:]
+            if args[:2] == ["api", "user"]:
+                if account_error:
+                    raise self.code["subprocess"].CalledProcessError(1, command)
+                return json.dumps(account if account is not None else
+                                  {"id": 319626568, "login": "californiantiramisu", "type": "User"})
+            if args[-1] == ".default_branch":
+                return "main"
+            if args[-1] == ".allow_auto_merge":
+                return "true"
+            if args[:2] == ["api", "repos/example/repo/rules/branches/main"]:
+                return json.dumps([{"type": "required_status_checks", "parameters": {
+                    "strict_required_status_checks_policy": True,
+                    "required_status_checks": [{"context": "CI gate"}],
+                }}])
+            if args[:2] == ["pr", "merge"]:
+                if "--disable-auto" in args:
+                    self.disables += 1
+                    self.current["autoMergeRequest"] = None
+                else:
+                    self.direct += 1
+                    self.assertNotIn("--auto", args)
+                    self.assertEqual(args[-2:], ["--match-head-commit", "abc"])
+                    self.assertIn("--author-email", args)
+                return ""
+            if args[:2] == ["api", "graphql"]:
+                fields = dict(item.split("=", 1) for item in args if "=" in item)
+                if fields["query"].startswith("query("):
+                    return json.dumps({"data": {"node": {k: self.current[k] for k in (
+                        "id", "headRefOid", "baseRefName", "mergeStateStatus", "isMergeQueueEnabled")}}})
+                self.assertIn("enablePullRequestAutoMerge", fields["query"])
+                self.assertIn("expectedHeadOid:$head", fields["query"])
+                self.assertNotIn("authorEmail:", fields["query"])
+                self.assertEqual((fields["id"], fields["head"], fields["method"]),
+                                 ("PR_fixture", "abc", "SQUASH"))
+                self.enables += 1
+                if error:
+                    raise self.code["subprocess"].CalledProcessError(1, command)
+                if withdrawal:
+                    if withdrawal == "unlabeled":
+                        self.current["labels"] = []
+                    elif withdrawal == "converted_to_draft":
+                        self.current["isDraft"] = True
+                    else:
+                        self.current["baseRefName"] = "release"
+                    event = {"number": 7, "repository": {"full_name": "example/repo"},
+                             "action": withdrawal, "pull_request": {
+                                 "updated_at": "2026-11-08T12:20:00Z",
+                                 "user": {"login": "californiantiramisu"},
+                                 "head": {"sha": "abc", "ref": "renovate/ci-workflows", "repo": {
+                                     "node_id": "R_example", "full_name": "example/repo"}},
+                                 "base": {"sha": "base", "ref": self.current["baseRefName"],
+                                          "repo": {"full_name": "example/repo"}}}}
+                    if withdrawal == "unlabeled":
+                        event["label"] = {"name": "automerge"}
+                    elif withdrawal == "edited_base":
+                        event.update(action="edited", changes={"base": {"ref": {"from": "main"}}})
+                    with tempfile.TemporaryDirectory() as directory:
+                        path = Path(directory) / "event.json"
+                        path.write_text(json.dumps(event))
+                        with patch.dict(os.environ, GITHUB_EVENT_NAME="pull_request_target",
+                                        GITHUB_REF="refs/heads/main", GITHUB_EVENT_PATH=str(path)):
+                            self.code["cancel_from_target_event"]("example/repo", "7", "main",
+                                                                  {"californiantiramisu"})
+                    self.assertIsNone(self.current["autoMergeRequest"])
+                    self.withdrawal_finished_before_enable = True
+                self.current["autoMergeRequest"] = self.request()
+                payload = {"clientMutationId": fields["client"], "actor": {
+                    "id": "U_bot", "login": "californiantiramisu", "databaseId": 319626568}, "pullRequest": {
+                        "id": "PR_fixture", "number": 7, "state": "OPEN", "headRefOid": "abc",
+                        "autoMergeRequest": copy.deepcopy(self.current["autoMergeRequest"])}}
+                if ack:
+                    ack(payload)
+                if after:
+                    after(self.current)
+                return json.dumps({"data": {"enablePullRequestAutoMerge": payload}})
+            self.fail(f"Unexpected command: {args}")
+
+        with patch.dict(os.environ, self.environment | {"NATIVE_AUTO_MERGE": str(explicit).lower()}, clear=True), patch.dict(
+            self.code, {"snapshot": snapshot, "request_native_with_cleanup": self.real_request_native,
+                        "merge_author_email": self.real_merge_author_email}
+        ), patch("subprocess.check_output", side_effect=transport), patch("time.sleep"), patch(
+            "time.monotonic", return_value=0
+        ):
+            self.code["main"]()
+
+    def test_six_withdrawal_interleavings_cleanup_after_enable(self):
+        for explicit in (False, True):
+            for withdrawal in ("unlabeled", "converted_to_draft", "edited_base"):
+                with self.subTest(explicit=explicit, withdrawal=withdrawal):
+                    self.run_case(explicit=explicit, withdrawal=withdrawal)
+                    self.assertTrue(self.withdrawal_finished_before_enable)
+                    self.assertEqual((self.enables, self.disables, self.direct), (1, 1, 0))
+                    self.assertIsNone(self.current["autoMergeRequest"])
+
+    def test_eligible_request_is_retained(self):
+        for explicit in (False, True):
+            self.run_case(explicit=explicit)
+            self.assertEqual((self.enables, self.disables), (1, 0))
+            self.assertIsNotNone(self.current["autoMergeRequest"])
+
+    def test_preexisting_manual_request_is_not_replaced_or_cancelled(self):
+        for explicit in (False, True):
+            self.run_case(explicit=explicit, preexisting=True)
+            self.assertEqual((self.enables, self.disables, self.direct), (0, 0, 0))
+            self.assertEqual(self.current["autoMergeRequest"]["enabledBy"]["login"], "manual-author")
+
+    def test_replaced_request_settings_or_creator_are_preserved(self):
+        for key, value in (("enabledAt", "2026-11-08T12:20:02Z"), ("mergeMethod", "REBASE"),
+                           ("authorEmail", "other@example.invalid"), ("commitHeadline", "new"),
+                           ("commitBody", "new"), ("enabledBy", {"id": "U_other", "login": "other"})):
+            with self.subTest(key=key):
+                self.run_case(withdrawal="unlabeled", after=lambda p: p["autoMergeRequest"].update({key: value}))
+                self.assertEqual(self.disables, 0)
+
+    def test_restored_intent_before_cleanup_is_preserved(self):
+        self.run_case(withdrawal="unlabeled", after=lambda p: p.update(labels=[{"name": "automerge"}]))
+        self.assertEqual(self.disables, 0)
+
+    def test_restored_intent_at_final_read_is_preserved(self):
+        self.run_case(withdrawal="unlabeled", final=lambda p: p.update(labels=[{"name": "automerge"}]))
+        self.assertEqual(self.disables, 0)
+
+    def test_replacement_at_final_read_is_preserved(self):
+        self.run_case(withdrawal="unlabeled", final=lambda p: p.update(autoMergeRequest=self.request(stamp="2026-11-08T12:22:00Z")))
+        self.assertEqual(self.disables, 0)
+
+    def test_stable_branch_head_advance_still_cleans_acknowledged_request(self):
+        self.run_case(withdrawal="unlabeled", after=lambda p: p.update(headRefOid="new-head", baseRefOid="new-base"))
+        self.assertEqual(self.disables, 1)
+
+    def test_foreign_pr_or_branch_after_ack_is_preserved(self):
+        for change in ({"id": "PR_other"}, {"headRefName": "other"}, {"author": {"login": "4alvit"}},
+                       {"headRepository": {"id": "R_other", "nameWithOwner": "other/repo"}}):
+            with self.subTest(change=change):
+                self.run_case(withdrawal="unlabeled", after=lambda p: p.update(change))
+                self.assertEqual(self.disables, 0)
+
+    def test_missing_or_mismatched_ack_never_cancels_or_retries(self):
+        changes = [lambda a: a.update(clientMutationId="other"), lambda a: a["actor"].update(databaseId=12),
+                   lambda a: a["pullRequest"].update(id="PR_other"), lambda a: a["pullRequest"].update(autoMergeRequest=None),
+                   lambda a: a["pullRequest"]["autoMergeRequest"].update(enabledAt="invalid"),
+                   lambda a: a["pullRequest"]["autoMergeRequest"]["enabledBy"].update(login="other")]
+        for change in changes:
+            with self.subTest(change=change), self.assertRaises(RuntimeError):
+                self.run_case(withdrawal="unlabeled", ack=change)
+            self.assertEqual((self.enables, self.disables, self.direct), (1, 0, 0))
+
+    def test_ambiguous_enable_transport_failure_is_never_replayed(self):
+        for explicit in (False, True):
+            with self.subTest(explicit=explicit), self.assertRaises(self.code["subprocess"].CalledProcessError):
+                self.run_case(explicit=explicit, error=True)
+            self.assertEqual((self.enables, self.disables, self.direct), (1, 0, 0))
+
+    def test_closed_or_already_merged_after_ack_never_disables(self):
+        for state in ("CLOSED", "MERGED"):
+            self.run_case(withdrawal="unlabeled", after=lambda p: p.update(state=state))
+            self.assertEqual(self.disables, 0)
+
+    def test_immediately_merged_response_reports_no_pending_cleanup(self):
+        self.run_case(ack=lambda a: a["pullRequest"].update(state="MERGED", autoMergeRequest=None))
+        self.assertEqual((self.enables, self.disables), (1, 0))
+
+    def test_actual_native_enable_omits_rejected_author_email(self):
+        for explicit in (False, True):
+            self.run_case(explicit=explicit)
+            mutation = [c for c in self.commands if c[1:3] == ["api", "graphql"]
+                        and any(x.startswith("query=mutation") for x in c)]
+            self.assertEqual(len(mutation), 1)
+            self.assertNotIn("authorEmail:", next(x for x in mutation[0] if x.startswith("query=")))
+            self.assertEqual(sum(c[1:3] == ["api", "user"] for c in self.commands), 1)
+
+    def test_account_read_failure_or_invalid_shape_blocks_mutations(self):
+        for explicit in (False, True):
+            with self.assertRaises(self.code["subprocess"].CalledProcessError):
+                self.run_case(explicit=explicit, account_error=True)
+            self.assertEqual((self.enables, self.disables, self.direct), (0, 0, 0))
+            for value in ({}, {"id": 319626568, "login": "californiantiramisu", "type": "Bot"}):
+                with self.assertRaisesRegex(RuntimeError, "authenticated merge author"):
+                    self.run_case(explicit=explicit, account=value)
+                self.assertEqual((self.enables, self.disables, self.direct), (0, 0, 0))
+
+    def test_gh287_immediate_states_keep_exact_protected_direct_merge(self):
+        for explicit in (False, True):
+            for state in ("CLEAN", "HAS_HOOKS", "UNSTABLE"):
+                with self.subTest(explicit=explicit, state=state):
+                    self.run_case(explicit=explicit, status=state)
+                    self.assertEqual((self.enables, self.disables, self.direct), (0, 0, 1))
+
+    def test_merge_queue_uses_enable_even_when_clean(self):
+        self.run_case(status="CLEAN", queued=True)
+        self.assertEqual((self.enables, self.direct), (1, 0))
+
+    def test_missing_unknown_state_or_queue_metadata_fails_closed(self):
+        for status, queued in ((None, False), ("UNKNOWN", False), ("NEW_STATE", False), ("BLOCKED", None)):
+            with self.subTest(status=status, queued=queued), self.assertRaisesRegex(RuntimeError, "metadata is unavailable"):
+                self.run_case(status=status, queued=queued)
+            self.assertEqual((self.enables, self.disables, self.direct), (0, 0, 0))
+
+    def test_toolkit_caller_keeps_withdrawals_independent_without_aborting_cleanup(self):
+        for name in (".github/workflows/auto-merge-prs.yml", "docs/examples/auto-merge.yml"):
+            caller = yaml.safe_load((WORKFLOW.parents[2] / name).read_text())
+            self.assertIs(caller["concurrency"]["cancel-in-progress"], False)
+            self.assertIn("github.run_id", caller["concurrency"]["group"])
+
 
 
 if __name__ == "__main__":
@@ -2069,98 +2319,6 @@ class MergeAuthorIdentityTests(unittest.TestCase):
             self.assertEqual(merges[0][-2], "--match-head-commit")
 
 
-class NativeEmailTransportTests(unittest.TestCase):
-    """Exercise both native entry points through the actual CLI transport wrapper."""
-
-    setUp = AutoMergeTests.setUp
-
-    def run_native_transport(self, explicit, *, account=None, account_error=False,
-                             merge_error=False, state="SUCCESS"):
-        """Model the observed native API rejection without making network calls."""
-        identity = account if account is not None else {
-            "id": 319626568, "login": "californiantiramisu", "type": "User",
-        }
-        self.commands = []
-
-        def transport(command, **kwargs):
-            self.assertIs(kwargs.get("text"), True)
-            self.commands.append(command)
-            self.assertEqual(command[0], "gh")
-            args = command[1:]
-            if args[:2] == ["api", "user"]:
-                if account_error:
-                    raise self.code["subprocess"].CalledProcessError(1, command)
-                return json.dumps(identity)
-            if args[:2] == ["pr", "merge"]:
-                if "--auto" in args and "--author-email" in args:
-                    raise self.code["subprocess"].CalledProcessError(
-                        1, command, stderr="enablePullRequestAutoMerge: account does not have a verified email"
-                    )
-                if merge_error:
-                    raise self.code["subprocess"].CalledProcessError(1, command, stderr="ambiguous response")
-                return ""
-            if args[-1] == ".default_branch":
-                return "main"
-            if args[-1] == ".allow_auto_merge":
-                return "true"
-            if args[:2] == ["api", "repos/example/repo/rules/branches/main"]:
-                return json.dumps([{"type": "required_status_checks", "parameters": {
-                    "strict_required_status_checks_policy": True,
-                    "required_status_checks": [{"context": "CI gate"}],
-                }}])
-            self.fail(f"Unexpected read: {args}")
-
-        environment = self.environment | {"NATIVE_AUTO_MERGE": "true" if explicit else "false"}
-        with patch.dict(os.environ, environment, clear=True), patch.dict(self.code, {
-            "snapshot": unittest.mock.Mock(return_value=pr(state=state)),
-            "merge_author_email": self.real_merge_author_email,
-        }), patch("subprocess.check_output", side_effect=transport), patch("time.sleep"), patch(
-            "time.monotonic", return_value=0
-        ):
-            self.code["main"]()
-
-    def merge_commands(self):
-        """Return only actual mutation argv captured at subprocess transport."""
-        return [command for command in self.commands if command[1:3] == ["pr", "merge"]]
-
-    def test_both_native_paths_omit_rejected_email_and_authenticate_account(self):
-        for explicit in (False, True):
-            with self.subTest(explicit=explicit):
-                self.run_native_transport(explicit)
-                merges = self.merge_commands()
-                self.assertEqual(len(merges), 1)
-                self.assertIn("--auto", merges[0])
-                self.assertNotIn("--author-email", merges[0])
-                self.assertEqual(merges[0][-2:], ["--match-head-commit", "abc"])
-                self.assertNotIn("--admin", merges[0])
-                self.assertEqual(sum(command[1:3] == ["api", "user"] for command in self.commands), 1)
-
-    def test_explicit_native_still_leaves_pending_gate_to_protected_server(self):
-        self.run_native_transport(True, state="PENDING")
-        self.assertEqual(len(self.merge_commands()), 1)
-        self.assertIn(["gh", "api", "repos/example/repo/rules/branches/main"], self.commands)
-
-    def test_account_read_failure_blocks_both_native_mutations(self):
-        for explicit in (False, True):
-            with self.subTest(explicit=explicit), self.assertRaises(self.code["subprocess"].CalledProcessError):
-                self.run_native_transport(explicit, account_error=True)
-            self.assertEqual(self.merge_commands(), [])
-
-    def test_invalid_account_shape_blocks_both_native_mutations(self):
-        for explicit in (False, True):
-            for account in ({}, {"id": 319626568, "login": "californiantiramisu", "type": "Bot"}):
-                with self.subTest(explicit=explicit, account=account), self.assertRaisesRegex(
-                    RuntimeError, "authenticated merge author"
-                ):
-                    self.run_native_transport(explicit, account=account)
-                self.assertEqual(self.merge_commands(), [])
-
-    def test_native_transport_failure_is_never_replayed(self):
-        for explicit in (False, True):
-            with self.subTest(explicit=explicit), self.assertRaises(self.code["subprocess"].CalledProcessError):
-                self.run_native_transport(explicit, merge_error=True)
-            self.assertEqual(len(self.merge_commands()), 1)
-            self.assertNotIn("--author-email", self.merge_commands()[0])
 
 
 class WithdrawalHeadAdvanceTests(unittest.TestCase):
