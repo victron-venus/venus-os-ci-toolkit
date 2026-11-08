@@ -49,6 +49,33 @@
       "packageNameTemplate": "https://github.com/victron-venus/venus-os-ci-toolkit",
       "datasourceTemplate": "git-refs",
       "fileFormat": "yaml"
+    },
+    {
+      "customType": "jsonata",
+      "managerFilePatterns": [
+        "/^\\.github/workflows/[^/]+\\.ya?ml$/"
+      ],
+      "matchStrings": [
+        "jobs.*[$type(uses) = \"string\" and $contains(uses, /^victron-venus\\/venus-os-ci-toolkit\\/\\.github\\/workflows\\/vendor-update\\.yml@[a-f0-9]{40}$/) and $type(with.\"toolkit-revision\") = \"string\" and $contains(with.\"toolkit-revision\", /^[a-f0-9]{40}$/)].{\"currentDigest\": with.\"toolkit-revision\"}"
+      ],
+      "currentValueTemplate": "main",
+      "depNameTemplate": "victron-venus/venus-os-ci-toolkit",
+      "packageNameTemplate": "https://github.com/victron-venus/venus-os-ci-toolkit",
+      "datasourceTemplate": "git-refs",
+      "fileFormat": "yaml"
+    },
+    {
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/(^|/)(scripts|tests)/.*\\.(py|mjs|cjs|js)$/"
+      ],
+      "matchStrings": [
+        "(?:^|\\r?\\n)(?:#|//) renovate: toolkit-reference\\r?\\n(?:const )?TOOLKIT_REF = [\"'](?<currentDigest>[a-f0-9]{40})[\"'];?[ \\t]*(?:\\r?\\n|$)"
+      ],
+      "currentValueTemplate": "main",
+      "depNameTemplate": "victron-venus/venus-os-ci-toolkit",
+      "packageNameTemplate": "https://github.com/victron-venus/venus-os-ci-toolkit",
+      "datasourceTemplate": "git-refs"
     }
   ],
   "packageRules": [
