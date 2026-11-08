@@ -1959,7 +1959,7 @@ class DisabledNativeCapabilityTests(unittest.TestCase):
 
 
 class MergeAuthorIdentityTests(unittest.TestCase):
-    """Authenticate the merge author without relying on personal email settings."""
+    """Authenticate the account and select native or explicit merge email options."""
 
     setUp = AutoMergeTests.setUp
 
@@ -2008,8 +2008,8 @@ class MergeAuthorIdentityTests(unittest.TestCase):
                 raise self.code["subprocess"].CalledProcessError(1, ["gh", "pr", "merge"])
             return "true" if args[-1] == ".allow_auto_merge" else "main"
         mocked = unittest.mock.Mock(side_effect=transport)
-        with patch.dict(os.environ, self.environment), patch.dict(self.code, {
-            "gh": mocked, "snapshot": unittest.mock.Mock(side_effect=[pr(), pr(), pr()]),
+        with patch.dict(os.environ, self.environment | {"REVIEWED_MERGE": "true", "REQUIRED_CHECKS": "CI"}), patch.dict(self.code, {
+            "gh": mocked, "snapshot": unittest.mock.Mock(return_value=ReviewedMergeTests.reviewed()),
             "merge_author_email": self.real_merge_author_email,
         }), patch("time.sleep"), patch("time.monotonic", return_value=0), self.assertRaises(
             self.code["subprocess"].CalledProcessError
@@ -2034,14 +2034,15 @@ class MergeAuthorIdentityTests(unittest.TestCase):
                 self.assertNotIn("--author-email", strings)
             else:
                 positive.append(call)
-                self.assertIn("--author-email", strings)
                 self.assertIn("--match-head-commit", strings)
                 self.assertNotIn("--admin", strings)
+                author_calls = [a.value if isinstance(a, ast.Starred) else a for a in call.args]
                 self.assertTrue(any(isinstance(a, ast.Call) and isinstance(a.func, ast.Name)
-                                    and a.func.id == "merge_author_email" for a in call.args))
+                                    and a.func.id in {"merge_author_email", "merge_author_options"}
+                                    for a in author_calls))
         self.assertEqual(len(positive), 3)
 
-    def test_real_modes_keep_explicit_author(self):
+    def test_real_modes_use_native_default_or_direct_explicit_author(self):
         ordinary = AutoMergeTests()
         ordinary.setUp()
         native = NativeAutoMergeTests()
@@ -2059,9 +2060,107 @@ class MergeAuthorIdentityTests(unittest.TestCase):
         for calls in cases:
             merges = [c.args for c in calls if c.args[:2] == ("pr", "merge")]
             self.assertEqual(len(merges), 1)
-            self.assertIn("--author-email", merges[0])
-            self.assertIn("123456+merge-account@users.noreply.github.com", merges[0])
+            if "--auto" in merges[0]:
+                self.assertNotIn("--author-email", merges[0])
+                self.assertNotIn("123456+merge-account@users.noreply.github.com", merges[0])
+            else:
+                self.assertIn("--author-email", merges[0])
+                self.assertIn("123456+merge-account@users.noreply.github.com", merges[0])
             self.assertEqual(merges[0][-2], "--match-head-commit")
+
+
+class NativeEmailTransportTests(unittest.TestCase):
+    """Exercise both native entry points through the actual CLI transport wrapper."""
+
+    setUp = AutoMergeTests.setUp
+
+    def run_native_transport(self, explicit, *, account=None, account_error=False,
+                             merge_error=False, state="SUCCESS"):
+        """Model the observed native API rejection without making network calls."""
+        identity = account if account is not None else {
+            "id": 319626568, "login": "californiantiramisu", "type": "User",
+        }
+        self.commands = []
+
+        def transport(command, **kwargs):
+            self.assertIs(kwargs.get("text"), True)
+            self.commands.append(command)
+            self.assertEqual(command[0], "gh")
+            args = command[1:]
+            if args[:2] == ["api", "user"]:
+                if account_error:
+                    raise self.code["subprocess"].CalledProcessError(1, command)
+                return json.dumps(identity)
+            if args[:2] == ["pr", "merge"]:
+                if "--auto" in args and "--author-email" in args:
+                    raise self.code["subprocess"].CalledProcessError(
+                        1, command, stderr="enablePullRequestAutoMerge: account does not have a verified email"
+                    )
+                if merge_error:
+                    raise self.code["subprocess"].CalledProcessError(1, command, stderr="ambiguous response")
+                return ""
+            if args[-1] == ".default_branch":
+                return "main"
+            if args[-1] == ".allow_auto_merge":
+                return "true"
+            if args[:2] == ["api", "repos/example/repo/rules/branches/main"]:
+                return json.dumps([{"type": "required_status_checks", "parameters": {
+                    "strict_required_status_checks_policy": True,
+                    "required_status_checks": [{"context": "CI gate"}],
+                }}])
+            self.fail(f"Unexpected read: {args}")
+
+        environment = self.environment | {"NATIVE_AUTO_MERGE": "true" if explicit else "false"}
+        with patch.dict(os.environ, environment, clear=True), patch.dict(self.code, {
+            "snapshot": unittest.mock.Mock(return_value=pr(state=state)),
+            "merge_author_email": self.real_merge_author_email,
+        }), patch("subprocess.check_output", side_effect=transport), patch("time.sleep"), patch(
+            "time.monotonic", return_value=0
+        ):
+            self.code["main"]()
+
+    def merge_commands(self):
+        """Return only actual mutation argv captured at subprocess transport."""
+        return [command for command in self.commands if command[1:3] == ["pr", "merge"]]
+
+    def test_both_native_paths_omit_rejected_email_and_authenticate_account(self):
+        for explicit in (False, True):
+            with self.subTest(explicit=explicit):
+                self.run_native_transport(explicit)
+                merges = self.merge_commands()
+                self.assertEqual(len(merges), 1)
+                self.assertIn("--auto", merges[0])
+                self.assertNotIn("--author-email", merges[0])
+                self.assertEqual(merges[0][-2:], ["--match-head-commit", "abc"])
+                self.assertNotIn("--admin", merges[0])
+                self.assertEqual(sum(command[1:3] == ["api", "user"] for command in self.commands), 1)
+
+    def test_explicit_native_still_leaves_pending_gate_to_protected_server(self):
+        self.run_native_transport(True, state="PENDING")
+        self.assertEqual(len(self.merge_commands()), 1)
+        self.assertIn(["gh", "api", "repos/example/repo/rules/branches/main"], self.commands)
+
+    def test_account_read_failure_blocks_both_native_mutations(self):
+        for explicit in (False, True):
+            with self.subTest(explicit=explicit), self.assertRaises(self.code["subprocess"].CalledProcessError):
+                self.run_native_transport(explicit, account_error=True)
+            self.assertEqual(self.merge_commands(), [])
+
+    def test_invalid_account_shape_blocks_both_native_mutations(self):
+        for explicit in (False, True):
+            for account in ({}, {"id": 319626568, "login": "californiantiramisu", "type": "Bot"}):
+                with self.subTest(explicit=explicit, account=account), self.assertRaisesRegex(
+                    RuntimeError, "authenticated merge author"
+                ):
+                    self.run_native_transport(explicit, account=account)
+                self.assertEqual(self.merge_commands(), [])
+
+    def test_native_transport_failure_is_never_replayed(self):
+        for explicit in (False, True):
+            with self.subTest(explicit=explicit), self.assertRaises(self.code["subprocess"].CalledProcessError):
+                self.run_native_transport(explicit, merge_error=True)
+            self.assertEqual(len(self.merge_commands()), 1)
+            self.assertNotIn("--author-email", self.merge_commands()[0])
 
 
 class WithdrawalHeadAdvanceTests(unittest.TestCase):
@@ -2179,7 +2278,7 @@ class WithdrawalHeadAdvanceTests(unittest.TestCase):
         self.assertFalse(any(call.args[:2] == ("pr", "merge") for call in calls))
         calls = self.run_native([pr(head="new"), pr(head="new")])
         self.assertEqual(calls[-1].args[-2:], ("--match-head-commit", "new"))
-        self.assertIn("--author-email", calls[-1].args)
+        self.assertNotIn("--author-email", calls[-1].args)
 
 
 class SnapshotHeadRepositoryTests(unittest.TestCase):

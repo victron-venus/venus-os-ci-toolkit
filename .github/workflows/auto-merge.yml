@@ -113,6 +113,14 @@ jobs:
               return f"{account['id']}+{account['login']}@users.noreply.github.com"
 
 
+          def merge_author_options(native=False):
+              email = merge_author_email()
+              # Native auto-merge uses the authenticated account's configured email.
+              # GitHub may reject an explicit noreply address for this API even
+              # when the account has a verified email and email privacy enabled.
+              return [] if native else ['--author-email', email]
+
+
           def native_auto_merge_enabled(repo):
               # A missing field or denied read is not evidence of a disabled setting.
               enabled = json.loads(gh('api', f'repos/{repo}', '--jq', '.allow_auto_merge'))
@@ -426,7 +434,7 @@ jobs:
                   print('PR head changed; the synchronize event will retry.')
                   return
               gh('pr', 'merge', number, '--repo', repo, '--auto', f'--{method}',
-                 '--author-email', merge_author_email(),
+                 *merge_author_options(native=True),
                  '--match-head-commit', fresh['headRefOid'])
               print('Requested native auto-merge; GitHub waits for the protected CI gate and reviews.')
 
@@ -641,7 +649,7 @@ jobs:
                               and (fresh['headRefOid'], fresh.get('baseRefOid') if protected_fallback else None, fresh_checks) == fingerprint):
                           options = [] if reviewed else ['--auto']
                           gh('pr', 'merge', number, '--repo', repo, *options, f'--{method}',
-                             '--author-email', merge_author_email(),
+                             *merge_author_options(native=not reviewed),
                              '--match-head-commit', fresh['headRefOid'])
                           print('Merged reviewed PR head.' if reviewed else
                                 'Requested native auto-merge for the verified PR head; repository protections still apply.')
