@@ -33,6 +33,7 @@ import release_gh_workflow  # pylint: disable=wrong-import-position
 import release_closed_workflow  # pylint: disable=wrong-import-position
 import release_receipt_migration  # pylint: disable=wrong-import-position
 import release_inventory_migration  # pylint: disable=wrong-import-position
+import release_distribution_migration  # pylint: disable=wrong-import-position
 import release_attempt_workflow  # pylint: disable=wrong-import-position
 import release_attempt_migration  # pylint: disable=wrong-import-position
 import release_push_scope  # pylint: disable=wrong-import-position
@@ -1377,6 +1378,14 @@ def validate_asset_restrictions(policy: dict) -> tuple[dict, ...]:
 def validate_policy(directory: Path, policy: dict) -> None:
     """Reject unsupported policy modes, stale publishers and invalid repository names."""
     mode = policy.get("mode", "release")
+    if "stable_distribution" in policy and policy["stable_distribution"] != "rc-payloads-v1":
+        raise ValueError("stable_distribution must be rc-payloads-v1 or absent")
+    if policy.get("stable_distribution") == "rc-payloads-v1" and policy.get("sign_releases") is True:
+        raise ValueError("Compact stable_distribution does not support full-inventory signing")
+    if (policy.get("stable_distribution") == "rc-payloads-v1" and
+            (not isinstance(policy.get("versioning"), dict) or
+             policy["versioning"].get("promotion") != "promote-bytes")):
+        raise ValueError("Compact stable_distribution requires promote-bytes versioning")
     release_validation.channel_workflows(policy)
     if release_fuzz.configuration(policy) is not None:
         release_fuzz.manifest(directory)
@@ -1675,6 +1684,7 @@ def release_files(directory: Path, policy: dict) -> dict[str, str]:
         for name in ("release_provenance", "merge_oci_archives"):
             files.setdefault(f"scripts/{name}.py", (ROOT / f"scripts/{name}.py").read_text())
         files["docs/VERSIONING.md"] = (ROOT / "docs/VERSIONING.md").read_text()
+        files["docs/release-distribution.md"] = (ROOT / "docs/release-distribution.md").read_text()
         files["docs/runner-preflight.md"] = (
             ROOT / "docs/runner-preflight.md"
         ).read_text()
@@ -1684,6 +1694,7 @@ def release_files(directory: Path, policy: dict) -> dict[str, str]:
             "runner_preflight",
             "release_state",
             "release_versioned",
+            "release_distribution",
             "prepare_version",
             "release_version_adapter",
             "stage_release_assets",
@@ -1711,6 +1722,7 @@ def release_files(directory: Path, policy: dict) -> dict[str, str]:
             "consumer_versioning",
             "cli_version_paths",
             "release_import_modes",
+            "release_distribution",
         ):
             files[f".github/release-tests/test_{name}.py"] = (
                 (ROOT / f"tests/test_{name}.py")
@@ -2101,6 +2113,11 @@ def render_release_inventory(directory: Path) -> dict[str, str]:
     return release_inventory_migration.render(directory)
 
 
+def render_release_distribution(directory: Path) -> dict[str, str]:
+    """Adopt known compact-manifest scripts/tests/docs without changing workflows."""
+    return release_distribution_migration.render(directory)
+
+
 def migrate_push_runtime(source):
     """Replace two known functions only; reject unreviewed consumer runtime drift."""
     canonical = (ROOT / RELEASE_VERSIONED_PATH).read_text()
@@ -2432,6 +2449,18 @@ Stable `vX.Y.Z` copies the tested RC bytes without rebuilding. No override or
 force-tag option exists. Expired/missing evidence requires a new RC. A partial
 upload remains an unpublished draft; inspect it before any manual recovery.
 
+Compact stable distribution is opt-in: the current driver's top-level policy
+must explicitly set `stable_distribution` to `rc-payloads-v1`. Absent means the
+existing full-manifest copy behavior; unknown, null and boolean values fail.
+The historical RC policy need not contain this field. Opted-in byte promotions
+ship unchanged payloads with a new schema-2 manifest linking the full RC proof.
+Only declared, verified receipts and the exact declared fuzz report stay solely
+on the RC; runtime JSON, feeds, metadata, checksums and signatures remain shipped.
+Every omitted file is still verified before publication. Keep the referenced RC
+and its immutable Actions evidence available and unexpired. Old schema-1 stable
+and final-build paths remain supported. See [compact distribution](release-distribution.md)
+for the narrow scripts/tests/docs migration and its workflow-preservation limits.
+
 Assets are uploaded to the draft's known release ID, using one bounded request
 per file. Publication does not repeat a tag lookup for each upload: a draft may
 not appear in the published-release-by-tag API. Each response must confirm a
@@ -2694,12 +2723,20 @@ def main():
         help="enforce declared package receipt inventory without replacing other release tooling",
     )
     modes.add_argument(
+        "--release-distribution-only", action="store_const", dest="renderer", const=render_release_distribution,
+        help="migrate reviewed compact stable scripts/tests/docs; preserve workflows and policy",
+    )
+    modes.add_argument(
         "--release-push-admission-only", action="store_const", dest="renderer", const=render_release_push_admission,
         help="adopt reviewed automatic test-only push admission without replacing publication jobs",
     )
     args = parser.parse_args()
     try:
         files = args.renderer(args.directory)
+        if args.renderer is render_release_distribution and not args.check:
+            release_distribution_migration.apply(args.directory, files)
+            print(f"Rendered {len(files)} files in {args.directory}")
+            return 0
         drift = []
         for relative, content in files.items():
             path = args.directory / relative

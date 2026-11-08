@@ -196,6 +196,15 @@ already contain the final base for RC. The embedded RC origin cannot change
 offline; external stable assignment and build origin are distinct. Full beta
 versions may be embedded because beta is not directly promoted.
 
+The current driver can separately opt into compact stable metadata with the
+top-level `stable_distribution: "rc-payloads-v1"` policy field. Its schema-2 stable
+manifest links the authenticated full RC proof and lists unchanged shipped
+payloads; declared receipts and the exact declared fuzz report remain at the RC.
+Absent means legacy full-manifest copying. This does not alter the RC's frozen
+plan, source or build number, and older schema-1 stable manifests remain readable.
+See [compact stable distribution](release-distribution.md) for validation,
+retention and the targeted migration that preserves existing workflows.
+
 `final-build` builds final-version packages from the accepted RC's exact source
 commit, including the dependency locks and recipe. The RC must match the current
 default-branch HEAD; create a new RC after code, policy or workflow changes.

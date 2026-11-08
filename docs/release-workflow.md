@@ -160,6 +160,18 @@ Stable `vX.Y.Z` copies the tested RC bytes without rebuilding. No override or
 force-tag option exists. Expired/missing evidence requires a new RC. A partial
 upload remains an unpublished draft; inspect it before any manual recovery.
 
+Compact stable distribution is opt-in: the current driver's top-level policy
+must explicitly set `stable_distribution` to `rc-payloads-v1`. Absent means the
+existing full-manifest copy behavior; unknown, null and boolean values fail.
+The historical RC policy need not contain this field. Opted-in byte promotions
+ship unchanged payloads with a new schema-2 manifest linking the full RC proof.
+Only declared, verified receipts and the exact declared fuzz report stay solely
+on the RC; runtime JSON, feeds, metadata, checksums and signatures remain shipped.
+Every omitted file is still verified before publication. Keep the referenced RC
+and its immutable Actions evidence available and unexpired. Old schema-1 stable
+and final-build paths remain supported. See [compact distribution](release-distribution.md)
+for the narrow scripts/tests/docs migration and its workflow-preservation limits.
+
 Assets are uploaded to the draft's known release ID, using one bounded request
 per file. Publication does not repeat a tag lookup for each upload: a draft may
 not appear in the published-release-by-tag API. Each response must confirm a

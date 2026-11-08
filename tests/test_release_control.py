@@ -2999,6 +2999,45 @@ class CurrentAttemptFreshnessTests(unittest.TestCase):
         with self.assertRaisesRegex(rc.ReleaseError, 'outside'):
             self.check()
 
+    def setup_boundary_fixture(self):
+        """Reproduce the runner setup timestamps observed in a completed job."""
+        self.detail['run_started_at'] = '2026-11-08T17:30:00Z'
+        self.job.update(started_at='2026-11-08T18:46:21Z', completed_at='2026-11-08T18:47:27Z')
+        self.job['steps'] = [{'name': 'Set up job', 'number': 1, 'status': 'completed',
+                             'conclusion': 'success', 'started_at': '2026-11-08T18:46:20Z',
+                             'completed_at': '2026-11-08T18:46:21Z'}]
+
+    def test_first_setup_step_may_cross_exact_one_second_job_boundary(self):
+        self.setup_boundary_fixture()
+        self.check()
+
+    def test_setup_boundary_exception_cannot_admit_other_steps_or_intervals(self):
+        for change in ({'started_at': '2026-11-08T18:46:19Z'}, {'name': 'Run checks'},
+                       {'number': 2}, {'number': True}, {'number': '1'},
+                       {'completed_at': '2026-11-08T18:46:20Z'},
+                       {'completed_at': '2026-11-08T18:47:28Z'}, {'status': 'in_progress'}):
+            with self.subTest(change=change):
+                self.setup_boundary_fixture()
+                self.job['steps'][0].update(change)
+                with self.assertRaises(rc.ReleaseError):
+                    self.check()
+        self.setup_boundary_fixture()
+        self.job['steps'].insert(0, {'conclusion': 'skipped'})
+        with self.assertRaisesRegex(rc.ReleaseError, 'outside'):
+            self.check()
+
+    def test_setup_boundary_never_crosses_the_attempt_start(self):
+        self.setup_boundary_fixture()
+        self.detail['run_started_at'] = '2026-11-08T18:46:21Z'
+        with self.assertRaisesRegex(rc.ReleaseError, 'outside'):
+            self.check()
+
+    def test_regular_step_still_requires_exact_job_interval(self):
+        self.setup_boundary_fixture()
+        self.job['steps'].append({**self.job['steps'][0], 'name': 'Check', 'number': 2})
+        with self.assertRaisesRegex(rc.ReleaseError, 'outside'):
+            self.check()
+
     def test_intentional_skips_and_unfinished_publisher_do_not_need_clocks(self):
         self.job['steps'].append({'conclusion': 'skipped'})
         self.job['steps'].append({'conclusion': 'failure', 'status': 'completed'})

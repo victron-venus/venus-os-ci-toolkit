@@ -12,6 +12,7 @@ import secrets
 import sys
 import tempfile
 from collections.abc import Callable, Iterator
+from contextlib import nullcontext
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import cast
@@ -208,9 +209,10 @@ def create_confirmation(
 
 # Keep source, workflow and byte verification together at the trust boundary.
 # pylint: disable-next=too-many-locals
-def verified_rc(
-    gh: rc.GitHub, tag: object, info: dict[str, object], current_run: dict[str, object]
-) -> tuple[dict[str, object], dict[str, object]]:
+def _read_verified_rc(
+    gh: rc.GitHub, tag: object, info: dict[str, object],
+    current_run: dict[str, object] | None, stage: Path | None,
+) -> tuple[dict[str, object], bytes, dict[str, object]]:
     """Verify the exact accepted RC source, immutable evidence and payload bytes."""
     rc.require(
         isinstance(tag, str)
@@ -221,22 +223,25 @@ def verified_rc(
     initial = rc.release_snapshot(gh, tag)
     ref, _, assets = initial
     manifests = [asset for asset in assets if asset["name"] == rc.MANIFEST]
-    rc.require(len(manifests) == 1, "RC manifest is missing")
+    rc.require(len(manifests) == 1 and 0 < cast(int, manifests[0].get("size", 2_000_001)) <= 2_000_000,
+               "RC manifest is missing or oversized")
     raw = gh.binary(
         f"releases/assets/{rc.positive(manifests[0]['id'], 'manifest asset ID')}"
     )
     manifest = rc.validate_manifest(raw, gh.repo, tag)
     source_policy = rc.source_policy_snapshot(gh, cast(str, manifest["source_sha"]))
     rc.require(source_policy == manifest["source_policy"], "RC source policy changed")
-    rc.require_current_fuzzing(gh, cast(dict[str, object], source_policy["data"]), cast(str, current_run["head_sha"]))
+    rc.require_release_policy(cast(dict[str, object], source_policy["data"]), gh.repo, qualified=True)
+    if current_run is not None:
+        rc.require_current_fuzzing(gh, cast(dict[str, object], source_policy["data"]),
+                                   cast(str, current_run["head_sha"]))
     rc.require(
         cast(dict[str, object], ref["object"]).get("sha")
         == cast(str, manifest["source_sha"]),
         "RC source tag mismatch",
     )
-    rc.require(
-        manifest["run_id"] != current_run["id"], "RC must come from a separate run"
-    )
+    if current_run is not None:
+        rc.require(manifest["run_id"] != current_run["id"], "RC must come from a separate run")
     source_run = cast(dict[str, object], gh.api(f"actions/runs/{manifest['run_id']}"))
     rc.validate_validation_run(gh, source_run, cast(dict[str, object], source_policy["data"]), "rc")
     rc.require(
@@ -267,19 +272,29 @@ def verified_rc(
         "RC asset inventory differs from immutable evidence",
     )
     rc.require(manifests[0]["size"] == len(raw), "RC asset size mismatch")
-    with tempfile.TemporaryDirectory(prefix="verified-rc-") as temp:
-        payload = Path(temp) / "payload"
+    if stage is not None:
+        rc.require(stage.is_dir() and not stage.is_symlink() and not any(stage.iterdir()),
+                   "RC staging must be an empty owned directory")
+    # The dispatch wrapper must keep accepting RC receipts from before producer
+    # identities were introduced. Only the new read-only resolver revalidates
+    # their complete semantic contract; the wrapper streams authenticated bytes.
+    retained = stage is not None or (current_run is None and bool(manifest.get("version_plan")))
+    with (nullcontext(str(stage)) if stage is not None else
+          tempfile.TemporaryDirectory(prefix="verified-rc-")) as temp:
+        directory = Path(temp)
         budget = rc.DownloadBudget(sum(cast(int, item["size"]) for item in expected.values()))
         for item in assets:
             if item["name"] == rc.MANIFEST:
                 continue
+            payload = directory / (cast(str, item["name"]) if retained else "payload")
             identity = rc.download_asset(
                 gh, item["id"], payload,
                 expected=cast(rc.AssetIdentity, {
                     key: expected[item["name"]][key] for key in ("size", "sha256")
                 }), budget=budget,
             )
-            payload.unlink()
+            if not retained:
+                payload.unlink()
             rc.require(item["size"] == identity["size"], "RC asset size mismatch")
             declaration = expected[item["name"]]
             rc.require(
@@ -287,17 +302,130 @@ def verified_rc(
                 and identity["sha256"] == declaration["sha256"],
                 f"RC payload checksum mismatch: {item['name']}",
             )
+        if current_run is None and manifest.get("version_plan"):
+            policy = cast(dict[str, object], source_policy["data"])
+            plan = cast(dict[str, object], manifest["version_plan"])
+            receipts = verify_receipts(
+                directory, plan, cast(list[dict[str, object]], manifest["assets"]), policy,
+                producer_identity(gh.repo, cast(int, manifest["run_id"]),
+                                  cast(int, manifest["run_attempt"]), cast(str, manifest["source_sha"])))
+            build, validation = candidate_fuzz_receipts(policy, "rc", receipts)
+            verify_required_build_receipts(build, policy)
+            rc.require(manifest.get("build_receipts") == [
+                {"name": value["name"], "sha256": value["sha256"]} for value in build
+            ], "RC build receipt evidence differs")
+            if "fuzzing" in policy:
+                rc.require(manifest.get("validation_receipts") == [
+                    {"name": value["name"], "sha256": value["sha256"]} for value in validation
+                ], "RC validation receipt evidence differs")
+            rc.require(verify_declared_artifacts(directory, policy, plan) == manifest.get("package_versions"),
+                       "RC package metadata differs")
+            if policy.get("sign_releases"):
+                # Authenticate with the retained source policy, not a newer driver.
+                if __package__:
+                    from .release_signing import verify
+                else:
+                    from release_signing import verify
+                verify(directory, policy, cast(str, manifest["source_sha"]))
+            else:
+                rc.verify_required_signatures(directory, gh.repo, cast(str, manifest["source_sha"]))
+    latest = cast(dict[str, object], gh.api(f"actions/runs/{manifest['run_id']}"))
+    rc.require(latest.get("id") == manifest["run_id"], "RC source run identity changed")
+    rc.validate_validation_run(gh, latest, cast(dict[str, object], source_policy["data"]), "rc")
+    rc.validate_run(gh, latest, info, cast(str, manifest["source_sha"]),
+                    cast(int, manifest["run_attempt"]), completed=True)
     rc.require(
         rc.snapshot_identity(rc.release_snapshot(gh, tag))
         == rc.snapshot_identity(initial),
         "RC changed during verification",
     )
-    return manifest, {
+    return manifest, raw, {
         "tag": tag,
         "manifest_sha256": rc.digest(raw),
         "source_sha": cast(str, manifest["source_sha"]),
         "run_id": manifest["run_id"],
+        "run_attempt": manifest["run_attempt"],
     }
+
+
+def read_verified_rc(
+    gh: rc.GitHub, tag: object, info: dict[str, object] | None = None,
+    *, stage: Path | None = None,
+) -> tuple[dict[str, object], bytes, dict[str, object]]:
+    """Authenticate a full retained RC without inventing a dispatch/current run.
+
+    An optional empty caller-owned stage retains every RC payload, including
+    receipts omitted by compact distributions. Without it temporary bytes expire.
+    """
+    return _read_verified_rc(gh, tag, info or rc.repository_info(gh), None, stage)
+
+
+def verified_rc(
+    gh: rc.GitHub, tag: object, info: dict[str, object], current_run: dict[str, object]
+) -> tuple[dict[str, object], dict[str, object]]:
+    """Keep dispatch-only separation/fuzz checks and the legacy parent schema."""
+    manifest, _, proof = _read_verified_rc(gh, tag, info, current_run, None)
+    return manifest, {key: value for key, value in proof.items() if key != "run_attempt"}
+
+
+# Keep the outer stable release and authenticated retained RC in one read scope.
+# pylint: disable-next=too-many-locals
+def read_verified_distribution(
+    gh: rc.GitHub, tag: str, raw: bytes, info: dict[str, object] | None = None,
+    *, stage: Path | None = None,
+) -> tuple[dict[str, object], bytes, dict[str, object]]:
+    """Resolve a compact stable envelope and verify its exact shipped bytes."""
+    # Legacy generated consumers need not import this optional module.
+    # pylint: disable-next=import-outside-toplevel
+    if __package__:
+        from .release_distribution import parse_distribution, verify_distribution
+    else:
+        from release_distribution import parse_distribution, verify_distribution
+
+    compact = parse_distribution(raw, gh.repo, tag)
+    rc.require(not rc.RELEASE_SIGNATURES_REQUIRED,
+               "Compact stable cannot omit full-inventory signature evidence")
+    info = info or rc.repository_info(gh)
+    pointer = compact["rc_evidence"]
+    original = rc.release_snapshot(gh, pointer["tag"])
+    manifest, candidate_raw, proof = read_verified_rc(gh, pointer["tag"], info)
+    rc.require(not cast(dict[str, object], cast(dict[str, object], manifest["source_policy"])["data"]).get("sign_releases"),
+               "Compact stable cannot omit full-inventory signature evidence")
+    verify_distribution(compact, manifest, candidate_raw)
+    plan = cast(dict[str, object], manifest["version_plan"])
+    policy = cast(dict[str, object], manifest["source_policy"])
+    source, run_id = cast(str, manifest["source_sha"]), cast(int, manifest["run_id"])
+    candidate_tag = cast(str, manifest["tag"])
+    verify_scheduled_reuse(gh, info, policy, plan, run_id, candidate_tag)
+    initial = published_plan_snapshot(gh, tag, source, False)
+    expected = {item["name"]: item for item in compact["assets"]}
+    declarations = {**expected, rc.MANIFEST: {"size": len(raw), "sha256": rc.digest(raw)}}
+    inventory = {asset["name"]: asset for asset in initial[2]}
+    rc.require(set(inventory) == set(declarations), "Compact stable asset inventory mismatch")
+    rc.require(all(asset.get("size") == declarations[name]["size"]
+                   and asset.get("digest") == "sha256:" + declarations[name]["sha256"]
+                   for name, asset in inventory.items()), "Compact stable asset metadata mismatch")
+    if stage is not None:
+        rc.require(stage.is_dir() and not stage.is_symlink() and not any(stage.iterdir()),
+                   "Stable staging must be an empty owned directory")
+    with (nullcontext(str(stage)) if stage is not None else
+          tempfile.TemporaryDirectory(prefix="verified-distribution-")) as temporary:
+        directory = Path(temporary)
+        budget = rc.DownloadBudget(sum(item["size"] for item in expected.values()))
+        for name, item in expected.items():
+            identity = rc.download_asset(
+                gh, inventory[name]["id"], directory / name,
+                expected=cast(rc.AssetIdentity, {key: item[key] for key in ("size", "sha256")}), budget=budget,
+            )
+            rc.require(identity == {key: item[key] for key in ("size", "sha256")},
+                       "Compact stable payload changed")
+        verify_scheduled_reuse(gh, info, policy, plan, run_id, candidate_tag)
+        rc.require(rc.snapshot_identity(original) == rc.snapshot_identity(
+            rc.release_snapshot(gh, pointer["tag"])), "Retained RC changed during stable transfer")
+        rc.require(rc.snapshot_identity(initial) == rc.snapshot_identity(
+            published_plan_snapshot(gh, tag, source, False)),
+            "Compact stable release changed during transfer")
+    return manifest, candidate_raw, proof
 
 
 def event_inputs() -> dict[str, object]:
@@ -427,6 +555,12 @@ def verify_scheduled_reuse(
     rc.require(cast(int, asset["size"]) <= 2_000_000, "Qualified manifest is too large")
     raw = gh.binary(f"releases/assets/{rc.positive(asset['id'], 'manifest ID')}")
     manifest = rc.parse_json(raw, "qualified manifest")
+    if isinstance(manifest, dict) and type(manifest.get("schema")) is int and manifest["schema"] == 2:
+        candidate, _, _ = read_verified_distribution(gh, tag, raw, info)
+        rc.require(candidate["version_plan"] == plan and candidate["source_policy"] == snapshot
+                   and candidate["run_id"] == source_run_id,
+                   "Compact stable differs from its qualified RC plan")
+        return
     rc.require(
         isinstance(manifest, dict)
         and isinstance(manifest.get("schema"), int)

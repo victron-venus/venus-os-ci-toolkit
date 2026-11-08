@@ -69,7 +69,14 @@ def record(gh: rc.GitHub, info: dict, run: dict, rc_tag: str, output: Path) -> d
     rc.require(len(stable_manifest) == 1 and stable_manifest[0].get("size", 2_000_001) <= 2_000_000,
                "Stable manifest is missing or oversized")
     stable_raw = gh.binary(f"releases/assets/{rc.positive(stable_manifest[0]['id'], 'manifest ID')}")
-    rc.require(stable_raw == raw, "Stable manifest differs from the accepted RC")
+    if stable_raw != raw:
+        # A compact envelope is deterministic; the receipt still binds raw RC evidence.
+        # pylint: disable-next=import-outside-toplevel
+        if __package__:
+            from .release_distribution import parse_distribution, verify_distribution
+        else:
+            from release_distribution import parse_distribution, verify_distribution
+        verify_distribution(parse_distribution(stable_raw, gh.repo, tag), manifest, raw)
     lifecycle.verify_scheduled_reuse(gh, info, policy, plan, manifest["run_id"], tag)
     rc.validate_run(gh, run, info, run["head_sha"], run["run_attempt"], False, gate=False)
     rc.require(rc.snapshot_identity(stable) == rc.snapshot_identity(

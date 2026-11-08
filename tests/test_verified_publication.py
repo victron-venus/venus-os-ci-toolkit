@@ -603,5 +603,30 @@ class VerifiedImageOutputTests(unittest.TestCase):
         self.assertFalse(self.output.exists())
 
 
+
+class CompactPublicationTests(unittest.TestCase):
+    def test_registry_admission_uses_authenticated_rc_policy_and_only_shipped_files(self):
+        from test_versioned_release import CompactConsumerTests
+        fixture = CompactConsumerTests()
+        self.addCleanup(fixture.doCleanups)
+        fixture.setUp()
+        with tempfile.TemporaryDirectory() as directory:
+            manifest = publisher.verified_assets(fixture.gh, fixture.compact["tag"], Path(directory))
+            self.assertEqual(manifest["source_policy"], fixture.manifest["source_policy"])
+            self.assertEqual({path.name for path in Path(directory).iterdir()},
+                             {item["name"] for item in fixture.compact["assets"]})
+        self.assertEqual(fixture.gh.writes, [])
+
+    def test_registry_admission_rejects_retained_rc_loss(self):
+        from test_versioned_release import CompactConsumerTests, rc as fixture_rc
+        fixture = CompactConsumerTests()
+        self.addCleanup(fixture.doCleanups)
+        fixture.setUp()
+        fixture.gh.evidence_by_run[100][0]["expired"] = True
+        with tempfile.TemporaryDirectory() as directory, self.assertRaises((ValueError, fixture_rc.ReleaseError)):
+            publisher.verified_assets(fixture.gh, fixture.compact["tag"], Path(directory))
+        self.assertEqual(fixture.gh.writes, [])
+
+
 if __name__ == "__main__":
     unittest.main()

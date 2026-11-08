@@ -72,9 +72,20 @@ def verified_assets(gh, tag, directory):
     ref = gh.api(f"git/ref/tags/{quote(tag, safe='')}")
     assets = gh.pages(f"releases/{positive(release['id'], 'release ID')}/assets")
     manifests = [a for a in assets if a["name"] == MANIFEST]
-    require(len(manifests) == 1, "Stable release has no unambiguous RC manifest")
+    require(len(manifests) == 1 and 0 < manifests[0].get("size", 2_000_001) <= 2_000_000,
+            "Stable release has no bounded unambiguous manifest")
     raw = gh.binary(f"releases/assets/{manifests[0]['id']}")
     candidate = json.loads(raw)
+    if isinstance(candidate, dict) and type(candidate.get("schema")) is int and candidate["schema"] == 2:
+        # Resolve the full RC before admitting any receipt-free stable payload.
+        # pylint: disable-next=import-outside-toplevel
+        if __package__:
+            from .release_versioned import read_verified_distribution
+        else:
+            from release_versioned import read_verified_distribution
+
+        manifest, _, _ = read_verified_distribution(gh, tag, raw, stage=directory)
+        return manifest
     manifest = validate_manifest(
         raw, gh.repo, candidate.get("tag", ""), allow_final=True
     )
