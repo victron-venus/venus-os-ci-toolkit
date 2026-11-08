@@ -147,10 +147,10 @@ class BoundedHeavyTests(unittest.TestCase):
 
     def test_absent_opt_in_preserves_existing_nuc_bytes(self):
         docs = base.render(base.plan())
-        # Reviewed baseline includes both ARC 0.15.0 and 0.15.1 metadata.
+        # Reviewed baseline includes ARC 0.15.0/0.15.1 and the exact Harness class allowance.
         # With bounded-heavy opt-in absent, all other rendered bytes stay fixed.
         payload = json.dumps(docs, sort_keys=True, separators=(',', ':')).encode()
-        self.assertEqual(hashlib.sha256(payload).hexdigest(), '76506ed0d7d58fbfe4a583bbedf5d012c53e5a126c633efb8225c0cd2b00434e')
+        self.assertEqual(hashlib.sha256(payload).hexdigest(), '0758944d004700a17e2552afc84b5def9363b6a93d15ac137783efce6b1d5bb3')
 
 
 class BoundedHeavyStorageTests(unittest.TestCase):
