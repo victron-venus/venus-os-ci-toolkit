@@ -53,6 +53,37 @@ class DistributionSchemaTests(unittest.TestCase):
         self.assertEqual(distribution.parse_distribution(encoded(self.compact), "OWNER/player", "v1.2.3"), self.compact)
         distribution.verify_distribution(self.compact, self.rc, self.raw)
 
+    def test_ordinary_report_filename_is_preserved_without_fuzz_declaration(self):
+        self.rc.pop("fuzzing_profile")
+        self.rc.pop("validation_receipts")
+        self.rc["assets"] = [item for item in self.rc["assets"]
+                             if item["name"] != "release-inputs-fuzz.json"]
+        compact = distribution.stable_distribution(self.rc, encoded(self.rc))
+        report = next(item for item in self.rc["assets"] if item["name"] == "fuzz-report.json")
+        self.assertIn(report, compact["assets"])
+        self.assertEqual({item["name"] for item in compact["assets"]},
+                         {item["name"] for item in self.rc["assets"]} - {"release-inputs-build.json"})
+        distribution.verify_distribution(compact, self.rc, encoded(self.rc))
+
+    def test_partial_fuzz_declaration_cannot_be_reclassified_as_an_ordinary_payload(self):
+        for remove in ("profile", "report", "receipt", "receipt-and-report"):
+            altered = deepcopy(self.rc)
+            if remove == "profile":
+                altered.pop("fuzzing_profile")
+            if "receipt" in remove:
+                altered["validation_receipts"] = []
+                altered["assets"] = [item for item in altered["assets"]
+                                     if item["name"] != "release-inputs-fuzz.json"]
+            if "report" in remove:
+                altered["assets"] = [item for item in altered["assets"] if item["name"] != "fuzz-report.json"]
+            with self.subTest(remove=remove), self.assertRaises(ValueError):
+                distribution.stable_distribution(altered, encoded(altered))
+        for profile in ({}, None, False, [], "rc"):
+            altered = deepcopy(self.rc)
+            altered["fuzzing_profile"] = profile
+            with self.subTest(profile=profile), self.assertRaises(ValueError):
+                distribution.stable_distribution(altered, encoded(altered))
+
     def test_raw_manifest_hash_is_not_a_reserialized_hash(self):
         raw = json.dumps(self.rc, indent=4).encode() + b"\n"
         result = distribution.stable_distribution(self.rc, raw)
@@ -144,13 +175,16 @@ class CompactPromotionTests(unittest.TestCase):
 
     def build_current(self):
         plan = versioned.LifecycleTests.build_current(self)
-        if getattr(self, "manifest_payload", False) or getattr(self, "empty_payload", False):
+        if (getattr(self, "manifest_payload", False) or getattr(self, "empty_payload", False)
+                or getattr(self, "ordinary_fuzz_report_payload", False)):
             assets = Path(self.args.assets)
             (assets / "release-inputs-linux.json").unlink()
             if getattr(self, "manifest_payload", False):
                 (assets / "app.json").rename(assets / "app-manifest.json")
             if getattr(self, "empty_payload", False):
                 (assets / "empty-marker").write_bytes(b"")
+            if getattr(self, "ordinary_fuzz_report_payload", False):
+                (assets / "fuzz-report.json").write_bytes(b'{"kind":"ordinary-application-report"}\n')
             versioned.receipt.create_receipt(versioned.lifecycle.PLAN,
                                             self.root / ".release-inputs.json", assets,
                                             assets / "release-inputs-linux.json")
@@ -258,6 +292,24 @@ class CompactPromotionTests(unittest.TestCase):
         compact = json.loads(files[rc.MANIFEST])
         distribution.verify_distribution(compact, manifest, raw)
         self.assertIn({"name": "empty-marker", "size": 0, "sha256": rc.digest(b"")}, compact["assets"])
+
+    def test_ordinary_receipt_covered_report_survives_real_promotion(self):
+        self.ordinary_fuzz_report_payload = True
+        published, _, manifest, raw = self.accepted_rc()
+        self.assertNotIn("fuzzing_profile", manifest)
+        self.assertEqual(manifest.get("validation_receipts", []), [])
+        original_id = next(key for key, value in self.gh.releases.items()
+                           if value["tag_name"] == published["tag"])
+        original_report = next(asset for asset in self.gh.assets[original_id]
+                               if asset["name"] == "fuzz-report.json")
+        original_bytes = self.gh.files[original_report["id"]]
+        _, files = self.promoted_files(self.driver(published["tag"], stable_distribution=distribution.KIND))
+        self.assertEqual(set(files), {"app.json", "fuzz-report.json", rc.MANIFEST})
+        self.assertEqual(files["fuzz-report.json"], original_bytes)
+        compact = json.loads(files[rc.MANIFEST])
+        self.assertIn({"name": "fuzz-report.json", "size": len(original_bytes),
+                       "sha256": rc.digest(original_bytes)}, compact["assets"])
+        distribution.verify_distribution(compact, manifest, raw)
 
     def test_unknown_mode_and_inventory_signing_reject_before_allocation_or_upload(self):
         published, _, _, _ = self.accepted_rc()

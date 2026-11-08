@@ -146,10 +146,10 @@ def stable_distribution(candidate: dict, candidate_raw: bytes) -> dict:
     receipt_names = {name for name in expected if name.startswith("release-inputs-")
                      and name.endswith(".json")}
     _require(receipt_names == omit, "Undeclared release-inputs asset")
-    has_fuzz = "fuzz-report.json" in expected
     fuzz_receipts = [item for item in validation if item.get("name") == "release-inputs-fuzz.json"]
-    _require(has_fuzz == bool(fuzz_receipts), "Incomplete declared fuzz evidence")
-    if has_fuzz:
+    if fuzz_receipts or "fuzzing_profile" in candidate:
+        _require(bool(fuzz_receipts) and "fuzz-report.json" in expected,
+                 "Incomplete declared fuzz evidence")
         _require(isinstance(candidate.get("fuzzing_profile"), dict)
                  and candidate["fuzzing_profile"], "Missing RC fuzz profile")
         omit.add("fuzz-report.json")
