@@ -84,7 +84,7 @@ class AutoMergeTests(unittest.TestCase):
         self.real_request_native = self.code["request_native_with_cleanup"]
         # Existing decision tests isolate the new mutation/acknowledgement boundary.
         # NativeRequestReconciliationTests exercises the actual helper and transport.
-        def native_transport_stub(repo, number, observed, _default, _authors, method):
+        def native_transport_stub(repo, number, observed, _default, _authors, method, checked_state=None):
             return self.code["gh"]("pr", "merge", number, "--repo", repo, "--auto", f"--{method}",
                                    *self.code["merge_author_options"](native=True),
                                    "--match-head-commit", observed["headRefOid"])
@@ -919,13 +919,16 @@ class NativeRequestReconciliationTests(unittest.TestCase):
 
     def run_case(self, *, explicit=True, withdrawal=None, status="BLOCKED", queued=False,
                  preexisting=False, before=None, after=None, final=None,
-                 ack=None, error=False, account=None, account_error=False):
+                 ack=None, error=False, account=None, account_error=False,
+                 states=None, between_states=None, state_error=None, expires_on_wait=False):
         self.current = pr() | {"id": "PR_fixture", "autoMergeRequest": None,
                                "mergeStateStatus": status, "isMergeQueueEnabled": queued}
         if preexisting:
             self.current["autoMergeRequest"] = self.request("manual-author")
         self.commands, self.snapshots = [], []
-        self.enables = self.disables = self.direct = 0
+        self.enables = self.disables = self.direct = self.state_reads = 0
+        self.retry_sleeps = []
+        self.deadline_expired = False
         self.withdrawal_finished_before_enable = False
 
         def snapshot(*_args, **_kwargs):
@@ -969,8 +972,16 @@ class NativeRequestReconciliationTests(unittest.TestCase):
             if args[:2] == ["api", "graphql"]:
                 fields = dict(item.split("=", 1) for item in args if "=" in item)
                 if fields["query"].startswith("query("):
-                    return json.dumps({"data": {"node": {k: self.current[k] for k in (
-                        "id", "headRefOid", "baseRefName", "mergeStateStatus", "isMergeQueueEnabled")}}})
+                    self.state_reads += 1
+                    if state_error == "transport":
+                        raise self.code["subprocess"].CalledProcessError(1, command)
+                    if states:
+                        self.current["mergeStateStatus"] = states[min(self.state_reads - 1, len(states) - 1)]
+                    response = {"data": {"node": {k: self.current[k] for k in (
+                        "id", "headRefOid", "baseRefName", "mergeStateStatus", "isMergeQueueEnabled")}}}
+                    if state_error == "graphql":
+                        response["errors"] = [{"message": "synthetic read error"}]
+                    return json.dumps(response)
                 self.assertIn("enablePullRequestAutoMerge", fields["query"])
                 self.assertIn("expectedHeadOid:$head", fields["query"])
                 self.assertNotIn("authorEmail:", fields["query"])
@@ -1019,11 +1030,18 @@ class NativeRequestReconciliationTests(unittest.TestCase):
                 return json.dumps({"data": {"enablePullRequestAutoMerge": payload}})
             self.fail(f"Unexpected command: {args}")
 
+        def sleep(seconds):
+            if seconds == 4:
+                self.retry_sleeps.append(seconds)
+                self.deadline_expired = expires_on_wait
+                if between_states:
+                    between_states(self.current)
+
         with patch.dict(os.environ, self.environment | {"NATIVE_AUTO_MERGE": str(explicit).lower()}, clear=True), patch.dict(
             self.code, {"snapshot": snapshot, "request_native_with_cleanup": self.real_request_native,
                         "merge_author_email": self.real_merge_author_email}
-        ), patch("subprocess.check_output", side_effect=transport), patch("time.sleep"), patch(
-            "time.monotonic", return_value=0
+        ), patch("subprocess.check_output", side_effect=transport), patch("time.sleep", side_effect=sleep), patch(
+            "time.monotonic", side_effect=lambda: 7201 if self.deadline_expired else 0
         ):
             self.code["main"]()
 
@@ -1139,6 +1157,88 @@ class NativeRequestReconciliationTests(unittest.TestCase):
             with self.subTest(status=status, queued=queued), self.assertRaisesRegex(RuntimeError, "metadata is unavailable"):
                 self.run_case(status=status, queued=queued)
             self.assertEqual((self.enables, self.disables, self.direct), (0, 0, 0))
+
+    def test_unknown_then_known_native_or_direct_uses_only_bounded_read_retry(self):
+        for explicit in (False, True):
+            for known in ("BLOCKED", "CLEAN"):
+                with self.subTest(explicit=explicit, known=known):
+                    self.run_case(explicit=explicit, states=["UNKNOWN", known])
+                    self.assertEqual(self.state_reads, 2)
+                    self.assertEqual(self.retry_sleeps, [4])
+                    self.assertEqual((self.enables, self.direct), (1, 0) if known == "BLOCKED" else (0, 1))
+
+    def test_unknown_exhaustion_never_mutates_and_wait_is_twelve_seconds(self):
+        for explicit in (False, True):
+            with self.subTest(explicit=explicit), self.assertRaisesRegex(RuntimeError, "bounded UNKNOWN"):
+                self.run_case(explicit=explicit, status="UNKNOWN")
+            self.assertEqual(self.state_reads, 4)
+            self.assertEqual(self.retry_sleeps, [4, 4, 4])
+            self.assertEqual((self.enables, self.direct, self.disables), (0, 0, 0))
+
+    def test_unknown_wait_rechecks_withdrawal_and_full_identity(self):
+        changes = ({"labels": []}, {"isDraft": True}, {"state": "CLOSED"},
+                   {"headRefOid": "new-head"}, {"baseRefName": "release"}, {"baseRefOid": "new-base"},
+                   {"id": "PR_other"}, {"number": 8}, {"headRefName": "other"},
+                   {"author": {"login": "4alvit"}},
+                   {"headRepository": {"id": "R_other", "nameWithOwner": "other/repo"}})
+        for explicit in (False, True):
+            for change in changes:
+                with self.subTest(explicit=explicit, change=change):
+                    self.run_case(explicit=explicit, states=["UNKNOWN", "BLOCKED"],
+                                  between_states=lambda p, c=change: p.update(c))
+                    self.assertEqual(self.state_reads, 1)
+                    self.assertEqual((self.enables, self.direct, self.disables), (0, 0, 0))
+
+    def test_unknown_wait_preserves_new_or_replacement_request(self):
+        for explicit in (False, True):
+            for login in ("manual-author", "californiantiramisu"):
+                with self.subTest(explicit=explicit, login=login):
+                    self.run_case(explicit=explicit, states=["UNKNOWN", "BLOCKED"],
+                                  between_states=lambda p, name=login: p.update(autoMergeRequest=self.request(name)))
+                    self.assertEqual(self.state_reads, 1)
+                    self.assertEqual((self.enables, self.direct, self.disables), (0, 0, 0))
+                    self.assertEqual(self.current["autoMergeRequest"]["enabledBy"]["login"], login)
+
+    def test_legacy_unknown_wait_rechecks_exact_original_check_fingerprint(self):
+        for state in ("FAILURE", "", "SUCCESS"):
+            def change(p, outcome=state):
+                p["statusCheckRollup"][0].update(conclusion=outcome, name="changed-check")
+            with self.subTest(state=state):
+                if state == "FAILURE":
+                    with self.assertRaises(self.code["CheckFailure"]):
+                        self.run_case(explicit=False, states=["UNKNOWN", "BLOCKED"], between_states=change)
+                else:
+                    self.run_case(explicit=False, states=["UNKNOWN", "BLOCKED"], between_states=change)
+                self.assertEqual(self.state_reads, 1)
+                self.assertEqual((self.enables, self.direct, self.disables), (0, 0, 0))
+        self.run_case(states=["UNKNOWN", "BLOCKED"],
+                      between_states=lambda p: p["statusCheckRollup"][0].update(status="IN_PROGRESS", conclusion=None))
+        self.assertEqual((self.state_reads, self.enables), (2, 1))
+
+    def test_unknown_does_not_retry_graphql_transport_missing_or_invalid_metadata(self):
+        for failure in ("graphql", "transport"):
+            expected = RuntimeError if failure == "graphql" else self.code["subprocess"].CalledProcessError
+            with self.subTest(failure=failure), self.assertRaises(expected):
+                self.run_case(status="UNKNOWN", state_error=failure)
+            self.assertEqual((self.state_reads, self.retry_sleeps, self.enables, self.direct), (1, [], 0, 0))
+        for status, queued in ((None, False), (True, False), ([], False), ({}, False),
+                               ("NEW_STATE", False), ("UNKNOWN", None)):
+            with self.subTest(status=status, queued=queued), self.assertRaisesRegex(RuntimeError, "metadata is unavailable"):
+                self.run_case(status=status, queued=queued)
+            self.assertEqual((self.state_reads, self.retry_sleeps, self.enables, self.direct), (1, [], 0, 0))
+
+    def test_legacy_unknown_wait_cannot_extend_original_checked_deadline(self):
+        with self.assertRaisesRegex(RuntimeError, "Legacy checked deadline expired"):
+            self.run_case(explicit=False, states=["UNKNOWN", "BLOCKED"], expires_on_wait=True)
+        self.assertEqual((self.state_reads, self.enables, self.direct, self.disables), (1, 0, 0, 0))
+        self.assertEqual(self.retry_sleeps, [4])
+
+    def test_unknown_resolution_never_retries_an_ambiguous_enable(self):
+        for explicit in (False, True):
+            with self.subTest(explicit=explicit), self.assertRaises(self.code["subprocess"].CalledProcessError):
+                self.run_case(explicit=explicit, states=["UNKNOWN", "BLOCKED"], error=True)
+            self.assertEqual(self.retry_sleeps, [4])
+            self.assertEqual((self.state_reads, self.enables, self.disables, self.direct), (2, 1, 0, 0))
 
     def test_toolkit_caller_keeps_withdrawals_independent_without_aborting_cleanup(self):
         for name in (".github/workflows/auto-merge-prs.yml", "docs/examples/auto-merge.yml"):
