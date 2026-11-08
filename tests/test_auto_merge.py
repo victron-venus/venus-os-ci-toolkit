@@ -2042,10 +2042,14 @@ class MergeAuthorIdentityTests(unittest.TestCase):
         self.assertEqual(len(positive), 3)
 
     def test_real_modes_keep_explicit_author(self):
-        ordinary = AutoMergeTests(); ordinary.setUp()
-        native = NativeAutoMergeTests(); native.setUp()
-        reviewed = ReviewedMergeTests(); reviewed.setUp()
-        single = SinglePassReviewedTests(); single.setUp()
+        ordinary = AutoMergeTests()
+        ordinary.setUp()
+        native = NativeAutoMergeTests()
+        native.setUp()
+        reviewed = ReviewedMergeTests()
+        reviewed.setUp()
+        single = SinglePassReviewedTests()
+        single.setUp()
         ready = reviewed.reviewed()
         ready_single = single.ready()
         cases = [ordinary.run_workflow([pr(), pr(), pr()]),
