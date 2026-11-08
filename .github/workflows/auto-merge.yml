@@ -101,6 +101,18 @@ jobs:
               return subprocess.check_output(['gh', *args], text=True).strip()
 
 
+          def merge_author_email():
+              # Bind the author to the account authenticated by this merge token,
+              # not the PR author/event actor or an account's public email field.
+              account = json.loads(gh('api', 'user', '--jq', '{id,login,type}'))
+              if (not isinstance(account, dict) or account.get('type') != 'User'
+                      or type(account.get('id')) is not int or account['id'] <= 0
+                      or not isinstance(account.get('login'), str)
+                      or not re.fullmatch(r'[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?', account['login'])):
+                  raise RuntimeError('Cannot verify the authenticated merge author identity.')
+              return f"{account['id']}+{account['login']}@users.noreply.github.com"
+
+
           def native_auto_merge_enabled(repo):
               # A missing field or denied read is not evidence of a disabled setting.
               enabled = json.loads(gh('api', f'repos/{repo}', '--jq', '.allow_auto_merge'))
@@ -111,7 +123,15 @@ jobs:
 
           def snapshot(repo, number, reviewed=False):
               pr = json.loads(gh('pr', 'view', number, '--repo', repo, '--json',
-                                   'author,labels,isDraft,isCrossRepository,baseRefName,baseRefOid,headRefOid,state,statusCheckRollup,autoMergeRequest'))
+                                   'number,author,labels,isDraft,isCrossRepository,baseRefName,baseRefOid,headRefOid,headRefName,headRepository,headRepositoryOwner,state,statusCheckRollup,autoMergeRequest'))
+              # Older gh versions project only {id, name} for headRepository.
+              # Derive the full name only from separately queried API components.
+              head = pr.get('headRepository')
+              owner = (pr.get('headRepositoryOwner') or {}).get('login')
+              if (isinstance(head, dict) and not head.get('nameWithOwner')
+                      and isinstance(owner, str) and owner
+                      and isinstance(head.get('name'), str) and head['name']):
+                  head['nameWithOwner'] = f"{owner}/{head['name']}"
               if reviewed:
                   pages = json.loads(gh('api', '--paginate', '--slurp',
                                         f'repos/{repo}/pulls/{number}/reviews?per_page=100'))
@@ -221,38 +241,76 @@ jobs:
               return ready, (checks, reviews)
 
 
+          def cancellation_identity(pr):
+              # Native requests can survive commits on the same branch. Bind the actual
+              # repository node and ref instead; positive merging still uses exact-head CAS.
+              head_repo = pr.get('headRepository') or {}
+              required = (pr.get('headRefOid'), pr.get('baseRefOid'), pr.get('headRefName'),
+                          pr.get('baseRefName'), head_repo.get('id'), head_repo.get('nameWithOwner'))
+              if (type(pr.get('number')) is not int or pr['number'] <= 0
+                      or not all(isinstance(value, str) and value for value in required)
+                      or type(pr.get('isCrossRepository')) is not bool
+                      or not isinstance((pr.get('author') or {}).get('login'), str)
+                      or not pr['author']['login']):
+                  return None
+              return (pr['number'], head_repo['id'], head_repo['nameWithOwner'],
+                      pr['headRefName'], pr['isCrossRepository'],
+                      canonical_author(pr['author']))
+
+
           def event_identity_matches(repo, pr, pull):
               base, head = pull.get('base') or {}, pull.get('head') or {}
-              head_repo = (head.get('repo') or {}).get('full_name')
-              # A moving commit on the same base branch does not replace an
-              # existing native request. Keep head, branch, repository and author
-              # identity bound; request ordering and a fresh equality check below
-              # still protect later replacement requests.
-              return (bool(head_repo) and (base.get('repo') or {}).get('full_name') == repo
-                      and bool(head.get('sha')) and pr.get('headRefOid') == head['sha']
-                      and bool(base.get('sha')) and bool(pr.get('baseRefOid'))
-                      and bool(base.get('ref')) and pr.get('baseRefName') == base['ref']
-                      and pr.get('isCrossRepository') is (head_repo != repo)
+              head_repo = head.get('repo') or {}
+              current_repo = pr.get('headRepository') or {}
+              return (cancellation_identity(pr) is not None
+                      and (base.get('repo') or {}).get('full_name') == repo
+                      and bool(head.get('sha')) and bool(base.get('sha'))
+                      and head.get('ref') == pr['headRefName']
+                      and head_repo.get('node_id') == current_repo['id']
+                      and head_repo.get('full_name') == current_repo['nameWithOwner']
+                      and base.get('ref') == pr['baseRefName']
+                      and pr['isCrossRepository'] is (head_repo['full_name'] != repo)
                       and canonical_author(pr['author']) == (pull.get('user') or {}).get('login'))
 
 
-          def withdrawal_intent(repo, number, pr, previous_request, default_branch):
-              # A surviving positive evaluator owns only the request it observed
-              # while eligible. Observing no request also forbids cancelling a new one.
-              if previous_request is not UNOBSERVED_REQUEST:
-                  return pr.get('autoMergeRequest') == previous_request
-              # A queued or stale evaluator has no ownership merely from a current
-              # label. Require the withdrawal event and reject later manual requests.
+          def withdrawal_state(pr):
+              return ('automerge' in {label['name'] for label in pr['labels']},
+                      pr['isDraft'], pr['baseRefName'])
+
+
+          def request_time(request):
+              try:
+                  enabled = datetime.fromisoformat(request['enabledAt'].replace('Z', '+00:00'))
+                  if enabled.tzinfo is None:
+                      return None
+                  return enabled
+              except (KeyError, TypeError, ValueError, AttributeError):
+                  return None
+
+
+          def withdrawal_intent(repo, number, pr, previous_observation, default_branch):
+              # A surviving positive evaluator owns only the same request and stable PR
+              # identity observed while eligible, even if a new commit arrives meanwhile.
+              if previous_observation is not UNOBSERVED_REQUEST:
+                  return (previous_observation is not None
+                          and eligible(previous_observation, default_branch,
+                                       {canonical_author(pr['author'])})
+                          and cancellation_identity(previous_observation) == cancellation_identity(pr)
+                          and pr.get('autoMergeRequest') == previous_observation.get('autoMergeRequest'))
+              # A queued evaluator still needs the original withdrawal event. A synchronize
+              # wakeup alone cannot claim an existing, potentially manual native request.
               path = os.environ.get('GITHUB_EVENT_PATH')
               if not path or os.environ.get('GITHUB_EVENT_NAME') not in {'pull_request', 'pull_request_target'}:
                   return False
               with open(path, encoding='utf-8') as stream:
                   event = json.load(stream)
               pull = event.get('pull_request') or {}
+              labelled = 'automerge' in {label['name'] for label in pr['labels']}
               removal = (event.get('action') == 'unlabeled'
-                         and (event.get('label') or {}).get('name') == 'automerge')
-              labelled_withdrawal = ('automerge' in {label['name'] for label in pr['labels']}
-                                    and (event.get('action') == 'converted_to_draft'
+                         and (event.get('label') or {}).get('name') == 'automerge'
+                         and not labelled)
+              labelled_withdrawal = (labelled
+                                    and ((event.get('action') == 'converted_to_draft' and pr['isDraft'])
                                          or (event.get('action') == 'edited'
                                              and (event.get('changes') or {}).get('base')
                                              and pr['baseRefName'] != default_branch)))
@@ -265,33 +323,39 @@ jobs:
 
 
           def request_predates_event(pr, pull):
+              enabled = request_time(pr.get('autoMergeRequest'))
               try:
-                  enabled = datetime.fromisoformat(pr['autoMergeRequest']['enabledAt'].replace('Z', '+00:00'))
                   withdrawn = datetime.fromisoformat(pull['updated_at'].replace('Z', '+00:00'))
               except (KeyError, TypeError, ValueError, AttributeError):
+                  withdrawn = None
+              if enabled is None or withdrawn is None or withdrawn.tzinfo is None:
                   print('Preserved pending auto-merge: withdrawal/request timestamps are unavailable or invalid.')
                   return False
-              if enabled.tzinfo is None or withdrawn.tzinfo is None or enabled >= withdrawn:
+              if enabled >= withdrawn:
                   print('Preserved pending auto-merge: request does not provably predate the withdrawal event.')
                   return False
               return True
 
 
-          def cancel_withdrawn_request(repo, number, pr, default_branch, authors, previous_request=UNOBSERVED_REQUEST):
-              # Only the observed trusted target may lose its existing request. Recheck
-              # identity and intent so a newly eligible or replaced request is preserved.
-              if (pr['state'] != 'OPEN' or not pr.get('autoMergeRequest')
-                      or canonical_author(pr['author']) not in authors
-                      or not withdrawal_intent(repo, number, pr, previous_request, default_branch)):
+          def cancel_withdrawn_request(repo, number, pr, default_branch, authors, previous_observation=UNOBSERVED_REQUEST):
+              # Existing request equality is a read-side guard, not an atomic server CAS.
+              # Preserve restored intent and unknown metadata; never broaden positive merges.
+              identity = cancellation_identity(pr)
+              if pr.get('autoMergeRequest') and request_time(pr['autoMergeRequest']) is None:
+                  print('Preserved pending auto-merge: withdrawal/request timestamps are unavailable or invalid.')
                   return
-              identity = ('headRefOid', 'baseRefName', 'isCrossRepository')
-              if not pr.get('baseRefOid') or any(pr.get(key) is None for key in identity):
-                  raise RuntimeError('Cannot verify withdrawn request identity')
+              if (pr['state'] != 'OPEN' or not pr.get('autoMergeRequest')
+                      or identity is None or pr['number'] != int(number)
+                      or pr['isCrossRepository'] is not (pr['headRepository']['nameWithOwner'] != repo)
+                      or request_time(pr['autoMergeRequest']) is None
+                      or eligible(pr, default_branch, authors)
+                      or canonical_author(pr['author']) not in authors
+                      or not withdrawal_intent(repo, number, pr, previous_observation, default_branch)):
+                  return
               fresh = snapshot(repo, number)
-              if (fresh['state'] != 'OPEN' or not fresh.get('baseRefOid')
-                      or eligible(fresh, default_branch, authors)
-                      or canonical_author(fresh['author']) != canonical_author(pr['author'])
-                      or any(fresh.get(key) != pr[key] for key in identity)
+              if (fresh['state'] != 'OPEN' or eligible(fresh, default_branch, authors)
+                      or cancellation_identity(fresh) != identity
+                      or withdrawal_state(fresh) != withdrawal_state(pr)
                       or fresh.get('autoMergeRequest') != pr['autoMergeRequest']):
                   print('Withdrawal changed; a later event must evaluate the current intent.')
                   return
@@ -355,13 +419,14 @@ jobs:
               fresh = snapshot(repo, number)
               if not eligible(fresh, default_branch, authors):
                   cancel_withdrawn_request(repo, number, fresh, default_branch, authors,
-                                           pr.get('autoMergeRequest') if fresh['headRefOid'] == pr['headRefOid'] else None)
+                                           pr)
                   print('Eligibility changed; no merge requested.')
                   return
               if fresh['headRefOid'] != pr['headRefOid']:
                   print('PR head changed; the synchronize event will retry.')
                   return
               gh('pr', 'merge', number, '--repo', repo, '--auto', f'--{method}',
+                 '--author-email', merge_author_email(),
                  '--match-head-commit', fresh['headRefOid'])
               print('Requested native auto-merge; GitHub waits for the protected CI gate and reviews.')
 
@@ -485,6 +550,7 @@ jobs:
                   if stable:
                       try:
                           gh('pr', 'merge', str(number), '--repo', repo, f'--{method}',
+                             '--author-email', merge_author_email(),
                              '--match-head-commit', value['headRefOid'])
                       except subprocess.CalledProcessError as error:
                           # A head race or per-PR rule rejection must not starve
@@ -538,8 +604,7 @@ jobs:
                   return
               deadline = time.monotonic() + 120 * 60
               previous_green = None
-              opt_in_head = None
-              opt_in_request = UNOBSERVED_REQUEST
+              opt_in_observation = UNOBSERVED_REQUEST
               capability_checked = reviewed
               protected_fallback = False
               while time.monotonic() < deadline:
@@ -549,11 +614,10 @@ jobs:
                       return
                   if not eligible(pr, default_branch, authors):
                       cancel_withdrawn_request(repo, number, pr, default_branch, authors,
-                                               opt_in_request if opt_in_head in {None, pr['headRefOid']} else None)
+                                               opt_in_observation)
                       print('PR is not eligible: author, label, draft, target branch, or open state does not match.')
                       return
-                  opt_in_head = pr['headRefOid']
-                  opt_in_request = pr.get('autoMergeRequest')
+                  opt_in_observation = pr
                   if not capability_checked:
                       capability_checked = True
                       if not native_auto_merge_enabled(repo):
@@ -569,7 +633,7 @@ jobs:
                       fresh = snapshot(repo, number, reviewed=True) if reviewed else snapshot(repo, number)
                       if not eligible(fresh, default_branch, authors):
                           cancel_withdrawn_request(repo, number, fresh, default_branch, authors,
-                                                   opt_in_request if opt_in_head == fresh['headRefOid'] else None)
+                                                   opt_in_observation)
                           print('Eligibility changed; no merge requested.')
                           return
                       fresh_ready, fresh_checks = checked_snapshot(fresh, required, os.environ.get('GITHUB_RUN_ID', ''), reviewed, actions_authors)
@@ -577,6 +641,7 @@ jobs:
                               and (fresh['headRefOid'], fresh.get('baseRefOid') if protected_fallback else None, fresh_checks) == fingerprint):
                           options = [] if reviewed else ['--auto']
                           gh('pr', 'merge', number, '--repo', repo, *options, f'--{method}',
+                             '--author-email', merge_author_email(),
                              '--match-head-commit', fresh['headRefOid'])
                           print('Merged reviewed PR head.' if reviewed else
                                 'Requested native auto-merge for the verified PR head; repository protections still apply.')
