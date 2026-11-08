@@ -1,5 +1,6 @@
 """Compact stable envelopes retain authenticated RC evidence and payload bytes."""
 import argparse
+import builtins
 from copy import deepcopy
 import hashlib
 import json
@@ -201,6 +202,20 @@ class CompactPromotionTests(unittest.TestCase):
         _, files = self.promoted_files(self.driver(published["tag"], stable_distribution=distribution.KIND))
         self.assertEqual(set(files), {"app-manifest.json", rc.MANIFEST})
         distribution.verify_distribution(json.loads(files[rc.MANIFEST]), manifest, raw)
+
+    def test_non_fuzz_producer_does_not_require_optional_fuzz_adapter(self):
+        published, _, _, _ = self.accepted_rc()
+        args = self.driver(published["tag"], stable_distribution=distribution.KIND)
+        original = builtins.__import__
+
+        def reject_optional(name, *values, **keywords):
+            if name.endswith("release_fuzz"):
+                raise ModuleNotFoundError("Optional fuzz adapter is not installed")
+            return original(name, *values, **keywords)
+
+        with patch.object(builtins, "__import__", side_effect=reject_optional):
+            _, files = self.promoted_files(args)
+        self.assertEqual(set(files), {"app.json", rc.MANIFEST})
 
     def test_unknown_mode_and_inventory_signing_reject_before_allocation_or_upload(self):
         published, _, _, _ = self.accepted_rc()

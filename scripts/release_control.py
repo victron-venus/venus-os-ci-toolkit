@@ -1573,7 +1573,13 @@ def _require_fresh_job_timing(job: JSONObject, boundary: datetime) -> None:
         require(step.get("status") == "completed", "Successful job has incomplete execution steps")
         step_start = _execution_timestamp(step.get("started_at"), "step start")
         step_end = _execution_timestamp(step.get("completed_at"), "step completion")
-        require(start <= step_start <= step_end <= end,
+        # GitHub can timestamp its initial runner setup one second before the
+        # enclosing job. It must still cross the job start in this same attempt.
+        setup_boundary = (step is steps[0] and type(step.get("number")) is int
+                          and step["number"] == 1 and step.get("name") == "Set up job"
+                          and 0 < (start - step_start).total_seconds() <= 1
+                          and boundary <= step_start and start <= step_end <= end)
+        require(start <= step_start <= step_end <= end or setup_boundary,
                 "Executed step lies outside the current job interval")
 
 
@@ -2871,11 +2877,9 @@ def prepare_stable_distribution(stage: Path, output: Path, manifest: JSONObject,
     # pylint: disable=import-outside-toplevel
     if __package__:
         from .release_distribution import stable_distribution
-        from .release_fuzz import split_receipts
         from .version_receipt import producer_identity, verify_declared_artifacts, verify_receipts, verify_required_build_receipts
     else:
         from release_distribution import stable_distribution
-        from release_fuzz import split_receipts
         from version_receipt import producer_identity, verify_declared_artifacts, verify_receipts, verify_required_build_receipts
     policy = cast(JSONObject, cast(JSONObject, manifest["source_policy"])["data"])
     plan = cast(JSONObject, manifest.get("version_plan"))
@@ -2888,7 +2892,13 @@ def prepare_stable_distribution(stage: Path, output: Path, manifest: JSONObject,
         receipts = verify_receipts(stage, plan, cast(list[JSONObject], manifest["assets"]), policy,
                                   producer_identity(manifest["repository"], manifest["run_id"],
                                                     manifest["run_attempt"], manifest["source_sha"]))
-        build, validation = split_receipts(receipts) if "fuzzing" in policy else (receipts, [])
+        build, validation = receipts, []
+        if "fuzzing" in policy:
+            if __package__:
+                from .release_fuzz import split_receipts
+            else:
+                from release_fuzz import split_receipts
+            build, validation = split_receipts(receipts)
         verify_required_build_receipts(build, policy)
         require(manifest.get("build_receipts") == [
             {"name": item["name"], "sha256": item["sha256"]} for item in build

@@ -2455,7 +2455,26 @@ class CompactConsumerTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "different release plan"):
             self.verify()
 
+    def test_non_fuzz_staging_does_not_import_the_optional_adapter(self):
+        import builtins
+        stage, output = self.fixture.root / "source-stage", self.fixture.root / "distribution-stage"
+        stage.mkdir()
+        output.mkdir()
+        manifest, raw, _ = lifecycle.read_verified_rc(self.gh, self.manifest["tag"], stage=stage)
+        original = builtins.__import__
+        def without_fuzz(name, *args, **kwargs):
+            if name.rsplit(".", 1)[-1] == "release_fuzz":
+                raise AssertionError("Non-fuzz compact staging must not import the optional fuzz adapter")
+            return original(name, *args, **kwargs)
+        with patch.object(builtins, "__import__", side_effect=without_fuzz):
+            rc.prepare_stable_distribution(stage, output, manifest, raw)
+        self.assertEqual({path.name for path in output.iterdir()}, {"app.json", rc.MANIFEST})
+        self.assertEqual(json.loads((output / rc.MANIFEST).read_bytes()), self.compact)
+
     def test_fuzz_receipt_is_authenticated_but_not_shipped(self):
+        import importlib.util
+        if importlib.util.find_spec("release_fuzz") is None:
+            self.skipTest("Optional fuzz adapter is not installed in this generated consumer")
         import release_fuzz as fuzz
         self.gh.releases.pop(self.stable_id)
         self.gh.assets.pop(self.stable_id)

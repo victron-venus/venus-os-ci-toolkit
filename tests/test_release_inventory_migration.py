@@ -172,7 +172,8 @@ class PlanLayerCompatibilityTests(unittest.TestCase):
     def setUp(self):
         """Freeze real canonical states, including the literal accepted v1 plan hash."""
         self.current = {name: (ROOT / name).read_text() for name in migration.FILES}
-        self.notes_publisher = self.current[receipts.PUBLISHER]
+        self.compact_publisher = self.current[receipts.PUBLISHER]
+        self.notes_publisher = migration._before_compact_distribution(self.compact_publisher)
         # Inventory-only upgrades retain their literal pre-notes publisher scope.
         self.current[receipts.PUBLISHER] = migration._before_notes_provenance(self.notes_publisher)
         self.casefold = dict(self.current)
@@ -353,6 +354,51 @@ class PlanLayerCompatibilityTests(unittest.TestCase):
         for publisher in (previous, self.notes_publisher):
             self.assertEqual(receipts.digest(migration.previous_canonical_source(publisher, receipts.PUBLISHER)),
                              "e27e76d2a6080bb257ce60420cf9ead4a4a86f1b4a86f568225aa6ee9706875e")
+
+    def test_compact_layer_roundtrips_hash_bound_source_and_vendor_header(self):
+        self.assertEqual(receipts.digest(self.compact_publisher),
+                         "999072e1cec48cc463ea34045b2983113a1e7731b459912e6d37b1f600f6224c")
+        self.assertEqual(receipts.digest(self.notes_publisher),
+                         "b8eea2626f3cb7b850d0cfa2914bc75c069b3552958cc4eead84abc8c177de10")
+        previous = self.notes_publisher.replace("#!/usr/bin/env python3\n", PREFIX, 1)
+        current = self.compact_publisher.replace("#!/usr/bin/env python3\n", PREFIX, 1)
+        self.assertEqual(receipts.transform(previous, receipts.PUBLISHER, migration.COMPACT_DISTRIBUTION),
+                         ("original", current))
+        self.assertEqual(migration._before_compact_distribution(current), previous)
+        self.assertEqual(receipts.transform(current, receipts.PUBLISHER, migration.COMPACT_DISTRIBUTION),
+                         ("current", current))
+        for source in (self.notes_publisher, self.compact_publisher):
+            self.assertEqual(receipts.digest(migration.previous_canonical_source(source, receipts.PUBLISHER)),
+                             "e27e76d2a6080bb257ce60420cf9ead4a4a86f1b4a86f568225aa6ee9706875e")
+
+    def test_inventory_preserves_compact_layer_without_installing_it(self):
+        for publisher in (self.notes_publisher, self.compact_publisher):
+            for state in (self.current, self.v1, self.casefold):
+                with self.subTest(publisher_hash=receipts.digest(publisher)):
+                    self.write_state({**state, receipts.PUBLISHER: publisher})
+                    before = self.snapshot()
+                    self.assertEqual(migration.render(self.root),
+                                     {} if state == self.current else self.expected([migration.PLAN]))
+                    self.assertEqual(self.snapshot(), before)
+        self.write_state(self.original)
+        publisher = migration.render(self.root)[receipts.PUBLISHER]
+        self.assertNotIn("def read_verified_distribution(", publisher)
+        self.assertNotIn("def read_verified_rc(", publisher)
+
+    def test_unknown_and_partial_compact_layers_fail_without_writes(self):
+        variants = [self.compact_publisher + "# unreviewed customization\n"]
+        for hunk in migration.COMPACT_DISTRIBUTION["hunks"]:
+            variants.append(self.notes_publisher.replace(hunk["before"], hunk["after"], 1))
+        for publisher in variants:
+            with self.subTest(publisher_hash=receipts.digest(publisher)):
+                self.assertEqual(migration._before_compact_distribution(publisher), publisher)
+                self.write_state({**self.casefold, receipts.PUBLISHER: publisher})
+                before = self.snapshot()
+                with self.assertRaisesRegex(ValueError, "Unknown or partially migrated"):
+                    migration.render(self.root)
+                with self.assertRaisesRegex(ValueError, "Unknown current"):
+                    migration.previous_canonical_source(publisher, receipts.PUBLISHER)
+                self.assertEqual(self.snapshot(), before)
 
     def test_inventory_preserves_automatic_test_push_without_installing_it(self):
         previous = migration._before_automatic_test_push(self.notes_publisher)
