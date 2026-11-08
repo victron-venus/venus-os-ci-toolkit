@@ -131,7 +131,7 @@ jobs:
 
           def snapshot(repo, number, reviewed=False):
               pr = json.loads(gh('pr', 'view', number, '--repo', repo, '--json',
-                                   'number,author,labels,isDraft,isCrossRepository,baseRefName,baseRefOid,headRefOid,headRefName,headRepository,headRepositoryOwner,state,statusCheckRollup,autoMergeRequest'))
+                                   'id,number,author,labels,isDraft,isCrossRepository,baseRefName,baseRefOid,headRefOid,headRefName,headRepository,headRepositoryOwner,state,statusCheckRollup,autoMergeRequest'))
               # Older gh versions project only {id, name} for headRepository.
               # Derive the full name only from separately queried API components.
               head = pr.get('headRepository')
@@ -403,6 +403,127 @@ jobs:
               cancel_withdrawn_request(repo, number, pr, default_branch, authors)
 
 
+          def native_request_identity(request):
+              # GitHub exposes no request ID. Compare every request setting and creator;
+              # display-name / gh bot-projection differences are not request identities.
+              fields = ('enabledAt', 'mergeMethod', 'authorEmail', 'commitHeadline', 'commitBody')
+              if (not isinstance(request, dict) or any(key not in request for key in fields)
+                      or request_time(request) is None
+                      or request['mergeMethod'] not in {'MERGE', 'SQUASH', 'REBASE'}
+                      or any(request[key] is not None and not isinstance(request[key], str)
+                             for key in ('authorEmail', 'commitHeadline', 'commitBody'))):
+                  return None
+              creator = request.get('enabledBy') or {}
+              if not all(isinstance(creator.get(key), str) and creator[key] for key in ('id', 'login')):
+                  return None
+              return tuple(request[key] for key in fields) + (creator['id'], creator['login'])
+
+
+          def request_native_with_cleanup(repo, number, observed, default_branch, authors, method, checked_state=None):
+              # Retain authenticated-user validation even when native enable omits authorEmail.
+              email = merge_author_email()
+              account_id, account_login = email.split('@', 1)[0].split('+', 1)
+              for attempt in range(4):
+                  fresh = snapshot(repo, number)
+                  identity = cancellation_identity(fresh)
+                  if (identity is None or identity != cancellation_identity(observed)
+                          or fresh['number'] != int(number)
+                          or fresh['isCrossRepository'] is not (fresh['headRepository']['nameWithOwner'] != repo)
+                          or fresh.get('id') != observed.get('id') or not fresh.get('id')
+                          or fresh['headRefOid'] != observed['headRefOid']
+                          or fresh['baseRefName'] != observed['baseRefName']
+                          or fresh.get('baseRefOid') != observed.get('baseRefOid')
+                          or not eligible(fresh, default_branch, authors)):
+                      print('Native request identity or eligibility changed; no mutation.')
+                      return
+                  if 'autoMergeRequest' not in fresh:
+                      raise RuntimeError('Native request metadata is unavailable.')
+                  if fresh['autoMergeRequest'] is not None:
+                      print('Preserved an existing native request; no replacement requested.')
+                      return
+                  if checked_state is not None:
+                      required, run_id, original_checks, deadline = checked_state
+                      if time.monotonic() >= deadline:
+                          raise RuntimeError('Legacy checked deadline expired; no mutation.')
+                      ready, checks = checked_snapshot(fresh, required, run_id, False)
+                      if not ready or checks != original_checks:
+                          print('Legacy checked state changed; no mutation.')
+                          return
+                  # gh 2.87 supports these internally, but its --json allowlist omits
+                  # isMergeQueueEnabled. Read the schema fields explicitly and bind them.
+                  state_query = '''query($id:ID!) { node(id:$id) { ... on PullRequest {
+                    id headRefOid baseRefName mergeStateStatus isMergeQueueEnabled
+                  } } }'''
+                  state_response = json.loads(gh('api', 'graphql', '-f', 'query=' + state_query,
+                                                '-f', 'id=' + fresh['id']))
+                  state = (state_response.get('data') or {}).get('node') or {}
+                  if (state_response.get('errors') or state.get('id') != fresh['id']
+                          or state.get('headRefOid') != fresh['headRefOid']
+                          or state.get('baseRefName') != fresh['baseRefName']):
+                      raise RuntimeError('Native merge-state identity changed; no mutation.')
+                  status = state.get('mergeStateStatus')
+                  queued = state.get('isMergeQueueEnabled')
+                  if (type(status) is not str
+                          or status not in {'CLEAN', 'HAS_HOOKS', 'UNSTABLE', 'BEHIND', 'BLOCKED', 'DIRTY', 'UNKNOWN'}
+                          or type(queued) is not bool):
+                      raise RuntimeError('Native merge-state or merge-queue metadata is unavailable.')
+                  if status != 'UNKNOWN':
+                      break
+                  if attempt == 3:
+                      raise RuntimeError('Native merge-state metadata is unavailable after bounded UNKNOWN reads.')
+                  # GitHub may briefly be computing mergeability after a push. Only this
+                  # explicit state is retried; each wait restarts all intent/identity guards.
+                  time.sleep(4)
+              if not queued and status in {'CLEAN', 'HAS_HOOKS', 'UNSTABLE'}:
+                  # Match gh's existing immediate-merge decision; never turn an API error
+                  # into a second mutation. Protected server rules and exact-head CAS apply.
+                  gh('pr', 'merge', number, '--repo', repo, f'--{method}',
+                     *merge_author_options(), '--match-head-commit', fresh['headRefOid'])
+                  print('Requested a protected direct merge at its exact head, not native enable.')
+                  return
+              correlation = os.urandom(16).hex()
+              query = '''mutation($id:ID!,$head:GitObjectID!,$method:PullRequestMergeMethod!,$client:String!) {
+                enablePullRequestAutoMerge(input:{pullRequestId:$id,expectedHeadOid:$head,
+                  mergeMethod:$method,clientMutationId:$client}) {
+                  clientMutationId actor{login ... on User{id databaseId}}
+                  pullRequest{id number state headRefOid autoMergeRequest{
+                    enabledAt enabledBy{id login} mergeMethod authorEmail commitHeadline commitBody
+                  }}
+                }
+              }'''
+              response = json.loads(gh('api', 'graphql', '-f', 'query=' + query,
+                                       '-f', 'id=' + fresh['id'], '-f', 'head=' + fresh['headRefOid'],
+                                       '-f', 'method=' + method.upper(), '-f', 'client=' + correlation))
+              payload = (response.get('data') or {}).get('enablePullRequestAutoMerge') or {}
+              actor = payload.get('actor') or {}
+              acknowledged = payload.get('pullRequest') or {}
+              if (response.get('errors') or payload.get('clientMutationId') != correlation
+                      or actor.get('login') != account_login or actor.get('databaseId') != int(account_id)
+                      or acknowledged.get('id') != fresh['id'] or acknowledged.get('number') != int(number)):
+                  raise RuntimeError('Native enable acknowledgement is unavailable or mismatched; do not replay.')
+              if acknowledged.get('state') == 'MERGED':
+                  print('GitHub merged before request cleanup; no pending-request cancellation is possible.')
+                  return
+              request = acknowledged.get('autoMergeRequest')
+              request_identity = native_request_identity(request)
+              if (acknowledged.get('state') != 'OPEN' or request_identity is None
+                      or request['enabledBy']['login'] != account_login
+                      or request['enabledBy']['id'] != actor.get('id')
+                      or request['mergeMethod'] != method.upper()):
+                  raise RuntimeError('Native request ownership is unavailable; no cancellation or replay.')
+              current = snapshot(repo, number)
+              if (current.get('id') != fresh['id'] or cancellation_identity(current) != identity
+                      or native_request_identity(current.get('autoMergeRequest')) != request_identity):
+                  print('Acknowledged request changed or disappeared; preserved current state.')
+                  return
+              # Correlate cleanup to the acknowledged request, not merely a later timestamp.
+              # No request ID or atomic read/disable CAS exists; same-fingerprint ABA
+              # and concurrent replacement after the final read remain platform limits.
+              owned_observation = dict(fresh, autoMergeRequest=current['autoMergeRequest'])
+              cancel_withdrawn_request(repo, number, current, default_branch, authors, owned_observation)
+              print('Native request acknowledged and current eligibility rechecked.')
+
+
           def request_protected_merge(repo, number, default_branch, authors, method, required):
               pr = snapshot(repo, number)
               if not eligible(pr, default_branch, authors):
@@ -433,10 +554,7 @@ jobs:
               if fresh['headRefOid'] != pr['headRefOid']:
                   print('PR head changed; the synchronize event will retry.')
                   return
-              gh('pr', 'merge', number, '--repo', repo, '--auto', f'--{method}',
-                 *merge_author_options(native=True),
-                 '--match-head-commit', fresh['headRefOid'])
-              print('Requested native auto-merge; GitHub waits for the protected CI gate and reviews.')
+              request_native_with_cleanup(repo, number, fresh, default_branch, authors, method)
 
 
           def reviewed_single_pass(repo, default_branch, authors, method, required, actions_authors):
@@ -647,6 +765,11 @@ jobs:
                       fresh_ready, fresh_checks = checked_snapshot(fresh, required, os.environ.get('GITHUB_RUN_ID', ''), reviewed, actions_authors)
                       if (eligible(fresh, default_branch, authors) and fresh_ready
                               and (fresh['headRefOid'], fresh.get('baseRefOid') if protected_fallback else None, fresh_checks) == fingerprint):
+                          if not reviewed:
+                              request_native_with_cleanup(
+                                  repo, number, fresh, default_branch, authors, method,
+                                  checked_state=(required, os.environ.get('GITHUB_RUN_ID', ''), fresh_checks, deadline))
+                              return
                           options = [] if reviewed else ['--auto']
                           gh('pr', 'merge', number, '--repo', repo, *options, f'--{method}',
                              *merge_author_options(native=not reviewed),

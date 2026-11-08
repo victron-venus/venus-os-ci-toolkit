@@ -165,7 +165,10 @@ class MetadataEventsTests(unittest.TestCase):
                 self.assertEqual(active, retargeted)
                 self.assertNotIn(ignored, (active, pending))
                 self.assertNotEqual(ignored, next_ignored)
-                self.assertEqual(workflow["concurrency"]["cancel-in-progress"], "true")
+                expected_cancel = "false" if name in (
+                    ".github/workflows/auto-merge-prs.yml", "docs/examples/auto-merge.yml"
+                ) else "true"
+                self.assertEqual(workflow["concurrency"]["cancel-in-progress"], expected_cancel)
                 for trigger in workflow["on"].values():
                     self.assertIn("edited", trigger["types"])
                     self.assertIn("converted_to_draft", trigger["types"])
