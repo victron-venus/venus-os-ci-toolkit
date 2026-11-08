@@ -487,7 +487,7 @@ jobs:
                   mergeMethod:$method,clientMutationId:$client}) {
                   clientMutationId actor{login ... on User{id databaseId}}
                   pullRequest{id number state headRefOid autoMergeRequest{
-                    enabledAt enabledBy{id login} mergeMethod authorEmail commitHeadline commitBody
+                    enabledAt enabledBy{login ... on User{id}} mergeMethod authorEmail commitHeadline commitBody
                   }}
                 }
               }'''

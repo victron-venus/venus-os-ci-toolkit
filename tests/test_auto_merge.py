@@ -2619,3 +2619,134 @@ class SnapshotHeadRepositoryTests(unittest.TestCase):
         self.assertEqual(transport.call_args_list[-1].args,
                          ("pr", "merge", "7", "--repo", "example/repo", "--disable-auto"))
         self.assertEqual(sum(call.args[:2] == ("pr", "merge") for call in transport.call_args_list), 1)
+
+
+class NativeActorSchemaTests(unittest.TestCase):
+    """Bind creator selections to the real GitHub Actor/User schema contract."""
+
+    setUp = AutoMergeTests.setUp
+    request = staticmethod(NativeRequestReconciliationTests.request)
+    run_case = NativeRequestReconciliationTests.run_case
+    # Captured by read-only GitHub introspection. No credentials or identity values.
+    SCHEMA = json.loads(r'''{
+    "observed_at": "2026-11-08T13:31:58.820988+00:00",
+    "introspection_sha256": "6f88f879f4bf0c82b21de6bcae8e585978c88d608300fbb98fd4097d7ffd8c7a",
+    "scope": "Exact Actor/User field contract; complete documents additionally validated offline against full live schema and through read-only API selections.",
+    "types": {
+        "Actor": {
+            "fields": {
+                "avatarUrl": "URI",
+                "login": "String",
+                "resourcePath": "URI",
+                "url": "URI"
+            },
+            "possible_types": [
+                "Bot",
+                "EnterpriseUserAccount",
+                "Mannequin",
+                "Organization",
+                "User"
+            ],
+            "interfaces": []
+        },
+        "User": {
+            "fields": {
+                "databaseId": "Int",
+                "id": "ID",
+                "login": "String",
+                "name": "String"
+            },
+            "possible_types": [],
+            "interfaces": [
+                "Actor",
+                "Agentic",
+                "Node",
+                "PackageOwner",
+                "ProfileOwner",
+                "ProjectOwner",
+                "ProjectV2Owner",
+                "ProjectV2Recent",
+                "RepositoryDiscussionAuthor",
+                "RepositoryDiscussionCommentAuthor",
+                "RepositoryOwner",
+                "Sponsorable",
+                "UniformResourceLocatable"
+            ]
+        }
+    }
+}''')
+
+    @classmethod
+    def validate_creator_selection(cls, document):
+        """Check only the creator selection; full-document validation is separate."""
+        tokens = re.findall(r"\.\.\.|[A-Za-z_][A-Za-z_0-9]*|[{}]", document)
+        position = tokens.index("enabledBy") + 1
+
+        def selection(index, parent):
+            if tokens[index] != "{":
+                raise ValueError("Expected creator selection")
+            index += 1
+            while tokens[index] != "}":
+                field = tokens[index]
+                index += 1
+                if field == "...":
+                    if tokens[index] != "on":
+                        raise ValueError("Unsupported creator fragment")
+                    subtype = tokens[index + 1]
+                    index += 2
+                    if subtype not in cls.SCHEMA["types"][parent]["possible_types"]:
+                        raise ValueError("Invalid creator fragment type")
+                    index = selection(index, subtype)
+                elif field not in cls.SCHEMA["types"][parent]["fields"]:
+                    raise ValueError(f"{parent}.{field} is absent from actual schema")
+            return index + 1
+
+        selection(position, "Actor")
+
+    @staticmethod
+    def mutation():
+        return next(node.value for node in ast.walk(ast.parse(SOURCE))
+                    if isinstance(node, ast.Constant) and isinstance(node.value, str)
+                    and node.value.startswith("mutation("))
+
+    def test_actual_actor_contract_requires_typed_user_id(self):
+        actor, user = (self.SCHEMA["types"][name] for name in ("Actor", "User"))
+        self.assertNotIn("id", actor["fields"])
+        self.assertEqual(actor["fields"]["login"], "String")
+        self.assertIn("User", actor["possible_types"])
+        self.assertIn("Actor", user["interfaces"])
+        self.assertIn("Node", user["interfaces"])
+        self.assertEqual(user["fields"]["id"], "ID")
+        self.validate_creator_selection(self.mutation())
+
+    def test_original_untyped_actor_selection_is_rejected(self):
+        original = self.mutation().replace(
+            "enabledBy{login ... on User{id}}", "enabledBy{id login}"
+        )
+        self.assertNotEqual(original, self.mutation())
+        with self.assertRaisesRegex(ValueError, "Actor.id"):
+            self.validate_creator_selection(original)
+
+    def test_both_actual_native_entrypoints_emit_schema_valid_creator_selection(self):
+        for explicit in (True, False):
+            with self.subTest(explicit=explicit):
+                self.run_case(explicit=explicit)
+                documents = [item.split("=", 1)[1] for command in self.commands
+                             for item in command if item.startswith("query=mutation(")]
+                self.assertEqual(len(documents), 1)
+                self.validate_creator_selection(documents[0])
+                self.assertEqual(self.enables, 1)
+                self.assertEqual(self.disables, 0)
+
+    def test_gh_user_projection_matches_ack_but_missing_node_id_is_unavailable(self):
+        request = self.request()
+        projected = copy.deepcopy(request)
+        # gh2.87 projects the same User fragment into its Author JSON structure.
+        projected["enabledBy"].update(name="Display only", is_bot=False)
+        identity = self.code["native_request_identity"]
+        self.assertEqual(identity(projected), identity(request))
+        for creator in ({"login": "californiantiramisu"},
+                        {"id": None, "login": "californiantiramisu"},
+                        {"id": "U_bot", "login": None}):
+            with self.subTest(creator=creator):
+                self.assertIsNone(identity(request | {"enabledBy": creator}))
