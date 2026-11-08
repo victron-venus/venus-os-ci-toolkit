@@ -967,13 +967,13 @@ def nuc_kvm_foundations(document, config, values_by_target):
                 'apiGroups': ['node.k8s.io'], 'apiVersions': ['v1'],
                 'operations': ['CREATE', 'UPDATE'], 'resources': ['runtimeclasses']}]},
             'matchConditions': [{'name': 'nuc-class-or-handler',
-                                 'expression': f'object.metadata.name == {json.dumps(NUC_RUNTIME)} || object.handler == {json.dumps(NUC_RUNTIME)}'}],
-            'validations': [{'expression': f'object.metadata.name == {json.dumps(NUC_RUNTIME)} && object.handler == {json.dumps(NUC_RUNTIME)} && '
+                                 'expression': f'object.metadata.name in {json.dumps([NUC_RUNTIME, "harness-pr-repair-nuc"])} || object.handler == {json.dumps(NUC_RUNTIME)}'}],
+            'validations': [{'expression': f'object.metadata.name in {json.dumps([NUC_RUNTIME, "harness-pr-repair-nuc"])} && object.handler == {json.dumps(NUC_RUNTIME)} && '
                              'has(object.overhead) && has(dyn(object.overhead).podFixed) && dyn(object.overhead).podFixed == '
                              + json.dumps(runtime['overhead']['podFixed']) + ' && has(object.scheduling) && '
                              'object.scheduling.nodeSelector == ' + json.dumps(runtime['scheduling']['nodeSelector'])
                              + ' && (!has(object.scheduling.tolerations) || size(object.scheduling.tolerations) == 0)',
-                             'message': 'The NUC handler has one fixed class, node and overhead; aliases are forbidden'}]}}
+                             'message': 'Only the ARC and exact Harness NUC classes may use the fixed handler, node and overhead'}]}}
     # Binding objects have no parent Pod spec available to CEL. Protect the
     # affected namespaces, including legacy bindings, without label selectors.
     binding_guard = {
