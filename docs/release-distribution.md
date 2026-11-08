@@ -29,6 +29,11 @@ extension filter, arbitrary exclusion list or manifest-supplied download URL is
 accepted. The new stable manifest is metadata, not a copied RC manifest or an
 independent promotion signature.
 
+A file named `fuzz-report.json` remains a shipped payload when the RC does not
+declare fuzz validation. Its name alone does not make it disposable evidence.
+Declared fuzz validation must include its authenticated receipt, profile and
+report; an incomplete declaration is rejected.
+
 Promotion still downloads and validates the entire RC, including omitted files,
 before selecting shipped payloads. Receipt, embedded metadata and signature
 checks use complete RC staging. Stable readers resolve the authenticated RC and

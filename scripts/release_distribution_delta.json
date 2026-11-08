@@ -175,21 +175,21 @@
     },
     "scripts/release_distribution.py": {
       "before_sha256": null,
-      "after_sha256": "8da709006da094f107d2370cf573145d542c9300c4327e9b2206d23adf0e5ea4",
+      "after_sha256": "2be267aa21357b709f0f453a396fde3009b7c35a8cf68043f11625c633b87c4e",
       "source": "scripts/release_distribution.py",
-      "source_sha256": "123cf8b2a83de13612a7ca0211228975678e6c967750131653ab205dfab711a4"
+      "source_sha256": "8a3318aee03976446440e002a904958f8d7c633adbfde870b718ce592f7b9770"
     },
     ".github/release-tests/test_release_distribution.py": {
       "before_sha256": null,
-      "after_sha256": "40cbd5ee44f970e30da4ac9a91fd211d9c25cb62d74b56b8d912567fd2fd0fc3",
+      "after_sha256": "8834aec4862fb3726b9176ed10cdeece8a2e367d12a27ee156d407d753deec1c",
       "source": "tests/test_release_distribution.py",
-      "source_sha256": "9dc67ed7c1c08aac114995cd2263de07d138c5dcc60e078dcd044fe6aa290733"
+      "source_sha256": "a928896ccc82554cedb443fae9f6cf548b8f4b3b8ffbab8f40a7ddf806592b33"
     },
     "docs/release-distribution.md": {
       "before_sha256": null,
-      "after_sha256": "71b7748878efc53061743e8ea9a5dfe7679e019b654b42049ae05513eb128c99",
+      "after_sha256": "7238ee18d6720261ca3fdaf4e628245ff07bf555d7338ce2d256843f9b681b44",
       "source": "docs/release-distribution.md",
-      "source_sha256": "71b7748878efc53061743e8ea9a5dfe7679e019b654b42049ae05513eb128c99"
+      "source_sha256": "7238ee18d6720261ca3fdaf4e628245ff07bf555d7338ce2d256843f9b681b44"
     }
   }
 }
