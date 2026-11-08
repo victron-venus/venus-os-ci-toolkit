@@ -123,7 +123,15 @@ jobs:
 
           def snapshot(repo, number, reviewed=False):
               pr = json.loads(gh('pr', 'view', number, '--repo', repo, '--json',
-                                   'number,author,labels,isDraft,isCrossRepository,baseRefName,baseRefOid,headRefOid,headRefName,headRepository,state,statusCheckRollup,autoMergeRequest'))
+                                   'number,author,labels,isDraft,isCrossRepository,baseRefName,baseRefOid,headRefOid,headRefName,headRepository,headRepositoryOwner,state,statusCheckRollup,autoMergeRequest'))
+              # Older gh versions project only {id, name} for headRepository.
+              # Derive the full name only from separately queried API components.
+              head = pr.get('headRepository')
+              owner = (pr.get('headRepositoryOwner') or {}).get('login')
+              if (isinstance(head, dict) and not head.get('nameWithOwner')
+                      and isinstance(owner, str) and owner
+                      and isinstance(head.get('name'), str) and head['name']):
+                  head['nameWithOwner'] = f"{owner}/{head['name']}"
               if reviewed:
                   pages = json.loads(gh('api', '--paginate', '--slurp',
                                         f'repos/{repo}/pulls/{number}/reviews?per_page=100'))

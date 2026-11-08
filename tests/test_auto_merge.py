@@ -2180,3 +2180,85 @@ class WithdrawalHeadAdvanceTests(unittest.TestCase):
         calls = self.run_native([pr(head="new"), pr(head="new")])
         self.assertEqual(calls[-1].args[-2:], ("--match-head-commit", "new"))
         self.assertIn("--author-email", calls[-1].args)
+
+
+class SnapshotHeadRepositoryTests(unittest.TestCase):
+    """Normalize supported CLI repository projections before identity validation."""
+
+    def setUp(self):
+        self.code = {"__name__": "snapshot_under_test"}
+        exec(compile(SOURCE, str(WORKFLOW), "exec"), self.code)  # noqa: S102
+
+    def snapshot(self, value, reviewed=False):
+        transport = unittest.mock.Mock(side_effect=[json.dumps(value), "[[{\"id\": 10}]]"])
+        with patch.dict(self.code, {"gh": transport}):
+            result = self.code["snapshot"]("example/repo", "7", reviewed=reviewed)
+        self.assertIn("headRepositoryOwner", transport.call_args_list[0].args[-1].split(","))
+        return result
+
+    def legacy(self):
+        value = pr()
+        value["headRepository"] = {"id": "R_example", "name": "repo", "nameWithOwner": ""}
+        value["headRepositoryOwner"] = {"login": "example"}
+        return value
+
+    def test_legacy_projection_derives_exact_name(self):
+        value = self.snapshot(self.legacy())
+        self.assertEqual(value["headRepository"]["nameWithOwner"], "example/repo")
+        self.assertIsNotNone(self.code["cancellation_identity"](value))
+
+    def test_modern_projection_is_preserved(self):
+        value = self.legacy()
+        value["headRepository"]["nameWithOwner"] = "example/repo"
+        value.pop("headRepositoryOwner")
+        self.assertEqual(self.snapshot(value), value)
+
+    def test_missing_identity_components_remain_unavailable(self):
+        for owner in [None, {}, {"login": ""}, {"login": 1}]:
+            with self.subTest(owner=owner):
+                value = self.legacy()
+                value["headRepositoryOwner"] = owner
+                observed = self.snapshot(value)
+                self.assertFalse(observed["headRepository"]["nameWithOwner"])
+                self.assertIsNone(self.code["cancellation_identity"](observed))
+        for name in [None, "", 1]:
+            with self.subTest(name=name):
+                value = self.legacy()
+                value["headRepository"]["name"] = name
+                self.assertIsNone(self.code["cancellation_identity"](self.snapshot(value)))
+        value = self.legacy()
+        value["headRepository"] = None
+        self.assertIsNone(self.code["cancellation_identity"](self.snapshot(value)))
+
+    def test_missing_node_id_is_not_reconstructed(self):
+        value = self.legacy()
+        value["headRepository"].pop("id")
+        observed = self.snapshot(value)
+        self.assertEqual(observed["headRepository"]["nameWithOwner"], "example/repo")
+        self.assertIsNone(self.code["cancellation_identity"](observed))
+
+    def test_review_history_is_preserved(self):
+        observed = self.snapshot(self.legacy(), reviewed=True)
+        self.assertEqual(observed["reviewHistory"], [{"id": 10}])
+        self.assertEqual(observed["headRepository"]["nameWithOwner"], "example/repo")
+
+    def test_real_legacy_snapshots_cancel_only_observed_request(self):
+        original = self.legacy()
+        original["autoMergeRequest"] = {
+            "enabledAt": "2026-11-08T06:00:00Z",
+            "enabledBy": {"login": "californiantiramisu"},
+            "mergeMethod": "SQUASH",
+        }
+        observed = self.snapshot(original)
+        current = copy.deepcopy(original)
+        current["labels"] = []
+        current["headRefOid"] = "advanced"
+        transport = unittest.mock.Mock(return_value=json.dumps(current))
+        with patch.dict(self.code, {"gh": transport}):
+            value = self.code["snapshot"]("example/repo", "7")
+            self.code["cancel_withdrawn_request"](
+                "example/repo", "7", value, "main", {"californiantiramisu"}, observed
+            )
+        self.assertEqual(transport.call_args_list[-1].args,
+                         ("pr", "merge", "7", "--repo", "example/repo", "--disable-auto"))
+        self.assertEqual(sum(call.args[:2] == ("pr", "merge") for call in transport.call_args_list), 1)
