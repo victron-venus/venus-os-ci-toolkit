@@ -25,7 +25,7 @@ const literalCommand = (command) => '^' + command.replace(/[.*+?^${}()|[\]\\]/g,
 module.exports = {
   platform: 'github',
   // Dedicated signing key registered to this account, never a personal login key.
-  gitAuthor: 'Renovate CI <alvit.work+4alvit@gmail.com>',
+  gitAuthor: 'Renovate CI <272257197+4alvit@users.noreply.github.com>',
   onboarding: false,
   requireConfig: 'required',
   repositories: require('./renovate-repositories.json'),
