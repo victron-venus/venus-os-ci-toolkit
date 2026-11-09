@@ -35,6 +35,7 @@
   "ha-homelab/ha-meter-contracts",
   "ha-homelab/ha-onvif-room-direction",
   "ha-homelab/ha-ottplay",
+  "ha-homelab/ha-radio-hub",
   "ha-homelab/ha-scenario-tests",
   "ha-homelab/ha-techo5-dot",
   "ha-homelab/ha-tuya-esphome",
