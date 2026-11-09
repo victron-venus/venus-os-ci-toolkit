@@ -78,713 +78,716 @@ jobs:
           REVIEWED_SINGLE_PASS: ${{ inputs.reviewed-single-pass }}
           ALLOW_DEPENDABOT_ACTIONS_REVIEW: ${{ inputs.allow-dependabot-actions-review }}
           ALLOW_OWNED_BOT_ACTIONS_REVIEW: ${{ inputs.allow-owned-bot-actions-review }}
+          TOOLKIT_AUTO_MERGE_SOURCE: |
+            import json
+            import os
+            import re
+            import subprocess
+            import time
+            from datetime import datetime
+            from urllib.parse import quote, urlparse
+
+
+            TRUSTED_AUTHORS = {'4alvit', 'californiantiramisu', 'dependabot[bot]', 'renovate[bot]'}
+            UNOBSERVED_REQUEST = object()
+
+
+            class CheckFailure(RuntimeError):
+                """Observed validation failure, not an API or authentication error."""
+
+
+            def gh(*args):
+                return subprocess.check_output(['gh', *args], text=True).strip()
+
+
+            def merge_author_email():
+                # Bind the author to the account authenticated by this merge token,
+                # not the PR author/event actor or an account's public email field.
+                account = json.loads(gh('api', 'user', '--jq', '{id,login,type}'))
+                if (not isinstance(account, dict) or account.get('type') != 'User'
+                        or type(account.get('id')) is not int or account['id'] <= 0
+                        or not isinstance(account.get('login'), str)
+                        or not re.fullmatch(r'[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?', account['login'])):
+                    raise RuntimeError('Cannot verify the authenticated merge author identity.')
+                return f"{account['id']}+{account['login']}@users.noreply.github.com"
+
+
+            def merge_author_options(native=False):
+                email = merge_author_email()
+                # Native auto-merge uses the authenticated account's configured email.
+                # GitHub may reject an explicit noreply address for this API even
+                # when the account has a verified email and email privacy enabled.
+                return [] if native else ['--author-email', email]
+
+
+            def native_auto_merge_enabled(repo):
+                # A missing field or denied read is not evidence of a disabled setting.
+                enabled = json.loads(gh('api', f'repos/{repo}', '--jq', '.allow_auto_merge'))
+                if not isinstance(enabled, bool):
+                    raise RuntimeError('Cannot verify repository allow_auto_merge; check repository visibility and token access.')
+                return enabled
+
+
+            def snapshot(repo, number, reviewed=False):
+                pr = json.loads(gh('pr', 'view', number, '--repo', repo, '--json',
+                                     'id,number,author,labels,isDraft,isCrossRepository,baseRefName,baseRefOid,headRefOid,headRefName,headRepository,headRepositoryOwner,state,statusCheckRollup,autoMergeRequest'))
+                # Older gh versions project only {id, name} for headRepository.
+                # Derive the full name only from separately queried API components.
+                head = pr.get('headRepository')
+                owner = (pr.get('headRepositoryOwner') or {}).get('login')
+                if (isinstance(head, dict) and not head.get('nameWithOwner')
+                        and isinstance(owner, str) and owner
+                        and isinstance(head.get('name'), str) and head['name']):
+                    head['nameWithOwner'] = f"{owner}/{head['name']}"
+                if reviewed:
+                    pages = json.loads(gh('api', '--paginate', '--slurp',
+                                          f'repos/{repo}/pulls/{number}/reviews?per_page=100'))
+                    pr['reviewHistory'] = [review for page in pages for review in page]
+                return pr
+
+
+            def canonical_author(author):
+                # gh's GraphQL response names known GitHub Apps differently from REST.
+                # Only normalize identities GitHub explicitly identifies as bots.
+                aliases = {'app/dependabot': 'dependabot[bot]', 'app/renovate': 'renovate[bot]'}
+                login = author['login']
+                return aliases.get(login, login) if author.get('is_bot') is True else login
+
+
+            def eligible(pr, default_branch, authors):
+                return (pr['state'] == 'OPEN' and not pr['isDraft']
+                        and canonical_author(pr['author']) in authors
+                        and pr['baseRefName'] == default_branch
+                        and 'automerge' in {label['name'] for label in pr['labels']})
+
+
+            def check_state(pr, required, run_id):
+                latest = {}
+                own_identities = set()
+                for index, check in enumerate(pr['statusCheckRollup'] or []):
+                    name = check.get('name', check.get('context', ''))
+                    workflow = check.get('workflowName', '')
+                    url = check.get('detailsUrl', check.get('targetUrl', ''))
+                    numbers = re.search(r'/actions/runs/(\d+)(?:/job/(\d+))?', url)
+                    # Concurrent runs can execute in a different order from their IDs.
+                    # Every active attempt blocks merge, even before its start is known.
+                    active = (check.get('status') in {'QUEUED', 'IN_PROGRESS', 'WAITING', 'PENDING', 'REQUESTED'}
+                              or check.get('state') == 'PENDING')
+                    attempt = (active, check.get('startedAt', check.get('createdAt', '')) or '',
+                               int(numbers[2] or 0) if numbers else 0,
+                               int(numbers[1]) if numbers else 0)
+                    # Workflow identity prevents unrelated same-name jobs masking failures.
+                    # Unknown external providers remain separate unless their URL also matches.
+                    identity = (workflow, name, '' if workflow else url or str(index))
+                    if (run_id and f'/actions/runs/{run_id}/' in url
+                            and (name == 'Auto Merge' or name.endswith(' / Auto Merge'))):
+                        own_identities.add(identity)
+                    if identity not in latest or attempt > latest[identity][0]:
+                        latest[identity] = (attempt, check)
+                checks = []
+                own_registered = bool(own_identities) or not run_id
+                # Identify self in the raw rollup: the other event of a dual caller
+                # may register a newer skipped job with the same orchestration identity.
+                # Deduplicate first, then remove only that verified self identity.
+                for identity, (_, check) in latest.items():
+                    if identity in own_identities:
+                        continue
+                    state = check.get('conclusion') if check.get('status') == 'COMPLETED' else check.get('state')
+                    checks.append((identity, state or 'PENDING'))
+                # GitHub can briefly return the previous run before registering this job.
+                # Wait for the current context rather than treating old attempts as current.
+                if not own_registered:
+                    return False, tuple(sorted(checks))
+                failed = [f'{identity[0] or "external"} / {identity[1]} ({state})'
+                          for identity, state in checks
+                          if state in {'FAILURE', 'ERROR', 'CANCELLED', 'TIMED_OUT', 'ACTION_REQUIRED', 'STALE', 'STARTUP_FAILURE'}]
+                if failed:
+                    raise CheckFailure('PR check failed: ' + '; '.join(failed)
+                                       + '. Fix or rerun the failed check before auto-merge.')
+                names = {identity[1] for identity, _ in checks}
+                ready = (bool(checks) and required <= names
+                         and all(state in {'SUCCESS', 'NEUTRAL', 'SKIPPED'} for _, state in checks))
+                return ready, tuple(sorted(checks))
+
+
+            def review_state(pr, actions_authors=frozenset()):
+                # Read every review page. COMMENTED does not retract a prior decision;
+                # DISMISSED does. Never accept the author's own or an old-head approval.
+                latest = {}
+                for review in sorted(pr['reviewHistory'], key=lambda item: item['id']):
+                    login = (review.get('user') or {}).get('login') or f"unknown-reviewer-{review['id']}"
+                    state = review['state']
+                    if login and state in {'APPROVED', 'CHANGES_REQUESTED', 'DISMISSED'}:
+                        latest[login] = (state, review.get('commit_id'), review['id'], (review.get('user') or {}).get('type'))
+                blocked = any(item[0] == 'CHANGES_REQUESTED' for item in latest.values())
+                author = canonical_author(pr['author'])
+                actions_allowed = (pr.get('isCrossRepository') is False
+                                   and author in actions_authors
+                                   and (author == 'californiantiramisu'
+                                        or (author == 'dependabot[bot]' and pr['author'].get('is_bot') is True)))
+                approved = any((login in {'4alvit', 'californiantiramisu'}
+                                or (actions_allowed and login == 'github-actions[bot]' and kind == 'Bot'))
+                               and login != canonical_author(pr['author'])
+                               and state == 'APPROVED' and commit == pr['headRefOid']
+                               for login, (state, commit, _, kind) in latest.items())
+                return approved and not blocked, tuple(sorted(latest.items()))
+
+
+            def checked_snapshot(pr, required, run_id, reviewed, actions_authors=frozenset()):
+                ready, checks = check_state(pr, required, run_id)
+                if not reviewed:
+                    return ready, checks
+                approved, reviews = review_state(pr, actions_authors)
+                # Required checks must succeed, not merely finish or skip. Existing
+                # check_state still rejects failures and pending optional checks.
+                successful = {identity[1] for identity, state in checks if state == 'SUCCESS'}
+                named_checks_pass = required <= successful and all(
+                    state == 'SUCCESS' for identity, state in checks if identity[1] in required)
+                ready = (ready and bool(successful) and named_checks_pass and approved
+                         and pr.get('isCrossRepository') is False)
+                return ready, (checks, reviews)
+
+
+            def cancellation_identity(pr):
+                # Native requests can survive commits on the same branch. Bind the actual
+                # repository node and ref instead; positive merging still uses exact-head CAS.
+                head_repo = pr.get('headRepository') or {}
+                required = (pr.get('headRefOid'), pr.get('baseRefOid'), pr.get('headRefName'),
+                            pr.get('baseRefName'), head_repo.get('id'), head_repo.get('nameWithOwner'))
+                if (type(pr.get('number')) is not int or pr['number'] <= 0
+                        or not all(isinstance(value, str) and value for value in required)
+                        or type(pr.get('isCrossRepository')) is not bool
+                        or not isinstance((pr.get('author') or {}).get('login'), str)
+                        or not pr['author']['login']):
+                    return None
+                return (pr['number'], head_repo['id'], head_repo['nameWithOwner'],
+                        pr['headRefName'], pr['isCrossRepository'],
+                        canonical_author(pr['author']))
+
+
+            def event_identity_matches(repo, pr, pull):
+                base, head = pull.get('base') or {}, pull.get('head') or {}
+                head_repo = head.get('repo') or {}
+                current_repo = pr.get('headRepository') or {}
+                return (cancellation_identity(pr) is not None
+                        and (base.get('repo') or {}).get('full_name') == repo
+                        and bool(head.get('sha')) and bool(base.get('sha'))
+                        and head.get('ref') == pr['headRefName']
+                        and head_repo.get('node_id') == current_repo['id']
+                        and head_repo.get('full_name') == current_repo['nameWithOwner']
+                        and base.get('ref') == pr['baseRefName']
+                        and pr['isCrossRepository'] is (head_repo['full_name'] != repo)
+                        and canonical_author(pr['author']) == (pull.get('user') or {}).get('login'))
+
+
+            def withdrawal_state(pr):
+                return ('automerge' in {label['name'] for label in pr['labels']},
+                        pr['isDraft'], pr['baseRefName'])
+
+
+            def request_time(request):
+                try:
+                    enabled = datetime.fromisoformat(request['enabledAt'].replace('Z', '+00:00'))
+                    if enabled.tzinfo is None:
+                        return None
+                    return enabled
+                except (KeyError, TypeError, ValueError, AttributeError):
+                    return None
+
+
+            def withdrawal_intent(repo, number, pr, previous_observation, default_branch):
+                # A surviving positive evaluator owns only the same request and stable PR
+                # identity observed while eligible, even if a new commit arrives meanwhile.
+                if previous_observation is not UNOBSERVED_REQUEST:
+                    return (previous_observation is not None
+                            and eligible(previous_observation, default_branch,
+                                         {canonical_author(pr['author'])})
+                            and cancellation_identity(previous_observation) == cancellation_identity(pr)
+                            and pr.get('autoMergeRequest') == previous_observation.get('autoMergeRequest'))
+                # A queued evaluator still needs the original withdrawal event. A synchronize
+                # wakeup alone cannot claim an existing, potentially manual native request.
+                path = os.environ.get('GITHUB_EVENT_PATH')
+                if not path or os.environ.get('GITHUB_EVENT_NAME') not in {'pull_request', 'pull_request_target'}:
+                    return False
+                with open(path, encoding='utf-8') as stream:
+                    event = json.load(stream)
+                pull = event.get('pull_request') or {}
+                labelled = 'automerge' in {label['name'] for label in pr['labels']}
+                removal = (event.get('action') == 'unlabeled'
+                           and (event.get('label') or {}).get('name') == 'automerge'
+                           and not labelled)
+                labelled_withdrawal = (labelled
+                                      and ((event.get('action') == 'converted_to_draft' and pr['isDraft'])
+                                           or (event.get('action') == 'edited'
+                                               and (event.get('changes') or {}).get('base')
+                                               and pr['baseRefName'] != default_branch)))
+                if not ((removal or labelled_withdrawal)
+                        and (event.get('repository') or {}).get('full_name') == repo
+                        and event.get('number') == int(number)
+                        and event_identity_matches(repo, pr, pull)):
+                    return False
+                return request_predates_event(pr, pull)
+
+
+            def request_predates_event(pr, pull):
+                enabled = request_time(pr.get('autoMergeRequest'))
+                try:
+                    withdrawn = datetime.fromisoformat(pull['updated_at'].replace('Z', '+00:00'))
+                except (KeyError, TypeError, ValueError, AttributeError):
+                    withdrawn = None
+                if enabled is None or withdrawn is None or withdrawn.tzinfo is None:
+                    print('Preserved pending auto-merge: withdrawal/request timestamps are unavailable or invalid.')
+                    return False
+                if enabled >= withdrawn:
+                    print('Preserved pending auto-merge: request does not provably predate the withdrawal event.')
+                    return False
+                return True
+
+
+            def cancel_withdrawn_request(repo, number, pr, default_branch, authors, previous_observation=UNOBSERVED_REQUEST):
+                # Existing request equality is a read-side guard, not an atomic server CAS.
+                # Preserve restored intent and unknown metadata; never broaden positive merges.
+                identity = cancellation_identity(pr)
+                if pr.get('autoMergeRequest') and request_time(pr['autoMergeRequest']) is None:
+                    print('Preserved pending auto-merge: withdrawal/request timestamps are unavailable or invalid.')
+                    return
+                if (pr['state'] != 'OPEN' or not pr.get('autoMergeRequest')
+                        or identity is None or pr['number'] != int(number)
+                        or pr['isCrossRepository'] is not (pr['headRepository']['nameWithOwner'] != repo)
+                        or request_time(pr['autoMergeRequest']) is None
+                        or eligible(pr, default_branch, authors)
+                        or canonical_author(pr['author']) not in authors
+                        or not withdrawal_intent(repo, number, pr, previous_observation, default_branch)):
+                    return
+                fresh = snapshot(repo, number)
+                if (fresh['state'] != 'OPEN' or eligible(fresh, default_branch, authors)
+                        or cancellation_identity(fresh) != identity
+                        or withdrawal_state(fresh) != withdrawal_state(pr)
+                        or fresh.get('autoMergeRequest') != pr['autoMergeRequest']):
+                    print('Withdrawal changed; a later event must evaluate the current intent.')
+                    return
+                gh('pr', 'merge', number, '--repo', repo, '--disable-auto')
+                print('Disabled the existing auto-merge request after verified withdrawal.')
+
+
+            def cancel_from_target_event(repo, number, default_branch, authors):
+                # This path never evaluates checks, enables auto-merge, or merges. PTR
+                # runs the default-branch workflow; no PR code is checked out or run.
+                if (os.environ.get('GITHUB_EVENT_NAME') != 'pull_request_target'
+                        or os.environ.get('GITHUB_REF') != f'refs/heads/{default_branch}'):
+                    raise RuntimeError('Withdrawal-only requires the trusted default PR-target context.')
+                with open(os.environ['GITHUB_EVENT_PATH'], encoding='utf-8') as stream:
+                    event = json.load(stream)
+                pull = event.get('pull_request') or {}
+                base, head = pull.get('base') or {}, pull.get('head') or {}
+                withdrawal = ((event.get('action') == 'unlabeled'
+                               and (event.get('label') or {}).get('name') == 'automerge')
+                              or event.get('action') == 'converted_to_draft'
+                              or (event.get('action') == 'edited'
+                                  and (event.get('changes') or {}).get('base')
+                                  and base.get('ref') != default_branch))
+                head_repo = (head.get('repo') or {}).get('full_name')
+                if (not withdrawal or not head_repo
+                        or (event.get('repository') or {}).get('full_name') != repo
+                        or (base.get('repo') or {}).get('full_name') != repo
+                        or event.get('number') != int(number)):
+                    print('No matching withdrawal event; no request changed.')
+                    return
+                pr = snapshot(repo, number)
+                if (eligible(pr, default_branch, authors)
+                        or not event_identity_matches(repo, pr, pull)
+                        or not request_predates_event(pr, pull)):
+                    print('Withdrawal identity, eligibility or request time changed; no request changed.')
+                    return
+                cancel_withdrawn_request(repo, number, pr, default_branch, authors)
+
+
+            def native_request_identity(request):
+                # GitHub exposes no request ID. Compare every request setting and creator;
+                # display-name / gh bot-projection differences are not request identities.
+                fields = ('enabledAt', 'mergeMethod', 'authorEmail', 'commitHeadline', 'commitBody')
+                if (not isinstance(request, dict) or any(key not in request for key in fields)
+                        or request_time(request) is None
+                        or request['mergeMethod'] not in {'MERGE', 'SQUASH', 'REBASE'}
+                        or any(request[key] is not None and not isinstance(request[key], str)
+                               for key in ('authorEmail', 'commitHeadline', 'commitBody'))):
+                    return None
+                creator = request.get('enabledBy') or {}
+                if not all(isinstance(creator.get(key), str) and creator[key] for key in ('id', 'login')):
+                    return None
+                return tuple(request[key] for key in fields) + (creator['id'], creator['login'])
+
+
+            def request_native_with_cleanup(repo, number, observed, default_branch, authors, method, checked_state=None):
+                # Retain authenticated-user validation even when native enable omits authorEmail.
+                email = merge_author_email()
+                account_id, account_login = email.split('@', 1)[0].split('+', 1)
+                for attempt in range(4):
+                    fresh = snapshot(repo, number)
+                    identity = cancellation_identity(fresh)
+                    if (identity is None or identity != cancellation_identity(observed)
+                            or fresh['number'] != int(number)
+                            or fresh['isCrossRepository'] is not (fresh['headRepository']['nameWithOwner'] != repo)
+                            or fresh.get('id') != observed.get('id') or not fresh.get('id')
+                            or fresh['headRefOid'] != observed['headRefOid']
+                            or fresh['baseRefName'] != observed['baseRefName']
+                            or fresh.get('baseRefOid') != observed.get('baseRefOid')
+                            or not eligible(fresh, default_branch, authors)):
+                        print('Native request identity or eligibility changed; no mutation.')
+                        return
+                    if 'autoMergeRequest' not in fresh:
+                        raise RuntimeError('Native request metadata is unavailable.')
+                    if fresh['autoMergeRequest'] is not None:
+                        print('Preserved an existing native request; no replacement requested.')
+                        return
+                    if checked_state is not None:
+                        required, run_id, original_checks, deadline = checked_state
+                        if time.monotonic() >= deadline:
+                            raise RuntimeError('Legacy checked deadline expired; no mutation.')
+                        ready, checks = checked_snapshot(fresh, required, run_id, False)
+                        if not ready or checks != original_checks:
+                            print('Legacy checked state changed; no mutation.')
+                            return
+                    # gh 2.87 supports these internally, but its --json allowlist omits
+                    # isMergeQueueEnabled. Read the schema fields explicitly and bind them.
+                    state_query = '''query($id:ID!) { node(id:$id) { ... on PullRequest {
+                      id headRefOid baseRefName mergeStateStatus isMergeQueueEnabled
+                    } } }'''
+                    state_response = json.loads(gh('api', 'graphql', '-f', 'query=' + state_query,
+                                                  '-f', 'id=' + fresh['id']))
+                    state = (state_response.get('data') or {}).get('node') or {}
+                    if (state_response.get('errors') or state.get('id') != fresh['id']
+                            or state.get('headRefOid') != fresh['headRefOid']
+                            or state.get('baseRefName') != fresh['baseRefName']):
+                        raise RuntimeError('Native merge-state identity changed; no mutation.')
+                    status = state.get('mergeStateStatus')
+                    queued = state.get('isMergeQueueEnabled')
+                    if (type(status) is not str
+                            or status not in {'CLEAN', 'HAS_HOOKS', 'UNSTABLE', 'BEHIND', 'BLOCKED', 'DIRTY', 'UNKNOWN'}
+                            or type(queued) is not bool):
+                        raise RuntimeError('Native merge-state or merge-queue metadata is unavailable.')
+                    if status != 'UNKNOWN':
+                        break
+                    if attempt == 3:
+                        raise RuntimeError('Native merge-state metadata is unavailable after bounded UNKNOWN reads.')
+                    # GitHub may briefly be computing mergeability after a push. Only this
+                    # explicit state is retried; each wait restarts all intent/identity guards.
+                    time.sleep(4)
+                if not queued and status in {'CLEAN', 'HAS_HOOKS', 'UNSTABLE'}:
+                    # Match gh's existing immediate-merge decision; never turn an API error
+                    # into a second mutation. Protected server rules and exact-head CAS apply.
+                    gh('pr', 'merge', number, '--repo', repo, f'--{method}',
+                       *merge_author_options(), '--match-head-commit', fresh['headRefOid'])
+                    print('Requested a protected direct merge at its exact head, not native enable.')
+                    return
+                correlation = os.urandom(16).hex()
+                query = '''mutation($id:ID!,$head:GitObjectID!,$method:PullRequestMergeMethod!,$client:String!) {
+                  enablePullRequestAutoMerge(input:{pullRequestId:$id,expectedHeadOid:$head,
+                    mergeMethod:$method,clientMutationId:$client}) {
+                    clientMutationId actor{login ... on User{id databaseId}}
+                    pullRequest{id number state headRefOid autoMergeRequest{
+                      enabledAt enabledBy{login ... on User{id}} mergeMethod authorEmail commitHeadline commitBody
+                    }}
+                  }
+                }'''
+                response = json.loads(gh('api', 'graphql', '-f', 'query=' + query,
+                                         '-f', 'id=' + fresh['id'], '-f', 'head=' + fresh['headRefOid'],
+                                         '-f', 'method=' + method.upper(), '-f', 'client=' + correlation))
+                payload = (response.get('data') or {}).get('enablePullRequestAutoMerge') or {}
+                actor = payload.get('actor') or {}
+                acknowledged = payload.get('pullRequest') or {}
+                if (response.get('errors') or payload.get('clientMutationId') != correlation
+                        or actor.get('login') != account_login or actor.get('databaseId') != int(account_id)
+                        or acknowledged.get('id') != fresh['id'] or acknowledged.get('number') != int(number)):
+                    raise RuntimeError('Native enable acknowledgement is unavailable or mismatched; do not replay.')
+                if acknowledged.get('state') == 'MERGED':
+                    print('GitHub merged before request cleanup; no pending-request cancellation is possible.')
+                    return
+                request = acknowledged.get('autoMergeRequest')
+                request_identity = native_request_identity(request)
+                if (acknowledged.get('state') != 'OPEN' or request_identity is None
+                        or request['enabledBy']['login'] != account_login
+                        or request['enabledBy']['id'] != actor.get('id')
+                        or request['mergeMethod'] != method.upper()):
+                    raise RuntimeError('Native request ownership is unavailable; no cancellation or replay.')
+                current = snapshot(repo, number)
+                if (current.get('id') != fresh['id'] or cancellation_identity(current) != identity
+                        or native_request_identity(current.get('autoMergeRequest')) != request_identity):
+                    print('Acknowledged request changed or disappeared; preserved current state.')
+                    return
+                # Correlate cleanup to the acknowledged request, not merely a later timestamp.
+                # No request ID or atomic read/disable CAS exists; same-fingerprint ABA
+                # and concurrent replacement after the final read remain platform limits.
+                owned_observation = dict(fresh, autoMergeRequest=current['autoMergeRequest'])
+                cancel_withdrawn_request(repo, number, current, default_branch, authors, owned_observation)
+                print('Native request acknowledged and current eligibility rechecked.')
+
+
+            def request_protected_merge(repo, number, default_branch, authors, method, required):
+                pr = snapshot(repo, number)
+                if not eligible(pr, default_branch, authors):
+                    cancel_withdrawn_request(repo, number, pr, default_branch, authors)
+                    print('PR is not eligible for auto-merge.')
+                    return
+                if not native_auto_merge_enabled(repo):
+                    raise RuntimeError('Native auto-merge is disabled for this repository; use the default checked merge mode.')
+                # GitHub evaluates effective active rules, including organization rules.
+                # Fail closed on missing rules, unreadable rules, or an unprotected gate.
+                rules = json.loads(gh('api', f'repos/{repo}/rules/branches/{quote(default_branch, safe="")}'))
+                required = required | {'CI gate'}
+                protected = set()
+                strict = False
+                for rule in rules:
+                    if rule.get('type') == 'required_status_checks':
+                        parameters = rule.get('parameters', {})
+                        strict |= parameters.get('strict_required_status_checks_policy') is True
+                        protected.update(check['context'] for check in parameters.get('required_status_checks', []))
+                if not strict or not required <= protected:
+                    raise RuntimeError('Native mode requires a strict protected branch and every required check, including CI gate.')
+                fresh = snapshot(repo, number)
+                if not eligible(fresh, default_branch, authors):
+                    cancel_withdrawn_request(repo, number, fresh, default_branch, authors,
+                                             pr)
+                    print('Eligibility changed; no merge requested.')
+                    return
+                if fresh['headRefOid'] != pr['headRefOid']:
+                    print('PR head changed; the synchronize event will retry.')
+                    return
+                request_native_with_cleanup(repo, number, fresh, default_branch, authors, method)
+
+
+            def reviewed_single_pass(repo, default_branch, authors, method, required, actions_authors):
+                # Event payloads only wake this evaluator. Every candidate comes from
+                # GitHub's authoritative, paginated open-PR list, never an artifact.
+                allowed_events = {'pull_request', 'pull_request_target', 'pull_request_review',
+                                  'workflow_run', 'status', 'check_run', 'check_suite',
+                                  'schedule', 'workflow_dispatch'}
+                if os.environ.get('GITHUB_EVENT_NAME') not in allowed_events:
+                    raise RuntimeError('Unsupported single-pass wakeup event')
+                with open(os.environ['GITHUB_EVENT_PATH'], encoding='utf-8') as stream:
+                    event = json.load(stream)
+                if (event.get('repository') or {}).get('full_name') != repo:
+                    raise RuntimeError('Wakeup repository does not match the current repository')
+                run_id = os.environ.get('GITHUB_RUN_ID', '')
+                if re.fullmatch(r'[1-9][0-9]*', run_id) is None:
+                    raise RuntimeError('A verified current workflow run is required')
+                current_run = json.loads(gh('api', f'repos/{repo}/actions/runs/{run_id}'))
+                workflow_id = current_run.get('workflow_id')
+                if ((current_run.get('repository') or {}).get('full_name') != repo
+                        or current_run.get('id') != int(run_id)
+                        or not isinstance(workflow_id, int) or isinstance(workflow_id, bool)
+                        or workflow_id < 1):
+                    raise RuntimeError('Could not verify the current orchestration workflow')
+                run_cache = {run_id: current_run}
+                check_cache = {}
+                job_cache = {}
+                server = urlparse(os.environ.get('GITHUB_SERVER_URL', 'https://github.com'))
+
+                def own_check(check, head):
+                    name = check.get('name', '')
+                    url = urlparse(check.get('detailsUrl', ''))
+                    match = re.fullmatch('/' + re.escape(repo) + r'/actions/runs/([1-9][0-9]*)/job/([1-9][0-9]*)', url.path)
+                    if (check.get('__typename') != 'CheckRun'
+                            or not (name == 'Auto Merge' or name.endswith(' / Auto Merge'))
+                            or not match or url.query or url.fragment
+                            or (url.scheme, url.netloc) != (server.scheme, server.netloc)):
+                        return False
+                    candidate_id, job_id = match.groups()
+                    if candidate_id not in run_cache:
+                        run_cache[candidate_id] = json.loads(gh('api', f'repos/{repo}/actions/runs/{candidate_id}'))
+                    candidate = run_cache[candidate_id]
+                    if ((candidate.get('repository') or {}).get('full_name') != repo
+                            or candidate.get('id') != int(candidate_id)
+                            or candidate.get('workflow_id') != workflow_id):
+                        return False
+                    # A check URL alone is not provenance: another app can copy it.
+                    # Resolve the actual Actions job and require exactly one matching
+                    # GitHub Actions check on this head, with that job's check ID.
+                    if job_id not in job_cache:
+                        job_cache[job_id] = json.loads(gh('api', f'repos/{repo}/actions/jobs/{job_id}'))
+                    job = job_cache[job_id]
+                    if (job.get('id') != int(job_id) or job.get('run_id') != int(candidate_id)
+                            or job.get('name') != name):
+                        return False
+                    if head not in check_cache:
+                        pages = json.loads(gh('api', '--paginate', '--slurp',
+                                             f'repos/{repo}/commits/{head}/check-runs?filter=all&per_page=100'))
+                        check_cache[head] = [item for page in pages for item in page['check_runs']]
+                    matching = [item for item in check_cache[head]
+                                if item.get('name') == name and item.get('details_url') == check.get('detailsUrl')]
+                    return (len(matching) == 1
+                            and bool(job.get('check_run_url'))
+                            and matching[0].get('url') == job.get('check_run_url')
+                            and matching[0].get('head_sha') == head
+                            and (matching[0].get('app') or {}).get('slug') == 'github-actions')
+
+                def observed(number):
+                    value = snapshot(repo, str(number), reviewed=True)
+                    for key in ('baseRefOid', 'headRefOid'):
+                        if re.fullmatch(r'[0-9a-f]{40}', value.get(key, '')) is None:
+                            raise RuntimeError('Missing current base or head identity')
+                    # PR baseRefOid can remain the historical PR base after main
+                    # advances. Verify ancestry against the actual branch ref.
+                    base = gh('api', f'repos/{repo}/git/ref/heads/{quote(default_branch, safe="")}',
+                              '--jq', '.object.sha')
+                    if re.fullmatch(r'[0-9a-f]{40}', base) is None:
+                        raise RuntimeError('Missing current default branch identity')
+                    head = value['headRefOid']
+                    current_base_in_head = gh('api', f'repos/{repo}/compare/{base}...{head}',
+                                               '--jq', '.merge_base_commit.sha') == base
+                    if not current_base_in_head:
+                        print(f'PR #{number} must include the current default branch before merge.', flush=True)
+                    check_cache.clear()
+                    value['statusCheckRollup'] = [check for check in value['statusCheckRollup'] or []
+                                                 if not own_check(check, head)]
+                    ready, state = checked_snapshot(value, required, '', True, actions_authors)
+                    return value, ready and current_base_in_head, (base, value['baseRefOid'], head, state)
+
+                pages = json.loads(gh('api', '--paginate', '--slurp',
+                                     f'repos/{repo}/pulls?state=open&per_page=100'))
+                merge_failures = []
+                for row in (row for page in pages for row in page):
+                    # This inexpensive REST prefilter cannot authorize a merge.
+                    # Each actual decision uses three fresh complete snapshots.
+                    if (row.get('draft') or (row.get('base') or {}).get('ref') != default_branch
+                            or (row.get('user') or {}).get('login') not in authors
+                            or 'automerge' not in {label.get('name') for label in row.get('labels', [])}
+                            or ((row.get('head') or {}).get('repo') or {}).get('full_name') != repo):
+                        continue
+                    number = row.get('number')
+                    if not isinstance(number, int) or isinstance(number, bool) or number < 1:
+                        raise RuntimeError('Malformed candidate pull request identity')
+                    previous = None
+                    stable = True
+                    for _ in range(3):
+                        try:
+                            value, ready, fingerprint = observed(number)
+                        except CheckFailure as error:
+                            print(f'PR #{number} is waiting: {error}', flush=True)
+                            stable = False
+                            break
+                        if (not eligible(value, default_branch, authors) or not ready
+                                or (previous is not None and previous != fingerprint)):
+                            print(f'PR #{number} is not ready or changed; a later wakeup will retry.', flush=True)
+                            stable = False
+                            break
+                        previous = fingerprint
+                    if stable:
+                        try:
+                            gh('pr', 'merge', str(number), '--repo', repo, f'--{method}',
+                               '--author-email', merge_author_email(),
+                               '--match-head-commit', value['headRefOid'])
+                        except subprocess.CalledProcessError as error:
+                            # A head race or per-PR rule rejection must not starve
+                            # other candidates. Do not retry an ambiguous response.
+                            failure = f'#{number} (exit {error.returncode})'
+                            merge_failures.append(failure)
+                            print(f'Merge command did not confirm success for {failure}.', flush=True)
+                            continue
+                        print(f'Merged reviewed PR #{number} at its verified head.', flush=True)
+                if merge_failures:
+                    raise RuntimeError('Merge command failed: ' + ', '.join(merge_failures))
+
+
+            def main():
+                if not os.environ.get('GH_TOKEN', '').strip():
+                    raise RuntimeError('BOT_PAT is missing. Configure it and explicitly forward it from the caller.')
+                repo, number = os.environ['GITHUB_REPOSITORY'], os.environ['PR_NUMBER']
+                single_pass = os.environ.get('REVIEWED_SINGLE_PASS') == 'true'
+                withdrawal_only = os.environ.get('WITHDRAWAL_ONLY') == 'true'
+                if (withdrawal_only or not single_pass) and not number.isdecimal():
+                    raise RuntimeError('A pull-request metadata event with a numeric PR number is required.')
+                authors = {item.strip() for item in os.environ['PR_AUTHORS'].split(',') if item.strip()}
+                if not authors or not authors <= TRUSTED_AUTHORS:
+                    raise RuntimeError('pr-author must be a nonempty subset of the trusted PR authors.')
+                method = os.environ['MERGE_METHOD']
+                if method not in {'merge', 'squash', 'rebase'}:
+                    raise RuntimeError('merge-method must be merge, squash, or rebase.')
+                required = {item.strip() for item in os.environ['REQUIRED_CHECKS'].split(',') if item.strip()}
+                default_branch = gh('api', f'repos/{repo}', '--jq', '.default_branch')
+                reviewed = os.environ.get('REVIEWED_MERGE') == 'true'
+                native = os.environ.get('NATIVE_AUTO_MERGE') == 'true'
+                actions_authors = set()
+                if os.environ.get('ALLOW_DEPENDABOT_ACTIONS_REVIEW') == 'true':
+                    actions_authors.add('dependabot[bot]')
+                if os.environ.get('ALLOW_OWNED_BOT_ACTIONS_REVIEW') == 'true':
+                    actions_authors.add('californiantiramisu')
+                if withdrawal_only:
+                    if native or reviewed or single_pass or actions_authors:
+                        raise RuntimeError('Withdrawal-only cannot be combined with merge or review modes.')
+                    cancel_from_target_event(repo, number, default_branch, authors)
+                    return
+                if (single_pass or actions_authors) and not reviewed:
+                    raise RuntimeError('Single-pass and Actions approval options require reviewed merge')
+                if reviewed and (native or not required):
+                    raise RuntimeError('Reviewed merge requires explicit checks and cannot use native mode.')
+                if single_pass:
+                    reviewed_single_pass(repo, default_branch, authors, method, required, actions_authors)
+                    return
+                if native:
+                    request_protected_merge(repo, number, default_branch, authors, method, required)
+                    return
+                deadline = time.monotonic() + 120 * 60
+                previous_green = None
+                opt_in_observation = UNOBSERVED_REQUEST
+                capability_checked = reviewed
+                protected_fallback = False
+                while time.monotonic() < deadline:
+                    pr = snapshot(repo, number, reviewed=True) if reviewed else snapshot(repo, number)
+                    if reviewed and pr.get('isCrossRepository') is not False:
+                        print('Reviewed merge excludes forks and unknown repository identity.')
+                        return
+                    if not eligible(pr, default_branch, authors):
+                        cancel_withdrawn_request(repo, number, pr, default_branch, authors,
+                                                 opt_in_observation)
+                        print('PR is not eligible: author, label, draft, target branch, or open state does not match.')
+                        return
+                    opt_in_observation = pr
+                    if not capability_checked:
+                        capability_checked = True
+                        if not native_auto_merge_enabled(repo):
+                            reviewed = protected_fallback = True
+                            print('Native auto-merge is disabled; waiting for successful checks and a current-head independent review.')
+                            # Discard the unreviewed observation and fetch review history.
+                            continue
+                    if protected_fallback and not pr.get('baseRefOid'):
+                        raise RuntimeError('Cannot verify the current base for a protected merge.')
+                    ready, checks = checked_snapshot(pr, required, os.environ.get('GITHUB_RUN_ID', ''), reviewed, actions_authors)
+                    fingerprint = (pr['headRefOid'], pr.get('baseRefOid') if protected_fallback else None, checks)
+                    if ready and fingerprint == previous_green:
+                        fresh = snapshot(repo, number, reviewed=True) if reviewed else snapshot(repo, number)
+                        if not eligible(fresh, default_branch, authors):
+                            cancel_withdrawn_request(repo, number, fresh, default_branch, authors,
+                                                     opt_in_observation)
+                            print('Eligibility changed; no merge requested.')
+                            return
+                        fresh_ready, fresh_checks = checked_snapshot(fresh, required, os.environ.get('GITHUB_RUN_ID', ''), reviewed, actions_authors)
+                        if (eligible(fresh, default_branch, authors) and fresh_ready
+                                and (fresh['headRefOid'], fresh.get('baseRefOid') if protected_fallback else None, fresh_checks) == fingerprint):
+                            if not reviewed:
+                                request_native_with_cleanup(
+                                    repo, number, fresh, default_branch, authors, method,
+                                    checked_state=(required, os.environ.get('GITHUB_RUN_ID', ''), fresh_checks, deadline))
+                                return
+                            options = [] if reviewed else ['--auto']
+                            gh('pr', 'merge', number, '--repo', repo, *options, f'--{method}',
+                               *merge_author_options(native=not reviewed),
+                               '--match-head-commit', fresh['headRefOid'])
+                            print('Merged reviewed PR head.' if reviewed else
+                                  'Requested native auto-merge for the verified PR head; repository protections still apply.')
+                            return
+                        previous_green = None
+                    else:
+                        previous_green = fingerprint if ready else None
+                    print('Waiting for stable successful checks on the current PR head.', flush=True)
+                    time.sleep(30)
+                raise RuntimeError('Checks did not become green within 120 minutes. Inspect pending or missing checks and rerun.')
+
+
+            if __name__ == '__main__':
+                main()
         run: |
           python3 -I - <<'PY'
-          import json
           import os
-          import re
-          import subprocess
-          import time
-          from datetime import datetime
-          from urllib.parse import quote, urlparse
-
-
-          TRUSTED_AUTHORS = {'4alvit', 'californiantiramisu', 'dependabot[bot]', 'renovate[bot]'}
-          UNOBSERVED_REQUEST = object()
-
-
-          class CheckFailure(RuntimeError):
-              """Observed validation failure, not an API or authentication error."""
-
-
-          def gh(*args):
-              return subprocess.check_output(['gh', *args], text=True).strip()
-
-
-          def merge_author_email():
-              # Bind the author to the account authenticated by this merge token,
-              # not the PR author/event actor or an account's public email field.
-              account = json.loads(gh('api', 'user', '--jq', '{id,login,type}'))
-              if (not isinstance(account, dict) or account.get('type') != 'User'
-                      or type(account.get('id')) is not int or account['id'] <= 0
-                      or not isinstance(account.get('login'), str)
-                      or not re.fullmatch(r'[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?', account['login'])):
-                  raise RuntimeError('Cannot verify the authenticated merge author identity.')
-              return f"{account['id']}+{account['login']}@users.noreply.github.com"
-
-
-          def merge_author_options(native=False):
-              email = merge_author_email()
-              # Native auto-merge uses the authenticated account's configured email.
-              # GitHub may reject an explicit noreply address for this API even
-              # when the account has a verified email and email privacy enabled.
-              return [] if native else ['--author-email', email]
-
-
-          def native_auto_merge_enabled(repo):
-              # A missing field or denied read is not evidence of a disabled setting.
-              enabled = json.loads(gh('api', f'repos/{repo}', '--jq', '.allow_auto_merge'))
-              if not isinstance(enabled, bool):
-                  raise RuntimeError('Cannot verify repository allow_auto_merge; check repository visibility and token access.')
-              return enabled
-
-
-          def snapshot(repo, number, reviewed=False):
-              pr = json.loads(gh('pr', 'view', number, '--repo', repo, '--json',
-                                   'id,number,author,labels,isDraft,isCrossRepository,baseRefName,baseRefOid,headRefOid,headRefName,headRepository,headRepositoryOwner,state,statusCheckRollup,autoMergeRequest'))
-              # Older gh versions project only {id, name} for headRepository.
-              # Derive the full name only from separately queried API components.
-              head = pr.get('headRepository')
-              owner = (pr.get('headRepositoryOwner') or {}).get('login')
-              if (isinstance(head, dict) and not head.get('nameWithOwner')
-                      and isinstance(owner, str) and owner
-                      and isinstance(head.get('name'), str) and head['name']):
-                  head['nameWithOwner'] = f"{owner}/{head['name']}"
-              if reviewed:
-                  pages = json.loads(gh('api', '--paginate', '--slurp',
-                                        f'repos/{repo}/pulls/{number}/reviews?per_page=100'))
-                  pr['reviewHistory'] = [review for page in pages for review in page]
-              return pr
-
-
-          def canonical_author(author):
-              # gh's GraphQL response names known GitHub Apps differently from REST.
-              # Only normalize identities GitHub explicitly identifies as bots.
-              aliases = {'app/dependabot': 'dependabot[bot]', 'app/renovate': 'renovate[bot]'}
-              login = author['login']
-              return aliases.get(login, login) if author.get('is_bot') is True else login
-
-
-          def eligible(pr, default_branch, authors):
-              return (pr['state'] == 'OPEN' and not pr['isDraft']
-                      and canonical_author(pr['author']) in authors
-                      and pr['baseRefName'] == default_branch
-                      and 'automerge' in {label['name'] for label in pr['labels']})
-
-
-          def check_state(pr, required, run_id):
-              latest = {}
-              own_identities = set()
-              for index, check in enumerate(pr['statusCheckRollup'] or []):
-                  name = check.get('name', check.get('context', ''))
-                  workflow = check.get('workflowName', '')
-                  url = check.get('detailsUrl', check.get('targetUrl', ''))
-                  numbers = re.search(r'/actions/runs/(\d+)(?:/job/(\d+))?', url)
-                  # Concurrent runs can execute in a different order from their IDs.
-                  # Every active attempt blocks merge, even before its start is known.
-                  active = (check.get('status') in {'QUEUED', 'IN_PROGRESS', 'WAITING', 'PENDING', 'REQUESTED'}
-                            or check.get('state') == 'PENDING')
-                  attempt = (active, check.get('startedAt', check.get('createdAt', '')) or '',
-                             int(numbers[2] or 0) if numbers else 0,
-                             int(numbers[1]) if numbers else 0)
-                  # Workflow identity prevents unrelated same-name jobs masking failures.
-                  # Unknown external providers remain separate unless their URL also matches.
-                  identity = (workflow, name, '' if workflow else url or str(index))
-                  if (run_id and f'/actions/runs/{run_id}/' in url
-                          and (name == 'Auto Merge' or name.endswith(' / Auto Merge'))):
-                      own_identities.add(identity)
-                  if identity not in latest or attempt > latest[identity][0]:
-                      latest[identity] = (attempt, check)
-              checks = []
-              own_registered = bool(own_identities) or not run_id
-              # Identify self in the raw rollup: the other event of a dual caller
-              # may register a newer skipped job with the same orchestration identity.
-              # Deduplicate first, then remove only that verified self identity.
-              for identity, (_, check) in latest.items():
-                  if identity in own_identities:
-                      continue
-                  state = check.get('conclusion') if check.get('status') == 'COMPLETED' else check.get('state')
-                  checks.append((identity, state or 'PENDING'))
-              # GitHub can briefly return the previous run before registering this job.
-              # Wait for the current context rather than treating old attempts as current.
-              if not own_registered:
-                  return False, tuple(sorted(checks))
-              failed = [f'{identity[0] or "external"} / {identity[1]} ({state})'
-                        for identity, state in checks
-                        if state in {'FAILURE', 'ERROR', 'CANCELLED', 'TIMED_OUT', 'ACTION_REQUIRED', 'STALE', 'STARTUP_FAILURE'}]
-              if failed:
-                  raise CheckFailure('PR check failed: ' + '; '.join(failed)
-                                     + '. Fix or rerun the failed check before auto-merge.')
-              names = {identity[1] for identity, _ in checks}
-              ready = (bool(checks) and required <= names
-                       and all(state in {'SUCCESS', 'NEUTRAL', 'SKIPPED'} for _, state in checks))
-              return ready, tuple(sorted(checks))
-
-
-          def review_state(pr, actions_authors=frozenset()):
-              # Read every review page. COMMENTED does not retract a prior decision;
-              # DISMISSED does. Never accept the author's own or an old-head approval.
-              latest = {}
-              for review in sorted(pr['reviewHistory'], key=lambda item: item['id']):
-                  login = (review.get('user') or {}).get('login') or f"unknown-reviewer-{review['id']}"
-                  state = review['state']
-                  if login and state in {'APPROVED', 'CHANGES_REQUESTED', 'DISMISSED'}:
-                      latest[login] = (state, review.get('commit_id'), review['id'], (review.get('user') or {}).get('type'))
-              blocked = any(item[0] == 'CHANGES_REQUESTED' for item in latest.values())
-              author = canonical_author(pr['author'])
-              actions_allowed = (pr.get('isCrossRepository') is False
-                                 and author in actions_authors
-                                 and (author == 'californiantiramisu'
-                                      or (author == 'dependabot[bot]' and pr['author'].get('is_bot') is True)))
-              approved = any((login in {'4alvit', 'californiantiramisu'}
-                              or (actions_allowed and login == 'github-actions[bot]' and kind == 'Bot'))
-                             and login != canonical_author(pr['author'])
-                             and state == 'APPROVED' and commit == pr['headRefOid']
-                             for login, (state, commit, _, kind) in latest.items())
-              return approved and not blocked, tuple(sorted(latest.items()))
-
-
-          def checked_snapshot(pr, required, run_id, reviewed, actions_authors=frozenset()):
-              ready, checks = check_state(pr, required, run_id)
-              if not reviewed:
-                  return ready, checks
-              approved, reviews = review_state(pr, actions_authors)
-              # Required checks must succeed, not merely finish or skip. Existing
-              # check_state still rejects failures and pending optional checks.
-              successful = {identity[1] for identity, state in checks if state == 'SUCCESS'}
-              named_checks_pass = required <= successful and all(
-                  state == 'SUCCESS' for identity, state in checks if identity[1] in required)
-              ready = (ready and bool(successful) and named_checks_pass and approved
-                       and pr.get('isCrossRepository') is False)
-              return ready, (checks, reviews)
-
-
-          def cancellation_identity(pr):
-              # Native requests can survive commits on the same branch. Bind the actual
-              # repository node and ref instead; positive merging still uses exact-head CAS.
-              head_repo = pr.get('headRepository') or {}
-              required = (pr.get('headRefOid'), pr.get('baseRefOid'), pr.get('headRefName'),
-                          pr.get('baseRefName'), head_repo.get('id'), head_repo.get('nameWithOwner'))
-              if (type(pr.get('number')) is not int or pr['number'] <= 0
-                      or not all(isinstance(value, str) and value for value in required)
-                      or type(pr.get('isCrossRepository')) is not bool
-                      or not isinstance((pr.get('author') or {}).get('login'), str)
-                      or not pr['author']['login']):
-                  return None
-              return (pr['number'], head_repo['id'], head_repo['nameWithOwner'],
-                      pr['headRefName'], pr['isCrossRepository'],
-                      canonical_author(pr['author']))
-
-
-          def event_identity_matches(repo, pr, pull):
-              base, head = pull.get('base') or {}, pull.get('head') or {}
-              head_repo = head.get('repo') or {}
-              current_repo = pr.get('headRepository') or {}
-              return (cancellation_identity(pr) is not None
-                      and (base.get('repo') or {}).get('full_name') == repo
-                      and bool(head.get('sha')) and bool(base.get('sha'))
-                      and head.get('ref') == pr['headRefName']
-                      and head_repo.get('node_id') == current_repo['id']
-                      and head_repo.get('full_name') == current_repo['nameWithOwner']
-                      and base.get('ref') == pr['baseRefName']
-                      and pr['isCrossRepository'] is (head_repo['full_name'] != repo)
-                      and canonical_author(pr['author']) == (pull.get('user') or {}).get('login'))
-
-
-          def withdrawal_state(pr):
-              return ('automerge' in {label['name'] for label in pr['labels']},
-                      pr['isDraft'], pr['baseRefName'])
-
-
-          def request_time(request):
-              try:
-                  enabled = datetime.fromisoformat(request['enabledAt'].replace('Z', '+00:00'))
-                  if enabled.tzinfo is None:
-                      return None
-                  return enabled
-              except (KeyError, TypeError, ValueError, AttributeError):
-                  return None
-
-
-          def withdrawal_intent(repo, number, pr, previous_observation, default_branch):
-              # A surviving positive evaluator owns only the same request and stable PR
-              # identity observed while eligible, even if a new commit arrives meanwhile.
-              if previous_observation is not UNOBSERVED_REQUEST:
-                  return (previous_observation is not None
-                          and eligible(previous_observation, default_branch,
-                                       {canonical_author(pr['author'])})
-                          and cancellation_identity(previous_observation) == cancellation_identity(pr)
-                          and pr.get('autoMergeRequest') == previous_observation.get('autoMergeRequest'))
-              # A queued evaluator still needs the original withdrawal event. A synchronize
-              # wakeup alone cannot claim an existing, potentially manual native request.
-              path = os.environ.get('GITHUB_EVENT_PATH')
-              if not path or os.environ.get('GITHUB_EVENT_NAME') not in {'pull_request', 'pull_request_target'}:
-                  return False
-              with open(path, encoding='utf-8') as stream:
-                  event = json.load(stream)
-              pull = event.get('pull_request') or {}
-              labelled = 'automerge' in {label['name'] for label in pr['labels']}
-              removal = (event.get('action') == 'unlabeled'
-                         and (event.get('label') or {}).get('name') == 'automerge'
-                         and not labelled)
-              labelled_withdrawal = (labelled
-                                    and ((event.get('action') == 'converted_to_draft' and pr['isDraft'])
-                                         or (event.get('action') == 'edited'
-                                             and (event.get('changes') or {}).get('base')
-                                             and pr['baseRefName'] != default_branch)))
-              if not ((removal or labelled_withdrawal)
-                      and (event.get('repository') or {}).get('full_name') == repo
-                      and event.get('number') == int(number)
-                      and event_identity_matches(repo, pr, pull)):
-                  return False
-              return request_predates_event(pr, pull)
-
-
-          def request_predates_event(pr, pull):
-              enabled = request_time(pr.get('autoMergeRequest'))
-              try:
-                  withdrawn = datetime.fromisoformat(pull['updated_at'].replace('Z', '+00:00'))
-              except (KeyError, TypeError, ValueError, AttributeError):
-                  withdrawn = None
-              if enabled is None or withdrawn is None or withdrawn.tzinfo is None:
-                  print('Preserved pending auto-merge: withdrawal/request timestamps are unavailable or invalid.')
-                  return False
-              if enabled >= withdrawn:
-                  print('Preserved pending auto-merge: request does not provably predate the withdrawal event.')
-                  return False
-              return True
-
-
-          def cancel_withdrawn_request(repo, number, pr, default_branch, authors, previous_observation=UNOBSERVED_REQUEST):
-              # Existing request equality is a read-side guard, not an atomic server CAS.
-              # Preserve restored intent and unknown metadata; never broaden positive merges.
-              identity = cancellation_identity(pr)
-              if pr.get('autoMergeRequest') and request_time(pr['autoMergeRequest']) is None:
-                  print('Preserved pending auto-merge: withdrawal/request timestamps are unavailable or invalid.')
-                  return
-              if (pr['state'] != 'OPEN' or not pr.get('autoMergeRequest')
-                      or identity is None or pr['number'] != int(number)
-                      or pr['isCrossRepository'] is not (pr['headRepository']['nameWithOwner'] != repo)
-                      or request_time(pr['autoMergeRequest']) is None
-                      or eligible(pr, default_branch, authors)
-                      or canonical_author(pr['author']) not in authors
-                      or not withdrawal_intent(repo, number, pr, previous_observation, default_branch)):
-                  return
-              fresh = snapshot(repo, number)
-              if (fresh['state'] != 'OPEN' or eligible(fresh, default_branch, authors)
-                      or cancellation_identity(fresh) != identity
-                      or withdrawal_state(fresh) != withdrawal_state(pr)
-                      or fresh.get('autoMergeRequest') != pr['autoMergeRequest']):
-                  print('Withdrawal changed; a later event must evaluate the current intent.')
-                  return
-              gh('pr', 'merge', number, '--repo', repo, '--disable-auto')
-              print('Disabled the existing auto-merge request after verified withdrawal.')
-
-
-          def cancel_from_target_event(repo, number, default_branch, authors):
-              # This path never evaluates checks, enables auto-merge, or merges. PTR
-              # runs the default-branch workflow; no PR code is checked out or run.
-              if (os.environ.get('GITHUB_EVENT_NAME') != 'pull_request_target'
-                      or os.environ.get('GITHUB_REF') != f'refs/heads/{default_branch}'):
-                  raise RuntimeError('Withdrawal-only requires the trusted default PR-target context.')
-              with open(os.environ['GITHUB_EVENT_PATH'], encoding='utf-8') as stream:
-                  event = json.load(stream)
-              pull = event.get('pull_request') or {}
-              base, head = pull.get('base') or {}, pull.get('head') or {}
-              withdrawal = ((event.get('action') == 'unlabeled'
-                             and (event.get('label') or {}).get('name') == 'automerge')
-                            or event.get('action') == 'converted_to_draft'
-                            or (event.get('action') == 'edited'
-                                and (event.get('changes') or {}).get('base')
-                                and base.get('ref') != default_branch))
-              head_repo = (head.get('repo') or {}).get('full_name')
-              if (not withdrawal or not head_repo
-                      or (event.get('repository') or {}).get('full_name') != repo
-                      or (base.get('repo') or {}).get('full_name') != repo
-                      or event.get('number') != int(number)):
-                  print('No matching withdrawal event; no request changed.')
-                  return
-              pr = snapshot(repo, number)
-              if (eligible(pr, default_branch, authors)
-                      or not event_identity_matches(repo, pr, pull)
-                      or not request_predates_event(pr, pull)):
-                  print('Withdrawal identity, eligibility or request time changed; no request changed.')
-                  return
-              cancel_withdrawn_request(repo, number, pr, default_branch, authors)
-
-
-          def native_request_identity(request):
-              # GitHub exposes no request ID. Compare every request setting and creator;
-              # display-name / gh bot-projection differences are not request identities.
-              fields = ('enabledAt', 'mergeMethod', 'authorEmail', 'commitHeadline', 'commitBody')
-              if (not isinstance(request, dict) or any(key not in request for key in fields)
-                      or request_time(request) is None
-                      or request['mergeMethod'] not in {'MERGE', 'SQUASH', 'REBASE'}
-                      or any(request[key] is not None and not isinstance(request[key], str)
-                             for key in ('authorEmail', 'commitHeadline', 'commitBody'))):
-                  return None
-              creator = request.get('enabledBy') or {}
-              if not all(isinstance(creator.get(key), str) and creator[key] for key in ('id', 'login')):
-                  return None
-              return tuple(request[key] for key in fields) + (creator['id'], creator['login'])
-
-
-          def request_native_with_cleanup(repo, number, observed, default_branch, authors, method, checked_state=None):
-              # Retain authenticated-user validation even when native enable omits authorEmail.
-              email = merge_author_email()
-              account_id, account_login = email.split('@', 1)[0].split('+', 1)
-              for attempt in range(4):
-                  fresh = snapshot(repo, number)
-                  identity = cancellation_identity(fresh)
-                  if (identity is None or identity != cancellation_identity(observed)
-                          or fresh['number'] != int(number)
-                          or fresh['isCrossRepository'] is not (fresh['headRepository']['nameWithOwner'] != repo)
-                          or fresh.get('id') != observed.get('id') or not fresh.get('id')
-                          or fresh['headRefOid'] != observed['headRefOid']
-                          or fresh['baseRefName'] != observed['baseRefName']
-                          or fresh.get('baseRefOid') != observed.get('baseRefOid')
-                          or not eligible(fresh, default_branch, authors)):
-                      print('Native request identity or eligibility changed; no mutation.')
-                      return
-                  if 'autoMergeRequest' not in fresh:
-                      raise RuntimeError('Native request metadata is unavailable.')
-                  if fresh['autoMergeRequest'] is not None:
-                      print('Preserved an existing native request; no replacement requested.')
-                      return
-                  if checked_state is not None:
-                      required, run_id, original_checks, deadline = checked_state
-                      if time.monotonic() >= deadline:
-                          raise RuntimeError('Legacy checked deadline expired; no mutation.')
-                      ready, checks = checked_snapshot(fresh, required, run_id, False)
-                      if not ready or checks != original_checks:
-                          print('Legacy checked state changed; no mutation.')
-                          return
-                  # gh 2.87 supports these internally, but its --json allowlist omits
-                  # isMergeQueueEnabled. Read the schema fields explicitly and bind them.
-                  state_query = '''query($id:ID!) { node(id:$id) { ... on PullRequest {
-                    id headRefOid baseRefName mergeStateStatus isMergeQueueEnabled
-                  } } }'''
-                  state_response = json.loads(gh('api', 'graphql', '-f', 'query=' + state_query,
-                                                '-f', 'id=' + fresh['id']))
-                  state = (state_response.get('data') or {}).get('node') or {}
-                  if (state_response.get('errors') or state.get('id') != fresh['id']
-                          or state.get('headRefOid') != fresh['headRefOid']
-                          or state.get('baseRefName') != fresh['baseRefName']):
-                      raise RuntimeError('Native merge-state identity changed; no mutation.')
-                  status = state.get('mergeStateStatus')
-                  queued = state.get('isMergeQueueEnabled')
-                  if (type(status) is not str
-                          or status not in {'CLEAN', 'HAS_HOOKS', 'UNSTABLE', 'BEHIND', 'BLOCKED', 'DIRTY', 'UNKNOWN'}
-                          or type(queued) is not bool):
-                      raise RuntimeError('Native merge-state or merge-queue metadata is unavailable.')
-                  if status != 'UNKNOWN':
-                      break
-                  if attempt == 3:
-                      raise RuntimeError('Native merge-state metadata is unavailable after bounded UNKNOWN reads.')
-                  # GitHub may briefly be computing mergeability after a push. Only this
-                  # explicit state is retried; each wait restarts all intent/identity guards.
-                  time.sleep(4)
-              if not queued and status in {'CLEAN', 'HAS_HOOKS', 'UNSTABLE'}:
-                  # Match gh's existing immediate-merge decision; never turn an API error
-                  # into a second mutation. Protected server rules and exact-head CAS apply.
-                  gh('pr', 'merge', number, '--repo', repo, f'--{method}',
-                     *merge_author_options(), '--match-head-commit', fresh['headRefOid'])
-                  print('Requested a protected direct merge at its exact head, not native enable.')
-                  return
-              correlation = os.urandom(16).hex()
-              query = '''mutation($id:ID!,$head:GitObjectID!,$method:PullRequestMergeMethod!,$client:String!) {
-                enablePullRequestAutoMerge(input:{pullRequestId:$id,expectedHeadOid:$head,
-                  mergeMethod:$method,clientMutationId:$client}) {
-                  clientMutationId actor{login ... on User{id databaseId}}
-                  pullRequest{id number state headRefOid autoMergeRequest{
-                    enabledAt enabledBy{login ... on User{id}} mergeMethod authorEmail commitHeadline commitBody
-                  }}
-                }
-              }'''
-              response = json.loads(gh('api', 'graphql', '-f', 'query=' + query,
-                                       '-f', 'id=' + fresh['id'], '-f', 'head=' + fresh['headRefOid'],
-                                       '-f', 'method=' + method.upper(), '-f', 'client=' + correlation))
-              payload = (response.get('data') or {}).get('enablePullRequestAutoMerge') or {}
-              actor = payload.get('actor') or {}
-              acknowledged = payload.get('pullRequest') or {}
-              if (response.get('errors') or payload.get('clientMutationId') != correlation
-                      or actor.get('login') != account_login or actor.get('databaseId') != int(account_id)
-                      or acknowledged.get('id') != fresh['id'] or acknowledged.get('number') != int(number)):
-                  raise RuntimeError('Native enable acknowledgement is unavailable or mismatched; do not replay.')
-              if acknowledged.get('state') == 'MERGED':
-                  print('GitHub merged before request cleanup; no pending-request cancellation is possible.')
-                  return
-              request = acknowledged.get('autoMergeRequest')
-              request_identity = native_request_identity(request)
-              if (acknowledged.get('state') != 'OPEN' or request_identity is None
-                      or request['enabledBy']['login'] != account_login
-                      or request['enabledBy']['id'] != actor.get('id')
-                      or request['mergeMethod'] != method.upper()):
-                  raise RuntimeError('Native request ownership is unavailable; no cancellation or replay.')
-              current = snapshot(repo, number)
-              if (current.get('id') != fresh['id'] or cancellation_identity(current) != identity
-                      or native_request_identity(current.get('autoMergeRequest')) != request_identity):
-                  print('Acknowledged request changed or disappeared; preserved current state.')
-                  return
-              # Correlate cleanup to the acknowledged request, not merely a later timestamp.
-              # No request ID or atomic read/disable CAS exists; same-fingerprint ABA
-              # and concurrent replacement after the final read remain platform limits.
-              owned_observation = dict(fresh, autoMergeRequest=current['autoMergeRequest'])
-              cancel_withdrawn_request(repo, number, current, default_branch, authors, owned_observation)
-              print('Native request acknowledged and current eligibility rechecked.')
-
-
-          def request_protected_merge(repo, number, default_branch, authors, method, required):
-              pr = snapshot(repo, number)
-              if not eligible(pr, default_branch, authors):
-                  cancel_withdrawn_request(repo, number, pr, default_branch, authors)
-                  print('PR is not eligible for auto-merge.')
-                  return
-              if not native_auto_merge_enabled(repo):
-                  raise RuntimeError('Native auto-merge is disabled for this repository; use the default checked merge mode.')
-              # GitHub evaluates effective active rules, including organization rules.
-              # Fail closed on missing rules, unreadable rules, or an unprotected gate.
-              rules = json.loads(gh('api', f'repos/{repo}/rules/branches/{quote(default_branch, safe="")}'))
-              required = required | {'CI gate'}
-              protected = set()
-              strict = False
-              for rule in rules:
-                  if rule.get('type') == 'required_status_checks':
-                      parameters = rule.get('parameters', {})
-                      strict |= parameters.get('strict_required_status_checks_policy') is True
-                      protected.update(check['context'] for check in parameters.get('required_status_checks', []))
-              if not strict or not required <= protected:
-                  raise RuntimeError('Native mode requires a strict protected branch and every required check, including CI gate.')
-              fresh = snapshot(repo, number)
-              if not eligible(fresh, default_branch, authors):
-                  cancel_withdrawn_request(repo, number, fresh, default_branch, authors,
-                                           pr)
-                  print('Eligibility changed; no merge requested.')
-                  return
-              if fresh['headRefOid'] != pr['headRefOid']:
-                  print('PR head changed; the synchronize event will retry.')
-                  return
-              request_native_with_cleanup(repo, number, fresh, default_branch, authors, method)
-
-
-          def reviewed_single_pass(repo, default_branch, authors, method, required, actions_authors):
-              # Event payloads only wake this evaluator. Every candidate comes from
-              # GitHub's authoritative, paginated open-PR list, never an artifact.
-              allowed_events = {'pull_request', 'pull_request_target', 'pull_request_review',
-                                'workflow_run', 'status', 'check_run', 'check_suite',
-                                'schedule', 'workflow_dispatch'}
-              if os.environ.get('GITHUB_EVENT_NAME') not in allowed_events:
-                  raise RuntimeError('Unsupported single-pass wakeup event')
-              with open(os.environ['GITHUB_EVENT_PATH'], encoding='utf-8') as stream:
-                  event = json.load(stream)
-              if (event.get('repository') or {}).get('full_name') != repo:
-                  raise RuntimeError('Wakeup repository does not match the current repository')
-              run_id = os.environ.get('GITHUB_RUN_ID', '')
-              if re.fullmatch(r'[1-9][0-9]*', run_id) is None:
-                  raise RuntimeError('A verified current workflow run is required')
-              current_run = json.loads(gh('api', f'repos/{repo}/actions/runs/{run_id}'))
-              workflow_id = current_run.get('workflow_id')
-              if ((current_run.get('repository') or {}).get('full_name') != repo
-                      or current_run.get('id') != int(run_id)
-                      or not isinstance(workflow_id, int) or isinstance(workflow_id, bool)
-                      or workflow_id < 1):
-                  raise RuntimeError('Could not verify the current orchestration workflow')
-              run_cache = {run_id: current_run}
-              check_cache = {}
-              job_cache = {}
-              server = urlparse(os.environ.get('GITHUB_SERVER_URL', 'https://github.com'))
-
-              def own_check(check, head):
-                  name = check.get('name', '')
-                  url = urlparse(check.get('detailsUrl', ''))
-                  match = re.fullmatch('/' + re.escape(repo) + r'/actions/runs/([1-9][0-9]*)/job/([1-9][0-9]*)', url.path)
-                  if (check.get('__typename') != 'CheckRun'
-                          or not (name == 'Auto Merge' or name.endswith(' / Auto Merge'))
-                          or not match or url.query or url.fragment
-                          or (url.scheme, url.netloc) != (server.scheme, server.netloc)):
-                      return False
-                  candidate_id, job_id = match.groups()
-                  if candidate_id not in run_cache:
-                      run_cache[candidate_id] = json.loads(gh('api', f'repos/{repo}/actions/runs/{candidate_id}'))
-                  candidate = run_cache[candidate_id]
-                  if ((candidate.get('repository') or {}).get('full_name') != repo
-                          or candidate.get('id') != int(candidate_id)
-                          or candidate.get('workflow_id') != workflow_id):
-                      return False
-                  # A check URL alone is not provenance: another app can copy it.
-                  # Resolve the actual Actions job and require exactly one matching
-                  # GitHub Actions check on this head, with that job's check ID.
-                  if job_id not in job_cache:
-                      job_cache[job_id] = json.loads(gh('api', f'repos/{repo}/actions/jobs/{job_id}'))
-                  job = job_cache[job_id]
-                  if (job.get('id') != int(job_id) or job.get('run_id') != int(candidate_id)
-                          or job.get('name') != name):
-                      return False
-                  if head not in check_cache:
-                      pages = json.loads(gh('api', '--paginate', '--slurp',
-                                           f'repos/{repo}/commits/{head}/check-runs?filter=all&per_page=100'))
-                      check_cache[head] = [item for page in pages for item in page['check_runs']]
-                  matching = [item for item in check_cache[head]
-                              if item.get('name') == name and item.get('details_url') == check.get('detailsUrl')]
-                  return (len(matching) == 1
-                          and bool(job.get('check_run_url'))
-                          and matching[0].get('url') == job.get('check_run_url')
-                          and matching[0].get('head_sha') == head
-                          and (matching[0].get('app') or {}).get('slug') == 'github-actions')
-
-              def observed(number):
-                  value = snapshot(repo, str(number), reviewed=True)
-                  for key in ('baseRefOid', 'headRefOid'):
-                      if re.fullmatch(r'[0-9a-f]{40}', value.get(key, '')) is None:
-                          raise RuntimeError('Missing current base or head identity')
-                  # PR baseRefOid can remain the historical PR base after main
-                  # advances. Verify ancestry against the actual branch ref.
-                  base = gh('api', f'repos/{repo}/git/ref/heads/{quote(default_branch, safe="")}',
-                            '--jq', '.object.sha')
-                  if re.fullmatch(r'[0-9a-f]{40}', base) is None:
-                      raise RuntimeError('Missing current default branch identity')
-                  head = value['headRefOid']
-                  current_base_in_head = gh('api', f'repos/{repo}/compare/{base}...{head}',
-                                             '--jq', '.merge_base_commit.sha') == base
-                  if not current_base_in_head:
-                      print(f'PR #{number} must include the current default branch before merge.', flush=True)
-                  check_cache.clear()
-                  value['statusCheckRollup'] = [check for check in value['statusCheckRollup'] or []
-                                               if not own_check(check, head)]
-                  ready, state = checked_snapshot(value, required, '', True, actions_authors)
-                  return value, ready and current_base_in_head, (base, value['baseRefOid'], head, state)
-
-              pages = json.loads(gh('api', '--paginate', '--slurp',
-                                   f'repos/{repo}/pulls?state=open&per_page=100'))
-              merge_failures = []
-              for row in (row for page in pages for row in page):
-                  # This inexpensive REST prefilter cannot authorize a merge.
-                  # Each actual decision uses three fresh complete snapshots.
-                  if (row.get('draft') or (row.get('base') or {}).get('ref') != default_branch
-                          or (row.get('user') or {}).get('login') not in authors
-                          or 'automerge' not in {label.get('name') for label in row.get('labels', [])}
-                          or ((row.get('head') or {}).get('repo') or {}).get('full_name') != repo):
-                      continue
-                  number = row.get('number')
-                  if not isinstance(number, int) or isinstance(number, bool) or number < 1:
-                      raise RuntimeError('Malformed candidate pull request identity')
-                  previous = None
-                  stable = True
-                  for _ in range(3):
-                      try:
-                          value, ready, fingerprint = observed(number)
-                      except CheckFailure as error:
-                          print(f'PR #{number} is waiting: {error}', flush=True)
-                          stable = False
-                          break
-                      if (not eligible(value, default_branch, authors) or not ready
-                              or (previous is not None and previous != fingerprint)):
-                          print(f'PR #{number} is not ready or changed; a later wakeup will retry.', flush=True)
-                          stable = False
-                          break
-                      previous = fingerprint
-                  if stable:
-                      try:
-                          gh('pr', 'merge', str(number), '--repo', repo, f'--{method}',
-                             '--author-email', merge_author_email(),
-                             '--match-head-commit', value['headRefOid'])
-                      except subprocess.CalledProcessError as error:
-                          # A head race or per-PR rule rejection must not starve
-                          # other candidates. Do not retry an ambiguous response.
-                          failure = f'#{number} (exit {error.returncode})'
-                          merge_failures.append(failure)
-                          print(f'Merge command did not confirm success for {failure}.', flush=True)
-                          continue
-                      print(f'Merged reviewed PR #{number} at its verified head.', flush=True)
-              if merge_failures:
-                  raise RuntimeError('Merge command failed: ' + ', '.join(merge_failures))
-
-
-          def main():
-              if not os.environ.get('GH_TOKEN', '').strip():
-                  raise RuntimeError('BOT_PAT is missing. Configure it and explicitly forward it from the caller.')
-              repo, number = os.environ['GITHUB_REPOSITORY'], os.environ['PR_NUMBER']
-              single_pass = os.environ.get('REVIEWED_SINGLE_PASS') == 'true'
-              withdrawal_only = os.environ.get('WITHDRAWAL_ONLY') == 'true'
-              if (withdrawal_only or not single_pass) and not number.isdecimal():
-                  raise RuntimeError('A pull-request metadata event with a numeric PR number is required.')
-              authors = {item.strip() for item in os.environ['PR_AUTHORS'].split(',') if item.strip()}
-              if not authors or not authors <= TRUSTED_AUTHORS:
-                  raise RuntimeError('pr-author must be a nonempty subset of the trusted PR authors.')
-              method = os.environ['MERGE_METHOD']
-              if method not in {'merge', 'squash', 'rebase'}:
-                  raise RuntimeError('merge-method must be merge, squash, or rebase.')
-              required = {item.strip() for item in os.environ['REQUIRED_CHECKS'].split(',') if item.strip()}
-              default_branch = gh('api', f'repos/{repo}', '--jq', '.default_branch')
-              reviewed = os.environ.get('REVIEWED_MERGE') == 'true'
-              native = os.environ.get('NATIVE_AUTO_MERGE') == 'true'
-              actions_authors = set()
-              if os.environ.get('ALLOW_DEPENDABOT_ACTIONS_REVIEW') == 'true':
-                  actions_authors.add('dependabot[bot]')
-              if os.environ.get('ALLOW_OWNED_BOT_ACTIONS_REVIEW') == 'true':
-                  actions_authors.add('californiantiramisu')
-              if withdrawal_only:
-                  if native or reviewed or single_pass or actions_authors:
-                      raise RuntimeError('Withdrawal-only cannot be combined with merge or review modes.')
-                  cancel_from_target_event(repo, number, default_branch, authors)
-                  return
-              if (single_pass or actions_authors) and not reviewed:
-                  raise RuntimeError('Single-pass and Actions approval options require reviewed merge')
-              if reviewed and (native or not required):
-                  raise RuntimeError('Reviewed merge requires explicit checks and cannot use native mode.')
-              if single_pass:
-                  reviewed_single_pass(repo, default_branch, authors, method, required, actions_authors)
-                  return
-              if native:
-                  request_protected_merge(repo, number, default_branch, authors, method, required)
-                  return
-              deadline = time.monotonic() + 120 * 60
-              previous_green = None
-              opt_in_observation = UNOBSERVED_REQUEST
-              capability_checked = reviewed
-              protected_fallback = False
-              while time.monotonic() < deadline:
-                  pr = snapshot(repo, number, reviewed=True) if reviewed else snapshot(repo, number)
-                  if reviewed and pr.get('isCrossRepository') is not False:
-                      print('Reviewed merge excludes forks and unknown repository identity.')
-                      return
-                  if not eligible(pr, default_branch, authors):
-                      cancel_withdrawn_request(repo, number, pr, default_branch, authors,
-                                               opt_in_observation)
-                      print('PR is not eligible: author, label, draft, target branch, or open state does not match.')
-                      return
-                  opt_in_observation = pr
-                  if not capability_checked:
-                      capability_checked = True
-                      if not native_auto_merge_enabled(repo):
-                          reviewed = protected_fallback = True
-                          print('Native auto-merge is disabled; waiting for successful checks and a current-head independent review.')
-                          # Discard the unreviewed observation and fetch review history.
-                          continue
-                  if protected_fallback and not pr.get('baseRefOid'):
-                      raise RuntimeError('Cannot verify the current base for a protected merge.')
-                  ready, checks = checked_snapshot(pr, required, os.environ.get('GITHUB_RUN_ID', ''), reviewed, actions_authors)
-                  fingerprint = (pr['headRefOid'], pr.get('baseRefOid') if protected_fallback else None, checks)
-                  if ready and fingerprint == previous_green:
-                      fresh = snapshot(repo, number, reviewed=True) if reviewed else snapshot(repo, number)
-                      if not eligible(fresh, default_branch, authors):
-                          cancel_withdrawn_request(repo, number, fresh, default_branch, authors,
-                                                   opt_in_observation)
-                          print('Eligibility changed; no merge requested.')
-                          return
-                      fresh_ready, fresh_checks = checked_snapshot(fresh, required, os.environ.get('GITHUB_RUN_ID', ''), reviewed, actions_authors)
-                      if (eligible(fresh, default_branch, authors) and fresh_ready
-                              and (fresh['headRefOid'], fresh.get('baseRefOid') if protected_fallback else None, fresh_checks) == fingerprint):
-                          if not reviewed:
-                              request_native_with_cleanup(
-                                  repo, number, fresh, default_branch, authors, method,
-                                  checked_state=(required, os.environ.get('GITHUB_RUN_ID', ''), fresh_checks, deadline))
-                              return
-                          options = [] if reviewed else ['--auto']
-                          gh('pr', 'merge', number, '--repo', repo, *options, f'--{method}',
-                             *merge_author_options(native=not reviewed),
-                             '--match-head-commit', fresh['headRefOid'])
-                          print('Merged reviewed PR head.' if reviewed else
-                                'Requested native auto-merge for the verified PR head; repository protections still apply.')
-                          return
-                      previous_green = None
-                  else:
-                      previous_green = fingerprint if ready else None
-                  print('Waiting for stable successful checks on the current PR head.', flush=True)
-                  time.sleep(30)
-              raise RuntimeError('Checks did not become green within 120 minutes. Inspect pending or missing checks and rerun.')
-
-
-          if __name__ == '__main__':
-              main()
+          exec(compile(os.environ.pop('TOOLKIT_AUTO_MERGE_SOURCE'), '<stdin>', 'exec'))
           PY
