@@ -59,7 +59,7 @@
     ]
   },
   "fuzzing": {
-    "toolkit_ref": "427a937de66be398d624822e1af558c0e019e0df"
+    "toolkit_ref": "b07180c5b397133fd8ba296181eb630fd603d468"
   },
   "container_assets": {
     "oci-builder-linux-amd64.oci.tar": "ghcr.io/victron-venus/oci-builder-amd64",
