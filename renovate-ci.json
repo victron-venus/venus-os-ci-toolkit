@@ -95,6 +95,15 @@
       "matchManagers": ["github-actions"],
       "matchDepTypes": ["github-runner", "uses-with"],
       "enabled": false
+    },
+    {
+      "description": "Resolve Toolkit main workflow pins through the same git-refs source as its runtime and policy pins.",
+      "matchManagers": ["github-actions"],
+      "matchDatasources": ["github-digest"],
+      "matchPackageNames": ["victron-venus/venus-os-ci-toolkit"],
+      "matchCurrentValue": "/^main$/",
+      "overrideDatasource": "git-refs",
+      "overridePackageName": "https://github.com/victron-venus/venus-os-ci-toolkit"
     }
   ]
 }
