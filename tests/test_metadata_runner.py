@@ -37,8 +37,17 @@ def metadata_entrypoint(filename, script):
         command = shlex.split(first.split(" <<", 1)[0])
         stdin = source.rsplit("\nPY", 1)[0]
         expected = "BOT_PAT is missing"
+    # Only this trusted literal is needed by the merger's isolated launcher.
+    # Never copy secret/input expressions from the workflow into the test process.
+    source_key = "TOOLKIT_AUTO_MERGE_SOURCE"
+    literal_environment = {}
+    if source_key in step.get("env", {}):
+        source = step["env"][source_key]
+        if "${{" in source:
+            raise ValueError("Metadata test source must be a literal")
+        literal_environment[source_key] = source
     command[0] = sys.executable
-    return command, stdin, expected
+    return command, stdin, expected, literal_environment
 
 
 class MetadataRunnerTests(unittest.TestCase):
@@ -83,14 +92,17 @@ class MetadataRunnerTests(unittest.TestCase):
                 injected = root / "pythonpath"
                 workspace.mkdir()
                 injected.mkdir()
-                command, stdin, expected = metadata_entrypoint(
+                command, stdin, expected, literal_environment = metadata_entrypoint(
                     filename, root / "metadata.py"
                 )
                 for location in (workspace, injected):
                     with self.subTest(filename=filename, location=location.name):
                         shadow = location / "json.py"
                         shadow.write_text('raise RuntimeError("UNTRUSTED_IMPORT")\n')
-                        environment = {"PATH": os.defpath, "PYTHONPATH": str(injected)}
+                        environment = {
+                            "PATH": os.defpath, "PYTHONPATH": str(injected),
+                            **literal_environment,
+                        }
                         result = subprocess.run(
                             command,
                             input=stdin,
