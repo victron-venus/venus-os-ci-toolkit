@@ -6,7 +6,8 @@ import json
 import os
 import re
 import tempfile
-import textwrap
+import subprocess
+import sys
 import unittest
 from contextlib import contextmanager
 from pathlib import Path
@@ -15,11 +16,9 @@ from unittest.mock import patch
 import yaml
 
 WORKFLOW = Path(__file__).resolve().parents[1] / ".github/workflows/auto-merge.yml"
-SOURCE = textwrap.dedent(
-    WORKFLOW.read_text()
-    .split("python3 -I - <<'PY'\n", 1)[1]
-    .rsplit("\n          PY", 1)[0]
-)
+SOURCE = yaml.safe_load(WORKFLOW.read_text())["jobs"]["auto-merge"]["steps"][1]["env"][
+    "TOOLKIT_AUTO_MERGE_SOURCE"
+]
 
 
 def own_check():
@@ -1250,6 +1249,82 @@ class NativeRequestReconciliationTests(unittest.TestCase):
             caller = yaml.safe_load((WORKFLOW.parents[2] / name).read_text())
             self.assertIs(caller["concurrency"]["cancel-in-progress"], False)
             self.assertIn("github.run_id", caller["concurrency"]["group"])
+
+
+
+STEP = yaml.safe_load(WORKFLOW.read_text())["jobs"]["auto-merge"]["steps"][1]
+KEY = "TOOLKIT_AUTO_MERGE_SOURCE"
+SOURCE = STEP["env"][KEY]
+PREFIX = "python3 -I - <<'PY'\n"
+assert STEP["run"].startswith(PREFIX) and STEP["run"].endswith("\nPY\n")
+WRAPPER = STEP["run"][len(PREFIX) : -3]
+
+
+class SourceTransportTests(unittest.TestCase):
+    """Check real interpreter entry semantics and fail-closed transport boundaries."""
+
+    def run_payload(self, payload=None):
+        # No credentials or arbitrary inherited process environment enter this child.
+        env = {"PATH": os.defpath, "TRANSPORT_SENTINEL": "preserved"}
+        if payload is not None:
+            env[KEY] = payload
+        return subprocess.run(
+            [sys.executable, "-I", "-"],
+            input=WRAPPER,
+            text=True,
+            capture_output=True,
+            env=env,
+            timeout=5,
+            check=False,
+        )
+
+    def test_original_source_loads_after_environment_is_removed(self):
+        namespace = {"__name__": "workflow_under_test", "__file__": "<stdin>"}
+        with patch.dict(os.environ, {KEY: SOURCE}):
+            # pylint: disable-next=exec-used
+            exec(compile(WRAPPER, "<stdin>", "exec"), namespace)  # noqa: S102
+            self.assertNotIn(KEY, os.environ)
+        self.assertTrue(callable(namespace["main"]))
+        self.assertEqual(namespace["main"].__code__.co_filename, "<stdin>")
+        self.assertEqual(namespace["__name__"], "workflow_under_test")
+
+    def test_real_stdin_entry_runs_once_and_does_not_leak_source_to_child(self):
+        payload = """import json, os, subprocess, sys
+if __name__ == '__main__':
+    child = subprocess.check_output([sys.executable, '-I', '-c',
+        "import os; print(os.environ.get('TOOLKIT_AUTO_MERGE_SOURCE', 'absent'))"], text=True)
+    print(json.dumps({'name': __name__, 'file': __file__, 'argv': sys.argv,
+        'isolated': sys.flags.isolated, 'source_present': 'TOOLKIT_AUTO_MERGE_SOURCE' in os.environ,
+        'child': child.strip(), 'sentinel': os.environ.get('TRANSPORT_SENTINEL')}))
+"""
+        # Exercise the environment transport with the same size as the real payload.
+        payload += "#" + "x" * (len(SOURCE.encode()) - len(payload.encode()) - 2) + "\n"
+        self.assertEqual(len(payload.encode()), len(SOURCE.encode()))
+        result = self.run_payload(payload)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(len(result.stdout.splitlines()), 1)
+        self.assertEqual(json.loads(result.stdout), {
+            "name": "__main__", "file": "<stdin>", "argv": ["-"],
+            "isolated": 1, "source_present": False, "child": "absent", "sentinel": "preserved",
+        })
+
+    def test_missing_payload_fails_without_executing_code(self):
+        result = self.run_payload()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.stdout, "")
+        self.assertIn("KeyError", result.stderr)
+
+    def test_malformed_payload_compiles_before_any_statement_executes(self):
+        result = self.run_payload("print('UNEXPECTED_EXECUTION')\nif:\n")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.stdout, "")
+        self.assertIn("SyntaxError", result.stderr)
+
+    def test_runtime_failure_propagates_without_replay(self):
+        result = self.run_payload("print('ONCE', flush=True)\nraise RuntimeError('fixed-test-error')\n")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.stdout, "ONCE\n")
+        self.assertIn("RuntimeError", result.stderr)
 
 
 
