@@ -111,7 +111,7 @@ jobs:
       # Deliberately no checkout: the consumer has no Python dependency files.
       # Update this source pin when changing the composite action under test.
       - name: Exercise the downloaded composite action
-        uses: victron-venus/venus-os-ci-toolkit/actions/setup-python@b07180c5b397133fd8ba296181eb630fd603d468 # main
+        uses: victron-venus/venus-os-ci-toolkit/actions/setup-python@d4b21d156067ce58f89f89149bfad545e1889ae7 # main
         with:
           python-version: '3.12'
       - name: Verify tools in an empty consumer
