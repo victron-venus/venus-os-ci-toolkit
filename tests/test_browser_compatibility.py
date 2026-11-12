@@ -244,6 +244,69 @@ class BrowserCompatibilityTests(unittest.TestCase):
             step = next(row for row in WORKFLOW["jobs"][job]["steps"] if row.get("name") == name)
             self.assertEqual(step["env"]["BROWSER_REQUIRED_PROFILE"], "${{ inputs.browser-required-profile }}")
 
+    def test_windows_scope_preserves_inventory_and_reports_only_actual_windows_coverage(self):
+        import shutil
+        for profile in ("baseline", "windows-firefox-1.62.1"):
+            for channel in ("beta", "rc", "stable"):
+                with self.subTest(profile=profile, channel=channel):
+                    shutil.rmtree(self.root / "evidence", ignore_errors=True)
+                    (self.root / "output").unlink(missing_ok=True)
+                    full = channel in ("rc", "stable")
+                    inventory = self.regression_targets() if profile != "baseline" else self.release_targets()
+                    result = self.plan(inventory, BROWSER_PLATFORM_SCOPE="windows", BROWSER_REQUIRED_PROFILE=profile,
+                                       BROWSER_RELEASE_CHANNEL=channel, BROWSER_EXTENDED=str(full).lower())
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    coverage = self.output("coverage")
+                    selected = self.output()["include"]
+                    self.assertEqual(len(selected), 11 if full else 2 if profile != "baseline" else 1)
+                    self.assertTrue(all(row["os"] == "windows-2022" for row in selected))
+                    self.assertEqual(len(coverage["skippedTargets"]), 24 if full else 4)
+                    rows, directory = self.release_evidence(channel, selected)
+                    env = {"BROWSER_PLATFORM_SCOPE": "windows", "BROWSER_REQUIRED_PROFILE": profile,
+                           "BROWSER_COVERAGE": json.dumps(coverage)}
+                    result = self.verdict(rows, directory, channel=channel, **env)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    receipt = json.loads((self.root / "verdict.json").read_text())
+                    self.assertEqual(receipt["platformCoverage"], "windows-only")
+                    self.assertFalse(receipt["fullPlatformQualified"])
+                    self.assertEqual(len(receipt["targets"]), len(selected))
+                    self.assertNotEqual(self.verdict(rows, directory, channel=channel).returncode, 0)
+
+    def test_windows_scope_rejects_incomplete_inventory_unknown_scope_and_linux_fallback(self):
+        rows = self.release_targets()
+        for changed in (rows[:-1], rows[:-1] + [rows[0]]):
+            self.assertNotEqual(self.plan(changed, BROWSER_PLATFORM_SCOPE="windows", BROWSER_RELEASE_CHANNEL="rc",
+                                          BROWSER_EXTENDED="true").returncode, 0)
+        for scope in ("Windows", "windows-only", "", "linux"):
+            self.assertNotEqual(self.plan(rows, BROWSER_PLATFORM_SCOPE=scope, BROWSER_RELEASE_CHANNEL="rc",
+                                          BROWSER_EXTENDED="true").returncode, 0)
+        self.assertNotEqual(self.plan(rows, BROWSER_PLATFORM_SCOPE="windows", BROWSER_RELEASE_CHANNEL="rc",
+                                      BROWSER_EXTENDED="true", **self.reserve_env()).returncode, 0)
+
+    def test_windows_verdict_rejects_forged_coverage_and_stale_or_failed_results(self):
+        result = self.plan(self.release_targets(), BROWSER_PLATFORM_SCOPE="windows", BROWSER_RELEASE_CHANNEL="rc",
+                           BROWSER_EXTENDED="true")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        coverage = self.output("coverage")
+        rows, directory = self.release_evidence(rows=self.output()["include"])
+        env = {"BROWSER_PLATFORM_SCOPE": "windows", "BROWSER_COVERAGE": json.dumps(coverage)}
+        for changed in ({}, coverage | {"platformScope": "all"}, coverage | {"requestedScope": "all"},
+                        coverage | {"hostedRunnersEnabled": False}, coverage | {"skippedTargets": []},
+                        coverage | {"selectedTargetIds": list(reversed(coverage["selectedTargetIds"]))}):
+            self.assertNotEqual(self.verdict(rows, directory, **(env | {"BROWSER_COVERAGE": json.dumps(changed)})).returncode, 0)
+        self.assertNotEqual(self.verdict(rows, directory, **(env | {"CI_HOSTED_RUNNERS_ENABLED": "false"})).returncode, 0)
+        self.assertNotEqual(self.verdict(rows[:-1], directory, **env).returncode, 0)
+        mixed = copy.deepcopy(rows)
+        mixed[0]["os"] = "ubuntu-latest"
+        self.assertNotEqual(self.verdict(mixed, directory, **env).returncode, 0)
+        file = directory / f"browser-release-{rows[0]['id']}-2" / "result.json"
+        original = json.loads(file.read_text())
+        for changed in ({"sourceSha": "b" * 40}, {"runAttempt": "1"}, {"testsFailed": 1}):
+            file.write_text(json.dumps(original | changed))
+            self.assertNotEqual(self.verdict(rows, directory, **env).returncode, 0)
+        file.write_text(json.dumps(original))
+        self.assertEqual(self.verdict(rows, directory, **env).returncode, 0)
+
     def test_historical_profile_preserves_all_baseline_targets_and_full_release_inventory(self):
         rows = self.regression_targets()
         for channel in ("", "nightly", "beta", "rc", "stable"):

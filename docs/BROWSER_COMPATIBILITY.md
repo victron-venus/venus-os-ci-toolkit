@@ -417,3 +417,21 @@ References: [Playwright browser and branded-channel differences](https://playwri
 [Safari WebDriver](https://developer.apple.com/documentation/webkit/testing-with-webdriver-in-safari).
 The Windows prerequisite is implemented by
 [Playwright's dependency installer](https://github.com/microsoft/playwright/blob/main/packages/playwright-core/src/server/registry/dependencies.ts).
+
+## Explicit Windows runtime qualification
+
+`browser-platform-scope: windows` selects only the Windows portion of the
+unchanged, validated 35-target inventory. Beta/nightly baseline selection is the
+current Windows Chromium required target (two required targets with the
+historical Windows Firefox profile). RC/stable selection is all 11 Windows
+targets: three engines across three generations, plus current Chrome and Edge.
+
+The verdict records `platformCoverage: windows-only`,
+`fullPlatformQualified: false`, the exact selected target IDs, and the omitted
+platforms (24 targets for RC/stable). This is Windows runtime evidence, not
+35-target or macOS/Linux qualification. Default `all` and the explicit reduced
+Linux budget policy retain their existing behavior. Windows scope rejects a
+disabled-hosted configuration instead of substituting a Linux runner. Artifact
+identity, actual runtime versions, application assertions, and same-source/run/
+attempt verification remain mandatory. This setting does not select or remove
+release packages; package inventory remains the consumer's separate policy.
