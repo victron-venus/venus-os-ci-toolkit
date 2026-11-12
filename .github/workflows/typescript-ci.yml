@@ -523,7 +523,7 @@ jobs:
       - name: Prepare bounded browser evidence recovery helper
         id: evidence_helper
         if: ${{ always() && inputs.browser-evidence-upload-retry && steps.lock.outcome == 'success' }}
-        timeout-minutes: 2
+        timeout-minutes: 1
         env:
           BROWSER_EVIDENCE_DIRECTORY: .compatibility/${{ matrix.id }}
           BROWSER_EVIDENCE_SNAPSHOT: ${{ runner.temp }}/browser-evidence-${{ matrix.id }}.json
@@ -708,7 +708,7 @@ jobs:
       - name: Snapshot browser evidence for optional upload recovery
         id: evidence_snapshot
         if: ${{ always() && inputs.browser-evidence-upload-retry && steps.evidence_helper.outcome == 'success' && steps.lock.outcome == 'success' }}
-        timeout-minutes: 5
+        timeout-minutes: 1
         env:
           BROWSER_EVIDENCE_DIRECTORY: .compatibility/${{ matrix.id }}
           BROWSER_EVIDENCE_SNAPSHOT: ${{ runner.temp }}/browser-evidence-${{ matrix.id }}.json
@@ -721,7 +721,7 @@ jobs:
         id: evidence_upload
         if: ${{ always() && steps.lock.outcome == 'success' && (inputs.browser-evidence-upload-retry != true || steps.evidence_snapshot.outcome == 'success') }}
         continue-on-error: ${{ inputs.browser-evidence-upload-retry }}
-        timeout-minutes: ${{ inputs.browser-evidence-upload-retry && 8 || 35 }}
+        timeout-minutes: ${{ inputs.browser-evidence-upload-retry && 3 || 35 }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ${{ inputs.browser-evidence-prefix }}-${{ matrix.id }}-${{ github.run_attempt }}
@@ -734,7 +734,7 @@ jobs:
         id: evidence_upload_retry
         if: ${{ always() && inputs.browser-evidence-upload-retry && steps.lock.outcome == 'success' && steps.evidence_snapshot.outcome == 'success' && steps.evidence_upload.outcome == 'failure' }}
         continue-on-error: true
-        timeout-minutes: 8
+        timeout-minutes: 3
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ${{ inputs.browser-evidence-prefix }}-${{ matrix.id }}-${{ github.run_attempt }}
@@ -746,14 +746,14 @@ jobs:
       - name: Read back browser evidence after optional upload recovery
         id: evidence_readback
         if: ${{ always() && inputs.browser-evidence-upload-retry && steps.evidence_snapshot.outcome == 'success' && steps.lock.outcome == 'success' }}
-        timeout-minutes: 5
+        timeout-minutes: 3
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: ${{ inputs.browser-evidence-prefix }}-${{ matrix.id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/browser-evidence-readback-${{ matrix.id }}
       - name: Require exact browser evidence read-back
         if: ${{ always() && inputs.browser-evidence-upload-retry && steps.evidence_snapshot.outcome == 'success' && steps.lock.outcome == 'success' }}
-        timeout-minutes: 2
+        timeout-minutes: 1
         env:
           EVIDENCE_READBACK_OUTCOME: ${{ steps.evidence_readback.outcome }}
           BROWSER_EVIDENCE_DIRECTORY: .compatibility/${{ matrix.id }}

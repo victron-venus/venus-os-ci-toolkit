@@ -406,6 +406,12 @@ Those stages alone consume the former 25-minute budget. The additional ten
 minutes allow for checkout, runtime validation and artifacts without depending
 on a prewarmed runner. Application assertions and their timeouts are unchanged.
 
+Recovery is best-effort within the existing 35-minute browser job ceiling. The
+helper, snapshot and final comparison each have a one-minute cap; each upload
+and the read-back have a three-minute cap. These transport limits do not extend
+application test deadlines, and an exhausted budget remains a failed
+qualification.
+
 References: [Playwright browser and branded-channel differences](https://playwright.dev/docs/browsers),
 [CI platform setup](https://playwright.dev/docs/ci), and
 [Safari WebDriver](https://developer.apple.com/documentation/webkit/testing-with-webdriver-in-safari).

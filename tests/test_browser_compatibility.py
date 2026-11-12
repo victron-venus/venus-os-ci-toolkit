@@ -727,10 +727,10 @@ class BrowserCompatibilityTests(unittest.TestCase):
         primary, retry = uploads
         self.assertEqual(primary["id"], "evidence_upload")
         self.assertEqual(primary["continue-on-error"], "${{ inputs.browser-evidence-upload-retry }}")
-        self.assertEqual(primary["timeout-minutes"], "${{ inputs.browser-evidence-upload-retry && 8 || 35 }}")
+        self.assertEqual(primary["timeout-minutes"], "${{ inputs.browser-evidence-upload-retry && 3 || 35 }}")
         self.assertIn("steps.evidence_upload.outcome == 'failure'", retry["if"])
         self.assertEqual(retry["continue-on-error"], "true")
-        self.assertEqual(retry["timeout-minutes"], "8")
+        self.assertEqual(retry["timeout-minutes"], "3")
         self.assertEqual(primary["with"], retry["with"])
         self.assertEqual(primary["with"]["overwrite"], "false")
         self.assertEqual(primary["with"]["name"],
@@ -745,7 +745,7 @@ class BrowserCompatibilityTests(unittest.TestCase):
         self.assertEqual(recovery["with"]["path"], "${{ runner.temp }}/browser-evidence-readback-${{ matrix.id }}")
         self.assertNotIn("run-id", recovery["with"])
         self.assertNotIn("github-token", recovery["with"])
-        self.assertEqual(recovery["timeout-minutes"], "5")
+        self.assertEqual(recovery["timeout-minutes"], "3")
         self.assertEqual(recovery["if"], "${{ always() && inputs.browser-evidence-upload-retry && steps.evidence_snapshot.outcome == 'success' && steps.lock.outcome == 'success' }}")
 
     def test_upload_recovery_snapshots_and_reads_back_the_exact_hidden_tree(self):
