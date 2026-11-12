@@ -44,6 +44,21 @@ def fixture(kind="tar", *, duplicate=False, symlink=False):
 
 
 class InstallReleaseGhTests(unittest.TestCase):
+    def test_committed_producer_sdks_match_the_renderer(self):
+        rendered = {"jobs": {"prepare": {"steps": [{"uses": "actions/checkout@fixture"}]}}}
+        release_gh_workflow.apply(rendered, {"actions/setup-go": "actions/setup-go@fixture"})
+        expected = rendered["jobs"]["prepare"]["steps"][1]["with"]["go-version"]
+        workflow = yaml.safe_load((ROOT / ".github/workflows/release-pipeline.yml").read_text())
+        producers = []
+        for name, job in workflow["jobs"].items():
+            steps = job.get("steps", [])
+            if any("scripts/install_release_gh.py" in step.get("run", "") for step in steps):
+                versions = [step["with"]["go-version"] for step in steps
+                            if step.get("uses", "").startswith("actions/setup-go@")]
+                self.assertEqual(versions, [expected], name)
+                producers.append(name)
+        self.assertEqual(len(producers), 4)
+
     def test_exact_tar_and_zip_and_hashes(self):
         for kind in ("tar", "zip"):
             raw, artifact, expected = fixture(kind)
