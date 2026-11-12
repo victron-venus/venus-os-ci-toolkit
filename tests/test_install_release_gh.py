@@ -8,8 +8,10 @@ import sys
 import tarfile
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 import zipfile
+
+import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 import install_release_gh as installer
@@ -42,6 +44,21 @@ def fixture(kind="tar", *, duplicate=False, symlink=False):
 
 
 class InstallReleaseGhTests(unittest.TestCase):
+    def test_committed_producer_sdks_match_the_renderer(self):
+        rendered = {"jobs": {"prepare": {"steps": [{"uses": "actions/checkout@fixture"}]}}}
+        release_gh_workflow.apply(rendered, {"actions/setup-go": "actions/setup-go@fixture"})
+        expected = rendered["jobs"]["prepare"]["steps"][1]["with"]["go-version"]
+        workflow = yaml.safe_load((ROOT / ".github/workflows/release-pipeline.yml").read_text())
+        producers = []
+        for name, job in workflow["jobs"].items():
+            steps = job.get("steps", [])
+            if any("scripts/install_release_gh.py" in step.get("run", "") for step in steps):
+                versions = [step["with"]["go-version"] for step in steps
+                            if step.get("uses", "").startswith("actions/setup-go@")]
+                self.assertEqual(versions, [expected], name)
+                producers.append(name)
+        self.assertEqual(len(producers), 4)
+
     def test_exact_tar_and_zip_and_hashes(self):
         for kind in ("tar", "zip"):
             raw, artifact, expected = fixture(kind)
@@ -172,22 +189,57 @@ class InstallReleaseGhTests(unittest.TestCase):
                 run.assert_not_called()
 
     def test_downloader_requires_exact_toolchain_before_network(self):
-        with patch.object(installer.subprocess, "run") as run:
-            run.return_value.stdout = "go version go1.27.2 linux/amd64\n"
-            with self.assertRaisesRegex(ValueError, "exactly Go 1.27.3"):
-                installer.download("https://example.invalid/test")
-            self.assertEqual(run.call_count, 1)
-            env = run.call_args.kwargs["env"]
-            self.assertEqual(env["GOTOOLCHAIN"], "local")
-            self.assertEqual(env["GO111MODULE"], "off")
-            self.assertEqual(env["GODEBUG"], "fips140=on")
+        for version in ("go1.27.3", "go1.27.40", "go1.28.0", "devel go1.27.4"):
+            with self.subTest(version=version), patch.object(installer.subprocess, "run") as run:
+                run.return_value.stdout = f"go version {version} linux/amd64\n"
+                with self.assertRaisesRegex(ValueError, "exactly Go 1.27.4"):
+                    installer.download("https://example.invalid/test")
+                self.assertEqual(run.call_count, 1)
+                env = run.call_args.kwargs["env"]
+                self.assertEqual(env["GOTOOLCHAIN"], "local")
+                self.assertEqual(env["GO111MODULE"], "off")
+                self.assertEqual(env["GODEBUG"], "fips140=on")
+
+    def test_exact_downloader_toolchain_keeps_isolated_fips_profile(self):
+        def run(command, **kwargs):
+            env = kwargs["env"]
+            expected = {"GOTOOLCHAIN": "local", "GO111MODULE": "off", "GOWORK": "off",
+                        "GOENV": "off", "CGO_ENABLED": "0", "GODEBUG": "fips140=on",
+                        "GOMAXPROCS": "2", "GOFLAGS": "-p=2"}
+            self.assertEqual({key: value for key, value in env.items() if key.startswith(("GO", "CGO"))}, expected)
+            if command == ["go", "version"]:
+                self.assertEqual(kwargs["timeout"], 15)
+                return Mock(stdout="go version go1.27.4 linux/amd64\n")
+            self.assertEqual(command[:3], ["go", "run", str(ROOT / "scripts/download_release_gh.go")])
+            self.assertEqual(command[3], "https://example.invalid/test")
+            self.assertEqual(kwargs["timeout"], 180)
+            self.assertEqual(Path(kwargs["cwd"]), Path(command[4]).parent)
+            Path(command[4]).write_bytes(b"bounded synthetic archive")
+            return Mock()
+
+        with patch.dict(os.environ, {"GOTOOLCHAIN": "auto", "GODEBUG": "fips140=off", "GOPROXY": "private"}), \
+                patch.object(installer.subprocess, "run", side_effect=run) as subprocess_run:
+            self.assertEqual(installer.download("https://example.invalid/test"), b"bounded synthetic archive")
+        self.assertEqual(subprocess_run.call_count, 2)
+        self.assertFalse(Path(subprocess_run.call_args.args[0][4]).parent.exists())
+
+    def test_downloader_runtime_and_all_direct_producers_use_one_sdk(self):
+        for name in ("download_release_gh.go", "download_release_gh_test.go"):
+            self.assertIn('runtime.Version() != "go1.27.4"', (ROOT / "scripts" / name).read_text())
+        contracts = yaml.load((ROOT / ".github/workflows/contract-tests.yml").read_text(), Loader=yaml.BaseLoader)
+        for job in ("release-gh-contract", "scorecard-contracts"):
+            setup = [step for step in contracts["jobs"][job]["steps"]
+                     if step.get("uses", "").startswith("actions/setup-go@")]
+            self.assertEqual(len(setup), 1)
+            self.assertEqual(setup[0]["with"]["go-version"], "1.27.4")
+        self.assertRegex((ROOT / "tools/scorecard-scan/go.mod").read_text(), r"(?m)^go 1\.27\.4$")
 
     def test_every_publication_stage_installs_same_client_after_checkout(self):
-        names = ("prepare", "candidate", "stable", "final")
+        names = ("prepare", "candidate", "stable", "final", "closed_stable_resolve", "closed_existing_resolve")
         workflow = {"jobs": {name: {"steps": [{"uses": "actions/checkout@pin"}, {"run": "publish"}]} for name in names}}
         release_gh_workflow.apply(workflow, {"actions/setup-go": "actions/setup-go@pin"})
         for job in workflow["jobs"].values():
-            self.assertEqual(job["steps"][1]["with"]["go-version"], "1.27.3")
+            self.assertEqual(job["steps"][1]["with"]["go-version"], "1.27.4")
             self.assertEqual(job["steps"][2], release_gh_workflow.installer())
             self.assertEqual(job["steps"][3], {"run": "publish"})
 

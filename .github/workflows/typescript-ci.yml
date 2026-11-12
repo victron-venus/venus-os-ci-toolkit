@@ -76,11 +76,11 @@ on:
         type: boolean
         default: false
       browser-platform-scope:
-        description: 'Ordinary browser CI scope: all or linux (ubuntu-latest reserve targets only); release qualification requires all'
+        description: 'Browser runtime scope: all, linux reserve, or explicit windows-only qualification; package builds are unchanged'
         type: string
         default: 'all'
       browser-release-channel:
-        description: 'Optional release qualification: nightly/beta require the declared profile, rc/stable require all 35'
+        description: 'Release qualification: declared required profile, or full scoped inventory for rc/stable; omitted platforms are reported'
         type: string
         default: ''
       browser-required-profile:
@@ -253,7 +253,7 @@ jobs:
           const isRegression = row => row.os === 'windows-2022' && row.engine === 'firefox' && row.playwright === '1.62.1' && !row.channel;
           if (regressionProfile && (rows.filter(isRegression).length !== 1 || rows.find(isRegression).tier !== 'required')) fail('The historical Windows Firefox profile requires its exact target');
           const requestedScope = process.env.BROWSER_PLATFORM_SCOPE ?? 'all';
-          if (!['all', 'linux'].includes(requestedScope)) fail('Browser platform scope must be all or linux');
+          if (!['all', 'linux', 'windows'].includes(requestedScope)) fail('Browser platform scope must be all, linux or windows');
           const hostedSetting = process.env.CI_HOSTED_RUNNERS_ENABLED || 'true';
           if (!['true', 'false'].includes(hostedSetting)) fail('CI_HOSTED_RUNNERS_ENABLED must be true or false');
           const hostedEnabled = hostedSetting === 'true';
@@ -262,13 +262,14 @@ jobs:
             try { labels = JSON.parse(process.env.CI_RUNNER_LABELS || '[]'); } catch { fail('Invalid CI_RUNNER_LABELS'); }
             if (!['self-hosted', 'k3s'].includes(process.env.CI_RUNNER_MODE) || !Array.isArray(labels) || !labels.length || labels.some(label => typeof label !== 'string' || !label.trim()) || process.env.RUNNER_ENVIRONMENT !== 'self-hosted') fail('Disabled hosted runners require a configured self-hosted CI runner');
           }
+          if (requestedScope === 'windows' && !hostedEnabled) fail('Windows qualification requires hosted Windows runners; Linux fallback is forbidden');
           const platformScope = hostedEnabled ? requestedScope : 'linux';
           const requested = rows.filter(row => row.tier === 'required' || process.env.BROWSER_EXTENDED === 'true');
-          const selected = requested.filter(row => platformScope === 'all' || row.os === 'ubuntu-latest');
+          const selected = requested.filter(row => platformScope === 'all' || (platformScope === 'windows' ? row.os === 'windows-2022' : row.os === 'ubuntu-latest'));
           if (!selected.some(row => row.tier === 'required')) fail('At least one required target in the selected platform scope is mandatory');
           const releaseChannel = process.env.BROWSER_RELEASE_CHANNEL || '';
           if (!['', 'nightly', 'beta', 'rc', 'stable'].includes(releaseChannel)) fail('Unknown browser release channel');
-          if (releaseChannel && requestedScope !== 'all') fail('Release inventory selection requires all platforms; use the explicit hosted budget policy for unavailable runners');
+          if (releaseChannel && requestedScope === 'linux') fail('Release inventory selection requires all platforms or explicit Windows scope; use the explicit hosted budget policy for unavailable runners');
           if (releaseChannel) {
             const full = ['rc', 'stable'].includes(releaseChannel);
             if (rows.length !== 35 || rows.filter(row => row.tier === 'required').length !== requiredCount) fail('Release qualification requires the reviewed 35-target inventory and declared required profile');
@@ -841,6 +842,7 @@ jobs:
         env:
           BROWSER_MATRIX: ${{ needs.browser-plan.outputs.matrix }}
           BROWSER_COVERAGE: ${{ needs.browser-plan.outputs.coverage }}
+          BROWSER_PLATFORM_SCOPE: ${{ inputs.browser-platform-scope }}
           CI_HOSTED_RUNNERS_ENABLED: ${{ vars.CI_HOSTED_RUNNERS_ENABLED }}
           BROWSER_RELEASE_CHANNEL: ${{ inputs.browser-release-channel }}
           BROWSER_REQUIRED_PROFILE: ${{ inputs.browser-required-profile }}
@@ -862,11 +864,18 @@ jobs:
           const regressionProfile = requiredProfile === 'windows-firefox-1.62.1';
           const requiredCount = regressionProfile ? 6 : 5;
           const full = ['rc', 'stable'].includes(releaseChannel);
+          const requestedScope = process.env.BROWSER_PLATFORM_SCOPE ?? 'all';
+          if (!['all', 'windows'].includes(requestedScope)) fail('Release verdict requires all or explicit Windows scope');
+          const windows = requestedScope === 'windows';
           const reduced = process.env.CI_HOSTED_RUNNERS_ENABLED === 'false';
+          if (windows && reduced) fail('Windows qualification cannot use Linux fallback');
+          const selectedRequiredCount = windows ? (regressionProfile ? 2 : 1) : reduced ? 3 : requiredCount;
+          const selectedCount = windows ? (full ? 11 : selectedRequiredCount) : reduced ? (full ? 13 : 3) : (full ? 35 : requiredCount);
           const coverage = JSON.parse(process.env.BROWSER_COVERAGE || 'null');
-          if (!Array.isArray(rows) || rows.length !== (reduced ? (full ? 13 : 3) : (full ? 35 : requiredCount)) || new Set(rows.map(row => row.id)).size !== rows.length) fail('Incorrect or duplicate release target set');
-          if (rows.filter(row => row.tier === 'required').length !== (reduced ? 3 : requiredCount) || (!full && rows.some(row => row.tier !== 'required'))) fail('Incorrect required release targets');
+          if (!Array.isArray(rows) || rows.length !== selectedCount || new Set(rows.map(row => row.id)).size !== rows.length) fail('Incorrect or duplicate release target set');
+          if (rows.filter(row => row.tier === 'required').length !== selectedRequiredCount || (!full && rows.some(row => row.tier !== 'required'))) fail('Incorrect required release targets');
           if (reduced && (rows.some(row => row.os !== 'ubuntu-latest') || coverage?.hostedRunnersEnabled !== false || coverage.platformScope !== 'linux' || coverage.releaseChannel !== releaseChannel || JSON.stringify(coverage.selectedTargetIds) !== JSON.stringify(rows.map(row => row.id)) || coverage.skippedTargets?.length !== (full ? 22 : requiredCount - 3))) fail('Missing explicit reduced-platform evidence');
+          if (windows && (rows.some(row => row.os !== 'windows-2022') || coverage?.hostedRunnersEnabled !== true || coverage.requestedScope !== 'windows' || coverage.platformScope !== 'windows' || coverage.releaseChannel !== releaseChannel || JSON.stringify(coverage.selectedTargetIds) !== JSON.stringify(rows.map(row => row.id)) || coverage.skippedTargets?.length !== (full ? 24 : 4) || new Set(coverage.skippedTargets.map(row => row.id)).size !== coverage.skippedTargets.length || coverage.skippedTargets.some(row => !['ubuntu-latest', 'ubuntu-26.04', 'macos-15', 'macos-15-intel'].includes(row.os) || row.reason !== 'platform-scope' || rows.some(selected => selected.id === row.id)))) fail('Missing explicit Windows-only qualification evidence');
           if (regressionProfile && !reduced) {
             const matches = rows.filter(row => row.os === 'windows-2022' && row.engine === 'firefox' && row.playwright === '1.62.1' && !row.channel);
             if (matches.length !== 1 || matches[0].tier !== 'required') fail('Missing exact historical Windows Firefox result');
@@ -901,7 +910,7 @@ jobs:
             if (!Number.isSafeInteger(result.testsPassed) || result.testsPassed < 1 || result.testsFailed !== 0 || !Array.isArray(result.scenarios) || result.scenarios.length !== result.testsPassed || new Set(result.scenarios).size !== result.scenarios.length || result.scenarios.some(name => typeof name !== 'string' || !name.trim())) fail('Missing or failed application scenarios');
             return {id: row.id, os: row.os, engine: row.engine, channel: row.channel, playwrightVersion: runtime.playwrightVersion, browserVersion: runtime.browserVersion, testsPassed: result.testsPassed, scenarios: result.scenarios, evidenceSha256: digest};
           });
-          fs.writeFileSync(process.env.BROWSER_VERDICT_FILE, JSON.stringify({...binding, requiredProfile, targets, platformCoverage: reduced ? 'reduced-linux' : 'all-requested', fullPlatformQualified: !reduced, skippedTargets: coverage?.skippedTargets || []}, null, 2) + '\n');
+          fs.writeFileSync(process.env.BROWSER_VERDICT_FILE, JSON.stringify({...binding, requiredProfile, targets, platformCoverage: windows ? 'windows-only' : reduced ? 'reduced-linux' : 'all-requested', fullPlatformQualified: !windows && !reduced, skippedTargets: coverage?.skippedTargets || []}, null, 2) + '\n');
           NODE
       - name: Preserve verified release qualification
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

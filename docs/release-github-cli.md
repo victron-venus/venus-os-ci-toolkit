@@ -9,7 +9,7 @@ were inspected with `go version -m`. Source commit:
 `7948e8056e45ac3c729b829e0eafe2d0797a95c6`. The upstream MIT notice is retained in
 `.github/gh/LICENSE`; `gh licenses` lists the binary's dependency notices.
 
-The installer requires Go 1.27.3 to run a small standard-library-only HTTPS
+The installer requires Go 1.27.4 to run a small standard-library-only HTTPS
 downloader under `GODEBUG=fips140=on`. It rejects HTTP, HTTPS downgrade redirects,
 more than ten redirects, oversized responses and errors. No operator credential
 is sent to the download endpoint. The installer checks the archive, reads exactly
@@ -17,6 +17,10 @@ one regular executable member without extracting paths, checks its hash and
 version, and atomically replaces the selected output only after validation.
 `--check` needs no Go compiler: the exact binary hash identifies the inspected
 Go build and requires the same FIPS runtime setting. Unsupported platforms fail.
+
+The downloader compiler is pinned separately from the retained CLI executable.
+Go 1.27.4 includes the standard-library fix for GO-2026-6859; changing this
+bootstrap compiler does not change or requalify the official CLI binaries above.
 
 The downloader makes at most three top-level GET attempts for HTTP 429, 500,
 502, 503 or 504. One 60-second deadline covers all attempts, redirects, response
@@ -34,7 +38,7 @@ an invalid archive never falls back to downloading. Private runner image builds
 use this mode after a bounded, unauthenticated HTTPS download. This does not
 change the online installer's Go-based FIPS transport profile.
 
-For local release helper use, select Go 1.27.3 on PATH, then:
+For local release helper use, select Go 1.27.4 on PATH, then:
 
 ```sh
 export GODEBUG=fips140=on

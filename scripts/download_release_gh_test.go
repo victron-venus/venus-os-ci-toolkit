@@ -48,8 +48,8 @@ func response(status int, body *testBody) *http.Response {
 }
 
 func TestQualifiedRuntime(t *testing.T) {
-	if runtime.Version() != "go1.27.3" || !fips140.Enabled() {
-		t.Fatal("regressions must run with the production Go 1.27.3 FIPS profile")
+	if runtime.Version() != "go1.27.4" || !fips140.Enabled() {
+		t.Fatal("regressions must run with the production Go 1.27.4 FIPS profile")
 	}
 }
 

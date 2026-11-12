@@ -206,7 +206,7 @@
           "mode": "100644"
         },
         "scripts/install_release_gh.py": {
-          "sha256": "77dc8af9fa3020d149dde8f8698c37afb0d7ea4b5c947a7cc50efee4c44464b7",
+          "sha256": "98e834e7e69e9f77cf4d98d3197739188d2ec450adf429404a2b9902d8dc4b64",
           "bytes": 6291,
           "mode": "100755"
         },
@@ -266,7 +266,7 @@
           "mode": "100644"
         },
         "scripts/install_release_gh.py": {
-          "sha256": "77dc8af9fa3020d149dde8f8698c37afb0d7ea4b5c947a7cc50efee4c44464b7",
+          "sha256": "98e834e7e69e9f77cf4d98d3197739188d2ec450adf429404a2b9902d8dc4b64",
           "bytes": 6291,
           "mode": "100755"
         }

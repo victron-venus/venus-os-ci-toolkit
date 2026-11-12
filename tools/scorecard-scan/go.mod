@@ -1,6 +1,6 @@
 module github.com/victron-venus/venus-os-ci-toolkit/tools/scorecard-scan
 
-go 1.27.3
+go 1.27.4
 
 require (
 	github.com/google/osv-scalibr v0.5.3-0.20260911142458-3090dbb7aaa2
