@@ -95,6 +95,10 @@ on:
         description: 'Unique artifact namespace when this workflow is called more than once per run'
         type: string
         default: 'browser-compatibility'
+      browser-evidence-upload-retry:
+        description: 'Opt in to one same-attempt browser evidence upload retry with exact artifact read-back verification'
+        type: boolean
+        default: false
       browser-success-report-retention-days:
         description: 'Retention for successful ordinary browser reports (1..14 days); failures and release qualification retain 14 days'
         type: number
@@ -516,15 +520,254 @@ jobs:
           if (!Number.isSafeInteger(result.testsPassed) || result.testsPassed < 1 || result.testsFailed !== 0) throw new Error('No passing application acceptance tests, or failed tests remain');
           if (!Array.isArray(result.scenarios) || result.scenarios.length !== result.testsPassed || result.scenarios.some(value => typeof value !== 'string' || !value.trim()) || new Set(result.scenarios).size !== result.scenarios.length) throw new Error('Each passed application scenario must be named exactly once');
           NODE
+      - name: Prepare bounded browser evidence recovery helper
+        id: evidence_helper
+        if: ${{ always() && inputs.browser-evidence-upload-retry && steps.lock.outcome == 'success' }}
+        timeout-minutes: 1
+        env:
+          BROWSER_EVIDENCE_DIRECTORY: .compatibility/${{ matrix.id }}
+          BROWSER_EVIDENCE_SNAPSHOT: ${{ runner.temp }}/browser-evidence-${{ matrix.id }}.json
+          BROWSER_EVIDENCE_READBACK: ${{ runner.temp }}/browser-evidence-readback-${{ matrix.id }}
+          BROWSER_EVIDENCE_TARGET_ID: ${{ matrix.id }}
+          BROWSER_EVIDENCE_HELPER: ${{ runner.temp }}/browser-evidence-recovery-${{ matrix.id }}.cjs
+          GITHUB_WORKSPACE: ${{ github.workspace }}
+        run: |
+          set -o noclobber
+          cat > "$BROWSER_EVIDENCE_HELPER" <<'NODE'
+          'use strict';
+          const crypto = require('node:crypto');
+          const fs = require('node:fs');
+          const path = require('node:path');
+          const MAX_FILES = 4096;
+          const MAX_ENTRIES = 8192;
+          const MAX_BYTES = 512 * 1024 * 1024;
+          const MAX_MANIFEST_BYTES = 4 * 1024 * 1024;
+          const MAX_DEPTH = 32;
+          const fail = message => { throw new Error(`Browser evidence recovery: ${message}`); };
+          function sameFileIdentity(before, after) {
+            return before.dev === after.dev && before.ino === after.ino && before.mode === after.mode &&
+              before.nlink === after.nlink && before.size === after.size && before.mtimeMs === after.mtimeMs &&
+              before.ctimeMs === after.ctimeMs;
+          }
+          function collect(root) {
+            const rootStat = fs.lstatSync(root);
+            if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) fail('evidence root must be a real directory');
+            const files = [];
+            const names = new Set();
+            let totalBytes = 0;
+            let totalEntries = 0;
+            function visit(directory, relative, depth) {
+              if (depth > MAX_DEPTH) fail('evidence directory depth exceeds the limit');
+              const openedDirectory = fs.opendirSync(directory);
+              try {
+                let entry;
+                while ((entry = openedDirectory.readSync()) !== null) {
+                  totalEntries += 1;
+                  if (totalEntries > MAX_ENTRIES) fail('evidence exceeds entry limit');
+                  if (!entry.name || entry.name === '.' || entry.name === '..' || /[\\/:\0]/.test(entry.name)) fail('invalid evidence filename');
+                  const name = relative ? `${relative}/${entry.name}` : entry.name;
+                  if (names.has(name)) fail('duplicate normalized evidence path');
+                  names.add(name);
+                  const filename = path.join(directory, entry.name);
+                  const before = fs.lstatSync(filename);
+                  if (before.isSymbolicLink()) fail('symbolic links are not permitted in browser evidence');
+                  if (before.isDirectory()) {
+                    visit(filename, name, depth + 1);
+                    const after = fs.lstatSync(filename);
+                    if (!sameFileIdentity(before, after)) fail('evidence directory changed while being read');
+                    continue;
+                  }
+                  if (!before.isFile() || before.nlink !== 1) fail('evidence must contain only singly-linked regular files and directories');
+                  if (files.length >= MAX_FILES || before.size > MAX_BYTES - totalBytes) fail('evidence exceeds file or byte limits');
+                  const flags = fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0);
+                  const fd = fs.openSync(filename, flags);
+                  const hash = crypto.createHash('sha256');
+                  let bytes = 0;
+                  try {
+                    const opened = fs.fstatSync(fd);
+                    if (!opened.isFile() || !sameFileIdentity(before, opened)) fail('evidence file changed before hashing');
+                    const buffer = Buffer.allocUnsafe(64 * 1024);
+                    for (;;) {
+                      const count = fs.readSync(fd, buffer, 0, buffer.length, null);
+                      if (count === 0) break;
+                      bytes += count;
+                      if (bytes > before.size || bytes > MAX_BYTES - totalBytes) fail('evidence file grew beyond the byte limit');
+                      hash.update(buffer.subarray(0, count));
+                    }
+                    const after = fs.fstatSync(fd);
+                    if (bytes !== before.size || !sameFileIdentity(before, after)) fail('evidence file changed while being read');
+                  } finally {
+                    fs.closeSync(fd);
+                  }
+                  totalBytes += bytes;
+                  files.push({path: name, size: bytes, sha256: hash.digest('hex')});
+                }
+              } finally {
+                openedDirectory.closeSync();
+              }
+            }
+            visit(root, '', 0);
+            const rootAfter = fs.lstatSync(root);
+            if (!sameFileIdentity(rootStat, rootAfter)) fail('evidence root changed while being read');
+            files.sort((a, b) => a.path.localeCompare(b.path));
+            if (files.length === 0) fail('evidence tree is empty');
+            return {schema: 1, fileCount: files.length, totalBytes, files};
+          }
+          function isWithin(parent, candidate) {
+            const relative = path.relative(parent, candidate);
+            return relative === '' || (relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
+          }
+          function evidenceRoot() {
+            const workspace = fs.realpathSync(process.env.GITHUB_WORKSPACE);
+            const workingDirectory = fs.realpathSync(process.cwd());
+            if (!isWithin(workspace, workingDirectory)) fail('working directory escapes the checkout');
+            const root = path.resolve(workingDirectory, process.env.BROWSER_EVIDENCE_DIRECTORY);
+            if (!isWithin(workingDirectory, root) || !isWithin(workspace, root)) fail('evidence directory escapes the checkout');
+            let cursor = root;
+            for (;;) {
+              const stat = fs.lstatSync(cursor);
+              if (stat.isSymbolicLink()) fail('symlinked evidence paths are not permitted');
+              if (cursor === workspace) break;
+              const parent = path.dirname(cursor);
+              if (parent === cursor || !isWithin(workspace, parent)) fail('evidence path has an unsafe checkout ancestor');
+              cursor = parent;
+            }
+            return root;
+          }
+          function ownedTempPath(candidate, expectedName) {
+            const tempRoot = fs.realpathSync(process.env.RUNNER_TEMP);
+            const resolved = path.resolve(candidate);
+            if (fs.realpathSync(path.dirname(resolved)) !== tempRoot || path.basename(resolved) !== expectedName) fail('temporary evidence path is outside the runner temp directory');
+            return resolved;
+          }
+          function expectedTempNames() {
+            const target = process.env.BROWSER_EVIDENCE_TARGET_ID;
+            if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(target || '')) fail('invalid browser target ID');
+            return {snapshot: `browser-evidence-${target}.json`, readback: `browser-evidence-readback-${target}`};
+          }
+          function snapshot() {
+            const names = expectedTempNames();
+            const snapshotPath = ownedTempPath(process.env.BROWSER_EVIDENCE_SNAPSHOT, names.snapshot);
+            const readbackPath = ownedTempPath(process.env.BROWSER_EVIDENCE_READBACK, names.readback);
+            if (fs.existsSync(snapshotPath) || fs.existsSync(readbackPath)) fail('snapshot or read-back destination already exists');
+            const inventory = collect(evidenceRoot());
+            const contents = `${JSON.stringify(inventory)}\n`;
+            if (Buffer.byteLength(contents) > MAX_MANIFEST_BYTES) fail('evidence snapshot exceeds manifest limit');
+            const fd = fs.openSync(snapshotPath, 'wx', 0o600);
+            try { fs.writeFileSync(fd, contents); } finally { fs.closeSync(fd); }
+            fs.mkdirSync(readbackPath, {mode: 0o700});
+            console.log(`Snapshotted ${inventory.fileCount} files (${inventory.totalBytes} bytes)`);
+          }
+          function readSnapshot(snapshotPath) {
+            const before = fs.lstatSync(snapshotPath);
+            if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1 || before.size > MAX_MANIFEST_BYTES) fail('snapshot manifest file is unsafe or oversized');
+            const fd = fs.openSync(snapshotPath, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0));
+            try {
+              const opened = fs.fstatSync(fd);
+              if (!opened.isFile() || !sameFileIdentity(before, opened)) fail('snapshot manifest changed before reading');
+              const bytes = Buffer.alloc(before.size + 1);
+              let length = 0;
+              while (length < bytes.length) {
+                const count = fs.readSync(fd, bytes, length, bytes.length - length, null);
+                if (count === 0) break;
+                length += count;
+              }
+              const after = fs.fstatSync(fd);
+              if (length !== before.size || !sameFileIdentity(before, after)) fail('snapshot manifest changed while being read');
+              return JSON.parse(bytes.subarray(0, length).toString('utf8'));
+            } finally {
+              fs.closeSync(fd);
+            }
+          }
+          function verify() {
+            const names = expectedTempNames();
+            const snapshotPath = ownedTempPath(process.env.BROWSER_EVIDENCE_SNAPSHOT, names.snapshot);
+            const readbackPath = ownedTempPath(process.env.BROWSER_EVIDENCE_READBACK, names.readback);
+            const expected = readSnapshot(snapshotPath);
+            if (expected.schema !== 1 || !Array.isArray(expected.files) || expected.files.length !== expected.fileCount || expected.fileCount < 1 || expected.fileCount > MAX_FILES || !Number.isSafeInteger(expected.totalBytes) || expected.totalBytes < 0 || expected.totalBytes > MAX_BYTES) fail('snapshot manifest is invalid');
+            let manifestBytes = 0;
+            const manifestPaths = new Set();
+            for (const item of expected.files) {
+              if (!item || typeof item.path !== 'string' || item.path.startsWith('/') || item.path.includes('\\') || item.path.split('/').some(part => !part || part === '.' || part === '..') || !Number.isSafeInteger(item.size) || item.size < 0 || !/^[a-f0-9]{64}$/.test(item.sha256 || '') || manifestPaths.has(item.path)) fail('snapshot manifest contains an invalid file entry');
+              manifestPaths.add(item.path);
+              manifestBytes += item.size;
+              if (!Number.isSafeInteger(manifestBytes) || manifestBytes > MAX_BYTES) fail('snapshot manifest exceeds the byte limit');
+            }
+            if (manifestBytes !== expected.totalBytes || expected.files.some((item, index) => index > 0 && expected.files[index - 1].path.localeCompare(item.path) >= 0)) fail('snapshot manifest totals or ordering are invalid');
+            const source = collect(evidenceRoot());
+            if (JSON.stringify(source) !== JSON.stringify(expected)) fail('original evidence changed after its snapshot');
+            const readback = collect(readbackPath);
+            if (JSON.stringify(readback) !== JSON.stringify(expected)) fail('downloaded artifact does not exactly match the snapshotted evidence');
+            console.log(`Verified exact browser evidence artifact (${expected.fileCount} files, ${expected.totalBytes} bytes)`);
+          }
+          const command = process.argv[2];
+          if (command === 'snapshot') snapshot();
+          else if (command === 'verify') verify();
+          else fail('expected snapshot or verify command');
+          NODE
+      - name: Snapshot browser evidence for optional upload recovery
+        id: evidence_snapshot
+        if: ${{ always() && inputs.browser-evidence-upload-retry && steps.evidence_helper.outcome == 'success' && steps.lock.outcome == 'success' }}
+        timeout-minutes: 1
+        env:
+          BROWSER_EVIDENCE_DIRECTORY: .compatibility/${{ matrix.id }}
+          BROWSER_EVIDENCE_SNAPSHOT: ${{ runner.temp }}/browser-evidence-${{ matrix.id }}.json
+          BROWSER_EVIDENCE_READBACK: ${{ runner.temp }}/browser-evidence-readback-${{ matrix.id }}
+          BROWSER_EVIDENCE_TARGET_ID: ${{ matrix.id }}
+          BROWSER_EVIDENCE_HELPER: ${{ runner.temp }}/browser-evidence-recovery-${{ matrix.id }}.cjs
+          GITHUB_WORKSPACE: ${{ github.workspace }}
+        run: node "$BROWSER_EVIDENCE_HELPER" snapshot
       - name: Preserve browser versions and synthetic failure diagnostics
-        if: ${{ always() && steps.lock.outcome == 'success' }}
+        id: evidence_upload
+        if: ${{ always() && steps.lock.outcome == 'success' && (inputs.browser-evidence-upload-retry != true || steps.evidence_snapshot.outcome == 'success') }}
+        continue-on-error: ${{ inputs.browser-evidence-upload-retry }}
+        timeout-minutes: ${{ inputs.browser-evidence-upload-retry && 3 || 35 }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ${{ inputs.browser-evidence-prefix }}-${{ matrix.id }}-${{ github.run_attempt }}
           path: ${{ inputs.working-directory }}/.compatibility/${{ matrix.id }}/
           include-hidden-files: true
+          overwrite: false
           if-no-files-found: error
           retention-days: ${{ job.status == 'success' && inputs.browser-release-channel == '' && inputs.browser-success-report-retention-days || 14 }}
+      - name: Retry browser evidence upload once without overwriting
+        id: evidence_upload_retry
+        if: ${{ always() && inputs.browser-evidence-upload-retry && steps.lock.outcome == 'success' && steps.evidence_snapshot.outcome == 'success' && steps.evidence_upload.outcome == 'failure' }}
+        continue-on-error: true
+        timeout-minutes: 3
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ inputs.browser-evidence-prefix }}-${{ matrix.id }}-${{ github.run_attempt }}
+          path: ${{ inputs.working-directory }}/.compatibility/${{ matrix.id }}/
+          include-hidden-files: true
+          overwrite: false
+          if-no-files-found: error
+          retention-days: ${{ job.status == 'success' && inputs.browser-release-channel == '' && inputs.browser-success-report-retention-days || 14 }}
+      - name: Read back browser evidence after optional upload recovery
+        id: evidence_readback
+        if: ${{ always() && inputs.browser-evidence-upload-retry && steps.evidence_snapshot.outcome == 'success' && steps.lock.outcome == 'success' }}
+        timeout-minutes: 3
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ inputs.browser-evidence-prefix }}-${{ matrix.id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/browser-evidence-readback-${{ matrix.id }}
+      - name: Require exact browser evidence read-back
+        if: ${{ always() && inputs.browser-evidence-upload-retry && steps.evidence_snapshot.outcome == 'success' && steps.lock.outcome == 'success' }}
+        timeout-minutes: 1
+        env:
+          EVIDENCE_READBACK_OUTCOME: ${{ steps.evidence_readback.outcome }}
+          BROWSER_EVIDENCE_DIRECTORY: .compatibility/${{ matrix.id }}
+          BROWSER_EVIDENCE_SNAPSHOT: ${{ runner.temp }}/browser-evidence-${{ matrix.id }}.json
+          BROWSER_EVIDENCE_READBACK: ${{ runner.temp }}/browser-evidence-readback-${{ matrix.id }}
+          BROWSER_EVIDENCE_TARGET_ID: ${{ matrix.id }}
+          BROWSER_EVIDENCE_HELPER: ${{ runner.temp }}/browser-evidence-recovery-${{ matrix.id }}.cjs
+          GITHUB_WORKSPACE: ${{ github.workspace }}
+        run: |
+          if [[ "$EVIDENCE_READBACK_OUTCOME" != "success" ]]; then
+            echo "Exact current-run browser evidence artifact could not be read back" >&2
+            exit 1
+          fi
+          node "$BROWSER_EVIDENCE_HELPER" verify
   browser-gate:
     name: Verify selected browser scope
     needs: [change-scope, browser-plan, browser]

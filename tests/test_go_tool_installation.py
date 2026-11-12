@@ -22,6 +22,10 @@ class GoToolInstallationTests(unittest.TestCase):
             return yaml.load((ROOT / '.github/workflows' / name).read_text(), Loader=yaml.BaseLoader)
 
         matrix = workflow('contract-tests.yml')['jobs']['go-tools-contract']['strategy']['matrix']['include']
+        self.assertEqual(len(matrix), 2)
+        self.assertEqual({item['lint']: item['go'] for item in matrix}, {
+            '1': '1.26.11', '2': '1.27.4',
+        })
         generation = ACTION['inputs']['golangci-lint-major']['default']
         qualified = [item['go'] for item in matrix if item['lint'] == generation]
         self.assertEqual(len(qualified), 1)

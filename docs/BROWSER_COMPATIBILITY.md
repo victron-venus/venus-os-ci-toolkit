@@ -29,6 +29,31 @@ extend an uploaded report's retention. When
 qualification receipt retain 14 days, including successful targets. Artifact
 names, contents, upload conditions and qualification checks are unchanged.
 
+### Recover a transient evidence upload failure
+
+`browser-evidence-upload-retry` is an opt-in for reusable-workflow callers; it is
+`false` by default. When enabled, the browser job takes a bounded snapshot of the
+evidence tree after application checks, attempts the normal immutable upload, and
+retries that upload at most once if the first upload step fails. It then downloads
+the exact artifact name for the current workflow run and attempt and compares the
+complete file list, sizes and SHA-256 hashes with both the snapshot and the original
+evidence directory. The job remains failed if that read-back is missing, incomplete,
+or differs. The option does not retry tests or change the browser verdict contract.
+
+The recovery path rejects symlinks, hard-linked or special files, empty trees,
+concurrent source changes, more than 4,096 files, 8,192 total files/directories,
+more than 512 MiB, a snapshot over 4 MiB, and directory nesting deeper than 32
+levels. Snapshot and read-back checks have five-minute limits; each upload attempt
+has an eight-minute limit when recovery is enabled. It does not overwrite or delete
+an artifact. Leave the option off unless a caller needs to tolerate a transient
+upload-service failure; default workflow behavior and artifact retention remain
+unchanged.
+
+```yaml
+with:
+  browser-evidence-upload-retry: true
+```
+
 ## Prepare a consumer
 
 From a reviewed toolkit checkout, prepare the separate browser toolchain locks:
@@ -380,6 +405,12 @@ the browser download and extraction, and seven for application acceptance.
 Those stages alone consume the former 25-minute budget. The additional ten
 minutes allow for checkout, runtime validation and artifacts without depending
 on a prewarmed runner. Application assertions and their timeouts are unchanged.
+
+Recovery is best-effort within the existing 35-minute browser job ceiling. The
+helper, snapshot and final comparison each have a one-minute cap; each upload
+and the read-back have a three-minute cap. These transport limits do not extend
+application test deadlines, and an exhausted budget remains a failed
+qualification.
 
 References: [Playwright browser and branded-channel differences](https://playwright.dev/docs/browsers),
 [CI platform setup](https://playwright.dev/docs/ci), and
