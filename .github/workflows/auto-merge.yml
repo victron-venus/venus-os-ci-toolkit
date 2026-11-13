@@ -685,9 +685,14 @@ jobs:
                             break
                         previous = fingerprint
                     if stable:
+                        # Authenticate the mutation identity before entering the
+                        # merge-command error handler. A failed account read is
+                        # an API/authentication failure, not a rejected merge
+                        # that may be reconciled as a policy race.
+                        author_email = merge_author_email()
                         try:
                             gh('pr', 'merge', str(number), '--repo', repo, f'--{method}',
-                               '--author-email', merge_author_email(),
+                               '--author-email', author_email,
                                '--match-head-commit', value['headRefOid'])
                         except subprocess.CalledProcessError as error:
                             # Never retry an ambiguous write. A fresh read can only defer this
