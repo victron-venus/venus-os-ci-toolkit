@@ -1644,6 +1644,7 @@ class SinglePassReviewedTests(unittest.TestCase):
         failure=None,
         failure_after_merge=False,
         rejected_merges=(),
+        author_read_failure=False,
     ):
         """Mock only metadata transport; execute the actual main and merge decision."""
         import json  # pylint: disable=import-outside-toplevel
@@ -1672,6 +1673,8 @@ class SinglePassReviewedTests(unittest.TestCase):
                     rejected_write_seen = True
                     raise self.code["subprocess"].CalledProcessError(1, args)
                 return ""
+            if args[:2] == ("api", "user") and author_read_failure:
+                raise self.code["subprocess"].CalledProcessError(1, args)
             endpoint = next(item for item in args if item.startswith("repos/"))
             if failure and failure in endpoint and (
                 not failure_after_merge or rejected_write_seen
@@ -1924,6 +1927,18 @@ class SinglePassReviewedTests(unittest.TestCase):
                 failure_after_merge=True,
             )
         self.assertEqual(len(self.merges(self.last_calls)), 1)
+
+    def test_author_identity_read_failure_is_not_reconciled_as_policy_change(self):
+        """A failed account read stays red even if the next snapshot would be blocked."""
+        blocked = self.ready() | {"mergeStateStatus": "BLOCKED"}
+        with patch.dict(self.code, {"merge_author_email": self.real_merge_author_email}):
+            with self.assertRaises(self.code["subprocess"].CalledProcessError):
+                self.run_once(
+                    {7: [self.ready(), self.ready(), self.ready(), blocked]},
+                    author_read_failure=True,
+                )
+        self.assertFalse(self.merges(self.last_calls))
+        self.assertEqual(sum("/compare/" in " ".join(call.args) for call in self.last_calls), 3)
 
     def test_historical_pr_base_does_not_hide_a_behind_candidate(self):
         """A green reviewed PR must include actual main, not only its old PR base."""
@@ -2535,9 +2550,26 @@ class MergeAuthorIdentityTests(unittest.TestCase):
                 self.assertIn("--match-head-commit", strings)
                 self.assertNotIn("--admin", strings)
                 author_calls = [a.value if isinstance(a, ast.Starred) else a for a in call.args]
-                self.assertTrue(any(isinstance(a, ast.Call) and isinstance(a.func, ast.Name)
-                                    and a.func.id in {"merge_author_email", "merge_author_options"}
-                                    for a in author_calls))
+                directly_bound = any(
+                    isinstance(a, ast.Call)
+                    and isinstance(a.func, ast.Name)
+                    and a.func.id in {"merge_author_email", "merge_author_options"}
+                    for a in author_calls
+                )
+                if not directly_bound:
+                    self.assertTrue(any(
+                        isinstance(a, ast.Name) and a.id == "author_email"
+                        for a in author_calls
+                    ))
+                    self.assertTrue(any(
+                        isinstance(node, ast.Assign)
+                        and any(isinstance(target, ast.Name) and target.id == "author_email"
+                                for target in node.targets)
+                        and isinstance(node.value, ast.Call)
+                        and isinstance(node.value.func, ast.Name)
+                        and node.value.func.id == "merge_author_email"
+                        for node in ast.walk(ast.parse(SOURCE))
+                    ))
         self.assertEqual(len(positive), 3)
 
     def test_real_modes_use_native_default_or_direct_explicit_author(self):
