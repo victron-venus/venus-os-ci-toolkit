@@ -1613,6 +1613,7 @@ class SinglePassReviewedTests(unittest.TestCase):
         """A same-repository, current-base branch with a current-head approval."""
         value = ReviewedMergeTests.reviewed(head=cls.HEAD)
         value["baseRefOid"] = cls.BASE
+        value["mergeStateStatus"] = "CLEAN"
         value["statusCheckRollup"][1]["__typename"] = "CheckRun"
         return value
 
@@ -1641,12 +1642,14 @@ class SinglePassReviewedTests(unittest.TestCase):
         compare=None,
         base_refs=None,
         failure=None,
+        failure_after_merge=False,
         rejected_merges=(),
     ):
         """Mock only metadata transport; execute the actual main and merge decision."""
         import json  # pylint: disable=import-outside-toplevel
 
         current = {}
+        rejected_write_seen = False
         values = (
             {number: iter(items) for number, items in snapshots.items()}
             if isinstance(snapshots, dict)
@@ -1661,14 +1664,18 @@ class SinglePassReviewedTests(unittest.TestCase):
             return copy.deepcopy(current)
 
         def transport(*args):
+            nonlocal rejected_write_seen
             if args == ("api", "repos/example/repo", "--jq", ".default_branch"):
                 return "main"
             if args[:2] == ("pr", "merge"):
                 if int(args[2]) in rejected_merges:
+                    rejected_write_seen = True
                     raise self.code["subprocess"].CalledProcessError(1, args)
                 return ""
             endpoint = next(item for item in args if item.startswith("repos/"))
-            if failure and failure in endpoint:
+            if failure and failure in endpoint and (
+                not failure_after_merge or rejected_write_seen
+            ):
                 raise RuntimeError("API/authentication failed")
             if endpoint == "repos/example/repo/git/ref/heads/main":
                 return next(branch_refs) if branch_refs is not None else self.BASE
@@ -1846,15 +1853,77 @@ class SinglePassReviewedTests(unittest.TestCase):
         self.assertIn("--slurp", listing.args)
 
     def test_rejected_merge_does_not_starve_later_pr_but_still_fails_the_run(self):
-        """A write rejection is not a success or a retry of an ambiguous operation."""
-        snapshots = [self.ready()] * 6
+        """An unexplained CLEAN rejection remains red after later candidates are checked."""
+        snapshots = [self.ready()] * 7
         pages = [[self.candidate(), self.candidate(8)]]
         with self.assertRaisesRegex(RuntimeError, r"#7 \(exit 1\)"):
             self.run_once(snapshots, pages=pages, rejected_merges=(7,))
         self.assertEqual([call[2] for call in self.merges(self.last_calls)], ["7", "8"])
         self.assertEqual(
-            sum("/compare/" in " ".join(call.args) for call in self.last_calls), 6
+            sum("/compare/" in " ".join(call.args) for call in self.last_calls), 7
         )
+
+    def test_protected_merge_states_wait_and_do_not_starve_a_ready_pr(self):
+        """Known non-CLEAN GitHub states defer a PR while later candidates remain usable."""
+        blocked = self.ready() | {"mergeStateStatus": "BLOCKED"}
+        ready = self.ready()
+        calls = self.run_once(
+            {7: [blocked, blocked, blocked], 8: [ready, ready, ready]},
+            pages=[[self.candidate(), self.candidate(8)]],
+        )
+        self.assertEqual([call[2] for call in self.merges(calls)], ["8"])
+        for state in (
+            "BLOCKED", "BEHIND", "DIRTY", "UNKNOWN", "DRAFT"
+        ):
+            with self.subTest(state=state):
+                value = self.ready() | {"mergeStateStatus": state}
+                self.assertFalse(self.merges(self.run_once([value] * 3)))
+
+    def test_missing_or_unrecognized_merge_state_fails_closed(self):
+        """The reviewer must not merge if GitHub omitted or changed the state field."""
+        for value in (
+            self.ready() | {"mergeStateStatus": None},
+            self.ready() | {"mergeStateStatus": "FUTURE_STATE"},
+            {key: item for key, item in self.ready().items() if key != "mergeStateStatus"},
+        ):
+            with self.subTest(state=value.get("mergeStateStatus")):
+                with self.assertRaisesRegex(RuntimeError, "merge-state metadata"):
+                    self.run_once([value] * 3)
+                self.assertFalse(self.merges(self.last_calls))
+
+    def test_clean_hooks_and_unstable_states_allow_only_the_verified_check_gate(self):
+        """CLEAN/HAS_HOOKS/UNSTABLE are eligible only after the real check and review gate."""
+        for state in ("CLEAN", "HAS_HOOKS", "UNSTABLE"):
+            with self.subTest(state=state):
+                ready = self.ready() | {"mergeStateStatus": state}
+                self.assertEqual(len(self.merges(self.run_once([ready] * 3))), 1)
+        failing = self.ready() | {"mergeStateStatus": "UNSTABLE"}
+        failing["statusCheckRollup"][0]["conclusion"] = "FAILURE"
+        self.assertFalse(self.merges(self.run_once([failing] * 3)))
+
+    def test_protection_race_after_rejected_write_defers_then_processes_next_pr(self):
+        """A fresh blocked state defers one rejected write without retrying or starving peers."""
+        initial = self.ready()
+        blocked = initial | {"mergeStateStatus": "BLOCKED"}
+        ready = self.ready()
+        calls = self.run_once(
+            {7: [initial, initial, initial, blocked], 8: [ready, ready, ready]},
+            pages=[[self.candidate(), self.candidate(8)]],
+            rejected_merges=(7,),
+        )
+        self.assertEqual([call[2] for call in self.merges(calls)], ["7", "8"])
+        self.assertEqual(sum(call[2] == "7" for call in self.merges(calls)), 1)
+
+    def test_reconciliation_read_failure_after_rejected_write_still_fails(self):
+        """Auth/read failures after a write error are not converted to queue deferrals."""
+        with self.assertRaisesRegex(RuntimeError, "API/authentication"):
+            self.run_once(
+                [self.ready()] * 4,
+                rejected_merges=(7,),
+                failure="/compare/",
+                failure_after_merge=True,
+            )
+        self.assertEqual(len(self.merges(self.last_calls)), 1)
 
     def test_historical_pr_base_does_not_hide_a_behind_candidate(self):
         """A green reviewed PR must include actual main, not only its old PR base."""
@@ -1876,7 +1945,6 @@ class SinglePassReviewedTests(unittest.TestCase):
             {7: [behind] * 3, 8: [ready] * 3},
             pages=[[self.candidate()], [self.candidate(8)]],
             base_refs=["c" * 40] * 4,
-            rejected_merges=(7,),
         )
         self.assertEqual([call[2] for call in self.merges(calls)], ["8"])
 
@@ -2631,6 +2699,7 @@ class SnapshotHeadRepositoryTests(unittest.TestCase):
         with patch.dict(self.code, {"gh": transport}):
             result = self.code["snapshot"]("example/repo", "7", reviewed=reviewed)
         self.assertIn("headRepositoryOwner", transport.call_args_list[0].args[-1].split(","))
+        self.assertIn("mergeStateStatus", transport.call_args_list[0].args[-1].split(","))
         return result
 
     def legacy(self):
