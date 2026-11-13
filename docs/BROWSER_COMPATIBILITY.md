@@ -276,6 +276,13 @@ audits with an empty release channel do not claim release qualification.
 Re-run the complete qualification workflow after a failure: results from an older
 run attempt are deliberately rejected, even if an individual old target passed.
 
+The pinned download action flattens a singleton pattern match. For that case,
+the verdict also downloads the exact admitted artifact name into separate
+staging and requires both complete regular-file trees and SHA-256 hashes to
+match before restoring the artifact-named directory. Missing exact-name evidence,
+extra artifacts, mixed layouts, links and oversized trees still fail. Both stock
+downloads retain digest verification; multiple-target handling is unchanged.
+
 ## Application acceptance contract
 
 ![The admitted candidate and target plan are compared with every runtime and application result before an aggregate release verdict is accepted](assets/browser-evidence-contract.svg)

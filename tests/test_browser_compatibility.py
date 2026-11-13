@@ -307,6 +307,109 @@ class BrowserCompatibilityTests(unittest.TestCase):
         file.write_text(json.dumps(original))
         self.assertEqual(self.verdict(rows, directory, **env).returncode, 0)
 
+    def singleton_evidence(self):
+        import shutil
+        result = self.plan(self.release_targets(), BROWSER_PLATFORM_SCOPE="windows",
+                           BROWSER_RELEASE_CHANNEL="beta", BROWSER_EXTENDED="false")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        rows, directory = self.release_evidence("beta", self.output()["include"])
+        folder = directory / f"browser-release-{rows[0]['id']}-2"
+        exact = self.root / "exact-singleton"
+        shutil.copytree(folder, exact)
+        # download-artifact@9000827 extracts a single pattern match directly here.
+        for file in folder.iterdir():
+            file.rename(directory / file.name)
+        folder.rmdir()
+        return rows, directory, exact, {
+            "BROWSER_PLATFORM_SCOPE": "windows", "BROWSER_COVERAGE": json.dumps(self.output("coverage")),
+            "BROWSER_SINGLETON_EVIDENCE_DIRECTORY": str(exact),
+        }
+
+    def test_singleton_pattern_download_is_normalized_only_after_exact_named_readback(self):
+        import hashlib
+        rows, directory, exact, env = self.singleton_evidence()
+        digest = hashlib.sha256((directory / "result.json").read_bytes()).hexdigest()
+        result = self.verdict(rows, directory, channel="beta", **env)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        receipt = json.loads((self.root / "verdict.json").read_text())
+        self.assertEqual(receipt["targets"][0]["evidenceSha256"], digest)
+        self.assertEqual(receipt["sourceSha"], "a" * 40)
+        self.assertEqual(receipt["runId"], "123")
+        self.assertEqual(receipt["runAttempt"], "2")
+        self.assertEqual(receipt["candidateArtifactId"], "456")
+        self.assertEqual(sorted(path.name for path in directory.iterdir()), [f"browser-release-{rows[0]['id']}-2"])
+        self.assertTrue((exact / "result.json").is_file())
+
+    def test_singleton_requires_exact_named_download_and_rejects_extra_or_mixed_payloads(self):
+        import shutil
+        rows, directory, exact, env = self.singleton_evidence()
+        wrong_name = self.root / "wrong-artifact-name"
+        exact.rename(wrong_name)
+        # A matching payload under a wrong artifact name cannot replace the absent exact-name download.
+        self.assertNotEqual(self.verdict(rows, directory, channel="beta", **env).returncode, 0)
+        wrong_name.rename(exact)
+        multiple = self.root / "two-matches"
+        multiple.mkdir()
+        shutil.copytree(exact, multiple / f"browser-release-{rows[0]['id']}-2")
+        shutil.copytree(exact, multiple / "browser-release-unexpected-2")
+        self.assertNotEqual(self.verdict(rows, multiple, channel="beta", **env).returncode, 0)
+        for extra in ("unexpected.json", f"browser-release-{rows[0]['id']}-2"):
+            path = directory / extra
+            if extra.endswith(".json"):
+                path.write_text("{}")
+            else:
+                shutil.copytree(exact, path)
+            self.assertNotEqual(self.verdict(rows, directory, channel="beta", **env).returncode, 0)
+            if path.is_dir():
+                shutil.rmtree(path)
+            else:
+                path.unlink()
+        original = (exact / "result.json").read_bytes()
+        (exact / "result.json").write_bytes(original + b" ")
+        self.assertNotEqual(self.verdict(rows, directory, channel="beta", **env).returncode, 0)
+        self.assertTrue((directory / "result.json").is_file(), "Failed normalization must not move the evidence")
+
+    def test_singleton_rejects_links_and_out_of_bound_evidence(self):
+        rows, directory, exact, env = self.singleton_evidence()
+        link = directory / "linked.json"
+        link.symlink_to(exact / "result.json")
+        self.assertNotEqual(self.verdict(rows, directory, channel="beta", **env).returncode, 0)
+        link.unlink()
+        for root in (directory, exact):
+            with (root / "oversize.bin").open("wb") as stream:
+                stream.truncate(512 * 1024 * 1024 + 1)
+        self.assertNotEqual(self.verdict(rows, directory, channel="beta", **env).returncode, 0)
+
+    def test_singleton_identical_downloads_do_not_bypass_release_identity_or_results(self):
+        import shutil
+        rows, directory, exact, env = self.singleton_evidence()
+        original = json.loads((directory / "result.json").read_text())
+        for changed in ({"runAttempt": "1"}, {"runId": "122"}, {"sourceSha": "b" * 40},
+                        {"candidateArtifactId": "455"}, {"target": "wrong"}, {"testsFailed": 1}):
+            with self.subTest(changed=changed):
+                sample = self.root / "sample"
+                shutil.copytree(exact, sample)
+                for root in (sample, exact):
+                    (root / "result.json").write_text(json.dumps(original | changed))
+                self.assertNotEqual(self.verdict(rows, sample, channel="beta", **env).returncode, 0)
+                shutil.rmtree(sample)
+        (exact / "result.json").write_text(json.dumps(original))
+
+    def test_singleton_transport_uses_exact_name_and_same_run_without_new_permissions(self):
+        steps = WORKFLOW["jobs"]["browser-verdict"]["steps"]
+        broad = next(step for step in steps if step.get("name") == "Download qualification evidence from this run and attempt")
+        exact = next(step for step in steps if step.get("name") == "Bind a singleton download to its exact artifact name")
+        self.assertEqual(exact["uses"], broad["uses"])
+        self.assertEqual(exact["if"], "${{ fromJSON(needs.browser-plan.outputs.matrix).include[1] == null }}")
+        self.assertEqual(exact["with"], {
+            "name": "${{ format('{0}-{1}-{2}', inputs.browser-evidence-prefix, fromJSON(needs.browser-plan.outputs.matrix).include[0].id, github.run_attempt) }}",
+            "path": "${{ runner.temp }}/browser-release-singleton",
+            "digest-mismatch": "error",
+        })
+        self.assertNotIn("continue-on-error", exact)
+        self.assertEqual(broad["with"]["merge-multiple"], "false")
+        self.assertEqual(broad["with"]["pattern"], "${{ inputs.browser-evidence-prefix }}-*-${{ github.run_attempt }}")
+
     def test_historical_profile_preserves_all_baseline_targets_and_full_release_inventory(self):
         rows = self.regression_targets()
         for channel in ("", "nightly", "beta", "rc", "stable"):
