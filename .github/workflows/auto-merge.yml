@@ -130,7 +130,7 @@ jobs:
 
             def snapshot(repo, number, reviewed=False):
                 pr = json.loads(gh('pr', 'view', number, '--repo', repo, '--json',
-                                     'id,number,author,labels,isDraft,isCrossRepository,baseRefName,baseRefOid,headRefOid,headRefName,headRepository,headRepositoryOwner,state,statusCheckRollup,autoMergeRequest'))
+                                     'id,number,author,labels,isDraft,isCrossRepository,baseRefName,baseRefOid,headRefOid,headRefName,headRepository,headRepositoryOwner,state,mergeStateStatus,statusCheckRollup,autoMergeRequest'))
                 # Older gh versions project only {id, name} for headRepository.
                 # Derive the full name only from separately queried API components.
                 head = pr.get('headRepository')
@@ -623,6 +623,17 @@ jobs:
 
                 def observed(number):
                     value = snapshot(repo, str(number), reviewed=True)
+                    merge_state = value.get('mergeStateStatus')
+                    known_merge_states = {
+                        'BEHIND', 'BLOCKED', 'CLEAN', 'DIRTY', 'DRAFT',
+                        'HAS_HOOKS', 'UNKNOWN', 'UNSTABLE',
+                    }
+                    if not isinstance(merge_state, str) or merge_state not in known_merge_states:
+                        raise RuntimeError('Missing or unknown GitHub merge-state metadata')
+                    mergeable_states = {'CLEAN', 'HAS_HOOKS', 'UNSTABLE'}
+                    mergeable = merge_state in mergeable_states
+                    if not mergeable:
+                        print(f'PR #{number} is waiting: GitHub merge state is {merge_state}.', flush=True)
                     for key in ('baseRefOid', 'headRefOid'):
                         if re.fullmatch(r'[0-9a-f]{40}', value.get(key, '')) is None:
                             raise RuntimeError('Missing current base or head identity')
@@ -641,7 +652,8 @@ jobs:
                     value['statusCheckRollup'] = [check for check in value['statusCheckRollup'] or []
                                                  if not own_check(check, head)]
                     ready, state = checked_snapshot(value, required, '', True, actions_authors)
-                    return value, ready and current_base_in_head, (base, value['baseRefOid'], head, state)
+                    return value, ready and current_base_in_head and mergeable, (
+                        base, value['baseRefOid'], head, state, merge_state)
 
                 pages = json.loads(gh('api', '--paginate', '--slurp',
                                      f'repos/{repo}/pulls?state=open&per_page=100'))
@@ -678,15 +690,32 @@ jobs:
                                '--author-email', merge_author_email(),
                                '--match-head-commit', value['headRefOid'])
                         except subprocess.CalledProcessError as error:
-                            # A head race or per-PR rule rejection must not starve
-                            # other candidates. Do not retry an ambiguous response.
+                            # Never retry an ambiguous write. A fresh read can only defer this
+                            # candidate when its identity/eligibility/readiness/protection state
+                            # changed; read or authentication errors remain fatal.
                             failure = f'#{number} (exit {error.returncode})'
+                            try:
+                                latest, latest_ready, latest_fingerprint = observed(number)
+                            except CheckFailure as state_error:
+                                print(
+                                    f'Merge was not confirmed for {failure}; candidate now waits: '
+                                    f'{state_error}.', flush=True)
+                                continue
+                            if (not eligible(latest, default_branch, authors)
+                                    or not latest_ready or latest_fingerprint != fingerprint):
+                                print(
+                                    f'Merge was not confirmed for {failure}; candidate changed or '
+                                    'is no longer mergeable. No retry.', flush=True)
+                                continue
                             merge_failures.append(failure)
-                            print(f'Merge command did not confirm success for {failure}.', flush=True)
+                            print(
+                                f'Merge command failed for unchanged mergeable candidate {failure}; '
+                                'continuing the queue.', flush=True)
                             continue
                         print(f'Merged reviewed PR #{number} at its verified head.', flush=True)
                 if merge_failures:
-                    raise RuntimeError('Merge command failed: ' + ', '.join(merge_failures))
+                    raise RuntimeError('Merge command failed for unchanged mergeable candidates: '
+                                       + ', '.join(merge_failures))
 
 
             def main():

@@ -124,10 +124,17 @@ once, using GitHub's paginated PR list. Pending, missing or failed validation an
 missing reviews defer that PR without sleeping; other candidates are still
 examined. The job has a five-minute timeout. API, authentication and malformed
 identity errors fail visibly instead of being reported as a successful check.
-An unsuccessful merge command is never retried within the same evaluation;
-other candidates still receive fresh checks, and the run fails after the scan
-with the affected PR numbers. Metadata/read failures, including authentication
-failures during those reads, stop immediately.
+GitHub's `mergeStateStatus` must be recognized: `CLEAN`, `HAS_HOOKS` and
+`UNSTABLE` permit a candidate to proceed to the existing check, review and
+identity gates; they do not replace those gates. A failed check or missing
+review still defers that PR. Known blocked, behind, dirty, draft and unknown
+states defer it as well. An unsuccessful merge command is never retried within
+the same evaluation. The evaluator performs one read-only reconciliation; if
+identity, eligibility, checks, review or mergeability changed, that candidate
+is deferred and the queue continues. An unchanged mergeable candidate remains
+a visible failure after other candidates are examined. Metadata/read failures,
+including authentication failures during reconciliation, stop immediately.
+A successful queue evaluation therefore does not mean every candidate merged.
 Existing consumers keep their polling behavior until explicitly migrated.
 
 The caller must provide future wakeups; otherwise a deferred PR will remain open:
