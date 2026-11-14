@@ -60,7 +60,7 @@ jobs:
         run: python3 scripts/prepare_oci_promotion.py
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
-          go-version: '1.26.10'
+          go-version: '1.27.4'
           cache: false
       - name: Build the source-locked native Buildx client
         env:
