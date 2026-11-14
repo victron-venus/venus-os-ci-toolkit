@@ -24,12 +24,36 @@ Renovate Dockerfile updates are disabled for these recipes: a tagless digest
 refresh can select a different distribution or compiler and invalidate the
 source, ABI and package locks. Other dependency managers remain enabled.
 
-Update a runtime base in a dedicated reviewed change that checks its actual
-image identity, preserves or requalifies the compiler and native package locks,
-and updates the canonical context inventory together. Complete the image
-artifact checks described here before any separate site/runtime qualification.
-A refreshed recipe hash records the inputs; successful build and scan evidence
-establishes their qualification.
+For `runner-reserve`, update a base in a dedicated reviewed change that checks
+its actual image identity, preserves or requalifies the compiler and native
+package locks, and updates the canonical context inventory together. Complete
+the public and private image artifact checks described here before any separate
+site/runtime qualification. A refreshed recipe hash records the inputs;
+successful build and scan evidence establishes their qualification.
+
+### Separate `arc-ottplay` qualification
+
+`runner-image-artifacts.yml` builds `runner-reserve` and its `arc-private`
+derivative. Its canonical context inventory does **not** include
+`deploy/arc-ottplay`; those successful builds, scans, or refreshed inventory
+hashes do not qualify an `arc-ottplay` base update.
+
+Review that image separately: record the exact source commit and all base image
+identities, verify the Ubuntu ABI/package requirements and locked build-tool
+inputs, and run `python3 -m unittest discover -s tests -p test_arc_ottplay.py`.
+Retain an actual `linux/amd64` build of `deploy/arc-ottplay/Dockerfile` with
+`deploy/arc-ottplay` as its context, its resulting immutable image identity,
+complete build log, and a full image vulnerability scan with reviewed findings.
+Source and template tests alone do not establish image qualification.
+
+Before admitting jobs, run the image's `/opt/ottplay/smoke.sh` in a secret-free
+Actions job for each proposed pool (`linux`, `kvm`, or `release`). Retain the
+runtime tool versions, nonroot/isolation and writable-directory checks, network
+probe results, and, for `kvm`, actual KVM/emulator acceleration results. Then
+qualify representative cold/warm jobs with memory and disk observations. Keep
+disabled pools disabled until their own checks pass, and only then review a
+separate values change pinning the accepted image digest. This is a separate
+operator procedure, not an output of the artifact workflow described below.
 
 ```mermaid
 flowchart LR
