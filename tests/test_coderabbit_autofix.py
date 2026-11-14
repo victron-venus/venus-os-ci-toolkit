@@ -36,7 +36,7 @@ class AutofixContract(unittest.TestCase):
         }
         self.repository = {"full_name": REPO, "private": False, "visibility": "public", "archived": False}
         self.pr = {"number": 17, "state": "open", "draft": False,
-                   "head": {"sha": HEAD, "repo": {"full_name": "contributor/fork"}},
+                   "head": {"sha": HEAD, "repo": {"full_name": REPO}},
                    "base": {"repo": {"full_name": REPO}}}
         self.current = copy.deepcopy(self.pr)
         self.identity = dict(BOT)
@@ -101,7 +101,7 @@ class AutofixContract(unittest.TestCase):
         elif path == f"{BASE}/issues/17/comments":
             self.assertEqual(command[3:], ["--method", "POST", "--input", "-"])
             body = json.loads(kwargs["input"])["body"]
-            self.assertTrue(body.startswith("@coderabbitai autofix\n\n<!-- toolkit-coderabbit-autofix:v1 "))
+            self.assertTrue(body.startswith("@coderabbitai fix comments stacked pr\n\n<!-- toolkit-coderabbit-autofix:v1 "))
             self.assertNotIn("Do not execute", body)
             self.posted.append(body)
             if self.fail_post:
@@ -117,11 +117,43 @@ class AutofixContract(unittest.TestCase):
         with patch.dict(os.environ, self.environment, clear=True), patch("subprocess.run", side_effect=self.api_process):
             exec(compile(self.code, str(WORKFLOW), "exec"), {"__name__": "__main__"})  # noqa: S102
 
-    def marked_comment(self, head=HEAD, fingerprint=None, author=None):
+    def marked_comment(self, head=HEAD, fingerprint=None, author=None, *, legacy=False):
         fingerprint = fingerprint or hashlib.sha256(b"thread-1").hexdigest()
-        return {"user": author or BOT, "body": f"@coderabbitai autofix\n\n<!-- toolkit-coderabbit-autofix:v1 head={head} findings={fingerprint} -->"}
+        command = "@coderabbitai autofix" if legacy else "@coderabbitai fix comments stacked pr"
+        return {"user": author or BOT, "body": f"{command}\n\n<!-- toolkit-coderabbit-autofix:v1 head={head} findings={fingerprint} -->"}
 
-    def test_completed_fork_review_posts_fixed_command(self):
+    def test_open_fork_is_skipped_without_requesting_unsupported_delivery(self):
+        self.pr["head"]["repo"]["full_name"] = "contributor/fork"
+        self.current = copy.deepcopy(self.pr)
+        self.execute()
+        self.assertEqual(self.posted, [])
+        self.assertEqual(self.reads, 1)
+        self.assertEqual(self.thread_reads, 0)
+
+    def test_request_is_a_one_off_stacked_proposal_not_direct_autofix(self):
+        self.execute()
+        self.assertEqual(self.posted[0].splitlines()[0], "@coderabbitai fix comments stacked pr")
+
+    def test_legacy_request_still_deduplicates_current_head_or_findings(self):
+        for head, fingerprint in ((HEAD, "c" * 64), ("b" * 40, None)):
+            with self.subTest(head=head):
+                self.setUp()
+                self.comments = [[self.marked_comment(head=head, fingerprint=fingerprint, legacy=True)]]
+                self.execute()
+                self.assertEqual(self.posted, [])
+
+    def test_legacy_and_proposal_requests_share_the_same_three_round_cap(self):
+        self.comments = [[self.marked_comment(head=c * 40, fingerprint=c * 64, legacy=(c != "c"))
+                          for c in "bcd"]]
+        self.execute()
+        self.assertEqual(self.posted, [])
+
+    def test_unrelated_new_review_can_request_proposal_below_legacy_cap(self):
+        self.comments = [[self.marked_comment(head="b" * 40, fingerprint="c" * 64, legacy=True)]]
+        self.execute()
+        self.assertEqual(self.posted, [self.marked_comment()["body"]])
+
+    def test_completed_same_repository_review_posts_fixed_command(self):
         self.execute()
         self.assertEqual(self.posted, [self.marked_comment()["body"]])
         self.assertEqual(self.reads, 2)
