@@ -1,7 +1,7 @@
 {
   "schema": 1,
   "scan_acceptance_schema": 1,
-  "canonical_source": "d42d0f0e7976a34d99a6b85f5d424bb148ffc909",
+  "canonical_source": "c0e3181a7200964f0e38a05f73ca64db809d7cd2",
   "platform": "linux/amd64",
   "tools": {
     "buildkit": {
@@ -81,53 +81,53 @@
           "mode": "100644"
         },
         ".github/containers/runner-go-tools.json": {
-          "sha256": "c1e39d5ac8be7a6c42ae118a3ab68746d39697d81bc26ceed9225e72f492310f",
-          "bytes": 4018,
+          "sha256": "189281df51cfb0cb78a5670a798500d85f95b6a9d048a38d989b5772b51ed918",
+          "bytes": 4384,
           "mode": "100644"
         },
         ".github/containers/runner-go-tools/buildx/go.mod": {
-          "sha256": "a4638edafc40dda5d8f0fbef5d37127982f139738fda16e3169a3eba393ed129",
-          "bytes": 12182,
+          "sha256": "017bf058ea7dfa31f15fe17f18e1a0682a0355f82a11275048023ba3acd1958a",
+          "bytes": 12232,
           "mode": "100644"
         },
         ".github/containers/runner-go-tools/buildx/go.sum": {
-          "sha256": "d2cf87407a367f5279119eb3232062e1e513392cab72f3457bc09d87a0401a65",
-          "bytes": 69112,
+          "sha256": "f936d1079e4e8eace5e4da9074e04db87f8e893472176e93dec35428deb8311a",
+          "bytes": 70377,
           "mode": "100644"
         },
         ".github/containers/runner-go-tools/buildx/inputs.json": {
-          "sha256": "d556183b11ad94b05d5775d802d13b794eb92c09205d4f0df5ce35954ecfd67d",
-          "bytes": 1634,
+          "sha256": "3c05fd7873a5d8bb2071d2857b8a3fa97ff82bc1b8c4d0188d0b854c86ee9c72",
+          "bytes": 2184,
           "mode": "100644"
         },
         ".github/containers/runner-go-tools/compose/go.mod": {
-          "sha256": "c15c025920a223d47ce0210c74cc3e3ddc8017c829d283619967c8368b681d4f",
-          "bytes": 6559,
+          "sha256": "abd20dcb5491cf84407f6c7fd44871901e751c028df7bc5c69685d965375c165",
+          "bytes": 6609,
           "mode": "100644"
         },
         ".github/containers/runner-go-tools/compose/go.sum": {
-          "sha256": "ba1f4d56e139a6ed226bbaf7cebb3828057d67a75fa2fcdbff0be8531dc6a6d5",
-          "bytes": 33112,
+          "sha256": "af766cc7236f44bc4fe2b72b8d56a75c736128783e8af530fd33f7d9b556d49d",
+          "bytes": 34377,
           "mode": "100644"
         },
         ".github/containers/runner-go-tools/compose/inputs.json": {
-          "sha256": "fcd02e7b89d74cf44107f3d4954cace5a8a5616a154c7f4e2289a42f3a9e5000",
-          "bytes": 805,
+          "sha256": "455cebfbfb19d027143310d4e03ac6a5509e4014b6c808a80495ff19e41dd9ea",
+          "bytes": 1008,
           "mode": "100644"
         },
         ".github/containers/runner-go-tools/containerd/go.mod": {
-          "sha256": "8d29cbac04e6dd8383a2c5298d888a7f7bd92f6f9fb6780459c98537449a0159",
-          "bytes": 7027,
+          "sha256": "42535821d5d66eae84e7c8ae639c94234a553a2d5d8131fd9397d242c767a20e",
+          "bytes": 7077,
           "mode": "100644"
         },
         ".github/containers/runner-go-tools/containerd/go.sum": {
-          "sha256": "9e158789298a6cd353bfdad2f6781a0b7818bec4baf5a242ab893b88df271c8d",
-          "bytes": 43546,
+          "sha256": "9678ec1cf0541993a9f9ef2a885a2d923be8aeca162ea30c874ec518500a82b6",
+          "bytes": 44624,
           "mode": "100644"
         },
         ".github/containers/runner-go-tools/containerd/inputs.json": {
-          "sha256": "ab3fba5cbbf715db7944892f6b4f44179290508f64c887f762b4a36468a579e7",
-          "bytes": 1342,
+          "sha256": "3da61f7474eadf2b67cc8c4b8064ebbd7024582a4739b00952d3c0101c11e9d9",
+          "bytes": 1545,
           "mode": "100644"
         },
         ".github/containers/runner-gstreamer.json": {
@@ -151,7 +151,7 @@
           "mode": "100644"
         },
         "deploy/runner-reserve/Dockerfile": {
-          "sha256": "aab1c7bc6afcfcb26d0f39455a76eae9a1b5656d5f613c68675b874c6cbaffea",
+          "sha256": "82ecd4aec7bc3e8761f0175ed18c2b31c362ff87077d4d320f462ef43f7362dc",
           "bytes": 15827,
           "mode": "100644"
         },
@@ -191,8 +191,8 @@
           "mode": "100644"
         },
         "scripts/build_runner_go_tools.py": {
-          "sha256": "57a109ee0614855c4c18c3caddfca14717bbe515d2fadc330cb1133d4885cf2f",
-          "bytes": 27884,
+          "sha256": "d2a4e8cc0945c47b149220e5c9137567b195c9ea02588f1c7967b445fa241291",
+          "bytes": 29764,
           "mode": "100644"
         },
         "scripts/build_runner_gstreamer.py": {

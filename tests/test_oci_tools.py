@@ -468,6 +468,33 @@ class QualificationTests(unittest.TestCase):
                 root, config = self.container_fixture(mode, fail=True)
                 self.assertEqual(json.loads((root / (mode + "-config.json")).read_text()), config)
 
+    def test_runc_cgo_cache_is_fresh_private_and_cannot_reuse_an_old_closure(self):
+        manifest = json.loads(build.MANIFEST.read_text())
+        spec = manifest["components"]["runc"]
+        ambient = self.root / "ambient-cache"
+        ambient.mkdir()
+        (ambient / "old-cgo-object").write_bytes(b"previous native input closure")
+        expected = self.root / "runc-go-build-cache"
+        def version(argv, **kwargs):
+            self.assertEqual(argv, ["go", "version"])
+            self.assertEqual(kwargs["env"]["GOCACHE"], str(expected))
+            self.assertEqual(stat.S_IMODE(expected.stat().st_mode), 0o700)
+            self.assertEqual(list(expected.iterdir()), [])
+            return "go version " + manifest["go_version"] + " linux/amd64"
+        with patch.dict(os.environ, {"GOCACHE": str(ambient)}), \
+                patch.object(build.os, "geteuid", return_value=1001), \
+                patch.object(build, "run", side_effect=version), \
+                patch.object(build, "download", side_effect=RuntimeError("stop after cache proof")):
+            with self.assertRaisesRegex(RuntimeError, "stop after cache proof"):
+                build.build_component("runc", spec, self.root, "amd64", manifest)
+        self.assertEqual((ambient / "old-cgo-object").read_bytes(), b"previous native input closure")
+        with patch.object(build.os, "geteuid", return_value=1001), \
+                patch.object(build, "run") as compiler, patch.object(build, "download") as download:
+            with self.assertRaises(FileExistsError):
+                build.build_component("runc", spec, self.root, "amd64", manifest)
+            compiler.assert_not_called()
+            download.assert_not_called()
+
     def test_go_configuration_ignores_ambient_cross_toolchain_or_cgo_flags(self):
         with patch.dict(os.environ, {"GOPRIVATE": "*", "CGO_LDFLAGS": "-L/unreviewed",
                                      "GOTOOLCHAIN": "auto", "GOEXPERIMENT": "unreviewed"}):
@@ -577,6 +604,41 @@ class QualificationTests(unittest.TestCase):
         build.write_json(output / "evidence/security/gate.json", {"passed": False})
         with self.assertRaisesRegex(ValueError, "security gate"):
             runtime.verify_binaries(output, "a" * 40, "amd64")
+
+    def test_new_derivative_labels_are_embedded_in_every_candidate_binary(self):
+        manifest = json.loads(build.MANIFEST.read_text())
+        self.assertEqual(manifest["go_version"], "go1.27.4")
+        for name, spec in manifest["components"].items():
+            suffix = spec["downstream_version"].split("+", 1)[1]
+            self.assertEqual(suffix, "victron.security.2")
+            for command in build.commands(name, spec, self.root).values():
+                flags = command[command.index("-ldflags") + 1]
+                if name == "runc":
+                    self.assertIn("main.extraVersion=" + suffix, flags)
+                else:
+                    self.assertIn("Version=" + spec["downstream_version"], flags)
+                    self.assertIn("Revision=" + spec["commit"] + "+" + suffix, flags)
+                self.assertNotIn("victron.security.1", flags)
+
+    def test_unreviewed_locks_cannot_enter_native_build_scan_or_bundle(self):
+        manifest = json.loads(build.MANIFEST.read_text())
+        manifest["locks_reviewed"] = False
+        path = self.root / "unreviewed.json"
+        build.write_json(path, manifest)
+        for action in ("native", "harden", "build", "scan", "bundle"):
+            with self.subTest(action=action), patch.object(build, "MANIFEST", path), \
+                    patch.object(sys, "argv", ["build_oci_tools.py", action]), \
+                    patch.object(build, "hosted_arch", return_value="amd64"), \
+                    patch.object(build.platform, "machine", return_value="x86_64"), \
+                    patch.object(build, "stage_dir", return_value=self.root), \
+                    patch.object(build, "install_native") as native, \
+                    patch.object(build, "build_component") as compile_source, \
+                    patch.object(build, "scan") as scan, \
+                    patch.object(build.tarfile, "open") as bundle:
+                with self.assertRaisesRegex(ValueError, "Lock preparation/review must finish"):
+                    build.main()
+                for boundary in (native, compile_source, scan, bundle):
+                    boundary.assert_not_called()
 
     def test_reviewed_locks_bind_sources_and_full_graph(self):
         manifest = json.loads(build.MANIFEST.read_text())
@@ -746,8 +808,9 @@ class HeaderApplicabilityTests(unittest.TestCase):
     def disposition_fixture(self):
         policy = copy.deepcopy(self.policy)
         policy["reviewed"] = True
+        version, release = self.binding["version"].rsplit("-", 1)
         package = {"Name": self.binding["name"], "ID": self.binding["name"] + "@" + self.binding["version"],
-                   "Arch": "amd64", "SrcName": "linux", "Version": "6.8.0", "Release": "147.147"}
+                   "Arch": "amd64", "SrcName": "linux", "Version": version, "Release": release}
         finding = {"VulnerabilityID": policy["cve_ids"][0], "Severity": "HIGH",
                    "PkgName": package["Name"], "PkgID": package["ID"],
                    "InstalledVersion": self.binding["version"], "DataSource": {"ID": "ubuntu"}}

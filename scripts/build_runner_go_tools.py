@@ -205,11 +205,12 @@ def install_locks(source, locks, spec):
     require(binding["source"] == {key: spec[key] for key in
             ("repository", "release_tag", "commit", "archive_sha256")},
             "Lock source binding changed; revalidate locks for the new source")
-    require(binding["go_version"] == "go1.26.10"
+    require(binding["go_version"] == "go1.27.4"
             and binding["original_locks"] == spec["original_locks"]
             and binding["fixed_locks"] == spec["fixed_locks"]
             and binding.get("retained_namesgenerator") == spec.get("retained_namesgenerator")
-            and binding.get("runtime_test_fix") == spec.get("runtime_test_fix"),
+            and binding.get("runtime_test_fix") == spec.get("runtime_test_fix")
+            and binding.get("idna_test_fix") == spec.get("idna_test_fix"),
             "Lock preparation binding changed")
     for name in ("go.mod", "go.sum"):
         require(digest(source / name) == spec["original_locks"][name],
@@ -247,6 +248,45 @@ def verify_runtime_test(source, spec):
     if fix is not None:
         require(digest(source / "pkg/shim/shim_test.go") == fix["after_sha256"],
                 "Runtime test changed during build")
+
+
+def fix_idna_test(source, spec):
+    """Retain strict IDNA rejection instead of expecting invalid UTF-8 to map."""
+    fix = spec.get("idna_test_fix")
+    if fix is None:
+        return
+    require(spec["repository"] == "docker/buildx", "Unexpected IDNA test owner")
+    path = source / "policy/validate_test.go"
+    require(path.is_file() and not path.is_symlink() and digest(path) == fix["before_sha256"],
+            "IDNA test source identity changed")
+    original = path.read_bytes()
+    before = b'\t\t{"https", "\\x94.EXAMPLE.COM", "xn--zn7c.example.com"},\n'
+    anchor = b'func TestSourceToInputSingleSource(t *testing.T) {\n'
+    replacement = br'''func TestNormalizeHTTPHostRejectsInvalidUTF8(t *testing.T) {
+	// Invalid UTF-8 must retain the strict lookup error, never a replacement-label match.
+	for _, host := range []string{"\x94.EXAMPLE.COM", "\xff.example.com", "ex\xc3.example.com", "\xed\xa0\x80.example.com"} {
+		t.Run(fmt.Sprintf("%x", host), func(t *testing.T) {
+			got, err := normalizeHTTPHost(&url.URL{Scheme: "https", Host: host})
+			require.Error(t, err)
+			require.Empty(t, got)
+		})
+	}
+}
+
+'''
+    require(original.count(before) == 1 and original.count(anchor) == 1,
+            "Expected one invalid UTF-8 positive vector and insertion point")
+    changed = original.replace(before, b"").replace(anchor, replacement + anchor)
+    require(hashlib.sha256(changed).hexdigest() == fix["after_sha256"],
+            "IDNA test result identity changed")
+    path.write_bytes(changed)
+
+
+def verify_idna_test(source, spec):
+    fix = spec.get("idna_test_fix")
+    if fix is not None:
+        require(digest(source / "policy/validate_test.go") == fix["after_sha256"],
+                "IDNA test changed during build")
 
 
 def retain_namesgenerator(source, spec):
@@ -474,6 +514,7 @@ def build(name, manifest, build_root=BUILD_ROOT, output=OUTPUT):
     install_locks(source, LOCKS / name, spec)
     retain_namesgenerator(source, spec)
     fix_runtime_test(source, spec)
+    fix_idna_test(source, spec)
     tags = {"containerd": "urfave_cli_no_docs,osusergo,netgo,static_build", "compose": "e2e"}.get(name)
     tag_arguments = ["-tags", tags] if tags else []
     packages = test_packages(name, run(["go", "list", *tag_arguments, "./..."], source, capture=True).stdout.splitlines())
@@ -510,6 +551,7 @@ def build(name, manifest, build_root=BUILD_ROOT, output=OUTPUT):
     for lock in ("go.mod", "go.sum"):
         require(digest(source / lock) == spec["fixed_locks"][lock], "Build changed reviewed locks")
     verify_runtime_test(source, spec)
+    verify_idna_test(source, spec)
     preserve_notices(source, output / "notices" / name, name, spec, commands,
                      architecture, test_command, output, unit_dependencies)
     for lock in ("go.mod", "go.sum"):

@@ -391,10 +391,115 @@
     "Family": "ubuntu",
     "Name": "24.04"
   },
+  "input_revalidation": {
+    "changed_headers": [
+      {
+        "after_sha256": "69f6566ab51435fc497fe38832d6429abbf9c4b3ee1b15ac34307e496dc7ee4d",
+        "before_sha256": "86b6c4af14bfea0acbc77bed3aaa247d4e155570347f221c3e0549fbe9dc7bcb",
+        "both_architectures_same_old_new_bytes": true,
+        "diff_lines": 16,
+        "path": "usr/include/linux/bpf.h"
+      },
+      {
+        "after_sha256": "5c6594df60b0c6555716e7ceca3d64f4432dc724f7bc4c52b9da743267bd7a76",
+        "before_sha256": "6768fe059c5daab89aca2e2ab3590280c1cafb92b2348f8a3c6b774b8bd28e0b",
+        "both_architectures_same_old_new_bytes": true,
+        "diff_lines": 11,
+        "path": "usr/include/linux/dma-heap.h"
+      },
+      {
+        "after_sha256": "7907319ac704584aaf87bfa51eeb1d364f01f3f4313614939b02842dc723ffad",
+        "before_sha256": "813cd39c50b0babc8b754988e1662df49933b7599e9e0d5f1316328f72176abe",
+        "both_architectures_same_old_new_bytes": true,
+        "diff_lines": 57,
+        "path": "usr/include/linux/ethtool.h"
+      },
+      {
+        "after_sha256": "ec396fdd44325cf60d6794d4569a5545de3f0b6ebc4a9e4ba8ecb38f9bd4512d",
+        "before_sha256": "c2ff2bbdaf3b9d44954ff6f0584d3648a0adaadb0e6194c1e59d9abc2efa1515",
+        "both_architectures_same_old_new_bytes": true,
+        "diff_lines": 10,
+        "path": "usr/include/linux/if_link.h"
+      },
+      {
+        "after_sha256": "9572d87806035399f1a92b0047c489c18148371d6e8f874874b5eae4549c49c2",
+        "before_sha256": "13753d722b649f5098d23db87c92c2e7b30b746ce6a52394ab7fcb06d4ac3b36",
+        "both_architectures_same_old_new_bytes": true,
+        "diff_lines": 12,
+        "path": "usr/include/linux/iommufd.h"
+      },
+      {
+        "after_sha256": "f91d84ba3eb0f62e944f8be18f7c13eb38bf42ad4404c3c290c5e1e99954ee9f",
+        "before_sha256": "4d3d08723ce22414d3ae42d92e978b19c8239e24dc19caddb7e4d477c18ba557",
+        "both_architectures_same_old_new_bytes": true,
+        "diff_lines": 15,
+        "path": "usr/include/linux/ip_vs.h"
+      },
+      {
+        "after_sha256": "0b06c2073994038a22e2d0002d642ca7abe2c6e1541d8fc2739e1f1d4476ffc5",
+        "before_sha256": "75368cf0e1eb2cc00413e116b728d89b640a1e5d7653737fe8198e63f752afe8",
+        "both_architectures_same_old_new_bytes": true,
+        "diff_lines": 10,
+        "path": "usr/include/linux/landlock.h"
+      },
+      {
+        "after_sha256": "6e3ebbe6b2ad64e8366b112c29654fd4744bf7cc1ed58f90d43bf96186c75386",
+        "before_sha256": "9dfe7d6a7c42721207dcdd35c1dc07ac6c2f95691f5e2edea9506fdae46b3391",
+        "both_architectures_same_old_new_bytes": true,
+        "diff_lines": 11,
+        "path": "usr/include/linux/raid/md_p.h"
+      },
+      {
+        "after_sha256": "c52674650503e77abf65d3f68dba9b2f72d3244b27229b15fd8ec4f01e59da1d",
+        "before_sha256": "0de106c280e624c6e8df830c7a898f6636bbb7eb2a731de32df140f9d21f8cf6",
+        "both_architectures_same_old_new_bytes": true,
+        "diff_lines": 11,
+        "path": "usr/include/linux/time_types.h"
+      },
+      {
+        "after_sha256": "bcdeab98d9713198d27f8d98ac146db99ff7de25dcf9f579704ce5f1ea968361",
+        "before_sha256": "584d28e2c185f87544f14099d0917e1691c66c34b117718df440027fd4ee0b15",
+        "both_architectures_same_old_new_bytes": true,
+        "diff_lines": 10,
+        "path": "usr/include/linux/virtio_crypto.h"
+      },
+      {
+        "after_sha256": "2b295ec2b9b74cd80f2e0da0ffbcbd173263be12ad9fcb4a272acb696a1f8ff0",
+        "before_sha256": "26831d6fb7f42dcb98c146e046286c75249dd6ad2e00e0e3a5c2f0eff4b44ecc",
+        "both_architectures_same_old_new_bytes": true,
+        "diff_lines": 15,
+        "path": "usr/include/rdma/rdma_netlink.h"
+      },
+      {
+        "after_sha256": "28945d54316cefe3f7079ae8990a12c7de1070ad8f432606d967d10085350e19",
+        "before_sha256": "ae7705724d29a5ad98354d48edf594e541490caf65c506e5fb7ac228e14f4d61",
+        "both_architectures_same_old_new_bytes": true,
+        "diff_lines": 22,
+        "path": "usr/include/sound/asound.h"
+      }
+    ],
+    "exported_header_diff_sha256": "a37390ba5877f7dea028f28dd2e6f820051ef7785098d89f38b31116d2a0a709",
+    "finite_cve_count_unchanged": 385,
+    "fresh_native_qualification_required": true,
+    "header_paths_and_modes_unchanged": true,
+    "host_kernel": "Only userspace compiler input packages change. No booted kernel is installed, measured or declared patched.",
+    "new_dispositions": [],
+    "new_findings_count": 233,
+    "new_findings_published_fixed_version": "6.8.0-149.149",
+    "original_cna_evidence_sha256": "31ef9fd4d4ed4e60e0075bbca28f10b310894745d4caf62a2497f5328e78863d",
+    "previous_version": "6.8.0-147.147",
+    "published_sources": [
+      "https://packages.ubuntu.com/noble-updates/amd64/linux-libc-dev/download",
+      "https://packages.ubuntu.com/noble-updates/arm64/linux-libc-dev/download"
+    ],
+    "review_scope": "Independently reviewed all 12 common exported-header changes on both architectures: declarations, structs/unions, enums/constants, comments and include order; no added kernel implementation or inline function bodies. The original 385 finite CNA records/reasons and exact exported conntrack boundary are retained. This is not byte or ABI equivalence and does not replace actual native/binary/security qualification.",
+    "source_snapshot_unchanged": "20261103T000000Z",
+    "version": "6.8.0-149.149"
+  },
   "packages": {
     "amd64": {
       "architecture": "amd64",
-      "archive_inventory_sha256": "7b2a72512d63fc32813f33a10a5ca813df9e7ba1181ddd118237593da285be8f",
+      "archive_inventory_sha256": "8e2f6dbc5132f08029e42597774fecca5763aea87ac009ccda0dc5b408b2b28e",
       "exported_conntrack": {
         "kernel_dead_flag_absent": true,
         "kernel_guard_absent": true,
@@ -402,16 +507,16 @@
         "verified": true
       },
       "file_count": 990,
-      "files_sha256": "416dd4bcc7d6c15829a372e71beea0633905c86c911032d59e9a831bc3938fff",
+      "files_sha256": "335a1c33f183235d8c6f9a81af71229b1954f7d8bcfaf31a53265d16da99e2ab",
       "name": "linux-libc-dev",
-      "sha256": "fec8e4a308c03cd98dace67370a8d5a8031c36741796065c9f6e3f9548ab0cd2",
-      "size": 1595188,
-      "total_bytes": 6750373,
-      "version": "6.8.0-147.147"
+      "sha256": "e4b7b9c5023ba727908868661e1113d28ed9b68e47aed00e314723dad4b2b31d",
+      "size": 1698546,
+      "total_bytes": 6854246,
+      "version": "6.8.0-149.149"
     },
     "arm64": {
       "architecture": "arm64",
-      "archive_inventory_sha256": "dee70a23715225257ebe924a08339c6d103c907bc237f46c8cf3c146f6c9a80e",
+      "archive_inventory_sha256": "07f408b82e46c7a3f80bd7c843ba37269f8fd89239b65dba48060022f6d68d53",
       "exported_conntrack": {
         "kernel_dead_flag_absent": true,
         "kernel_guard_absent": true,
@@ -419,12 +524,12 @@
         "verified": true
       },
       "file_count": 962,
-      "files_sha256": "0674f4c1698f51da6116b83436ed32a30dd290b71e7ea3b47e26c9b5c3b77756",
+      "files_sha256": "3f05589eb4cf453d6bab791fc45b6589fd25f6d79b13bf220589fd0e4f2d123c",
       "name": "linux-libc-dev",
-      "sha256": "e489840ff836f22ae92c1bc3534ea8c68bcce2c4500e39ba560bbefc1b25e359",
-      "size": 1568718,
-      "total_bytes": 6634068,
-      "version": "6.8.0-147.147"
+      "sha256": "7ab70f6ebc55fe9ea6ceb9bb087cc7df252b62b9f1b14df46e825052206d7cff",
+      "size": 1672414,
+      "total_bytes": 6737941,
+      "version": "6.8.0-149.149"
     }
   },
   "reason": "The exact reviewed CVE defects occur in kernel implementation absent from this userspace component. This does not clear linked native libraries or the booted kernel, and does not claim that headers cannot contain executable inline code.",

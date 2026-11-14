@@ -5,6 +5,33 @@ private recipe. Refreshing its toolchain changes more than a wrapper layer;
 qualification must bind the new source, complete OCI manifest and layer set.
 An older parent-only or wrapper-only receipt cannot qualify this rebuild.
 
+## Pending OpenTelemetry source candidate
+
+The proposed containerd, Buildx and Compose module locks resolve SDK and trace
+1.47.0 for [GHSA-q7gw-24fr-5p69](https://github.com/open-telemetry/opentelemetry-go/security/advisories/GHSA-q7gw-24fr-5p69).
+Their new derivative identities are `v2.4.2+victron.security.5`,
+`v0.38.2+victron.security.2` and `v5.6.1+victron.security.3`. The source-built
+Go stage is pinned to the official multi-platform Go 1.27.4 Bookworm image;
+registry digest identity alone does not establish its final-image acceptance.
+Existing source backports, retained namesgenerator/license files and independent
+OpenPGP/manifest-client guards remain required.
+
+The pinned Buildx hostname test previously treated malformed UTF-8 as a valid
+replacement-character label. With the reviewed `x/net` lock, IDNA correctly
+rejects it. A test-only, before/after-hash-bound adaptation retains every valid
+Unicode, IPv6 and port vector and explicitly checks four malformed inputs for
+an error and empty result. Production hostname normalization is unchanged;
+neither the lookup policy nor the upstream test inventory is weakened.
+
+This source candidate must pass the three actual upstream test/build lanes and
+fresh binary scans. The existing default-branch-only, first-attempt,
+exact-reviewed-commit image factory then builds the new public/private images
+with the invalid site sentinel. Full image scans, nonroot smoke and cold/warm
+resource observations precede any separately reviewed promotion. No guard is
+widened to qualify an arbitrary feature branch, and no previous image receipt
+is relabeled for this candidate. Cluster image pins and routing are unchanged.
+The following sections retain the earlier input and qualification history.
+
 ## Reviewed inputs
 
 `deploy/runner-reserve/Dockerfile` pins the multi-platform image digests for:

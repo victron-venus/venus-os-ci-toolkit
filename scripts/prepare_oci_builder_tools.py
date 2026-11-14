@@ -14,7 +14,7 @@ from oci_vulnerability import evaluate
 
 ROOT = Path(__file__).resolve().parents[1]
 require = source.require
-HELPER_GO_VERSION = "go1.27.3"
+HELPER_GO_VERSION = "go1.27.4"
 
 
 def helper(arch, stage):

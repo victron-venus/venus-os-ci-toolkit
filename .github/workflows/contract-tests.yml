@@ -87,7 +87,7 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         if: steps.changes.outputs.needed == 'true'
         with:
-          go-version: '1.26.10'
+          go-version: '1.27.4'
           cache-dependency-path: .github/containers/runner-go-tools/${{ matrix.component }}/go.sum
       - name: Test and compile the exact patched release source
         if: steps.changes.outputs.needed == 'true'

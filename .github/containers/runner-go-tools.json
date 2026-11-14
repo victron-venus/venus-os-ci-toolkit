@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "go_version": "go1.26.10",
+  "go_version": "go1.27.4",
   "components": {
     "containerd": {
       "repository": "containerd/containerd",
@@ -19,10 +19,10 @@
         "go.sum": "a38ac3f5c1c0a5ea2747e12b57fbd3547703251bfe02e49647939bec8860b4ff"
       },
       "fixed_locks": {
-        "go.mod": "8d29cbac04e6dd8383a2c5298d888a7f7bd92f6f9fb6780459c98537449a0159",
-        "go.sum": "9e158789298a6cd353bfdad2f6781a0b7818bec4baf5a242ab893b88df271c8d"
+        "go.mod": "42535821d5d66eae84e7c8ae639c94234a553a2d5d8131fd9397d242c767a20e",
+        "go.sum": "9678ec1cf0541993a9f9ef2a885a2d923be8aeca162ea30c874ec518500a82b6"
       },
-      "downstream_version": "v2.4.2+victron.security.4",
+      "downstream_version": "v2.4.2+victron.security.5",
       "backport": "https://github.com/containerd/containerd/commit/1350ed10d68320f0f3e944b86b92c4dfdf4791a3",
       "backport_patch_sha256": "5811ab4b799ce74499b3ab78dd517c6e2a72d905e5904333f124c78976509203",
       "runtime_test_fix": {
@@ -44,10 +44,10 @@
         "go.sum": "07063b1e7e4885d061d6aa9efd48cead00cdd3a7e68527ce0863d18ae0ed5766"
       },
       "fixed_locks": {
-        "go.mod": "a4638edafc40dda5d8f0fbef5d37127982f139738fda16e3169a3eba393ed129",
-        "go.sum": "d2cf87407a367f5279119eb3232062e1e513392cab72f3457bc09d87a0401a65"
+        "go.mod": "017bf058ea7dfa31f15fe17f18e1a0682a0355f82a11275048023ba3acd1958a",
+        "go.sum": "f936d1079e4e8eace5e4da9074e04db87f8e893472176e93dec35428deb8311a"
       },
-      "downstream_version": "v0.38.2+victron.security.1",
+      "downstream_version": "v0.38.2+victron.security.2",
       "retained_namesgenerator": {
         "upstream_component": "github.com/docker/docker/pkg/namesgenerator@v28.5.2+incompatible",
         "files": {
@@ -57,6 +57,11 @@
         },
         "import_before_sha256": "db0bf3c553a4cb87cca464e2324156993f84721e894c7f329ebb241a1c9349cb",
         "import_after_sha256": "fbd58878f16daf687e8dc17125982909ce41cccd62d0935c35e14afe3054d73f"
+      },
+      "idna_test_fix": {
+        "before_sha256": "465fd2ede51fcbd7a7c1a5e1381b27d958c620b6b9d25ad6175ea2cdc60ed4eb",
+        "after_sha256": "a0e16baf100431308d4565f80ab7c4d6c56b148d70bec7f33d8821c7a1d76380",
+        "contract": "Malformed UTF-8 HTTP hostnames must propagate the strict IDNA lookup error; retain every valid Unicode, IPv6 and port vector."
       }
     },
     "compose": {
@@ -74,10 +79,10 @@
         "go.sum": "c7958ca4e417c9da1dc013e51923633385fe1e7814f651cdc432719bb0607dd8"
       },
       "fixed_locks": {
-        "go.mod": "c15c025920a223d47ce0210c74cc3e3ddc8017c829d283619967c8368b681d4f",
-        "go.sum": "ba1f4d56e139a6ed226bbaf7cebb3828057d67a75fa2fcdbff0be8531dc6a6d5"
+        "go.mod": "abd20dcb5491cf84407f6c7fd44871901e751c028df7bc5c69685d965375c165",
+        "go.sum": "af766cc7236f44bc4fe2b72b8d56a75c736128783e8af530fd33f7d9b556d49d"
       },
-      "downstream_version": "v5.6.1+victron.security.2"
+      "downstream_version": "v5.6.1+victron.security.3"
     }
   }
 }

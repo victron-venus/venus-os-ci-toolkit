@@ -5,17 +5,18 @@
     "commit": "6cbc19a3fd59e305fb814dca4d854a4fb67d2941",
     "archive_sha256": "2293b570f258dfc6e38e0bfdd3fa0e710324a7cf0449994304b524af8fb4f06c"
   },
-  "go_version": "go1.26.10",
+  "go_version": "go1.27.4",
   "original_locks": {
     "go.mod": "4af3e0f8be78563fb4793b24f38d9efa51bb07147d4bcfbfe5751be47f7bbd62",
     "go.sum": "c7958ca4e417c9da1dc013e51923633385fe1e7814f651cdc432719bb0607dd8"
   },
   "fixed_locks": {
-    "go.mod": "c15c025920a223d47ce0210c74cc3e3ddc8017c829d283619967c8368b681d4f",
-    "go.sum": "ba1f4d56e139a6ed226bbaf7cebb3828057d67a75fa2fcdbff0be8531dc6a6d5"
+    "go.mod": "abd20dcb5491cf84407f6c7fd44871901e751c028df7bc5c69685d965375c165",
+    "go.sum": "af766cc7236f44bc4fe2b72b8d56a75c736128783e8af530fd33f7d9b556d49d"
   },
   "updates": [
-    "golang.org/x/net@v0.62.0"
+    "golang.org/x/net@v0.62.0",
+    "OpenTelemetry root/SDK/trace1.47.0 via actual Go1.27.4 resolution; all changed selected ZIP+module sums verified, including log and SDK metric companions; fresh binary/image qualification required"
   ],
   "qualification": "Lock preparation only. Source tests and final image acceptance are separate required gates."
 }
