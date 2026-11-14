@@ -11,15 +11,15 @@
     "go.sum": "07063b1e7e4885d061d6aa9efd48cead00cdd3a7e68527ce0863d18ae0ed5766"
   },
   "fixed_locks": {
-    "go.mod": "9614a66a1fbf20c9d21481dc1fd5b7c2e1e6755f5a7a2cb4571ffa400424267b",
-    "go.sum": "331c1f164ce6225a0ca4e06da7cf89afde8c39be44474792a0e0319f281ae8ab"
+    "go.mod": "017bf058ea7dfa31f15fe17f18e1a0682a0355f82a11275048023ba3acd1958a",
+    "go.sum": "f936d1079e4e8eace5e4da9074e04db87f8e893472176e93dec35428deb8311a"
   },
   "updates": [
     "github.com/moby/go-archive@v0.3.0",
     "golang.org/x/crypto@v0.58.1-0.20261009181718-2f1f834330b2",
     "golang.org/x/net@v0.62.0",
     "Retain exact frozen namesgenerator source and notices locally; remove unused legacy Docker module requirement",
-    "go.opentelemetry.io/otel/sdk@v1.47.0 and go.opentelemetry.io/otel/trace@v1.47.0 via actual Go module resolution; Go1.27.4 compiler; fresh binary/image qualification required"
+    "OpenTelemetry root/SDK/trace1.47.0 via actual Go1.27.4 resolution; all changed selected ZIP+module sums verified, including log and SDK metric companions; fresh binary/image qualification required"
   ],
   "qualification": "Lock preparation only. Source tests and final image acceptance are separate required gates.",
   "retained_namesgenerator": {

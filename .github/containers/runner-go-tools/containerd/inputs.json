@@ -11,14 +11,14 @@
     "go.sum": "a38ac3f5c1c0a5ea2747e12b57fbd3547703251bfe02e49647939bec8860b4ff"
   },
   "fixed_locks": {
-    "go.mod": "d8d649650f0a689e7469025c00b6dce3c4b2523745c0247ca88a97beffa5a449",
-    "go.sum": "f78e7ecfe54646054f059531cf4ee1dc6c4a96162c150a3d12a965f79489e2f6"
+    "go.mod": "42535821d5d66eae84e7c8ae639c94234a553a2d5d8131fd9397d242c767a20e",
+    "go.sum": "9678ec1cf0541993a9f9ef2a885a2d923be8aeca162ea30c874ec518500a82b6"
   },
   "updates": [
     "golang.org/x/net@v0.62.0",
     "github.com/cilium/ebpf@v0.22.0",
     "github.com/go-jose/go-jose/v4@v4.1.6",
-    "go.opentelemetry.io/otel/sdk@v1.47.0 and go.opentelemetry.io/otel/trace@v1.47.0 via actual Go module resolution; Go1.27.4 compiler; fresh binary/image qualification required"
+    "OpenTelemetry root/SDK/trace1.47.0 via actual Go1.27.4 resolution; all changed selected ZIP+module sums verified, including log and SDK metric companions; fresh binary/image qualification required"
   ],
   "qualification": "Lock preparation only. Source tests and final image acceptance are separate required gates.",
   "upstream_backport": "https://github.com/containerd/containerd/commit/1350ed10d68320f0f3e944b86b92c4dfdf4791a3",

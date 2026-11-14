@@ -19,8 +19,8 @@
         "go.sum": "a38ac3f5c1c0a5ea2747e12b57fbd3547703251bfe02e49647939bec8860b4ff"
       },
       "fixed_locks": {
-        "go.mod": "d8d649650f0a689e7469025c00b6dce3c4b2523745c0247ca88a97beffa5a449",
-        "go.sum": "f78e7ecfe54646054f059531cf4ee1dc6c4a96162c150a3d12a965f79489e2f6"
+        "go.mod": "42535821d5d66eae84e7c8ae639c94234a553a2d5d8131fd9397d242c767a20e",
+        "go.sum": "9678ec1cf0541993a9f9ef2a885a2d923be8aeca162ea30c874ec518500a82b6"
       },
       "downstream_version": "v2.4.2+victron.security.5",
       "backport": "https://github.com/containerd/containerd/commit/1350ed10d68320f0f3e944b86b92c4dfdf4791a3",
@@ -44,8 +44,8 @@
         "go.sum": "07063b1e7e4885d061d6aa9efd48cead00cdd3a7e68527ce0863d18ae0ed5766"
       },
       "fixed_locks": {
-        "go.mod": "9614a66a1fbf20c9d21481dc1fd5b7c2e1e6755f5a7a2cb4571ffa400424267b",
-        "go.sum": "331c1f164ce6225a0ca4e06da7cf89afde8c39be44474792a0e0319f281ae8ab"
+        "go.mod": "017bf058ea7dfa31f15fe17f18e1a0682a0355f82a11275048023ba3acd1958a",
+        "go.sum": "f936d1079e4e8eace5e4da9074e04db87f8e893472176e93dec35428deb8311a"
       },
       "downstream_version": "v0.38.2+victron.security.2",
       "retained_namesgenerator": {
@@ -74,8 +74,8 @@
         "go.sum": "c7958ca4e417c9da1dc013e51923633385fe1e7814f651cdc432719bb0607dd8"
       },
       "fixed_locks": {
-        "go.mod": "c872010eaac93b1fd1e3df0f22499562e3f92d2bc85551bec30293906a201a37",
-        "go.sum": "91e0c63aa7faa2e941a8332e6e410f84ddf511484d4597d6d34c11b8020d08e3"
+        "go.mod": "abd20dcb5491cf84407f6c7fd44871901e751c028df7bc5c69685d965375c165",
+        "go.sum": "af766cc7236f44bc4fe2b72b8d56a75c736128783e8af530fd33f7d9b556d49d"
       },
       "downstream_version": "v5.6.1+victron.security.3"
     }

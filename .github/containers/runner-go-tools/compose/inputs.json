@@ -11,12 +11,12 @@
     "go.sum": "c7958ca4e417c9da1dc013e51923633385fe1e7814f651cdc432719bb0607dd8"
   },
   "fixed_locks": {
-    "go.mod": "c872010eaac93b1fd1e3df0f22499562e3f92d2bc85551bec30293906a201a37",
-    "go.sum": "91e0c63aa7faa2e941a8332e6e410f84ddf511484d4597d6d34c11b8020d08e3"
+    "go.mod": "abd20dcb5491cf84407f6c7fd44871901e751c028df7bc5c69685d965375c165",
+    "go.sum": "af766cc7236f44bc4fe2b72b8d56a75c736128783e8af530fd33f7d9b556d49d"
   },
   "updates": [
     "golang.org/x/net@v0.62.0",
-    "go.opentelemetry.io/otel/sdk@v1.47.0 and go.opentelemetry.io/otel/trace@v1.47.0 via actual Go module resolution; Go1.27.4 compiler; fresh binary/image qualification required"
+    "OpenTelemetry root/SDK/trace1.47.0 via actual Go1.27.4 resolution; all changed selected ZIP+module sums verified, including log and SDK metric companions; fresh binary/image qualification required"
   ],
   "qualification": "Lock preparation only. Source tests and final image acceptance are separate required gates."
 }

@@ -9,8 +9,8 @@
       "compressed_bytes": 12147502,
       "downstream_version": "v0.34.2+victron.security.2",
       "locked_files": {
-        "go.mod": "2a1e592857a4cb0dd4504f96bc662e23bb6a7bb61b8c75bf5c91b29f3c1b7c30",
-        "go.sum": "2d405af3fb600550e82154a13b22d6a22cbe5c62e51cff3db4eb51c7c2724097",
+        "go.mod": "64be837bd33c4a13c1a7acd1042b3486bf6352567d51f0d814274ef0787d4032",
+        "go.sum": "26284fe4c1bfb8b3582515f6593d2ec0d6c3a8ea5bdea6e629fca11cfab169ca",
         "modules.json": "9416a5102a989244a1c6217bcb164a6f002c5fa32d79da6cdd17312405ae2daa"
       },
       "original_locks": {
@@ -20,7 +20,7 @@
       "release_tag": "v0.34.2",
       "repository": "moby/buildkit",
       "root": "buildkit-8c579433824224dc64a158cf8734495b6e2b186a",
-      "vendor_sha256": null
+      "vendor_sha256": "d7dc181c966ee3393ea2088f8fa3451923777c3499d1913b8eff703dc466a806"
     },
     "runc": {
       "allowed_symlinks": {
@@ -42,12 +42,12 @@
       "release_tag": "v1.5.2",
       "repository": "opencontainers/runc",
       "root": "runc-29dd3dc2b13b4123162e5fe132504bb4b15569f1",
-      "vendor_sha256": null
+      "vendor_sha256": "1e9f8b38ce08797173c98587e93c7c72fe74b9192d85d4ae49bcc603f885a62c"
     }
   },
   "go_version": "go1.27.4",
   "header_disposition_sha256": "fb0dd5889ad7f132df4692674c19513df87edafb086a26a810ba38210f9be699",
-  "locks_reviewed": false,
+  "locks_reviewed": true,
   "native_locks": {
     "amd64": "22a106ad7966bf9f7304cd797f28fede2cbae7f151fd780e29b34b9c58283030",
     "arm64": "fd4b89abe318086c3c26cd2f879d66e5ab22a239aac40fff7a4018bdde1e6c55"

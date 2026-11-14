@@ -295,15 +295,18 @@ credential is requested by this workflow.
 The source candidate uses Go 1.27.4 and OpenTelemetry SDK/trace 1.47.0 to address
 [GHSA-q7gw-24fr-5p69](https://github.com/open-telemetry/opentelemetry-go/security/advisories/GHSA-q7gw-24fr-5p69).
 BuildKit and runc receive new `victron.security.2` identities; old binary receipts
-cannot qualify these new compiler/module inputs. `locks_reviewed=false` and null
-vendor digests deliberately select hosted preparation, which resolves, verifies
-and vendors the actual upstream trees. No candidate compilation or native/runtime
-acceptance is admitted until those prepared locks receive a separate review.
+cannot qualify these new compiler/module inputs. Hosted preparation from
+[run 43563786217](https://github.com/victron-venus/venus-os-ci-toolkit/actions/runs/43563786217)
+resolved, verified and vendored the actual upstream trees. Its exact artifact
+`14101885685` received an independent source/module/lock review before adopting
+the new bindings and setting `locks_reviewed=true`. This admits the mandatory
+native build/security lanes; it does not establish native or runtime acceptance.
+An unreviewed candidate still selects preparation only, and regression tests
+reject native/build/scan/bundle operations while `locks_reviewed=false`.
 
 The accepted builder, promotion records, runtime image pins and cluster routing
-remain the retained operational inputs. After source-only bootstrap and review of
-the hosted preparation artifact, record the actual complete graphs/vendor hashes,
-then qualify the exact new source and binary bytes on both native architectures.
+remain the retained operational inputs. The adopted full graphs and vendor hashes must now be rechecked against the
+actual new source during both native architecture builds and security scans.
 Publication, image assembly, nonroot smoke, cold/warm resource observations and
 runtime promotion require their own fresh receipts. A changed source hash or a
 successful lock-preparation job is not evidence that those later gates passed.
