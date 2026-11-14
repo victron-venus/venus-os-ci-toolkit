@@ -179,7 +179,7 @@ class RunnerGoToolTests(unittest.TestCase):
                 'allowed_symlinks': links or {}}
 
     def test_manifest_and_separate_lock_origin_bind_every_source(self):
-        self.assertEqual(self.manifest['go_version'], 'go1.26.10')
+        self.assertEqual(self.manifest['go_version'], 'go1.27.4')
         self.assertEqual(set(self.manifest['components']), set(TOOLS.REPOSITORIES))
         for name, spec in self.manifest['components'].items():
             TOOLS.validate_spec(name, spec)

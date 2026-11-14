@@ -205,7 +205,7 @@ def install_locks(source, locks, spec):
     require(binding["source"] == {key: spec[key] for key in
             ("repository", "release_tag", "commit", "archive_sha256")},
             "Lock source binding changed; revalidate locks for the new source")
-    require(binding["go_version"] == "go1.26.10"
+    require(binding["go_version"] == "go1.27.4"
             and binding["original_locks"] == spec["original_locks"]
             and binding["fixed_locks"] == spec["fixed_locks"]
             and binding.get("retained_namesgenerator") == spec.get("retained_namesgenerator")

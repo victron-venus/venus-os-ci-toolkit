@@ -7,11 +7,11 @@
       "archive_sha256": "114a26e1a3d30fdb875ac869b404c09264b8f7bd7a085106b89b18dabd8dd651",
       "commit": "8c579433824224dc64a158cf8734495b6e2b186a",
       "compressed_bytes": 12147502,
-      "downstream_version": "v0.34.2+victron.security.1",
+      "downstream_version": "v0.34.2+victron.security.2",
       "locked_files": {
-        "go.mod": "4ad5fb4613240ff817023fede4b93bd52e859637afa2cd80276cc39b770f09cc",
-        "go.sum": "65978ee8dce869c990ebec1723d8925a38afc9b2de616efdc4a86e262cbb7cc2",
-        "modules.json": "beaab6f0fc8da166ecec395f34ef0cfe2e894cf850377bc50663f252ebd0f938"
+        "go.mod": "2a1e592857a4cb0dd4504f96bc662e23bb6a7bb61b8c75bf5c91b29f3c1b7c30",
+        "go.sum": "2d405af3fb600550e82154a13b22d6a22cbe5c62e51cff3db4eb51c7c2724097",
+        "modules.json": "9416a5102a989244a1c6217bcb164a6f002c5fa32d79da6cdd17312405ae2daa"
       },
       "original_locks": {
         "go.mod": "4eb5c9ccb202ca5031f7a9ba12a00f8ca49915b65e1e633a1fc22408883a12fe",
@@ -20,7 +20,7 @@
       "release_tag": "v0.34.2",
       "repository": "moby/buildkit",
       "root": "buildkit-8c579433824224dc64a158cf8734495b6e2b186a",
-      "vendor_sha256": "1f8840986c4e0afff738ac39ff0cfdbb92002efeb4a2e1af041f9cfb668301aa"
+      "vendor_sha256": null
     },
     "runc": {
       "allowed_symlinks": {
@@ -29,7 +29,7 @@
       "archive_sha256": "5386e1968f70cc1482b4b2a93dc1a88ea7fa5517fba49b9e0fafe614d5a4c97a",
       "commit": "29dd3dc2b13b4123162e5fe132504bb4b15569f1",
       "compressed_bytes": 2666129,
-      "downstream_version": "v1.5.2+victron.security.1",
+      "downstream_version": "v1.5.2+victron.security.2",
       "locked_files": {
         "go.mod": "e58a4888d2fe0a7ae0abdd1ab2936c2680b408d139a33b72a820dc7cc7eb5df1",
         "go.sum": "b279aff47638491fc31214571090858efdc0da30964ac0b1481e4b549870e301",
@@ -42,12 +42,12 @@
       "release_tag": "v1.5.2",
       "repository": "opencontainers/runc",
       "root": "runc-29dd3dc2b13b4123162e5fe132504bb4b15569f1",
-      "vendor_sha256": "1e9f8b38ce08797173c98587e93c7c72fe74b9192d85d4ae49bcc603f885a62c"
+      "vendor_sha256": null
     }
   },
-  "go_version": "go1.27.3",
+  "go_version": "go1.27.4",
   "header_disposition_sha256": "fb0dd5889ad7f132df4692674c19513df87edafb086a26a810ba38210f9be699",
-  "locks_reviewed": true,
+  "locks_reviewed": false,
   "native_locks": {
     "amd64": "22a106ad7966bf9f7304cd797f28fede2cbae7f151fd780e29b34b9c58283030",
     "arm64": "fd4b89abe318086c3c26cd2f879d66e5ab22a239aac40fff7a4018bdde1e6c55"

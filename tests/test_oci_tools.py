@@ -578,6 +578,41 @@ class QualificationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "security gate"):
             runtime.verify_binaries(output, "a" * 40, "amd64")
 
+    def test_new_derivative_labels_are_embedded_in_every_candidate_binary(self):
+        manifest = json.loads(build.MANIFEST.read_text())
+        self.assertEqual(manifest["go_version"], "go1.27.4")
+        for name, spec in manifest["components"].items():
+            suffix = spec["downstream_version"].split("+", 1)[1]
+            self.assertEqual(suffix, "victron.security.2")
+            for command in build.commands(name, spec, self.root).values():
+                flags = command[command.index("-ldflags") + 1]
+                if name == "runc":
+                    self.assertIn("main.extraVersion=" + suffix, flags)
+                else:
+                    self.assertIn("Version=" + spec["downstream_version"], flags)
+                    self.assertIn("Revision=" + spec["commit"] + "+" + suffix, flags)
+                self.assertNotIn("victron.security.1", flags)
+
+    def test_unreviewed_locks_cannot_enter_native_build_scan_or_bundle(self):
+        manifest = json.loads(build.MANIFEST.read_text())
+        manifest["locks_reviewed"] = False
+        path = self.root / "unreviewed.json"
+        build.write_json(path, manifest)
+        for action in ("native", "harden", "build", "scan", "bundle"):
+            with self.subTest(action=action), patch.object(build, "MANIFEST", path), \
+                    patch.object(sys, "argv", ["build_oci_tools.py", action]), \
+                    patch.object(build, "hosted_arch", return_value="amd64"), \
+                    patch.object(build.platform, "machine", return_value="x86_64"), \
+                    patch.object(build, "stage_dir", return_value=self.root), \
+                    patch.object(build, "install_native") as native, \
+                    patch.object(build, "build_component") as compile_source, \
+                    patch.object(build, "scan") as scan, \
+                    patch.object(build.tarfile, "open") as bundle:
+                with self.assertRaisesRegex(ValueError, "Lock preparation/review must finish"):
+                    build.main()
+                for boundary in (native, compile_source, scan, bundle):
+                    boundary.assert_not_called()
+
     def test_reviewed_locks_bind_sources_and_full_graph(self):
         manifest = json.loads(build.MANIFEST.read_text())
         build.validate_locks(manifest)

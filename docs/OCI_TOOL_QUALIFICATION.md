@@ -1,6 +1,6 @@
 # Source-built OCI tool qualification
 
-This lane builds candidate **BuildKit 0.34.1 and runc 1.5.2** from pinned public
+This lane builds candidate **BuildKit 0.34.2 and runc 1.5.2** from pinned public
 upstream source, with Go 1.27.3 and reviewed module updates. It does not use Docker,
 Buildx or an existing BuildKit daemon to bootstrap either tool. It does not change
 the toolkit release policy, publish a production binary, install a household
@@ -290,11 +290,29 @@ Download necessary review evidence before expiry. Both successful and failed
 source jobs upload the available reports. No publication permission or registry
 credential is requested by this workflow.
 
+## Pending OpenTelemetry security refresh
+
+The source candidate uses Go 1.27.4 and OpenTelemetry SDK/trace 1.47.0 to address
+[GHSA-q7gw-24fr-5p69](https://github.com/open-telemetry/opentelemetry-go/security/advisories/GHSA-q7gw-24fr-5p69).
+BuildKit and runc receive new `victron.security.2` identities; old binary receipts
+cannot qualify these new compiler/module inputs. `locks_reviewed=false` and null
+vendor digests deliberately select hosted preparation, which resolves, verifies
+and vendors the actual upstream trees. No candidate compilation or native/runtime
+acceptance is admitted until those prepared locks receive a separate review.
+
+The accepted builder, promotion records, runtime image pins and cluster routing
+remain the retained operational inputs. After source-only bootstrap and review of
+the hosted preparation artifact, record the actual complete graphs/vendor hashes,
+then qualify the exact new source and binary bytes on both native architectures.
+Publication, image assembly, nonroot smoke, cold/warm resource observations and
+runtime promotion require their own fresh receipts. A changed source hash or a
+successful lock-preparation job is not evidence that those later gates passed.
+
 ## Updating inputs and diagnosing failures
 
 Prepare changes in a disposable source directory, outside primary repositories:
 verify the exact commit archive, record original locks, apply the explicitly
-selected module versions with Go 1.27.3, then run `go mod tidy`, `go mod verify`,
+selected module versions with Go 1.27.4, then run `go mod tidy`, `go mod verify`,
 `go mod vendor` and `go list -mod=readonly -m -json all`. The recipe's
 `locked_modules()` removes machine paths, and `tree_digest()` binds vendor paths
 and file contents independently of timestamps. Review the complete lock diff and

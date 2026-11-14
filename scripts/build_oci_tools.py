@@ -189,7 +189,7 @@ def download_native_package(spec, item, target, *, archive_selected=False):
 
 
 def validate_locks(manifest):
-    require(manifest["schema"] == 1 and manifest["go_version"] == "go1.27.3",
+    require(manifest["schema"] == 1 and manifest["go_version"] == "go1.27.4",
             "Unexpected recipe schema/toolchain")
     require(set(manifest["components"]) == {"buildkit", "runc"}, "Unexpected component set")
     require(type(manifest["locks_reviewed"]) is bool, "Explicit lock review status required")
@@ -204,7 +204,7 @@ def validate_locks(manifest):
         require(len(spec["commit"]) == 40 and all(c in "0123456789abcdef" for c in spec["commit"]),
                 "Full source commit required")
         require(spec["root"] == name + "-" + spec["commit"], "Unexpected source root")
-        require(spec["downstream_version"] == spec["release_tag"] + "+victron.security.1",
+        require(spec["downstream_version"] == spec["release_tag"] + "+victron.security.2",
                 "Candidate must identify downstream modifications")
         binding = json.loads((INPUTS / name / "inputs.json").read_text())
         require(binding == {"go_version": manifest["go_version"], "source": spec},
@@ -397,12 +397,12 @@ def commands(name, spec, output):
     common = ["go", "build", "-mod=vendor", "-p", "2", "-trimpath", "-buildvcs=false"]
     if name == "runc":
         flags = ("-linkmode external -extldflags -static "
-                 f"-X main.gitCommit={spec['commit']} -X main.extraVersion=victron.security.1")
+                 f"-X main.gitCommit={spec['commit']} -X main.extraVersion=victron.security.2")
         return {"runc": common + ["-x", "-tags", TAGS[name], "-ldflags", flags,
                                   "-o", str(output / "runc"), "."]}
     prefix = "github.com/moby/buildkit/version."
     flags = (f"-X {prefix}Version={spec['downstream_version']} "
-             f"-X {prefix}Revision={spec['commit']}+victron.security.1 "
+             f"-X {prefix}Revision={spec['commit']}+victron.security.2 "
              f"-X {prefix}Package=github.com/moby/buildkit")
     return {tool: common + ["-tags", TAGS[name], "-ldflags", flags,
                            "-o", str(output / tool), "./cmd/" + tool]

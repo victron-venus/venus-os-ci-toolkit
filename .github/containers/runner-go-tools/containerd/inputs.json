@@ -5,19 +5,20 @@
     "commit": "b7a25261e029d68978bbf290df0a62fc819b3c51",
     "archive_sha256": "e38df0eeb40d2304f3450edb148aee838cb0a57f3976a47c78870f92c80f1796"
   },
-  "go_version": "go1.26.10",
+  "go_version": "go1.27.4",
   "original_locks": {
     "go.mod": "160493ce61c5b7a0639dcc4dc3cba19958384db3dd51d63c5e7b087d67e687cc",
     "go.sum": "a38ac3f5c1c0a5ea2747e12b57fbd3547703251bfe02e49647939bec8860b4ff"
   },
   "fixed_locks": {
-    "go.mod": "8d29cbac04e6dd8383a2c5298d888a7f7bd92f6f9fb6780459c98537449a0159",
-    "go.sum": "9e158789298a6cd353bfdad2f6781a0b7818bec4baf5a242ab893b88df271c8d"
+    "go.mod": "d8d649650f0a689e7469025c00b6dce3c4b2523745c0247ca88a97beffa5a449",
+    "go.sum": "f78e7ecfe54646054f059531cf4ee1dc6c4a96162c150a3d12a965f79489e2f6"
   },
   "updates": [
     "golang.org/x/net@v0.62.0",
     "github.com/cilium/ebpf@v0.22.0",
-    "github.com/go-jose/go-jose/v4@v4.1.6"
+    "github.com/go-jose/go-jose/v4@v4.1.6",
+    "go.opentelemetry.io/otel/sdk@v1.47.0 and go.opentelemetry.io/otel/trace@v1.47.0 via actual Go module resolution; Go1.27.4 compiler; fresh binary/image qualification required"
   ],
   "qualification": "Lock preparation only. Source tests and final image acceptance are separate required gates.",
   "upstream_backport": "https://github.com/containerd/containerd/commit/1350ed10d68320f0f3e944b86b92c4dfdf4791a3",

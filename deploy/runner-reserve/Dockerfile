@@ -37,7 +37,7 @@ USER 0:0
 RUN dpkg --path-include='/usr/share/locale/*/LC_MESSAGES/gst-plugins-bad-1.0.mo' \
         --unpack /opt/victron-gstreamer/libgstreamer-plugins-bad1.0-0.deb /opt/victron-gstreamer/gstreamer1.0-plugins-bad.deb \
     && sha256sum --check /opt/victron-gstreamer/installed.sha256
-FROM --platform=$BUILDPLATFORM docker.io/library/golang@sha256:672c944cfd07599b5f1bb179869270cdc94c6254e41db4d431259693cb286b82 AS patched-go-tools
+FROM --platform=$BUILDPLATFORM docker.io/library/golang@sha256:4fa7c968ba93f1635670522dbb01a2c78150443e1385746924566079f36570ea AS patched-go-tools
 ARG TARGETARCH
 RUN apt-get update && apt-get install -y --no-install-recommends python3 ca-certificates \
     && rm -rf /var/lib/apt/lists/* \

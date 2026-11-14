@@ -1,5 +1,5 @@
 {
-  "go_version": "go1.27.3",
+  "go_version": "go1.27.4",
   "source": {
     "allowed_symlinks": {
       "examples/kube-consistent-hash": "kubernetes/consistenthash"
@@ -7,11 +7,11 @@
     "archive_sha256": "114a26e1a3d30fdb875ac869b404c09264b8f7bd7a085106b89b18dabd8dd651",
     "commit": "8c579433824224dc64a158cf8734495b6e2b186a",
     "compressed_bytes": 12147502,
-    "downstream_version": "v0.34.2+victron.security.1",
+    "downstream_version": "v0.34.2+victron.security.2",
     "locked_files": {
-      "go.mod": "4ad5fb4613240ff817023fede4b93bd52e859637afa2cd80276cc39b770f09cc",
-      "go.sum": "65978ee8dce869c990ebec1723d8925a38afc9b2de616efdc4a86e262cbb7cc2",
-      "modules.json": "beaab6f0fc8da166ecec395f34ef0cfe2e894cf850377bc50663f252ebd0f938"
+      "go.mod": "2a1e592857a4cb0dd4504f96bc662e23bb6a7bb61b8c75bf5c91b29f3c1b7c30",
+      "go.sum": "2d405af3fb600550e82154a13b22d6a22cbe5c62e51cff3db4eb51c7c2724097",
+      "modules.json": "9416a5102a989244a1c6217bcb164a6f002c5fa32d79da6cdd17312405ae2daa"
     },
     "original_locks": {
       "go.mod": "4eb5c9ccb202ca5031f7a9ba12a00f8ca49915b65e1e633a1fc22408883a12fe",
@@ -20,6 +20,6 @@
     "release_tag": "v0.34.2",
     "repository": "moby/buildkit",
     "root": "buildkit-8c579433824224dc64a158cf8734495b6e2b186a",
-    "vendor_sha256": "1f8840986c4e0afff738ac39ff0cfdbb92002efeb4a2e1af041f9cfb668301aa"
+    "vendor_sha256": null
   }
 }

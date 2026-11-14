@@ -5,20 +5,21 @@
     "commit": "3c4cbd35852fc1a476923627a780a7836c28b654",
     "archive_sha256": "02bac8e7542eee39ab36228403c2d92d6822defab3f4bcf292052d74c644e732"
   },
-  "go_version": "go1.26.10",
+  "go_version": "go1.27.4",
   "original_locks": {
     "go.mod": "64826abe20bb482bb0c7747b7397c371f42b8efa91c19672e2bfac8106f08060",
     "go.sum": "07063b1e7e4885d061d6aa9efd48cead00cdd3a7e68527ce0863d18ae0ed5766"
   },
   "fixed_locks": {
-    "go.mod": "a4638edafc40dda5d8f0fbef5d37127982f139738fda16e3169a3eba393ed129",
-    "go.sum": "d2cf87407a367f5279119eb3232062e1e513392cab72f3457bc09d87a0401a65"
+    "go.mod": "9614a66a1fbf20c9d21481dc1fd5b7c2e1e6755f5a7a2cb4571ffa400424267b",
+    "go.sum": "331c1f164ce6225a0ca4e06da7cf89afde8c39be44474792a0e0319f281ae8ab"
   },
   "updates": [
     "github.com/moby/go-archive@v0.3.0",
     "golang.org/x/crypto@v0.58.1-0.20261009181718-2f1f834330b2",
     "golang.org/x/net@v0.62.0",
-    "Retain exact frozen namesgenerator source and notices locally; remove unused legacy Docker module requirement"
+    "Retain exact frozen namesgenerator source and notices locally; remove unused legacy Docker module requirement",
+    "go.opentelemetry.io/otel/sdk@v1.47.0 and go.opentelemetry.io/otel/trace@v1.47.0 via actual Go module resolution; Go1.27.4 compiler; fresh binary/image qualification required"
   ],
   "qualification": "Lock preparation only. Source tests and final image acceptance are separate required gates.",
   "retained_namesgenerator": {
