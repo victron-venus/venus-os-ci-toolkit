@@ -16,6 +16,13 @@ registry digest identity alone does not establish its final-image acceptance.
 Existing source backports, retained namesgenerator/license files and independent
 OpenPGP/manifest-client guards remain required.
 
+The pinned Buildx hostname test previously treated malformed UTF-8 as a valid
+replacement-character label. With the reviewed `x/net` lock, IDNA correctly
+rejects it. A test-only, before/after-hash-bound adaptation retains every valid
+Unicode, IPv6 and port vector and explicitly checks four malformed inputs for
+an error and empty result. Production hostname normalization is unchanged;
+neither the lookup policy nor the upstream test inventory is weakened.
+
 This source candidate must pass the three actual upstream test/build lanes and
 fresh binary scans. The existing default-branch-only, first-attempt,
 exact-reviewed-commit image factory then builds the new public/private images

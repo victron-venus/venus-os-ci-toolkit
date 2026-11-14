@@ -57,6 +57,11 @@
         },
         "import_before_sha256": "db0bf3c553a4cb87cca464e2324156993f84721e894c7f329ebb241a1c9349cb",
         "import_after_sha256": "fbd58878f16daf687e8dc17125982909ce41cccd62d0935c35e14afe3054d73f"
+      },
+      "idna_test_fix": {
+        "before_sha256": "465fd2ede51fcbd7a7c1a5e1381b27d958c620b6b9d25ad6175ea2cdc60ed4eb",
+        "after_sha256": "a0e16baf100431308d4565f80ab7c4d6c56b148d70bec7f33d8821c7a1d76380",
+        "contract": "Malformed UTF-8 HTTP hostnames must propagate the strict IDNA lookup error; retain every valid Unicode, IPv6 and port vector."
       }
     },
     "compose": {
