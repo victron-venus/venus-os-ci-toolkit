@@ -492,6 +492,7 @@
   "tests/test_coderabbit_autofix.py",
   "tests/test_coderabbit_review.py",
   "tests/test_consumer_versioning.py",
+  "tests/test_coverage_artifacts.py",
   "tests/test_coverage_install.py",
   "tests/test_coverage_integrity.py",
   "tests/test_coverage_policy.py",
