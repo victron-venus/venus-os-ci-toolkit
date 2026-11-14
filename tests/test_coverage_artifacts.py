@@ -79,6 +79,29 @@ class ProducerAttemptTests(unittest.TestCase):
         self.assertEqual(result["tested_sha"], "a" * 40)
         self.assertEqual(result["event_base_sha"], "c" * 40)
 
+    def test_prefix_sharing_producers_select_only_their_full_base(self):
+        records = [
+            artifact(1),
+            artifact(2, identifier=2002) | {"name": "coverage-python-unit-2"},
+            artifact(2, identifier=3002) | {"name": "coverage-python-2-2"},
+        ]
+        for inventory in (records, list(reversed(records))):
+            with self.subTest(inventory=inventory):
+                self.assertEqual(self.select(inventory)["artifact_id"], 1001)
+                env, event = context()
+                for base, expected in (
+                    ("coverage-python-unit", 2002),
+                    ("coverage-python-2", 3002),
+                ):
+                    env["COVERAGE_ARTIFACT"] = base
+                    selected = reports.select_artifact(env, event, inventory, now=NOW)
+                    self.assertEqual(selected["artifact_id"], expected)
+                    self.assertEqual(selected["producer_attempt"], 2)
+        with self.assertRaisesRegex(ValueError, "Malformed producer attempt"):
+            self.select(records + [artifact(2) | {"name": "coverage-python-02"}])
+        with self.assertRaisesRegex(ValueError, "duplicate coverage artifact ID"):
+            self.select(records + [artifact(1) | {"name": "coverage-python-unit-1"}])
+
     def test_newest_available_attempt_wins_without_retesting_claim(self):
         result = self.select([artifact(1), artifact(2)])
         self.assertEqual(result["artifact_id"], 1002)

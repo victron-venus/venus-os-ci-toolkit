@@ -262,6 +262,15 @@ def select_artifact(environment, event, artifacts, *, now=None):
         if not name.startswith(prefix):
             continue
         match = pattern.fullmatch(name)
+        if match is None:
+            # A configured producer may have a hyphenated name sharing this
+            # prefix. The final canonical attempt suffix belongs to its full
+            # base, not to the shorter requested producer.
+            sibling = re.fullmatch(
+                r"([A-Za-z0-9][A-Za-z0-9_.-]{0,99})-([1-9][0-9]*)", name
+            )
+            if sibling and sibling[1] != environment["COVERAGE_ARTIFACT"]:
+                continue
         require(match is not None, "Malformed producer attempt name")
         attempt = int(match[1])
         if attempt <= current:
