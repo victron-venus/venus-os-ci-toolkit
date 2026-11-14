@@ -2,7 +2,7 @@ module github.com/victron-venus/venus-os-ci-toolkit/tests/cel
 
 go 1.27.3
 
-require cel.dev/cel-go v0.33.1
+require cel.dev/cel-go v0.33.2
 
 require (
 	cel.dev/expr v0.25.1 // indirect
