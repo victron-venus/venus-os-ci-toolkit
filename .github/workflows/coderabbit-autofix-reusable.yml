@@ -61,6 +61,7 @@ jobs:
           REVIEWER = "coderabbitai[bot]"
           MAX_ROUNDS = 3
           MAX_GET_ATTEMPTS = 3
+          MAX_OPEN_PR_PAGES = 10
           REQUEST_TIMEOUT_SECONDS = 30
           MARKER = re.compile(r"<!-- toolkit-coderabbit-autofix:v1 head=([0-9a-f]{40}) findings=([0-9a-f]{64}) -->")
           THREADS = """query($owner:String!,$name:String!,$number:Int!,$cursor:String){
@@ -216,6 +217,27 @@ jobs:
               api(comments, token, payload={"body": body})
               print(f"Requested autofix on #{number} at {head} as {BOT}")
 
+          def automatic_pr_numbers(repository, head, token):
+              # The commit endpoint omits non-default-base PRs once this commit is
+              # already on the default branch. Keep its existing fork discovery,
+              # then supplement only exact same-repository open heads.
+              numbers = {p["number"] for p in items(
+                  f"repos/{repository}/commits/{head}/pulls?per_page=100", token)}
+              for page in range(1, MAX_OPEN_PR_PAGES + 1):
+                  rows = api(f"repos/{repository}/pulls?state=open&per_page=100&page={page}", token)
+                  if not isinstance(rows, list) or len(rows) > 100:
+                      raise RuntimeError("Invalid open PR discovery page")
+                  for pr in rows:
+                      if not isinstance(pr, dict) or type(pr.get("number")) is not int or pr["number"] <= 0:
+                          raise RuntimeError("Invalid open PR discovery entry")
+                      if (eligible_pr(pr, repository, pr["number"], head)
+                              and (pr.get("head", {}).get("repo") or {}).get("full_name") == repository):
+                          numbers.add(pr["number"])
+                  if len(rows) < 100:
+                      return sorted(numbers)
+              # Never issue a partial set of writes when discovery exceeds its cap.
+              raise RuntimeError("Open PR discovery exceeded its page bound")
+
           def main():
               event = os.environ.get("GITHUB_EVENT_NAME")
               number = os.environ.get("PR_NUMBER", "")
@@ -239,8 +261,7 @@ jobs:
               identity = api("user", token)
               if identity.get("login") != BOT or type(identity.get("id")) is not int or identity["id"] <= 0:
                   raise RuntimeError("BOT_PAT must belong to californiantiramisu")
-              numbers = ([int(number)] if manual else
-                         sorted({p["number"] for p in items(f"repos/{repository}/commits/{head}/pulls?per_page=100", token)}))
+              numbers = [int(number)] if manual else automatic_pr_numbers(repository, head, token)
               for pr_number in numbers:
                   process(repository, pr_number, head, token, identity)
 
