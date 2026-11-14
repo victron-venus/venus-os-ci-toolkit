@@ -106,8 +106,8 @@ The token must belong to `californiantiramisu`; a fine-grained token needs
 The caller must be merged onto the default branch before status events reach it.
 
 The [status event](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#status)
-runs the default-branch workflow when CodeRabbit reports success. It works for
-fork PRs without checking out their code or exposing secrets to a PR workflow.
+runs the default-branch workflow when CodeRabbit reports success. It does not
+check out PR code or expose secrets to a PR workflow.
 The caller authenticates the event sender as `coderabbitai[bot]` with type `Bot`;
 the reusable job also verifies the live status creator, including for manual dispatch.
 It verifies an actual submitted CodeRabbit review on the current
@@ -116,17 +116,29 @@ It then finds unresolved, non-outdated CodeRabbit review threads containing
 `Prompt for AI Agents` instructions and posts this command as the verified bot:
 
 ```text
-@coderabbitai autofix
+@coderabbitai fix comments stacked pr
 ```
 
-A hidden marker records the head and a hash of the finding IDs. The job allows
-one automatic request per head, does not retry the same finding set after another
-push, and caps automatic requests at three per PR. This bounds the feedback loop
-when Autofix pushes a commit that produces another review. Requests beyond this
-limit need a maintainer's explicit manual command. Do not delete the markers.
+This documented [one-off Fix comments command](https://docs.coderabbit.ai/finishing-touches/autofix)
+requests a separate stacked PR. It does not turn on the ongoing direct-push
+Autofix mode. A head may advance between the final API read and CodeRabbit
+starting its task; the observed SHA marker does not bind third-party execution.
+Review the separate proposal against its actual base and run applicable CI before
+integrating it. This workflow does not approve or merge that proposal.
+
+A hidden marker records the observed head and a hash of the finding IDs. The job
+allows one automatic request per head, does not retry the same finding set after
+another push, and caps requests at three per PR. Historical marked direct Autofix
+requests count toward the same deduplication and round limits; upgrading does not
+reset them. Requests beyond the limit need a maintainer's explicit manual command.
+Do not delete the markers. This change only controls new requests: independently
+stop any previously enabled ongoing Autofix task before relying on proposal-only
+operation. An old marker does not prove that a legacy task has stopped.
 Closed, draft, private, archived, deleted-head and superseded PRs are skipped.
-Open fork PRs are eligible; CodeRabbit's ability to write the fork still depends
-on its permissions. PR authors are not used as an identity signal for CodeRabbit.
+Open fork PRs are skipped because CodeRabbit does not run Fix comments on them.
+Apply reviewed changes yourself or use a same-repository branch; this helper does
+not copy fork code or expand credentials to work around that provider limitation.
+PR authors are not used as an identity signal for CodeRabbit.
 
 The job paginates reviews, threads and comments, verifies the bot's login and
 account ID for deduplication, and rechecks the head and findings before writing.
@@ -159,7 +171,9 @@ gh workflow run coderabbit-autofix.yml --repo OWNER/REPO --ref DEFAULT_BRANCH \
 
 Use `dry-run=false` to deliver an eligible request. Manual dispatch retains all
 deduplication, review and three-round checks. It cannot force an unreviewed head.
-Inspect the resulting CodeRabbit commit and normal CI before merging.
+Inspect the resulting stacked PR, its actual base and normal CI before integrating it.
 This workflow requests changes; it does not approve or merge the resulting code.
 [Autofix availability and limits](https://docs.coderabbit.ai/finishing-touches/autofix)
-are controlled by CodeRabbit. A delivered command is not proof of a completed fix.
+are controlled by CodeRabbit, including its existing plan and quota requirements.
+The workflow does not change a subscription or enable paid billing. A delivered
+command is not proof of a completed fix.
