@@ -468,6 +468,33 @@ class QualificationTests(unittest.TestCase):
                 root, config = self.container_fixture(mode, fail=True)
                 self.assertEqual(json.loads((root / (mode + "-config.json")).read_text()), config)
 
+    def test_runc_cgo_cache_is_fresh_private_and_cannot_reuse_an_old_closure(self):
+        manifest = json.loads(build.MANIFEST.read_text())
+        spec = manifest["components"]["runc"]
+        ambient = self.root / "ambient-cache"
+        ambient.mkdir()
+        (ambient / "old-cgo-object").write_bytes(b"previous native input closure")
+        expected = self.root / "runc-go-build-cache"
+        def version(argv, **kwargs):
+            self.assertEqual(argv, ["go", "version"])
+            self.assertEqual(kwargs["env"]["GOCACHE"], str(expected))
+            self.assertEqual(stat.S_IMODE(expected.stat().st_mode), 0o700)
+            self.assertEqual(list(expected.iterdir()), [])
+            return "go version " + manifest["go_version"] + " linux/amd64"
+        with patch.dict(os.environ, {"GOCACHE": str(ambient)}), \
+                patch.object(build.os, "geteuid", return_value=1001), \
+                patch.object(build, "run", side_effect=version), \
+                patch.object(build, "download", side_effect=RuntimeError("stop after cache proof")):
+            with self.assertRaisesRegex(RuntimeError, "stop after cache proof"):
+                build.build_component("runc", spec, self.root, "amd64", manifest)
+        self.assertEqual((ambient / "old-cgo-object").read_bytes(), b"previous native input closure")
+        with patch.object(build.os, "geteuid", return_value=1001), \
+                patch.object(build, "run") as compiler, patch.object(build, "download") as download:
+            with self.assertRaises(FileExistsError):
+                build.build_component("runc", spec, self.root, "amd64", manifest)
+            compiler.assert_not_called()
+            download.assert_not_called()
+
     def test_go_configuration_ignores_ambient_cross_toolchain_or_cgo_flags(self):
         with patch.dict(os.environ, {"GOPRIVATE": "*", "CGO_LDFLAGS": "-L/unreviewed",
                                      "GOTOOLCHAIN": "auto", "GOEXPERIMENT": "unreviewed"}):
@@ -781,8 +808,9 @@ class HeaderApplicabilityTests(unittest.TestCase):
     def disposition_fixture(self):
         policy = copy.deepcopy(self.policy)
         policy["reviewed"] = True
+        version, release = self.binding["version"].rsplit("-", 1)
         package = {"Name": self.binding["name"], "ID": self.binding["name"] + "@" + self.binding["version"],
-                   "Arch": "amd64", "SrcName": "linux", "Version": "6.8.0", "Release": "147.147"}
+                   "Arch": "amd64", "SrcName": "linux", "Version": version, "Release": release}
         finding = {"VulnerabilityID": policy["cve_ids"][0], "Severity": "HIGH",
                    "PkgName": package["Name"], "PkgID": package["ID"],
                    "InstalledVersion": self.binding["version"], "DataSource": {"ID": "ubuntu"}}

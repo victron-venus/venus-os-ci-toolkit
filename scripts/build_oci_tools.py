@@ -411,9 +411,16 @@ def commands(name, spec, output):
 
 def build_component(name, spec, stage, arch, manifest):
     env = environment(name, arch)
+    require(os.geteuid() != 0, "Source compilation and unit tests must be unprivileged")
+    cache = None
+    if name == "runc":
+        # Go does not reliably invalidate cached Cgo objects when external
+        # headers/libraries change. Never restore or reuse an ambient cache.
+        cache = stage / "runc-go-build-cache"
+        cache.mkdir(mode=0o700)
+        env["GOCACHE"] = str(cache)
     require(run(["go", "version"], env=env).split()[2] == manifest["go_version"],
             "Unexpected Go toolchain")
-    require(os.geteuid() != 0, "Source compilation and unit tests must be unprivileged")
     source = stage / "source" / name
     archive = stage / (name + ".tar.gz")
     download(f"https://codeload.github.com/{spec['repository']}/tar.gz/{spec['commit']}",
@@ -461,6 +468,10 @@ def build_component(name, spec, stage, arch, manifest):
     write_json(evidence / "provenance.json", {
         "source": spec, "architecture": arch, "go_version": manifest["go_version"],
         "commands": builds, "tests": tests,
+        "go_build_cache": None if cache is None else {
+            "fresh": True, "relative_path": str(cache.relative_to(stage)),
+            "native_inputs_sha256": manifest["native_locks"][arch],
+        },
         "binaries": {tool: digest(bins / tool) for tool in builds},
         "openpgp": {tool: [p["ImportPath"] for p in packages if p["ImportPath"].startswith(OPENPGP)]
                     for tool, packages in graphs.items()},

@@ -183,8 +183,9 @@ allowing removals or resolving an unpinned package from a live repository.
 ### Finite Linux header applicability
 
 The [reviewed policy](../.github/oci-tools/header-disposition.json) binds a finite
-set of 385 observed CVEs to Ubuntu 24.04 `linux-libc-dev` version `6.8.0-147.147`,
-with separate amd64/arm64 archive hashes, sizes, complete member inventories and
+set of 385 observed CVEs to Ubuntu 24.04 `linux-libc-dev` version `6.8.0-149.149`
+after the explicit input revalidation below, with separate amd64/arm64 archive
+hashes, sizes, complete member inventories and
 installed-file hashes. It is **inactive while `reviewed` is false**. It is not a
 package-wide suppression or a claim that header files cannot contain vulnerable
 inline code: for example, exported `linux/swab.h` contains inline operations.
@@ -310,6 +311,32 @@ actual new source during both native architecture builds and security scans.
 Publication, image assembly, nonroot smoke, cold/warm resource observations and
 runtime promotion require their own fresh receipts. A changed source hash or a
 successful lock-preparation job is not evidence that those later gates passed.
+
+## Patched userspace header input
+
+The native closure now pins published Ubuntu `linux-libc-dev` 6.8.0-149.149 on
+both AMD64 and ARM64. The previous exact source scan reported 233 additional
+HIGH/CRITICAL kernel-package findings with this published fixed version.
+Both official archive checksums and the unchanged snapshot downloader were
+verified before choosing the patched input; no other native package, snapshot,
+origin, installation constraint or scanner rule changes.
+
+The 12 common exported-header deltas were reviewed as declarations,
+structs/unions, enums/constants, comments and include order, with no added kernel
+implementation or inline function bodies. These are real input changes, so no
+byte/ABI equivalence is claimed. The original 385 finite per-CVE records and
+reasons remain immutable; the exported conntrack boundary remains identical.
+The source-bound policy records the input revalidation and adds zero new
+non-applicability entries. Actual fresh native builds, binary/source/library
+scans and runtime checks remain required. This changes compiler input packages,
+not the running host kernel, and makes no claim that a host kernel was patched.
+
+For the Cgo-enabled runc build, the helper creates a new private 0700 `GOCACHE`
+under the owned stage and refuses an existing path before running any Go command.
+Its provenance binds that fresh cache to the native-input manifest hash.
+`setup-go` cache restoration remains disabled; ambient compiled Cgo objects from
+an older header/library closure cannot qualify the new input. This does not
+change the separate module checksum/verification requirements.
 
 ## Updating inputs and diagnosing failures
 

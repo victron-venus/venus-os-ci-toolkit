@@ -385,11 +385,11 @@
     },
     {
       "name": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-149.149",
       "architecture": "amd64",
-      "filename": "pool/main/l/linux/linux-libc-dev_6.8.0-147.147_amd64.deb",
-      "sha256": "fec8e4a308c03cd98dace67370a8d5a8031c36741796065c9f6e3f9548ab0cd2",
-      "size": 1595188,
+      "filename": "pool/main/l/linux/linux-libc-dev_6.8.0-149.149_amd64.deb",
+      "sha256": "e4b7b9c5023ba727908868661e1113d28ed9b68e47aed00e314723dad4b2b31d",
+      "size": 1698546,
       "source": "linux"
     },
     {

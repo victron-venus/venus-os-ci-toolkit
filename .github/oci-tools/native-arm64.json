@@ -376,11 +376,11 @@
     },
     {
       "name": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-149.149",
       "architecture": "arm64",
-      "filename": "pool/main/l/linux/linux-libc-dev_6.8.0-147.147_arm64.deb",
-      "sha256": "e489840ff836f22ae92c1bc3534ea8c68bcce2c4500e39ba560bbefc1b25e359",
-      "size": 1568718,
+      "filename": "pool/main/l/linux/linux-libc-dev_6.8.0-149.149_arm64.deb",
+      "sha256": "7ab70f6ebc55fe9ea6ceb9bb087cc7df252b62b9f1b14df46e825052206d7cff",
+      "size": 1672414,
       "source": "linux"
     },
     {

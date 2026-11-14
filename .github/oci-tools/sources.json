@@ -46,11 +46,11 @@
     }
   },
   "go_version": "go1.27.4",
-  "header_disposition_sha256": "fb0dd5889ad7f132df4692674c19513df87edafb086a26a810ba38210f9be699",
+  "header_disposition_sha256": "b84c88acfb4db081b4f8294bd7691939b7f751e45ecb8b448acc2e831de17f9f",
   "locks_reviewed": true,
   "native_locks": {
-    "amd64": "22a106ad7966bf9f7304cd797f28fede2cbae7f151fd780e29b34b9c58283030",
-    "arm64": "fd4b89abe318086c3c26cd2f879d66e5ab22a239aac40fff7a4018bdde1e6c55"
+    "amd64": "5eb1bf975aceed36715936bf75fdd8b23ef111151bedf348eec5c9da173619e8",
+    "arm64": "ca5e62d001def4b3559b195ce72461aed935bbe26ebcd8583537d5f4ea3cbcad"
   },
   "schema": 1,
   "trivy": {
