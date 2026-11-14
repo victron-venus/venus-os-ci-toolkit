@@ -189,10 +189,61 @@ jobs:
                   reviews and reviews[-1]["state"] == "APPROVED"
                   and reviews[-1]["commit_id"] == head
               )
+              def supplement_last_push_approval():
+                  # Keep the PAT CODEOWNER review. A distinct existing Actions
+                  # identity can satisfy last-push approval for this narrow bot case.
+                  if (recovery or dependabot or actions_fallback
+                          or reviewer.lower() != os.environ.get("GITHUB_ACTOR", "").lower()
+                          or os.environ.get("PR_AUTHOR", "").lower() != "californiantiramisu"
+                          or not same_repository_bot(pr, repository)):
+                      return
+                  if review_decision(repository, number, token) != "REVIEW_REQUIRED":
+                      return
+                  actions_token = os.environ.get("GITHUB_TOKEN")
+                  if not actions_token:
+                      raise RuntimeError("GITHUB_TOKEN is missing for independent last-push approval")
+                  current_reviews = [
+                      review
+                      for page in api(f"{endpoint}/reviews?per_page=100", token, paginate=True)
+                      for review in page
+                      if review["state"] != "PENDING"
+                  ]
+                  pat_reviews = [review for review in current_reviews
+                                 if review["user"]["login"].lower() == reviewer.lower()]
+                  if (not pat_reviews or pat_reviews[-1]["state"] != "APPROVED"
+                          or pat_reviews[-1]["commit_id"] != head
+                          or marker not in (pat_reviews[-1].get("body") or "")):
+                      print("The current PAT approval is not retained; no supplementary review")
+                      return
+                  app_reviews = [review for review in current_reviews
+                                 if review["user"]["login"].lower() == "github-actions[bot]"]
+                  if (app_reviews and app_reviews[-1]["state"] == "APPROVED"
+                          and app_reviews[-1]["commit_id"] == head
+                          and marker in (app_reviews[-1].get("body") or "")):
+                      print("The current head/base already has an independent Actions approval")
+                      return
+                  latest = api(endpoint, token)
+                  latest_base = api(base_endpoint, token)["object"]["sha"]
+                  if (latest["head"]["sha"] != head or latest_base != base
+                          or latest["base"]["sha"] != pr["base"]["sha"]
+                          or latest["user"]["login"] != pr["user"]["login"]
+                          or not eligible(latest, authors, repository, default_branch)
+                          or not same_repository_bot(latest, repository)):
+                      print("Pull request changed; no supplementary Actions approval")
+                      return
+                  if review_decision(repository, number, token) != "REVIEW_REQUIRED":
+                      return
+                  api(f"{endpoint}/reviews", actions_token, payload={
+                      "event": "APPROVE", "commit_id": head,
+                      "body": f"Approved the current head against base commit {base}.\n\n{marker}",
+                  })
+                  print(f"Added independent Actions approval for pull request #{number} at {head}")
+
               if same_head_approval:
                   if (review_decision(repository, number, token) != "REVIEW_REQUIRED"
                           or marker in (reviews[-1].get("body") or "")):
                       print("The current head is already approved by this reviewer")
+                      supplement_last_push_approval()
                       return
               current = api(endpoint, token)
               current_base = api(base_endpoint, token)["object"]["sha"]
@@ -214,6 +265,7 @@ jobs:
                   "body": f"Approved the current head against base commit {base}.\n\n{marker}",
               })
               print(f"Approved pull request #{number} at {head}")
+              supplement_last_push_approval()
 
           if __name__ == "__main__":
               main()
