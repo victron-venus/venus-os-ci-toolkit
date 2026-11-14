@@ -16,6 +16,21 @@ private key, registry credential or runner registration token. Its artifacts are
 visible to readers of this public repository, so private configuration must never
 be added to the workflow or its context inventory.
 
+## Base image updates
+
+The two runtime recipes, `deploy/runner-reserve/Dockerfile` and
+`deploy/arc-ottplay/Dockerfile`, use qualified immutable base images. Direct
+Renovate Dockerfile updates are disabled for these recipes: a tagless digest
+refresh can select a different distribution or compiler and invalidate the
+source, ABI and package locks. Other dependency managers remain enabled.
+
+Update a runtime base in a dedicated reviewed change that checks its actual
+image identity, preserves or requalifies the compiler and native package locks,
+and updates the canonical context inventory together. Complete the image
+artifact checks described here before any separate site/runtime qualification.
+A refreshed recipe hash records the inputs; successful build and scan evidence
+establishes their qualification.
+
 ```mermaid
 flowchart LR
     A[Reviewed canonical file inventory] --> B[Public image build]

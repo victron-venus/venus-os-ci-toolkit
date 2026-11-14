@@ -56,6 +56,8 @@ class AutofixContract(unittest.TestCase):
         self.paginate_threads = False
         self.graphql_error = False
         self.fail_post = False
+        self.associated = [[{"number": 17}]]
+        self.open_pages = [[]]
 
     def api_process(self, command, **kwargs):
         self.assertEqual(command[:2], ["gh", "api"])
@@ -67,7 +69,11 @@ class AutofixContract(unittest.TestCase):
         elif path == "user":
             result = self.identity
         elif path == f"{BASE}/commits/{HEAD}/pulls?per_page=100":
-            result = [[{"number": 17}]]
+            result = self.associated
+        elif path.startswith(f"{BASE}/pulls?state=open&per_page=100&page="):
+            self.assertEqual(command[3:], [])
+            page = int(path.rsplit("=", 1)[1])
+            result = self.open_pages[min(page - 1, len(self.open_pages) - 1)]
         elif path == f"{BASE}/pulls/17":
             self.reads += 1
             result = self.pr if self.reads == 1 else self.current
@@ -119,6 +125,67 @@ class AutofixContract(unittest.TestCase):
         self.execute()
         self.assertEqual(self.posted, [self.marked_comment()["body"]])
         self.assertEqual(self.reads, 2)
+
+    def test_default_branch_commit_falls_back_to_exact_open_same_repo_head(self):
+        self.associated = [[]]
+        self.pr["base"]["ref"] = "release-preview"
+        self.pr["head"]["repo"]["full_name"] = REPO
+        self.current = copy.deepcopy(self.pr)
+        self.open_pages = [[copy.deepcopy(self.pr)]]
+        self.execute()
+        self.assertEqual(self.posted, [self.marked_comment()["body"]])
+        self.assertEqual(self.reads, 2)
+
+    def test_open_fallback_rejects_forks_wrong_heads_and_ineligible_prs(self):
+        for changes in ({"state": "closed"}, {"draft": True},
+                        {"head": {"sha": "b" * 40, "repo": {"full_name": REPO}}},
+                        {"head": {"sha": HEAD, "repo": {"full_name": "contributor/fork"}}},
+                        {"head": {"sha": HEAD, "repo": None}},
+                        {"base": {"repo": {"full_name": "other/repo"}}}):
+            with self.subTest(changes=changes):
+                self.setUp()
+                self.associated = [[]]
+                candidate = copy.deepcopy(self.pr)
+                candidate["head"]["repo"]["full_name"] = REPO
+                candidate.update(changes)
+                self.open_pages = [[candidate]]
+                self.execute()
+                self.assertEqual(self.posted, [])
+                self.assertEqual(self.reads, 0)
+
+    def test_open_fallback_paginates_then_deduplicates_before_existing_guards(self):
+        self.pr["head"]["repo"]["full_name"] = REPO
+        self.current = copy.deepcopy(self.pr)
+        self.open_pages = [[copy.deepcopy(self.pr)] * 100, [copy.deepcopy(self.pr)]]
+        self.execute()
+        self.assertEqual(self.posted, [self.marked_comment()["body"]])
+        self.assertEqual(self.reads, 2)
+
+    def test_open_fallback_overflow_or_malformed_page_never_posts_partial_results(self):
+        for rows in ([copy.deepcopy(self.pr)] * 100, {}, [None], [{"number": True}],
+                     [{"number": 0}], [copy.deepcopy(self.pr)] * 101):
+            with self.subTest(rows=repr(rows)[:100]):
+                self.setUp()
+                self.open_pages = [rows]
+                with self.assertRaisesRegex(RuntimeError, "open PR discovery|Open PR discovery"):
+                    self.execute()
+                self.assertEqual(self.posted, [])
+                self.assertEqual(self.reads, 0)
+
+    def test_fallback_does_not_bypass_current_head_review_or_final_re_read(self):
+        for changed in ("review", "head"):
+            with self.subTest(changed=changed):
+                self.setUp()
+                self.associated = [[]]
+                self.pr["head"]["repo"]["full_name"] = REPO
+                self.current = copy.deepcopy(self.pr)
+                self.open_pages = [[copy.deepcopy(self.pr)]]
+                if changed == "review":
+                    self.reviews[0][0]["commit_id"] = "b" * 40
+                else:
+                    self.current["head"]["sha"] = "b" * 40
+                self.execute()
+                self.assertEqual(self.posted, [])
 
     def test_manual_dispatch_uses_exact_head_and_defaults_can_dry_run(self):
         self.environment.update(GITHUB_EVENT_NAME="workflow_dispatch", PR_NUMBER="17", EXPECTED_HEAD=HEAD, DRY_RUN="true")

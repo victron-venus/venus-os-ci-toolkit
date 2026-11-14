@@ -1,5 +1,5 @@
 # Keep the distribution ABI/package identity while backporting one upstream fix.
-FROM docker.io/library/ubuntu@sha256:065aa8626841f16057b78b027b464cd59c4fac36c204c72dcbf48d66f5fa8a96 AS patched-libbpf
+FROM docker.io/library/ubuntu@sha256:68ee22004a9109b44973313b02ff7b1de250f1de0f5ecb628d73f579aaff33ac AS patched-libbpf
 ARG TARGETARCH
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential debhelper fakeroot libelf-dev zlib1g-dev pkg-config \
@@ -15,7 +15,7 @@ COPY .github/containers/libbpf/0001-restrict-core-poisoning.patch .github/contai
 USER 10001:10001
 RUN umask 022 && TARGETARCH="$TARGETARCH" python3 scripts/build_runner_libbpf.py
 # Compile only the affected codecparsers library, preserving all browser plugins.
-FROM docker.io/library/ubuntu@sha256:065aa8626841f16057b78b027b464cd59c4fac36c204c72dcbf48d66f5fa8a96 AS patched-gstreamer
+FROM docker.io/library/ubuntu@sha256:68ee22004a9109b44973313b02ff7b1de250f1de0f5ecb628d73f579aaff33ac AS patched-gstreamer
 ARG TARGETARCH
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential dpkg-dev meson ninja-build pkg-config binutils \
@@ -37,7 +37,7 @@ USER 0:0
 RUN dpkg --path-include='/usr/share/locale/*/LC_MESSAGES/gst-plugins-bad-1.0.mo' \
         --unpack /opt/victron-gstreamer/libgstreamer-plugins-bad1.0-0.deb /opt/victron-gstreamer/gstreamer1.0-plugins-bad.deb \
     && sha256sum --check /opt/victron-gstreamer/installed.sha256
-FROM --platform=$BUILDPLATFORM docker.io/library/golang@sha256:ec47ea3725fea0cc88f6de94919aef19f40f12fc1ec0e2d1b3426dbf15ecca04 AS patched-go-tools
+FROM --platform=$BUILDPLATFORM docker.io/library/golang@sha256:672c944cfd07599b5f1bb179869270cdc94c6254e41db4d431259693cb286b82 AS patched-go-tools
 ARG TARGETARCH
 RUN apt-get update && apt-get install -y --no-install-recommends python3 ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
@@ -79,10 +79,10 @@ RUN umask 022 && python3 scripts/build_runner_go_tools.py containerd \
     && python3 scripts/build_runner_go_tools.py buildx \
     && python3 scripts/build_runner_go_tools.py compose \
     && go clean -modcache -cache
-FROM docker.io/library/docker@sha256:7bf70dcb85c822e3fa6f2d332143e474b99147b9d7b39102b0cfe8b04a7dd61b AS docker
-FROM docker.io/library/node@sha256:e18c3ccdf7d71619990b0e85639f506e2028a95410999cab24cc373cbd10e0ac AS node
+FROM docker.io/library/docker@sha256:9e79b879b177fbd72c34376a3dd3d91747da5db49e1f560f76aea59561471977 AS docker
+FROM docker.io/library/node@sha256:55fb5f5a527ea2c5c4a95f963e48ef90aa38c7b346054fdc8ee9957a2b55d205 AS node
 # Runner v2.338.2 uses SDK 8.0.427 with the upstream .NET Brotli security fix.
-FROM ghcr.io/actions/actions-runner@sha256:6d0b2d80d80f143f77dcb676e50920100bbb547e39e883454d57f45ab8c31300 AS runner
+FROM ghcr.io/actions/actions-runner@sha256:759a1d94a15b05941aba5196974ff43fe15b4cbba29b694b35cbc32a1166b232 AS runner
 # Stage only the existing allowlisted local inputs on an empty filesystem.
 # Keeping these COPY operations off the populated runner avoids native snapshots
 # of the browser installation for each small input file.
@@ -100,7 +100,7 @@ COPY deploy/runner-reserve/start-runner.sh deploy/runner-reserve/sandbox-docker.
     deploy/runner-reserve/qualify.sh deploy/runner-reserve/qualify-npm.cjs \
     deploy/runner-reserve/qualify-browsers.cjs \
     deploy/runner-reserve/guard-ca.crt /opt/victron-ci-reserve/
-FROM docker.io/library/ubuntu@sha256:065aa8626841f16057b78b027b464cd59c4fac36c204c72dcbf48d66f5fa8a96
+FROM docker.io/library/ubuntu@sha256:68ee22004a9109b44973313b02ff7b1de250f1de0f5ecb628d73f579aaff33ac
 SHELL ["/bin/bash", "-eo", "pipefail", "-c"]
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get -o Dpkg::Options::=--force-unsafe-io install -y --no-install-recommends \
