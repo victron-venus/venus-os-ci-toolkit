@@ -10,9 +10,15 @@ import os
 import re
 import xml.etree.ElementTree as ET
 from pathlib import Path, PurePosixPath
+from datetime import datetime, timezone
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlsplit
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 from xml.parsers import expat
 
 MAX_REPORT_BYTES = 20 * 1024 * 1024
+MAX_METADATA_BYTES = 2 * 1024 * 1024
+MAX_ARTIFACTS = 1000
 SHA = re.compile(r"[0-9a-f]{40}")
 NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,99}")
 FLAG = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}")
@@ -129,6 +135,209 @@ def configuration(environment, event):
         "commit": commit,
         "pull_request": pull_request,
         "tested_sha": tested_sha,
+    }
+
+
+def github_artifact_json(environment, path):
+    """Read only the configured GitHub API; never redirect an installation token."""
+    base = environment.get("GITHUB_API_URL", "https://api.github.com").rstrip("/")
+    parsed = urlsplit(base)
+    require(
+        parsed.scheme == "https"
+        and parsed.hostname
+        and not parsed.username
+        and not parsed.password
+        and not parsed.query
+        and not parsed.fragment,
+        "Invalid GitHub API origin",
+    )
+    token = environment.get("GITHUB_TOKEN", "")
+    require(
+        isinstance(token, str)
+        and 0 < len(token) <= 4096
+        and all(33 <= ord(c) <= 126 for c in token),
+        "GitHub read-only artifact token is missing or invalid",
+    )
+
+    class NoRedirect(HTTPRedirectHandler):
+        def redirect_request(self, req, fp, code, msg, headers, newurl):
+            raise ValueError("GitHub artifact metadata redirects are forbidden")
+
+    request = Request(
+        base + "/" + path,
+        headers={
+            "Authorization": "Bearer " + token,
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+        },
+    )
+    try:
+        # Preserve operator-configured HTTPS proxies; TLS and redirect refusal
+        # keep the token bound to the configured API origin.
+        with build_opener(NoRedirect()).open(request, timeout=30) as response:
+            require(response.status == 200, "GitHub artifact inventory request failed")
+            raw = response.read(MAX_METADATA_BYTES + 1)
+    except (HTTPError, URLError, TimeoutError, OSError):
+        raise ValueError("GitHub artifact inventory request failed") from None
+    require(
+        len(raw) <= MAX_METADATA_BYTES,
+        "GitHub artifact inventory response is too large",
+    )
+    return json.loads(raw)
+
+
+def artifact_inventory(environment, fetch=None):
+    """List one immutable run, with finite pagination and fail-closed metadata."""
+    repository = environment.get("GITHUB_REPOSITORY", "")
+    require(
+        isinstance(repository, str)
+        and re.fullmatch(
+            r"[A-Za-z0-9][A-Za-z0-9_.-]{0,99}/[A-Za-z0-9_.-]{1,100}",
+            repository,
+        )
+        is not None
+        and repository.rsplit("/", 1)[1] not in {".", ".."},
+        "Invalid artifact repository",
+    )
+    run = environment.get("GITHUB_RUN_ID", "")
+    require(re.fullmatch(r"[1-9][0-9]*", run) is not None, "Invalid artifact run")
+    if fetch is None:
+
+        def fetch(path):
+            return github_artifact_json(environment, path)
+
+    records, total = [], None
+    for page in range(1, MAX_ARTIFACTS // 100 + 1):
+        value = fetch(
+            f"repos/{repository}/actions/runs/{run}/artifacts?per_page=100&page={page}"
+        )
+        require(isinstance(value, dict), "Malformed artifact inventory")
+        count, batch = value.get("total_count"), value.get("artifacts")
+        require(
+            type(count) is int and 0 <= count <= MAX_ARTIFACTS,
+            "Artifact inventory exceeds its supported bound",
+        )
+        require(
+            isinstance(batch, list) and len(batch) <= 100, "Malformed artifact page"
+        )
+        if total is None:
+            total = count
+        require(count == total, "Artifact inventory changed during pagination")
+        records.extend(batch)
+        require(len(records) <= total, "Artifact inventory count mismatch")
+        if len(records) == total:
+            return records
+        require(len(batch) == 100, "Artifact inventory is incomplete")
+    raise ValueError("Artifact inventory is incomplete")
+
+
+def select_artifact(environment, event, artifacts, *, now=None):
+    """Select newest named attempt first, then validate; never downgrade past bad data."""
+    config = configuration(environment, event)
+    require(
+        config["mode"] == environment.get("COVERAGE_MODE"), "Wrong upload trust job"
+    )
+    require(
+        isinstance(artifacts, list) and len(artifacts) <= MAX_ARTIFACTS,
+        "Malformed artifact inventory",
+    )
+    current = int(environment["GITHUB_RUN_ATTEMPT"])
+    pattern = re.compile(
+        re.escape(environment["COVERAGE_ARTIFACT"]) + r"-([1-9][0-9]*)"
+    )
+    prefix = environment["COVERAGE_ARTIFACT"] + "-"
+    candidates, ids = [], set()
+    for artifact in artifacts:
+        require(
+            isinstance(artifact, dict) and isinstance(artifact.get("name"), str),
+            "Malformed artifact record",
+        )
+        identifier = artifact.get("id")
+        require(
+            type(identifier) is int and identifier > 0 and identifier not in ids,
+            "Invalid or duplicate coverage artifact ID",
+        )
+        ids.add(identifier)
+        name = artifact["name"]
+        if not name.startswith(prefix):
+            continue
+        match = pattern.fullmatch(name)
+        require(match is not None, "Malformed producer attempt name")
+        attempt = int(match[1])
+        if attempt <= current:
+            candidates.append((attempt, artifact))
+    require(
+        candidates, "No coverage artifact exists in this run at an eligible attempt"
+    )
+    latest = max(attempt for attempt, _ in candidates)
+    selected = [artifact for attempt, artifact in candidates if attempt == latest]
+    require(len(selected) == 1, "The newest coverage artifact name is ambiguous")
+    artifact = selected[0]
+    require(
+        artifact.get("expired") is False, "The newest coverage artifact has expired"
+    )
+    expires = artifact.get("expires_at")
+    require(isinstance(expires, str), "Artifact expiry is missing")
+    try:
+        expiry = datetime.fromisoformat(expires.replace("Z", "+00:00"))
+        require(expiry.utcoffset() is not None, "Artifact expiry needs a timezone")
+        require(
+            expiry > (now or datetime.now(timezone.utc)),
+            "The newest coverage artifact has expired",
+        )
+    except (TypeError, ValueError):
+        raise ValueError(
+            "The newest coverage artifact expiry is invalid or expired"
+        ) from None
+    digest = artifact.get("digest")
+    require(
+        isinstance(digest, str) and re.fullmatch(r"sha256:[0-9a-f]{64}", digest),
+        "The newest coverage artifact digest is invalid",
+    )
+    source = artifact.get("workflow_run")
+    require(isinstance(source, dict), "Artifact source metadata is missing")
+    repository_id = event["repository"].get("id")
+    head_repository_id = (
+        event["pull_request"]["head"]["repo"].get("id")
+        if environment["GITHUB_EVENT_NAME"] == "pull_request"
+        else repository_id
+    )
+    require(
+        type(repository_id) is int
+        and repository_id > 0
+        and type(head_repository_id) is int
+        and head_repository_id > 0,
+        "Original event repository IDs are missing",
+    )
+    require(
+        type(source.get("id")) is int
+        and source["id"] == int(environment["GITHUB_RUN_ID"])
+        and type(source.get("repository_id")) is int
+        and source["repository_id"] == repository_id
+        and type(source.get("head_repository_id")) is int
+        and source["head_repository_id"] == head_repository_id
+        and source.get("head_sha") == config["commit"],
+        "The newest coverage artifact is not bound to this immutable run and head",
+    )
+    base = ""
+    if environment["GITHUB_EVENT_NAME"] == "pull_request":
+        base = event["pull_request"]["base"].get("sha", "")
+        require(
+            isinstance(base, str) and SHA.fullmatch(base),
+            "Original PR base SHA is invalid",
+        )
+    # GitHub reruns retain the original GITHUB_SHA/REF. REST run.pull_requests
+    # is mutable current PR metadata and must never be a source-binding authority.
+    return {
+        "artifact_id": artifact["id"],
+        "artifact_name": artifact["name"],
+        "artifact_digest_metadata": digest,
+        "producer_attempt": latest,
+        "uploader_attempt": current,
+        "run_id": int(environment["GITHUB_RUN_ID"]),
+        "head_sha": config["commit"],
+        "tested_sha": config["tested_sha"],
+        "event_base_sha": base,
     }
 
 
@@ -299,16 +508,30 @@ def validate_report(directory, report_file, format_name):
 def main():
     """Use environment inputs so workflow expressions never become shell code."""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("phase", choices=["prepare", "report"])
+    parser.add_argument("phase", choices=["prepare", "artifact", "report"])
     parser.add_argument("--directory", type=Path)
     args = parser.parse_args()
-    config = configuration(
-        os.environ, json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text())
-    )
+    event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text())
+    config = configuration(os.environ, event)
     require(config["mode"] == os.environ["COVERAGE_MODE"], "Wrong upload trust job")
     if args.phase == "prepare":
         with Path(os.environ["GITHUB_OUTPUT"]).open("a") as output:
             output.writelines(f"{key}={value}\n" for key, value in config.items())
+    elif args.phase == "artifact":
+        selected = select_artifact(os.environ, event, artifact_inventory(os.environ))
+        with Path(os.environ["GITHUB_OUTPUT"]).open("a") as output:
+            output.writelines(f"{key}={value}\n" for key, value in selected.items())
+        (Path(os.environ["RUNNER_TEMP"]) / "coverage-selection.json").write_text(
+            json.dumps(selected, indent=2) + "\n"
+        )
+        with Path(os.environ["GITHUB_STEP_SUMMARY"]).open("a") as summary:
+            summary.write(
+                f"Coverage report artifact `{selected['artifact_id']}` from producer attempt "
+                f"`{selected['producer_attempt']}` selected for uploader attempt "
+                f"`{selected['uploader_attempt']}` in the same immutable run "
+                f"`{selected['run_id']}`. This selection does not retest code or qualify "
+                "a newer producer attempt; required CI gates remain authoritative.\n"
+            )
     else:
         require(args.directory is not None, "Report directory is required")
         result = validate_report(
