@@ -57,6 +57,17 @@
         ".github/renovate-runtime.json"
       ],
       "enabled": false
+    },
+    {
+      "description": "Runtime runner images require a dedicated source-bound image qualification with their compiler, ABI and package locks; do not replace qualified base digests with the default latest tags.",
+      "matchManagers": [
+        "dockerfile"
+      ],
+      "matchFileNames": [
+        "deploy/arc-ottplay/Dockerfile",
+        "deploy/runner-reserve/Dockerfile"
+      ],
+      "enabled": false
     }
   ],
   "ignorePaths": [
