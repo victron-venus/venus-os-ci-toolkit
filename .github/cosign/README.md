@@ -11,7 +11,7 @@ go-chi/chi/v5 to v5.4.0, and go-jose/v4 to v4.1.6
 CVE-2026-63209; it is the upstream security-only patch release. The chi update
 removes the affected ClientIPFromXFF version (GHSA-j6qf-3m9c-vwj3); no claim
 is made that the Cosign CLI exposes that HTTP middleware. Build with
-Go 1.27.3. The resulting executable is a downstream patched build, not an official Sigstore binary. Source code is otherwise unchanged.
+Go 1.27.4. The resulting executable is a downstream patched build, not an official Sigstore binary. Source code is otherwise unchanged.
 The renderer vendors these exact files and the fail-closed builder into signed
 release consumers. See `docs/release-signer.md` for provenance and limitations.
 
@@ -23,3 +23,10 @@ locks and checked through the normal signing qualification.
 The x/net update addresses [GO-2026-6860 / CVE-2026-78661](https://pkg.go.dev/vuln/GO-2026-6860),
 which fixes quadratic text coalescing in the HTML parser. Existing binaries
 remain unchanged until rebuilt and qualified.
+
+The OpenTelemetry trace dependency is updated to `1.47.0` for
+[GHSA-q7gw-24fr-5p69](https://github.com/open-telemetry/opentelemetry-go/security/advisories/GHSA-q7gw-24fr-5p69),
+which repairs configured attribute-length truncation for valid replacement
+characters. The module graph, actual source build, signature/tamper tests and
+weak/strong TLS calibration qualify a new signer; earlier binaries and receipts
+retain their original identities.

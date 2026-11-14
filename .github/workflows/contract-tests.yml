@@ -290,7 +290,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: 1.27.3
+          go-version: 1.27.4
           cache-dependency-path: .github/cosign/go.sum
       - name: Build the reviewed patched release signer
         run: 'python3 scripts/build_release_signer.py --source .release-cosign-source --output "$RUNNER_TEMP/release-signer/cosign"
