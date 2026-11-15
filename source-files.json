@@ -520,6 +520,7 @@
   "tests/test_oci_tools.py",
   "tests/test_operator_config.py",
   "tests/test_prepare_version.py",
+  "tests/test_private_automation_priority.py",
   "tests/test_private_bounded_heavy.py",
   "tests/test_private_exclusive_contingency.py",
   "tests/test_private_nuc_full_memory.py",
