@@ -353,3 +353,39 @@ For selected sequential container tests, [bounded heavy CI v1](BOUNDED_HEAVY.md)
 keeps the 6 GiB tmpfs with a distinct 9/12 GiB memory tuple and a separately
 pinned derivative image. It requires explicit scope selection and cold-job
 memory/OOM acceptance; existing plans and global defaults are unchanged.
+
+## Optional non-preempting automation preference
+
+`NucKvmPlan.nonpreempting_automation_scopes` (JSON field of the same name)
+accepts an explicit list of unique repository scopes that are already selected
+NUC **automation** targets. An omitted or empty list preserves the complete
+previous output. Selecting a repository does not select its CI sibling, other
+repositories, or listeners. For example, an operator may first qualify only
+`example/automation-app` after separately reviewing its current workload.
+This changes the existing automation pool's worker template; it does not create
+a dedicated completion-job queue.
+
+Selected workers use `victron-private-automation-nonpreempting`, priority `100`,
+`preemptionPolicy: Never`, and `globalDefault: false`. The emitted admission
+policies require the exact class and selected scope/profile, deny use of this
+class by other worker profiles, and prevent priority tuple changes on existing
+Pods. The class resource itself is constrained to its fixed value and policy.
+Existing Pods retain their original priority and can continue status updates.
+All other profile fields, bounds, quotas, resources, images, namespace placement,
+and cross-namespace anti-affinity stay unchanged.
+
+This is a scheduling preference, **not fair queueing or a capacity increase**.
+It cannot fix quota admission before a Pod exists, does not update already
+Pending Pods, and does not bypass an occupied serialized slot. Scheduler
+backoff can still let lower-priority Pods proceed. A sustained preferred backlog
+can starve ordinary CI. `Never` forbids scheduler preemption by the preferred
+Pod; priority still participates in kubelet node-pressure eviction ordering and
+therefore does not promise that existing workloads can never be affected.
+See the [Kubernetes priority documentation](https://kubernetes.io/docs/concepts/scheduling-eviction/pod-priority-preemption/#non-preempting-priorityclass).
+
+Applying the source is separate from rendering. Review ARC's template update
+and existing assigned/Running workers before any live change; do not delete or
+restart work to demonstrate this option. Server-side admission typechecking,
+positive/negative dry runs, resource checks, and an actual naturally admitted
+and scheduled job remain required for an operational qualification. The locked
+CEL tests use dynamic fixtures and do not model all API defaults or scheduling.
