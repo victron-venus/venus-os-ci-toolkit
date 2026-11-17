@@ -180,6 +180,7 @@ jobs:
         run: |
           renovate="$RUNNER_TEMP/renovate/node_modules/renovate"
           node "$renovate/dist/config-validator.js" --strict --no-global renovate-ci.json renovate-fleet.json
+          node --test scripts/test_sync_pocket_id_source.cjs
           node tests/renovate_grouping.mjs "$renovate"
           node tests/renovate_security_grouping.mjs "$renovate"
           node tests/renovate_uv_preflight.mjs "$renovate"
@@ -197,9 +198,12 @@ jobs:
           docker pull "ghcr.io/renovatebot/renovate:$version"
           docker run --rm --network none --cap-drop ALL --security-opt no-new-privileges \
             --mount "type=bind,src=$PWD,dst=/repo,readonly" --workdir /repo \
+            --mount "type=bind,src=$PWD/scripts,dst=/config,readonly" \
             --mount "type=bind,src=$(command -v uv),dst=/usr/local/bin/uv,readonly" \
             "ghcr.io/renovatebot/renovate:$version" bash -e -c '
               export PATH="/usr/local/bin:$PATH"
+              /usr/local/renovate/node --test scripts/test_sync_pocket_id_source.cjs
+              /usr/local/renovate/node tests/renovate_pocket_id_post_upgrade.mjs /usr/local/renovate
               /usr/local/renovate/node tests/renovate_security_grouping.mjs /usr/local/renovate
               /usr/local/renovate/node tests/renovate_uv_preflight.mjs /usr/local/renovate
               /usr/local/renovate/node tests/renovate_python_builds.mjs /usr/local/renovate
