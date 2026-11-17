@@ -120,6 +120,17 @@ class CheckDocsTests(unittest.TestCase):
         self.repo.write('vendor/crate/README.md', '[missing](../CHANGELOG.md)\n')
         self.assertEqual(self.repo.run('links'), [])
 
+    def test_anchors_keep_the_text_inside_inline_code(self):
+        # A heading written as ``### `python-minimal/` `` slugs to its contents,
+        # so stripping code spans for link discovery must not affect anchors.
+        self.repo.write('docs/a.md', '### `python-minimal/`\n\nSee [it](#python-minimal).\n')
+        self.assertEqual(self.repo.run('anchors'), [])
+
+    def test_links_ignore_html_examples_inside_inline_code(self):
+        # A document explaining HTML must be able to show ``<a href="...">``.
+        self.repo.write('docs/a.md', 'Use `<a href="...">` for navigation.\n')
+        self.assertEqual(self.repo.run('links'), [])
+
     def test_links_ignore_rustdoc_intra_doc_links(self):
         self.repo.write('docs/a.md', 'See [`Variant`](struct@Variant) and [`T`](fn@run).\n')
         self.assertEqual(self.repo.run('links'), [])

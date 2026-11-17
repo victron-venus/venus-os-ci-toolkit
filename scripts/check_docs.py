@@ -118,6 +118,18 @@ def prose(text: str) -> str:
     return markdown_parts(text)[0]
 
 
+# Inline code spans hold examples, not links: ``<a href="...">`` in a sentence
+# about HTML is a code sample. They are stripped for link discovery only; anchors
+# still read them because a heading such as ``### `python-minimal/` `` slugs to
+# the text inside the backticks.
+INLINE_CODE = re.compile(r'(`+)(?!`).*?(?<!`)\1(?!`)')
+
+
+def linkable(text: str) -> str:
+    """Prose with inline code spans removed, for link discovery."""
+    return INLINE_CODE.sub('', prose(text))
+
+
 def anchors(text: str) -> set[str]:
     text = prose(text)
     found: set[str] = set()
@@ -269,7 +281,7 @@ def check_links(root: Path, files: list[Path]) -> list[str]:
             continue
         if (TEMPLATE_DIRS | VENDOR_DIRS) & set(path.relative_to(root).parts[:-1]):
             continue
-        body = prose(path.read_text(encoding='utf-8'))
+        body = linkable(path.read_text(encoding='utf-8'))
         targets = [link for link in LINK.findall(body) + HTML_HREF.findall(body)
                    if not RUSTDOC_LINK.match(link)]
         for link in targets:
