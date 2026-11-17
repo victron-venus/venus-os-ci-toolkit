@@ -54,3 +54,21 @@ targets are checked where they land.
 `tests/test_check_docs.py` exercises every check against a temporary repository,
 including the false-positive cases that motivated them: a link inside a fenced
 block, a heading slug, a beta tag against a normalised version.
+
+## What this checker is not
+
+Eight repositories had grown a local `check_docs.py`, and they are **not**
+replaced by this one. Each enforces a rule that only makes sense there:
+
+| Repository | Local rule this checker does not implement |
+| --- | --- |
+| `ha-entity-migrations`, `ha-scenario-tests`, `assist-scenario-lab`, `ha-meter-contracts` | A 24-language catalog and guide manifest whose source digest must match the English text |
+| `ha-echo-show-5`, `ha-echomuse` | SVG accessibility (title, `role`, `aria-label`) and a shipped-file inventory that must hold outside a Git checkout |
+| `ha-techo5-dot` | Source pins recorded next to the pages they describe |
+| `zac93-esp32` | Complete 24-language wiki families with generated language navigation and an exact step count per page |
+
+Replacing those with a wrapper would delete a real check, and vendoring this
+module into eight repositories would recreate the drift it exists to end. Use
+this checker where the rules are generic — a `docs/README.md` index, resolvable
+relative links, mermaid that renders — and keep a local script for a local
+invariant.
