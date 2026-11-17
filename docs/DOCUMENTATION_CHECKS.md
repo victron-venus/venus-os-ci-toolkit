@@ -72,3 +72,23 @@ module into eight repositories would recreate the drift it exists to end. Use
 this checker where the rules are generic — a `docs/README.md` index, resolvable
 relative links, mermaid that renders — and keep a local script for a local
 invariant.
+
+## Running it from CI
+
+`.github/workflows/docs-check.yml` is a reusable workflow. A repository calls it
+with an immutable toolkit commit, so the checker is not vendored:
+
+```yaml
+jobs:
+  docs:
+    uses: victron-venus/venus-os-ci-toolkit/.github/workflows/docs-check.yml@<40-char-sha>
+    with:
+      toolkit-ref: <40-char-sha>
+      checks: links,anchors,index,fences
+      python-version: '3.12'
+```
+
+The workflow is callable only, requests `contents: read`, and pins every action
+to a full commit SHA. `tests/test_docs_workflow.py` fails if any of that changes.
+A repository that also needs a local invariant keeps its own script for that
+invariant and calls this workflow for the generic rules.
