@@ -114,6 +114,16 @@ class CheckDocsTests(unittest.TestCase):
         finally:
             outside.unlink()
 
+    def test_links_ignore_vendored_third_party_trees(self):
+        # A vendor checkout is upstream's file; its links are not ours to fix.
+        self.repo.write('docs/README.md', '# Docs\n')
+        self.repo.write('vendor/crate/README.md', '[missing](../CHANGELOG.md)\n')
+        self.assertEqual(self.repo.run('links'), [])
+
+    def test_links_ignore_rustdoc_intra_doc_links(self):
+        self.repo.write('docs/a.md', 'See [`Variant`](struct@Variant) and [`T`](fn@run).\n')
+        self.assertEqual(self.repo.run('links'), [])
+
     def test_templates_keep_the_consumer_anchor_exemption(self):
         self.repo.write('templates/a.md', '[consumer](#consumer-heading)\n')
         self.assertEqual(self.repo.run('links'), [])

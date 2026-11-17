@@ -46,6 +46,15 @@ SHARED_BOILERPLATE = {
 # are checked where they land.
 TEMPLATE_DIRS = {'templates'}
 
+# Checkouts of third-party code: a broken link there is upstream's, not ours, and
+# rewriting vendor sources would make the next update fight the diff.
+VENDOR_DIRS = {'vendor', 'node_modules'}
+
+# rustdoc intra-doc links (``[`Variant`](struct@Variant)``) are resolvable only by
+# rustdoc against the crate; they are not repository paths.
+RUSTDOC_LINK = re.compile(r'^(struct|enum|trait|fn|mod|type|const|static|macro|union|'
+                          r'prim|keyword)@')
+
 LINK = re.compile(r'!?\[[^\]]*\]\((?P<target>[^)\s]+)(?:\s+"[^"]*")?\)')
 HTML_HREF = re.compile(r'href="(?P<target>[^"]+)"')
 HEADING = re.compile(r'^#{1,6}\s+(?P<title>.+)$', re.M)
@@ -258,10 +267,11 @@ def check_links(root: Path, files: list[Path]) -> list[str]:
     for path in files:
         if path.suffix != '.md' or not path.is_file():
             continue
-        if TEMPLATE_DIRS & set(path.relative_to(root).parts[:-1]):
+        if (TEMPLATE_DIRS | VENDOR_DIRS) & set(path.relative_to(root).parts[:-1]):
             continue
         body = prose(path.read_text(encoding='utf-8'))
-        targets = LINK.findall(body) + HTML_HREF.findall(body)
+        targets = [link for link in LINK.findall(body) + HTML_HREF.findall(body)
+                   if not RUSTDOC_LINK.match(link)]
         for link in targets:
             target = local_target(root, path, link)
             if target is not None and (not inside(root, target) or not target.exists()):
