@@ -80,9 +80,15 @@ def tracked(root: Path) -> list[Path]:
 
 
 def slugify(title: str) -> str:
+    """Slug a heading the way GitHub does.
+
+    GitHub turns each space into its own hyphen, so ``Intercom / Drop In`` loses
+    the slash and keeps both spaces: ``intercom--drop-in``. Collapsing runs of
+    whitespace into one hyphen produced a fragment that no reader could use.
+    """
     text = re.sub(r'[`*_\[\]()]', '', title).strip().lower()
     text = re.sub(r'[^\w\s-]', '', text)
-    return re.sub(r'[\s]+', '-', text)
+    return re.sub(r'\s', '-', text)
 
 
 def markdown_parts(text: str) -> tuple[str, list[tuple[str, str]], bool]:

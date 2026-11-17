@@ -131,6 +131,14 @@ class CheckDocsTests(unittest.TestCase):
         self.repo.write('docs/src/pages/index.md', '[gone](/nowhere)\n')
         self.assertTrue(self.repo.run('links'))
 
+    def test_anchors_follow_github_heading_slugging(self):
+        # GitHub turns every space into a hyphen, so "Intercom / Drop In" is
+        # #intercom--drop-in, not #intercom-drop-in.
+        self.repo.write('docs/a.md', '### Intercom / Drop In\n\nSee [it](#intercom--drop-in).\n')
+        self.assertEqual(self.repo.run('anchors'), [])
+        self.repo.write('docs/a.md', '### Intercom / Drop In\n\nSee [it](#intercom-drop-in).\n')
+        self.assertTrue(self.repo.run('anchors'))
+
     def test_anchors_keep_the_text_inside_inline_code(self):
         # A heading written as ``### `python-minimal/` `` slugs to its contents,
         # so stripping code spans for link discovery must not affect anchors.
