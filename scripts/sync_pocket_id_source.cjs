@@ -11,7 +11,7 @@ const DEADLINE_MS = 60000;
 const IDLE_MS = 10000;
 const COMPONENTS = ['deployments', 'pocket-id', 'image'];
 const FILE = 'Dockerfile';
-const VERSION = '([1-9][0-9]*\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*))';
+const VERSION = String.raw`([1-9]\d*\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*))`;
 
 class Hold extends Error {
   constructor(code) { super(code); this.name = 'Hold'; }
@@ -19,7 +19,7 @@ class Hold extends Error {
 function need(value, code) { if (!value) throw new Hold(code); }
 function versionTuple(version) {
   need(new RegExp('^' + VERSION + '$').test(version) && version.length <= 48, 'VERSION_FORMAT');
-  const parts = version.split('.').map(value => BigInt(value));
+  const parts = version.split('.').map(BigInt);
   need(parts.every(value => value <= 9007199254740991n), 'VERSION_FORMAT');
   return parts;
 }
@@ -79,7 +79,7 @@ async function fetchArchive(version) {
             const rawLength = response.headers['content-length'];
             let length;
             if (rawLength !== undefined) {
-              need(typeof rawLength === 'string' && /^[0-9]+$/.test(rawLength), 'DOWNLOAD_LENGTH');
+              need(typeof rawLength === 'string' && /^\d+$/.test(rawLength), 'DOWNLOAD_LENGTH');
               length = Number(rawLength);
               need(Number.isSafeInteger(length) && length > 0 && length <= MAX_ARCHIVE, 'DOWNLOAD_SIZE');
             }
@@ -119,7 +119,7 @@ async function fetchArchive(version) {
   }
   throw new Hold('DOWNLOAD_REDIRECT');
 }
-function escapeRegex(value) { return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+function escapeRegex(value) { return value.replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`); }
 function parseRecipe(raw) {
   need(Buffer.isBuffer(raw) && raw.length > 0 && raw.length <= MAX_RECIPE, 'RECIPE_SIZE');
   const text = raw.toString('utf8');
@@ -130,27 +130,27 @@ function parseRecipe(raw) {
     return matches[0];
   }
   const source = one('^ADD --checksum=sha256:([0-9a-f]{64}) '
-    + 'https://codeload\\.github\\.com/pocket-id/pocket-id/tar\\.gz/refs/tags/v'
-    + VERSION + ' /tmp/source\\.tar\\.gz$',
+    + String.raw`https://codeload\.github\.com/pocket-id/pocket-id/tar\.gz/refs/tags/v`
+    + VERSION + String.raw` /tmp/source\.tar\.gz$`,
   'https://codeload.github.com/pocket-id/pocket-id/', 'SOURCE_LAYOUT');
   need([...text.matchAll(/^ADD\s/gm)].length === 1, 'SOURCE_LAYOUT');
-  const runtime = one('^FROM ghcr\\.io/pocket-id/pocket-id:v' + VERSION
+  const runtime = one(String.raw`^FROM ghcr\.io/pocket-id/pocket-id:v` + VERSION
     + '-distroless@sha256:[0-9a-f]{64}$', 'FROM ghcr.io/pocket-id/pocket-id:', 'RUNTIME_LAYOUT');
   const froms = [...text.matchAll(/^FROM .+$/gm)].map(value => value[0]);
   need(froms.at(-1) === runtime[0], 'FINAL_STAGE');
   const final = text.slice(runtime.indices[0][1]);
   need(JSON.stringify([...final.matchAll(/^USER (.+)$/gm)].map(value => value[1]))
     === JSON.stringify(['65532']), 'FINAL_USER');
-  const build = one('-buildid=([^\\s\'\"]+)', '-buildid=', 'BUILD_ID_LAYOUT');
-  const compiled = one('-X github\\.com/pocket-id/pocket-id/backend/internal/common\\.Version=([^\\s\'\"]+)',
+  const build = one(String.raw`-buildid=([^\s'"]+)`, '-buildid=', 'BUILD_ID_LAYOUT');
+  const compiled = one(String.raw`-X github\.com/pocket-id/pocket-id/backend/internal/common\.Version=([^\s'"]+)`,
     'github.com/pocket-id/pocket-id/backend/internal/common.Version=', 'COMPILED_LAYOUT');
-  const label = one('org\\.opencontainers\\.image\\.version="([^"\\n]+)"',
+  const label = one(String.raw`org\.opencontainers\.image\.version="([^"\n]+)"`,
     'org.opencontainers.image.version=', 'LABEL_LAYOUT');
-  const description = one('org\\.opencontainers\\.image\\.description="Pocket ID ' + VERSION + ' [^"\\n]+"',
+  const description = one(String.raw`org\.opencontainers\.image\.description="Pocket ID ` + VERSION + String.raw` [^"\n]+"`,
     'org.opencontainers.image.description=', 'DESCRIPTION_LAYOUT');
   const oldVersion = source[2], newVersion = runtime[1], identity = build[1];
   versionTuple(oldVersion); versionTuple(newVersion);
-  need(new RegExp('^' + escapeRegex(oldVersion) + '-security\\.[1-9][0-9]*$').test(identity), 'OLD_BUILD_ID_MISMATCH');
+  need(new RegExp('^' + escapeRegex(oldVersion) + String.raw`-security\.[1-9]\d*$`).test(identity), 'OLD_BUILD_ID_MISMATCH');
   need(compiled[1] === identity && label[1] === identity && description[1] === oldVersion, 'OLD_IDENTITY_MISMATCH');
   need(compareVersions(newVersion, oldVersion) >= 0, 'ROLLBACK_REFUSED');
   return { text, oldVersion, newVersion, spans: {
@@ -199,78 +199,102 @@ function readBounded(fd) {
   need(count > 0 && count <= MAX_RECIPE, 'RECIPE_SIZE');
   return buffer.subarray(0, count);
 }
+function openDirectories(state) {
+  const flags = fs.constants;
+  const root = fs.openSync('.', flags.O_RDONLY | flags.O_DIRECTORY | flags.O_NOFOLLOW);
+  state.dirs.push(root); directory(fstat(root));
+  for (const name of COMPONENTS) {
+    const parent = state.dirs.at(-1), fd = fs.openSync(at(parent, name), flags.O_RDONLY | flags.O_DIRECTORY | flags.O_NOFOLLOW);
+    state.dirs.push(fd); directory(fstat(fd)); state.links.push({ parent, name, fd, inode: inode(fstat(fd)) });
+  }
+  state.image = state.dirs.at(-1);
+  state.target = at(state.image, FILE);
+}
+function readSource(state) {
+  state.source = fs.openSync(state.target, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+  state.before = fstat(state.source); file(state.before);
+  state.original = readBounded(state.source);
+  need(identity(fstat(state.source)) === identity(state.before), 'SOURCE_READ_DRIFT');
+  return parseRecipe(state.original);
+}
+function revalidate(state) {
+  directory(fstat(state.dirs[0]));
+  for (const link of state.links) {
+    const entry = lstat(at(link.parent, link.name)); directory(entry);
+    need(inode(entry) === link.inode && inode(fstat(link.fd)) === link.inode, 'DIRECTORY_DRIFT');
+  }
+  const current = lstat(state.target); file(current);
+  need(identity(current) === identity(state.before) && identity(fstat(state.source)) === identity(state.before), 'SOURCE_IDENTITY_DRIFT');
+  need(readBounded(state.source).equals(state.original), 'SOURCE_BYTES_DRIFT');
+}
+function writeStage(state, updated) {
+  const flags = fs.constants;
+  state.stageName = '.pocket-id-sync.' + crypto.randomBytes(12).toString('hex');
+  const stagePath = at(state.image, state.stageName);
+  state.stage = fs.openSync(stagePath, flags.O_RDWR | flags.O_CREAT | flags.O_EXCL | flags.O_NOFOLLOW, 0o600);
+  state.stageInode = inode(fstat(state.stage));
+  fs.fchmodSync(state.stage, Number(state.before.mode & 0o777n));
+  if (fstat(state.stage).gid !== state.before.gid) fs.fchownSync(state.stage, -1, Number(state.before.gid));
+  for (let offset = 0; offset < updated.length;) {
+    const count = fs.writeSync(state.stage, updated, offset, updated.length - offset, offset);
+    need(count > 0, 'STAGE_WRITE'); offset += count;
+  }
+  fs.fsyncSync(state.stage);
+  const staged = fstat(state.stage); file(staged);
+  need(readBounded(state.stage).equals(updated), 'STAGE_BYTES');
+  return { stagePath, staged };
+}
+function commitStage(state, updated, stagePath, staged) {
+  revalidate(state);
+  need(identity(lstat(stagePath)) === identity(staged) && inode(staged) === state.stageInode, 'STAGE_IDENTITY_DRIFT');
+  fs.renameSync(stagePath, state.target); state.replaced = true;
+  fs.fsyncSync(state.image);
+  const after = lstat(state.target); file(after);
+  need(inode(after) === state.stageInode && after.size === BigInt(updated.length), 'RESULT_FILE_IDENTITY');
+  const resultFd = fs.openSync(state.target, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+  try { need(readBounded(resultFd).equals(updated), 'RESULT_FILE_BYTES'); } finally { fs.closeSync(resultFd); }
+}
+function removeOwnedStage(state) {
+  if (!state.stageName || state.replaced || !state.dirs.length) return false;
+  try {
+    const path = at(state.dirs.at(-1), state.stageName);
+    if (state.stageInode && inode(lstat(path)) === state.stageInode) fs.unlinkSync(path);
+    return false;
+  } catch (error) { return error.code !== 'ENOENT'; }
+}
+function closeDescriptors(state) {
+  let cleanupFailed = false;
+  state.dirs.reverse();
+  for (const fd of [state.stage, state.source, ...state.dirs]) if (fd !== undefined) {
+    try { fs.closeSync(fd); } catch { cleanupFailed = true; }
+  }
+  return cleanupFailed;
+}
+function cleanup(state) {
+  const removeFailed = removeOwnedStage(state);
+  const closeFailed = closeDescriptors(state);
+  if (removeFailed || closeFailed) throw new Hold('CLEANUP_FAILED');
+}
 async function synchronize() {
   need(process.platform === 'linux', 'PLATFORM_UNQUALIFIED');
   need(Number.isInteger(fs.constants.O_NOFOLLOW) && Number.isInteger(fs.constants.O_DIRECTORY), 'FD_INTERFACE');
-  const dirs = [], links = [], flags = fs.constants;
-  let source, stage, stageName, stageInode, replaced = false;
+  const state = { dirs: [], links: [], replaced: false };
   try {
-    const root = fs.openSync('.', flags.O_RDONLY | flags.O_DIRECTORY | flags.O_NOFOLLOW);
-    dirs.push(root); directory(fstat(root));
-    for (const name of COMPONENTS) {
-      const parent = dirs.at(-1), fd = fs.openSync(at(parent, name), flags.O_RDONLY | flags.O_DIRECTORY | flags.O_NOFOLLOW);
-      dirs.push(fd); directory(fstat(fd)); links.push({ parent, name, fd, inode: inode(fstat(fd)) });
-    }
-    const image = dirs.at(-1), target = at(image, FILE);
-    source = fs.openSync(target, flags.O_RDONLY | flags.O_NOFOLLOW);
-    const before = fstat(source); file(before);
-    const original = readBounded(source);
-    need(identity(fstat(source)) === identity(before), 'SOURCE_READ_DRIFT');
-    const parsed = parseRecipe(original);
-    function revalidate() {
-      directory(fstat(root));
-      for (const link of links) {
-        const entry = lstat(at(link.parent, link.name)); directory(entry);
-        need(inode(entry) === link.inode && inode(fstat(link.fd)) === link.inode, 'DIRECTORY_DRIFT');
-      }
-      const current = lstat(target); file(current);
-      need(identity(current) === identity(before) && identity(fstat(source)) === identity(before), 'SOURCE_IDENTITY_DRIFT');
-      need(readBounded(source).equals(original), 'SOURCE_BYTES_DRIFT');
-    }
-    revalidate();
+    openDirectories(state);
+    const parsed = readSource(state);
+    revalidate(state);
     if (parsed.oldVersion === parsed.newVersion) return { status: 'already-coherent', version: parsed.newVersion, changed: false };
     const archive = await fetchArchive(parsed.newVersion);
-    const updated = transform(original, archive.sha256);
-    revalidate();
-    stageName = '.pocket-id-sync.' + crypto.randomBytes(12).toString('hex');
-    const stagePath = at(image, stageName);
-    stage = fs.openSync(stagePath, flags.O_RDWR | flags.O_CREAT | flags.O_EXCL | flags.O_NOFOLLOW, 0o600);
-    stageInode = inode(fstat(stage));
-    fs.fchmodSync(stage, Number(before.mode & 0o777n));
-    if (fstat(stage).gid !== before.gid) fs.fchownSync(stage, -1, Number(before.gid));
-    for (let offset = 0; offset < updated.length;) {
-      const count = fs.writeSync(stage, updated, offset, updated.length - offset, offset);
-      need(count > 0, 'STAGE_WRITE'); offset += count;
-    }
-    fs.fsyncSync(stage);
-    const staged = fstat(stage); file(staged);
-    need(readBounded(stage).equals(updated), 'STAGE_BYTES');
-    revalidate();
-    need(identity(lstat(stagePath)) === identity(staged) && inode(staged) === stageInode, 'STAGE_IDENTITY_DRIFT');
-    fs.renameSync(stagePath, target); replaced = true;
-    fs.fsyncSync(image);
-    const after = lstat(target); file(after);
-    need(inode(after) === stageInode && after.size === BigInt(updated.length), 'RESULT_FILE_IDENTITY');
-    const resultFd = fs.openSync(target, flags.O_RDONLY | flags.O_NOFOLLOW);
-    try { need(readBounded(resultFd).equals(updated), 'RESULT_FILE_BYTES'); } finally { fs.closeSync(resultFd); }
+    const updated = transform(state.original, archive.sha256);
+    revalidate(state);
+    const { stagePath, staged } = writeStage(state, updated);
+    commitStage(state, updated, stagePath, staged);
     return { status: 'synchronized', old_version: parsed.oldVersion, version: parsed.newVersion,
       archive_sha256: archive.sha256, archive_bytes: archive.bytes, changed: true };
   } catch (error) {
     if (error instanceof Hold) throw error;
     throw new Hold('FILESYSTEM_REFUSED');
-  } finally {
-    let cleanupFailed = false;
-    if (stageName && !replaced && dirs.length) {
-      try {
-        const path = at(dirs.at(-1), stageName);
-        if (stageInode && inode(lstat(path)) === stageInode) fs.unlinkSync(path);
-      } catch (error) { if (error.code !== 'ENOENT') cleanupFailed = true; }
-    }
-    for (const fd of [stage, source, ...dirs.reverse()]) if (fd !== undefined) {
-      try { fs.closeSync(fd); } catch { cleanupFailed = true; }
-    }
-    if (cleanupFailed) throw new Hold('CLEANUP_FAILED');
-  }
+  } finally { cleanup(state); }
 }
 async function main() {
   need(process.argv.length === 2, 'NO_ARGUMENTS_ALLOWED');

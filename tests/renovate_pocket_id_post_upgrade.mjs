@@ -9,6 +9,7 @@ assert.equal(process.platform, 'linux', 'Linux qualification cannot be skipped')
 assert.deepEqual(process.argv.slice(2), ['/usr/local/renovate']);
 assert.equal(JSON.parse(fs.readFileSync('/usr/local/renovate/package.json')).version, '44.215.0');
 assert(fs.existsSync('/usr/bin/env'));
+assert(fs.existsSync('/usr/bin/git'));
 const load = file => import(pathToFileURL('/usr/local/renovate/dist/' + file + '.js').href);
 const { GlobalConfig } = await load('config/global');
 const { setCustomEnv, setUserEnv } = await load('util/env');
@@ -17,11 +18,11 @@ const { default: postArtifacts } = await load('workers/repository/update/branch/
 const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pocket-id-native-')));
 const file = 'deployments/pocket-id/image/Dockerfile';
 const command = '/usr/bin/env -u NODE_OPTIONS -u NODE_PATH ' + process.execPath + ' --no-addons /config/sync_pocket_id_source.cjs';
-const literal = '^' + command.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$';
+const literal = '^' + command.replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`) + '$';
 const fixtureSource = fs.readFileSync(new URL('../scripts/test_sync_pocket_id_source.cjs', import.meta.url), 'utf8');
-const data = JSON.parse(fixtureSource.match(/^const FIXTURE_DATA = (.+);$/m)[1]);
+const data = JSON.parse(/^const FIXTURE_DATA = (.+);$/m.exec(fixtureSource)[1]);
 const recipe = Buffer.from(data.recipe, 'base64').toString('utf8');
-const git = (...args) => { const p = spawnSync('git', args, {cwd:root, encoding:'utf8', timeout:15000}); assert.equal(p.status,0,p.stderr); };
+const git = (...args) => { const p = spawnSync('/usr/bin/git', args, {cwd:root, encoding:'utf8', timeout:15000}); assert.equal(p.status,0,p.stderr); };
 try {
   fs.mkdirSync(path.dirname(path.join(root,file)),{recursive:true});
   fs.writeFileSync(path.join(root,file),recipe,{mode:0o644});
@@ -32,8 +33,8 @@ try {
   GlobalConfig.set({localDir:root,platform:'github',binarySource:'global',cacheDir:path.join(root,'cache'),executionTimeout:1,
     ignoreScripts:true,allowScripts:false,allowPlugins:false,allowedEnv:[],allowShellExecutorForPostUpgradeCommands:false,allowedCommands:[literal]});
   const poison=path.join(root,'preload.cjs'),marker=path.join(root,'untrusted-preload-executed');
-  fs.writeFileSync(poison,`require('node:fs').writeFileSync(${JSON.stringify(marker)},'BAD');throw Error('BAD');`);
-  setCustomEnv({PATH:process.env.PATH??'',HOME:root,NODE_OPTIONS:'--require='+poison,NODE_PATH:root});setUserEnv({});
+  fs.writeFileSync(poison,`require('node:fs').writeFileSync(${JSON.stringify(marker)},'BAD');throw new Error('BAD');`);
+  setCustomEnv({PATH:'/usr/bin:/bin',HOME:root,NODE_OPTIONS:'--require='+poison,NODE_PATH:root});setUserEnv({});
   await initRepo({url:root,defaultBranch:'main',currentBranch:'main'});await syncGit();
   const invoke = (contents,cmd=command) => postArtifacts({manager:'dockerfile',branchName:'renovate/fixture',
     upgrades:[{depName:'ghcr.io/pocket-id/pocket-id',packageFile:file}],

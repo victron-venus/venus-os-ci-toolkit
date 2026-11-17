@@ -22,7 +22,7 @@ const CHILD = 'process.stdout.write("trusted-child-no-preload")';
 function owned(value) {
   if (typeof value === 'number') return ownedFds.has(value);
   let resolved = String(value);
-  const proc = resolved.match(/^\/proc\/self\/fd\/(\d+)(\/.*)?$/);
+  const proc = /^\/proc\/self\/fd\/(\d+)(\/.*)?$/.exec(resolved);
   if (proc) {
     const parent = ownedFds.get(Number(proc[1]));
     if (!parent) return false;
@@ -32,7 +32,7 @@ function owned(value) {
   return resolved === ROOT || resolved.startsWith(ROOT + path.sep);
 }
 function resolveOwned(value) {
-  const proc = String(value).match(/^\/proc\/self\/fd\/(\d+)(\/.*)?$/);
+  const proc = /^\/proc\/self\/fd\/(\d+)(\/.*)?$/.exec(String(value));
   if (proc) return path.resolve(ownedFds.get(Number(proc[1])) + (proc[2] || ''));
   return path.resolve(value);
 }
@@ -101,7 +101,10 @@ function mockHttp(t, config = {}) {
       responses.push(response); callback(response);
       if (row.hang || response.destroyed) return;
       const blocks = row.blocks || [body];
-      for (const block of blocks) { if (response.destroyed) break; response.emit('data', block); }
+      for (const block of blocks) {
+        if (response.destroyed) break;
+        response.emit('data', block);
+      }
       if (row.beforeEnd) row.beforeEnd();
       if (!response.destroyed) response.emit(row.abort ? 'aborted' : 'end');
     });
@@ -110,6 +113,13 @@ function mockHttp(t, config = {}) {
   return { calls, responses, requests };
 }
 const isCode = code => error => error instanceof helper.Hold && error.message === code;
+async function rejectDownloads(t, rows, index = 0) {
+  if (index === rows.length) return;
+  mockHttp(t, rows[index]);
+  await assert.rejects(helper.fetchArchive('2.20.0'), helper.Hold);
+  t.mock.restoreAll();
+  return rejectDownloads(t, rows, index + 1);
+}
 
 // Pure controls run on macOS as well as Linux. They never claim FD qualification.
 test('pure: actual source layout and future release transformations preserve all other bytes', () => {
@@ -178,16 +188,14 @@ test('HTTPS: one exact redirect allowed but bounded, status/gzip/length refused'
   const m = mockHttp(t, { sequence: [{ status: 302, headers: { location: expected } }, {}] });
   assert.equal((await helper.fetchArchive('2.20.0')).sha256, digest()); assert.equal(m.calls.length, 2);
   t.mock.restoreAll();
-  for (const row of [{ status: 403 }, { body: Buffer.from('not gzip') },
+  await rejectDownloads(t, [{ status: 403 }, { body: Buffer.from('not gzip') },
     { headers: { 'content-length': String(ARCHIVE.length + 1) } },
     { headers: { 'content-length': String(helper.LIMITS.MAX_ARCHIVE + 1) } },
-    { headers: { 'content-length': 'not a number' } }, { abort: true }]) {
-    mockHttp(t, row); await assert.rejects(helper.fetchArchive('2.20.0'), helper.Hold); t.mock.restoreAll();
-  }
+    { headers: { 'content-length': 'not a number' } }, { abort: true }]);
 });
 test('HTTPS: streamed byte cap works without Content-Length', async t => {
   const block = Buffer.alloc(1024 * 1024, 1); block[0] = 0x1f; block[1] = 0x8b;
-  mockHttp(t, { noLength: true, blocks: Array(33).fill(block) });
+  mockHttp(t, { noLength: true, blocks: new Array(33).fill(block) });
   await assert.rejects(helper.fetchArchive('2.20.0'), isCode('DOWNLOAD_SIZE'));
 });
 test('HTTPS: absolute and idle deadlines destroy request with fixed codes', async t => {
@@ -209,7 +217,7 @@ test('entrypoint: arbitrary argv refused; non-Linux FD execution honestly held',
 test('preload wrapper: env clears NODE_OPTIONS and NODE_PATH BEFORE Node runs', () => {
   const f = temp(), marker = path.join(f.root, 'PRELOAD_MUST_NOT_RUN');
   const preload = path.join(f.root, 'hostile.cjs');
-  fs.writeFileSync(preload, 'require("node:fs").writeFileSync(' + JSON.stringify(marker) + ',"bad");throw Error("PRELOAD_RAN")');
+  fs.writeFileSync(preload, 'require("node:fs").writeFileSync(' + JSON.stringify(marker) + ',"bad");throw new Error("PRELOAD_RAN")');
   const result = cp.spawnSync('/usr/bin/env', ['-u', 'NODE_OPTIONS', '-u', 'NODE_PATH', process.execPath,
     '--no-addons', '-e', CHILD], { encoding: 'utf8', timeout: 10000,
     env: { PATH: '/usr/bin:/bin', NODE_OPTIONS: '--require=' + preload, NODE_PATH: f.root } });
@@ -217,7 +225,7 @@ test('preload wrapper: env clears NODE_OPTIONS and NODE_PATH BEFORE Node runs', 
 });
 test('harness: no outside-temp writes or non-whitelisted child/network calls', () => {
   assert.throws(() => fs.writeFileSync(path.join(__dirname, 'must-not-exist'), 'bad'), /OUTSIDE_OWNED_TEMP/);
-  assert.throws(() => cp.spawn('sh', ['-c', 'true']), /TEST_PROCESS_DENIED/);
+  assert.throws(() => cp.spawn('/bin/sh', ['-c', 'true']), /TEST_PROCESS_DENIED/);
   const socket = new net.Socket(); assert.throws(() => socket.connect(9, '127.0.0.1'), /TEST_NETWORK_DENIED/); socket.destroy();
 });
 
@@ -228,7 +236,7 @@ test('Linux FD: real atomic replacement/full-byte proof, source mode and no-op p
   const result = await helper.synchronize(); assert(result.changed); assert.notEqual(fs.statSync(f.file).ino, before);
   assert.equal(fs.statSync(f.file).mode & 0o777, 0o600); assert.equal(fs.readFileSync(f.file).toString(), helper.transform(runtime(), digest()).toString());
   const calls = [];
-  t.mock.restoreAll(); t.mock.method(https, 'get', () => { calls.push(1); throw Error('NOOP_NETWORK'); });
+  t.mock.restoreAll(); t.mock.method(https, 'get', () => { calls.push(1); throw new Error('NOOP_NETWORK'); });
   const inode = fs.statSync(f.file).ino; assert.equal((await helper.synchronize()).changed, false);
   assert.equal(fs.statSync(f.file).ino, inode); assert.deepEqual(calls, []); assert.deepEqual(fs.readdirSync(f.image), ['Dockerfile']);
   const zero = Buffer.from(RECIPE.toString().replaceAll('2.19.3', '2.0.0'));
@@ -267,7 +275,7 @@ test('Linux FD: ancestor substitution is not followed', linuxOnly, async t => {
 });
 test('Linux FD: fsync failure before commit preserves original and removes only own stage', linuxOnly, async t => {
   const f = temp(); process.chdir(f.root); const before = runtime(); fs.writeFileSync(f.file, before); mockHttp(t);
-  t.mock.method(fs, 'fsyncSync', () => { throw Error('TEST_ONLY_FSYNC'); });
+  t.mock.method(fs, 'fsyncSync', () => { throw new Error('TEST_ONLY_FSYNC'); });
   await assert.rejects(helper.synchronize(), helper.Hold); assert(fs.readFileSync(f.file).equals(before)); assert.deepEqual(fs.readdirSync(f.image), ['Dockerfile']);
 });
 test('Linux FD: source revalidated after staging, no descriptor leak', linuxOnly, async t => {
@@ -277,10 +285,18 @@ test('Linux FD: source revalidated after staging, no descriptor leak', linuxOnly
   await assert.rejects(helper.synchronize(), helper.Hold); assert.equal(fs.readFileSync(f.file, 'utf8'), 'foreign staged edit\n');
   assert.deepEqual(fs.readdirSync(f.image), ['Dockerfile']); assert.equal(fs.readdirSync('/proc/self/fd').length, before);
 });
-test('Linux FD: oversized recipe and group/world-writable source refused', linuxOnly, async () => {
+test('Linux FD: oversized recipe and synthetic hostile mode metadata refused', linuxOnly, async t => {
   const f = temp(); process.chdir(f.root); fs.writeFileSync(f.file, Buffer.alloc(helper.LIMITS.MAX_RECIPE + 1));
-  await assert.rejects(helper.synchronize(), helper.Hold); fs.writeFileSync(f.file, RECIPE); fs.chmodSync(f.file, 0o666);
-  await assert.rejects(helper.synchronize(), helper.Hold);
+  await assert.rejects(helper.synchronize(), helper.Hold); fs.writeFileSync(f.file, RECIPE);
+  // The real fixture remains secure; only the fstat result carries hostile metadata.
+  const secureMode = fs.statSync(f.file).mode, fstat = fs.fstatSync;
+  t.mock.method(fs, 'fstatSync', (fd, options) => {
+    const stat = fstat(fd, options);
+    if (stat.isFile()) return Object.assign(stat, { mode: stat.mode | 0o022n });
+    return stat;
+  });
+  await assert.rejects(helper.synchronize(), isCode('FILE_CUSTODY'));
+  assert.equal(fs.statSync(f.file).mode, secureMode);
 });
 
 test.after(() => {
