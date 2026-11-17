@@ -19,6 +19,11 @@ from runner_selection import ACTIVE_WORKFLOWS, render_consumer, render_workflows
 
 
 class RunnerSelectionTests(unittest.TestCase):
+    def test_documentation_workflow_uses_the_existing_ci_profile(self):
+        workflow = yaml.load((ROOT / '.github/workflows/docs-check.yml').read_text(),
+                             Loader=yaml.BaseLoader)
+        self.assertEqual(workflow['jobs']['docs']['runs-on'], runner_labels('ci'))
+
     def test_budget_expression_does_not_allocate_hosted_or_untrusted_reserve(self):
         # Execute the generated expression: these fixed boolean/string fixtures
         # use the same &&, ||, == and JSON semantics in Actions and JavaScript.
