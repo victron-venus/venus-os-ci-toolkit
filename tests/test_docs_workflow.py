@@ -6,7 +6,10 @@ requires an immutable toolkit commit, every action is pinned to a full SHA, and
 it invokes the checker that ships in this repository.
 """
 
+import json
+import os
 import re
+import subprocess
 import unittest
 from pathlib import Path
 
@@ -32,6 +35,8 @@ class DocumentationWorkflowTests(unittest.TestCase):
         self.assertEqual(inputs["toolkit-ref"]["required"], "true")
 
     def test_every_action_is_pinned_to_a_full_sha(self):
+        pins = {pin['packageName']: pin['digest']
+                for pin in json.loads((ROOT / '.github/action-pins.json').read_text())}
         for job in self.workflow["jobs"].values():
             for step in job["steps"]:
                 reference = step.get("uses")
@@ -39,9 +44,38 @@ class DocumentationWorkflowTests(unittest.TestCase):
                     continue
                 with self.subTest(reference=reference):
                     self.assertRegex(reference, PINNED)
+                    action, revision = reference.rsplit('@', 1)
+                    if action in pins:
+                        self.assertEqual(revision, pins[action])
+
+    def test_mutable_or_injected_checker_refs_fail_before_checkout(self):
+        steps = self.workflow['jobs']['docs']['steps']
+        guard = steps[0]
+        self.assertEqual(guard['shell'], 'bash')
+        self.assertEqual(guard['env'], {'TOOLKIT_REF': '${{ inputs.toolkit-ref }}'})
+        self.assertNotIn('${{', guard['run'])
+        checker = next(step for step in steps
+                       if step.get('with', {}).get('path') == 'toolkit')
+        self.assertEqual(checker['with']['ref'], '${{ inputs.toolkit-ref }}')
+        for reference, accepted in (
+            ('a' * 40, True), ('A1' * 20, True), ('main', False),
+            ('v1.0.0', False), ('a' * 39, False), ('a' * 41, False),
+            ('g' * 40, False), ('', False), ('a' * 40 + '\n', False),
+            ('$(exit 0)', False), ('"; exit 0; #', False),
+        ):
+            with self.subTest(reference=reference):
+                result = subprocess.run(
+                    ['bash', '--noprofile', '--norc', '-e', '-c', guard['run']],
+                    env={**os.environ, 'TOOLKIT_REF': reference},
+                    capture_output=True, text=True, timeout=5,
+                )
+                self.assertEqual(result.returncode == 0, accepted, result.stderr)
 
     def test_permissions_are_read_only(self):
         self.assertEqual(self.workflow.get("permissions"), {"contents": "read"})
+        for job in self.workflow['jobs'].values():
+            self.assertIn(job.get('permissions'), (None, {'contents': 'read'}))
+            self.assertNotIn('secrets', job)
 
     def test_it_runs_the_shared_checker_from_the_toolkit(self):
         steps = self.workflow["jobs"]["docs"]["steps"]

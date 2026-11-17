@@ -33,6 +33,16 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
+      - name: Require an immutable checker revision
+        shell: bash
+        env:
+          TOOLKIT_REF: ${{ inputs.toolkit-ref }}
+        run: |
+          if [[ ! "$TOOLKIT_REF" =~ ^[0-9a-fA-F]{40}$ ]]; then
+            echo 'toolkit-ref must be a full 40-character commit SHA' >&2
+            exit 1
+          fi
+
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
         with:
@@ -56,7 +66,7 @@ jobs:
           sparse-checkout-cone-mode: false
 
       - name: Setup Python
-        uses: actions/setup-python@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: ${{ inputs.python-version }}
 

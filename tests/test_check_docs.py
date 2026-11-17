@@ -66,6 +66,37 @@ class CheckDocsTests(unittest.TestCase):
         self.repo.write('docs/b.md', '# Present\n')
         self.assertEqual(self.repo.run('anchors'), [])
 
+    def test_anchors_do_not_accept_headings_in_examples(self):
+        for fence in ('```', '~~~', '````'):
+            with self.subTest(fence=fence):
+                self.repo.write('a.md', f'[missing](#fake)\n{fence}md\n# Fake\n{fence}\n')
+                self.assertTrue(self.repo.run('anchors'))
+
+    def test_anchors_accept_duplicate_heading_suffixes_and_closing_hashes(self):
+        self.repo.write('a.md', '# Same ###\n# Same\n[x](#same)\n[y](#same-1)\n')
+        self.assertEqual(self.repo.run('anchors'), [])
+
+    def test_links_and_anchors_resolve_root_directory_and_query_links(self):
+        self.repo.write('README.md', '# Home\n')
+        self.repo.write('docs/README.md', '# Docs\n')
+        self.repo.write('docs/a.md', '[home](/README.md#home)\n[docs](./?view=1#docs)\n')
+        self.assertEqual(self.repo.run('links'), [])
+        self.assertEqual(self.repo.run('anchors'), [])
+
+    def test_links_reject_existing_targets_outside_the_repository(self):
+        outside = self.repo.root.parent / (self.repo.root.name + '-outside.md')
+        outside.write_text('# Outside\n')
+        try:
+            self.repo.write('a.md', f'[escape](../{outside.name})\n')
+            self.assertTrue(self.repo.run('links'))
+        finally:
+            outside.unlink()
+
+    def test_templates_keep_the_consumer_anchor_exemption(self):
+        self.repo.write('templates/a.md', '[consumer](#consumer-heading)\n')
+        self.assertEqual(self.repo.run('links'), [])
+        self.assertEqual(self.repo.run('anchors'), [])
+
     def test_svg_rejects_malformed_xml(self):
         self.repo.write('docs/a.svg', '<svg><rect></svg>')
         self.assertTrue(self.repo.run('svg'))
@@ -83,9 +114,27 @@ class CheckDocsTests(unittest.TestCase):
         self.repo.write('docs/quality.md', '# Quality\n')
         self.assertEqual(self.repo.run('index'), [])
 
+    def test_index_follows_nested_navigation_and_cycles(self):
+        self.repo.write('docs/README.md', '[Guide](guide/)\n')
+        self.repo.write('docs/guide/README.md', '[Details](details.md)\n')
+        self.repo.write('docs/guide/details.md', '[Back](/docs/README.md)\n')
+        self.assertEqual(self.repo.run('index'), [])
+
     def test_fences_report_an_unbalanced_block(self):
         self.repo.write('docs/a.md', '```sh\necho hi\n')
         self.assertTrue(self.repo.run('fences'))
+
+    def test_fences_require_a_matching_marker_and_length(self):
+        for text in ('````md\n```\n', '~~~md\n```\n', '```sh\n```not-a-close\n'):
+            with self.subTest(text=text):
+                self.repo.write('a.md', text)
+                self.assertTrue(self.repo.run('fences'))
+
+    def test_long_fenced_examples_do_not_create_links_or_mermaid_blocks(self):
+        self.repo.write('a.md', '````md\n```mermaid\n[example](missing.md)\n```\n````\n')
+        self.assertEqual(self.repo.run('links'), [])
+        self.assertEqual(self.repo.run('mermaid'), [])
+        self.assertEqual(self.repo.run('fences'), [])
 
     def test_mermaid_reports_a_block_without_a_type(self):
         self.repo.write('docs/a.md', '```mermaid\nA --> B\n```\n')
@@ -94,6 +143,10 @@ class CheckDocsTests(unittest.TestCase):
     def test_mermaid_accepts_a_known_diagram_type(self):
         self.repo.write('docs/a.md', '```mermaid\nflowchart LR\nA --> B\n```\n')
         self.assertEqual(self.repo.run('mermaid'), [])
+
+    def test_mermaid_rejects_a_diagram_name_prefix(self):
+        self.repo.write('a.md', '~~~mermaid\ngraphical nonsense\n~~~\n')
+        self.assertTrue(self.repo.run('mermaid'))
 
     def test_version_reports_a_disagreement(self):
         self.repo.write('version', '0.4.1b2\n')
@@ -104,6 +157,24 @@ class CheckDocsTests(unittest.TestCase):
         self.repo.write('version', '0.4.1b3\n')
         self.repo.write('pyproject.toml', '[project]\nversion = "0.4.1b3"\n')
         self.assertEqual(self.repo.run('version'), [])
+
+    def test_version_reads_project_metadata_not_an_unrelated_tool(self):
+        self.repo.write('version', '1.0.0\n')
+        self.repo.write('pyproject.toml', "[tool.example]\nversion = '2.0.0'\n"
+                        "[project]\nversion = '1.0.0'\n")
+        self.assertEqual(self.repo.run('version'), [])
+
+    def test_version_reports_invalid_project_metadata(self):
+        self.repo.write('pyproject.toml', '[project\n')
+        self.assertIn('invalid TOML', self.repo.run('version')[0])
+
+    def test_version_does_not_accept_a_different_prerelease_tag(self):
+        self.repo.write('version', '0.4.1b3\n')
+        self.repo.write('pyproject.toml', '[project]\nversion = "0.4.1b3"\n')
+        subprocess.run(['git', '-c', 'user.email=t@example.com', '-c', 'user.name=t',
+                        'commit', '-qm', 'x'], cwd=self.repo.root, check=True)
+        subprocess.run(['git', 'tag', 'v0.4.1-beta.2'], cwd=self.repo.root, check=True)
+        self.assertTrue(self.repo.run('version'))
 
     def test_version_compares_a_beta_tag_without_a_false_positive(self):
         self.repo.write('version', '0.4.1b3\n')
