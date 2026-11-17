@@ -41,7 +41,7 @@
   },
   {
     "packageName": "actions/setup-go",
-    "version": "v7.0.0",
-    "digest": "b7ad1dad31e06c5925ef5d2fc7ad053ef454303e"
+    "version": "v7.1.0",
+    "digest": "d8cbb8045d7f43706b9177cceb36c1f91a6644d5"
   }
 ]
