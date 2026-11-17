@@ -30,7 +30,7 @@ and run attempt and become part of the candidate's release inventory.
 
 ![Public RC fuzzing process and repair loop](docs/images/rc-fuzzing/process.svg)
 
-Explore the [illustrated release process and verified rollout results](docs/rc-fuzzing-results.md), with SVG diagrams and links to the accepted RC reports.
+Explore the [historical release process and rollout snapshot dated 2026-10-17](https://github.com/victron-venus/venus-os-ci-toolkit/blob/32859e5dfecc1fd182eb009611449e7081042b9d/docs/rc-fuzzing-results.md), with SVG diagrams and links to the accepted RC reports.
 
 ## Operator inventories
 

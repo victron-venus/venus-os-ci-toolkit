@@ -78,6 +78,20 @@ class ToolkitReleaseNotesTests(unittest.TestCase):
             )
             self.assertEqual(result.returncode, 0, result.stderr)
 
+            # Exercise documentation from the shipped archive, including its
+            # workflow, canonical pins, navigation and image dependencies.
+            # This pattern excludes this package test, so it cannot recurse.
+            for command in (
+                [sys.executable, "-I", "-B", "-m", "unittest", "discover",
+                 "-s", "tests", "-p", "test*docs*.py", "-v"],
+                [sys.executable, "-I", "-B", "scripts/check_docs.py", "--root", "."],
+            ):
+                result = subprocess.run(
+                    command, cwd=extracted, capture_output=True, text=True,
+                    check=False,
+                )
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def test_checkout_changelog_supports_beta_and_rc(self):
         root = Path(__file__).resolve().parents[1]
         policy = json.loads((root / ".release-policy.json").read_text())

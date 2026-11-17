@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Generic documentation checks shared across repositories.
 
-Seven repositories each grew their own `check_docs.py`, differing between 37 and
+Eight repositories each grew their own `check_docs.py`, differing between 37 and
 179 lines and none of them covering the same set of rules. This module is the
 shared implementation. Keep repository-specific invariants in local checkers;
 call this module directly or through the reusable documentation workflow.
@@ -24,6 +24,7 @@ Exit status is 1 when any check fails, and the failures are printed one per line
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import subprocess
 import sys
@@ -141,6 +142,113 @@ def inside(root: Path, path: Path) -> bool:
     return path.resolve().is_relative_to(root.resolve())
 
 
+def regular_document(root: Path, path: Path) -> bool:
+    if not inside(root, path) or not path.is_file():
+        return False
+    current = root
+    for part in path.relative_to(root).parts:
+        current /= part
+        if current.is_symlink():
+            return False
+    return True
+
+
+def immutable_self_links(root: Path, documents: dict[Path, str]) -> dict[str, Path]:
+    """Prove equivalent local pages behind immutable self-permalinks, offline.
+
+    Batch metadata/content reads keep the Git process count independent of the
+    number of links. Unknown commits, replacements and lazy fetches cannot supply
+    evidence. Unsupported Git versions simply do not prove a permalink.
+    """
+    candidates: dict[str, tuple[str, str]] = {}
+    for text in documents.values():
+        for link in LINK.findall(text) + HTML_HREF.findall(text):
+            url = urlsplit(link.strip('<>'))
+            parts = unquote(url.path).lstrip('/').split('/', 4)
+            if (url.scheme != 'https' or url.netloc != 'github.com' or len(parts) != 5
+                    or parts[2] != 'blob' or not re.fullmatch(r'[0-9a-fA-F]{40}', parts[3])):
+                continue
+            path = root / parts[4]
+            if (any(p in {'', '.', '..'} for p in parts[4].split('/'))
+                    or any(ord(c) < 32 or c in '\\\x7f' for c in parts[4])
+                    or path.resolve() not in documents or not regular_document(root, path)):
+                continue
+            candidates[link] = ('/'.join(parts[:2]), parts[3].lower() + ':' + parts[4])
+    if not candidates:
+        return {}
+    environment = {k: v for k, v in os.environ.items() if not k.startswith('GIT_')}
+    environment.update(GIT_NO_REPLACE_OBJECTS='1', GIT_OPTIONAL_LOCKS='0',
+                       GIT_CONFIG_NOSYSTEM='1', GIT_CONFIG_GLOBAL=os.devnull,
+                       GIT_TERMINAL_PROMPT='0')
+
+    def read(*args: str, data: bytes | None = None) -> bytes:
+        return subprocess.check_output(
+            ['git', '--no-optional-locks', '--no-lazy-fetch', *args], cwd=root,
+            input=data, stderr=subprocess.DEVNULL, env=environment, timeout=10,
+        )
+
+    try:
+        origin = read('config', '--local', '--get', 'remote.origin.url').decode().strip()
+        if origin.startswith('git@github.com:'):
+            repository = origin.removeprefix('git@github.com:').removesuffix('.git')
+        elif origin.startswith('https://github.com/'):
+            repository = origin.removeprefix('https://github.com/').removesuffix('.git')
+        else:
+            return {}
+        matched = {link: spec for link, (repo, spec) in candidates.items()
+                   if repo.casefold() == repository.casefold()}
+        if not matched:
+            return {}
+        tracked_paths = set()
+        for row in read('ls-files', '--stage', '-z').split(b'\0'):
+            if row:
+                metadata, path = row.split(b'\t', 1)
+                mode, _, stage = metadata.split()
+                if mode in {b'100644', b'100755'} and stage == b'0':
+                    tracked_paths.add(path.decode())
+        specs = sorted({spec for spec in matched.values()
+                        if spec.split(':', 1)[1] in tracked_paths})
+        revisions = sorted({spec.split(':', 1)[0] for spec in specs})
+        requests = revisions + specs
+        metadata = read('cat-file', '--batch-check=%(objectname)\t%(objecttype)\t%(objectmode)\t%(objectsize)',
+                        data=''.join(x + '\n' for x in requests).encode()).splitlines()
+        if len(metadata) != len(requests):
+            return {}
+        rows = {request: line.split(b'\t') for request, line in zip(requests, metadata)}
+        valid_commits = {rev for rev in revisions if len(rows[rev]) == 4
+                         and rows[rev][0].decode() == rev and rows[rev][1] == b'commit'}
+        local: dict[str, tuple[bytes, bytes]] = {}
+        for spec in specs:
+            fields = rows[spec]
+            if (spec.split(':', 1)[0] not in valid_commits or len(fields) != 4
+                    or fields[1] != b'blob' or fields[2] not in {b'100644', b'100755'}):
+                continue
+            current = (root / spec.split(':', 1)[1]).read_bytes()
+            if int(fields[3]) == len(current):
+                local[spec] = (fields[0], current)
+        objects = sorted({oid for oid, _ in local.values()})
+        payload = read('cat-file', '--batch', data=b''.join(oid + b'\n' for oid in objects))
+        contents = {}
+        offset = 0
+        for oid in objects:
+            end = payload.index(b'\n', offset)
+            actual, kind, size = payload[offset:end].split()
+            size = int(size)
+            offset = end + 1
+            if (actual != oid or kind != b'blob' or len(payload) < offset + size + 1
+                    or payload[offset + size:offset + size + 1] != b'\n'):
+                return {}
+            contents[oid] = payload[offset:offset + size]
+            offset += size + 1
+        if offset != len(payload):
+            return {}
+        return {link: (root / spec.split(':', 1)[1]).resolve()
+                for link, spec in matched.items() if spec in local
+                and contents[local[spec][0]] == local[spec][1]}
+    except (OSError, ValueError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        return {}
+
+
 def check_links(root: Path, files: list[Path]) -> list[str]:
     errors: list[str] = []
     for path in files:
@@ -197,17 +305,23 @@ def check_index(root: Path, files: list[Path]) -> list[str]:
         return []
     if not index.is_file():
         return ['docs/README.md: missing navigation index']
-    documents = {p.resolve() for p in files if p.suffix == '.md' and docs in p.parents}
+    if not regular_document(root, index):
+        return ['docs/README.md: navigation index must be a regular repository file']
+    documents = {p.resolve(): prose(p.read_text(encoding='utf-8'))
+                 for p in files if p.suffix == '.md' and docs in p.parents
+                 and regular_document(root, p)}
+    permalinks = immutable_self_links(root, documents)
     reached: set[Path] = set()
+    index_body = prose(index.read_text(encoding='utf-8'))
     pending = [index.resolve()]
     while pending:
         page = pending.pop()
         if page in reached:
             continue
         reached.add(page)
-        body = prose(page.read_text(encoding='utf-8'))
+        body = documents.get(page, index_body)
         for link in LINK.findall(body) + HTML_HREF.findall(body):
-            target = local_target(root, page, link)
+            target = permalinks.get(link) or local_target(root, page, link)
             if target is not None and inside(root, target):
                 target = target.resolve()
                 if target in documents and target.is_file() and target not in reached:

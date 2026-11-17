@@ -1,7 +1,7 @@
 # Documentation checks
 
 `scripts/check_docs.py` supplies generic documentation checks for the
-organization. Seven repositories grew their own copy, between 37 and 179 lines,
+organization. Eight repositories grew their own copy, between 37 and 179 lines,
 and none of them enforced the same rules. Repository-specific rules remain in
 their local checkers, as described below.
 
@@ -28,14 +28,21 @@ exec python3 "$(git rev-parse --show-toplevel)/scripts/_toolkit/check_docs.py" -
 | `links` | Inline Markdown links/images and double-quoted HTML `href` targets resolve within the repository. Fenced code is ignored. Root-relative paths start at the repository root. |
 | `anchors` | Fragments in those links to Markdown files match an ATX heading slug or explicit anchor. Duplicate headings receive numeric suffixes; headings inside fenced examples do not count. |
 | `svg` | Every tracked SVG parses as XML. |
-| `index` | Every tracked `docs/**.md` is reachable through navigation links from `docs/README.md`, including nested indexes and excluding shared boilerplate. |
+| `index` | Every tracked `docs/**.md` is reachable through navigation links from `docs/README.md`, including nested indexes and excluding shared boilerplate. Immutable self-permalinks count only when a local Git proof shows identical current page bytes. |
 | `fences` | Backtick and tilde fences close with the same marker and at least the opening length. |
-| `mermaid` | Every mermaid block declares a diagram type, so it renders instead of showing as a code block. |
+| `mermaid` | Mermaid blocks contain a recognized diagram declaration. Diagram syntax and runtime rendering are not validated. |
 | `version` | A `version` file, `[project].version` in `pyproject.toml` and an integration `manifest.json` agree, and the newest tag matches, including its prerelease number. |
 
 Default set: `links,anchors,svg,index,fences,mermaid`. The `version` check is
 opt-in because most repositories do not declare a version in more than one
 place.
+
+Self-permalink recognition is offline: only an HTTPS GitHub URL for the existing
+origin, a full local commit and a tracked regular Markdown path can qualify.
+Foreign, unavailable, stale, symlinked or modified pages do not qualify. Git
+replacements and lazy fetching are disabled; older Git versions without the
+required batch metadata support cannot prove these links. Relative navigation
+does not need this proof.
 
 These are lightweight checks, not a complete Markdown renderer. Reference-style
 links, indented code blocks and Setext headings are not parsed. Non-Markdown
@@ -44,10 +51,9 @@ checker. External URLs are not fetched.
 
 ## Why the `index` check matters
 
-Across the organization, 97 `docs/` trees existed and only eight had an index.
-About forty percent of documents were reachable from nowhere: no README link, no
-navigation entry, no parent page. The check makes an orphan a CI failure rather
-than a document nobody finds.
+A navigation index makes documents discoverable without knowing their paths.
+The check follows links from `docs/README.md` through nested guides and reports
+documents with no route from that entry point.
 
 ## Templates are exempt
 
@@ -99,5 +105,10 @@ to a full commit SHA. It rejects a branch, tag or malformed `toolkit-ref` before
 checkout. Use the same immutable revision in both positions in the example.
 `tests/test_docs_workflow.py` exercises the guard and checks action pins against
 the toolkit's canonical action inventory.
+Runner selection uses the existing CI runner profile: GitHub-hosted by default,
+with the canonical opt-in managed runner expression for trusted same-repository
+PRs and default-branch events. Forks and other untrusted events remain hosted.
+No runner setting is changed by calling this workflow.
+
 A repository that also needs a local invariant keeps its own script for that
 invariant and calls this workflow for the generic rules.

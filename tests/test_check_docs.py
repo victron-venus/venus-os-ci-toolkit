@@ -10,6 +10,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 SPEC = importlib.util.spec_from_file_location('check_docs', ROOT / 'scripts' / 'check_docs.py')
@@ -38,6 +39,13 @@ class Repository:
 
     def close(self) -> None:
         self.temp.cleanup()
+
+    def commit(self) -> str:
+        subprocess.run(['git', '-c', 'user.email=t@example.com', '-c', 'user.name=t',
+                        '-c', 'commit.gpgsign=false', 'commit', '-qm', 'fixture'],
+                       cwd=self.root, check=True)
+        return subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=self.root,
+                                       text=True).strip()
 
 
 class CheckDocsTests(unittest.TestCase):
@@ -119,6 +127,77 @@ class CheckDocsTests(unittest.TestCase):
         self.repo.write('docs/guide/README.md', '[Details](details.md)\n')
         self.repo.write('docs/guide/details.md', '[Back](/docs/README.md)\n')
         self.assertEqual(self.repo.run('index'), [])
+
+    def permalink_fixture(self):
+        self.repo.write('docs/README.md', '# Docs\n')
+        self.repo.write('docs/page.md', '# Page\n')
+        revision = self.repo.commit()
+        subprocess.run(['git', 'remote', 'add', 'origin', 'https://github.com/org/repo.git'],
+                       cwd=self.repo.root, check=True)
+        return f'https://github.com/org/repo/blob/{revision}/docs/page.md'
+
+    def test_index_proves_same_repository_permalink_with_bounded_git_reads(self):
+        link = self.permalink_fixture()
+        self.repo.write('docs/README.md', f'[Page]({link})\n' * 500)
+        with mock.patch.object(check_docs.subprocess, 'check_output',
+                               wraps=subprocess.check_output) as calls:
+            self.assertEqual(self.repo.run('index'), [])
+        self.assertLessEqual(calls.call_count, 5)  # tracked() plus four batched reads
+        for call in calls.call_args_list:
+            if '--no-lazy-fetch' in call.args[0]:
+                self.assertEqual(call.kwargs['env']['GIT_NO_REPLACE_OBJECTS'], '1')
+        subprocess.run(['git', 'remote', 'set-url', 'origin', 'git@github.com:org/repo.git'],
+                       cwd=self.repo.root, check=True)
+        self.assertEqual(self.repo.run('index'), [])
+
+    def test_index_refuses_foreign_unknown_and_mutable_permalinks(self):
+        link = self.permalink_fixture()
+        revision = link.split('/')[6]
+        for bad in (link.replace('/org/repo/', '/other/repo/'),
+                    link.replace(revision, 'f' * 40), link.replace(revision, 'main'),
+                    link.replace('https:', 'http:'),
+                    link.replace('/docs/page.md', '/docs/../docs/page.md')):
+            with self.subTest(link=bad):
+                self.repo.write('docs/README.md', f'[Page]({bad})\n')
+                self.assertTrue(self.repo.run('index'))
+
+    def test_index_refuses_equal_size_dirty_or_stale_permalink_content(self):
+        link = self.permalink_fixture()
+        self.repo.write('docs/README.md', f'[Page]({link})\n')
+        self.repo.write('docs/page.md', '# Rage\n')  # Same length as the committed page.
+        self.assertTrue(self.repo.run('index'))
+        self.repo.commit()
+        self.assertTrue(self.repo.run('index'))
+
+    def test_self_permalink_never_proves_an_untracked_or_symlinked_page(self):
+        link = self.permalink_fixture()
+        self.repo.write('docs/README.md', f'[Page]({link})\n')
+        page = self.repo.root / 'docs/page.md'
+        documents = {(self.repo.root / 'docs/README.md').resolve(): f'[Page]({link})',
+                     page.resolve(): '# Page\n'}
+        subprocess.run(['git', 'rm', '--cached', '-q', 'docs/page.md'],
+                       cwd=self.repo.root, check=True)
+        self.assertEqual(check_docs.immutable_self_links(self.repo.root, documents), {})
+        page.unlink()
+        other = self.repo.root / 'docs/other.md'
+        other.write_text('# Page\n')
+        page.symlink_to(other)
+        subprocess.run(['git', 'add', 'docs/page.md'], cwd=self.repo.root, check=True)
+        documents[page.resolve()] = '# Page\n'
+        self.assertEqual(check_docs.immutable_self_links(self.repo.root, documents), {})
+
+    def test_self_permalink_refuses_a_historical_symlink_blob(self):
+        self.repo.write('docs/README.md', '# Docs\n')
+        target = self.repo.root / 'docs/page.md'
+        target.symlink_to('note')
+        subprocess.run(['git', 'add', 'docs/page.md'], cwd=self.repo.root, check=True)
+        revision = self.repo.commit()
+        target.unlink()
+        self.repo.write('docs/page.md', 'note')  # Exactly the historical symlink bytes.
+        subprocess.run(['git', 'remote', 'add', 'origin', 'https://github.com/org/repo.git'],
+                       cwd=self.repo.root, check=True)
+        self.repo.write('docs/README.md', f'[Page](https://github.com/org/repo/blob/{revision}/docs/page.md)\n')
+        self.assertTrue(self.repo.run('index'))
 
     def test_fences_report_an_unbalanced_block(self):
         self.repo.write('docs/a.md', '```sh\necho hi\n')
