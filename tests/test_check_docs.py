@@ -91,6 +91,20 @@ class CheckDocsTests(unittest.TestCase):
         self.assertEqual(self.repo.run('links'), [])
         self.assertEqual(self.repo.run('anchors'), [])
 
+    def test_links_accept_a_directory_without_a_readme(self):
+        # GitHub serves a directory listing at the directory path, so a link to a
+        # source directory is not broken merely because it has no README.
+        self.repo.write('docs/README.md', '# Docs\n')
+        (self.repo.root / 'src' / 'package').mkdir(parents=True)
+        subprocess.run(['git', 'add', 'src'], cwd=self.repo.root, check=True)
+        self.repo.write('docs/a.md', 'See [the source](../src/package).\n')
+        self.assertEqual(self.repo.run('links'), [])
+
+    def test_links_still_reject_a_missing_directory(self):
+        self.repo.write('docs/README.md', '# Docs\n')
+        self.repo.write('docs/a.md', 'See [the source](../src/absent).\n')
+        self.assertTrue(self.repo.run('links'))
+
     def test_links_reject_existing_targets_outside_the_repository(self):
         outside = self.repo.root.parent / (self.repo.root.name + '-outside.md')
         outside.write_text('# Outside\n')

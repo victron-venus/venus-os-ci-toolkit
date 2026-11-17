@@ -133,7 +133,11 @@ def local_target(root: Path, source: Path, link: str) -> Path | None:
     destination = unquote(url.path)
     target = (root / destination.lstrip('/') if destination.startswith('/')
               else source.parent / destination) if destination else source
-    if target.is_dir():
+    # A link to a directory is valid on GitHub whether or not the directory has a
+    # README. Resolve to the README only when one exists, so anchor and index
+    # checks still see a document; otherwise keep the directory itself, which
+    # ``check_links`` accepts because it exists.
+    if target.is_dir() and (target / 'README.md').is_file():
         target = target / 'README.md'
     return target
 
