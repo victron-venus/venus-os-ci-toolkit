@@ -86,5 +86,6 @@ control plane and release process that make up the CI toolkit.
 | [Public source and operator configuration](OPERATOR_CONFIG.md) | What the checked-in `fleet.json` snapshot does and does not contain. |
 | [Local nightly checks](LOCAL_NIGHTLY.md) | Running the nightly checks against selected local checkouts. |
 | [RC fuzzing: process and verified results](rc-fuzzing-results.md) | Illustrated process and accepted RC reports with SVG diagrams. |
+| [Documentation checks](DOCUMENTATION_CHECKS.md) | The shared `scripts/check_docs.py` checker: links, anchors, SVG, index coverage, fences, mermaid and version agreement. |
 
 Shared repository policy: [release-workflow.md](release-workflow.md), [runner-preflight.md](runner-preflight.md), [VERSIONING.md](VERSIONING.md) and [rc-fuzzing.md](rc-fuzzing.md) are generated or shared boilerplate maintained in [victron-venus/venus-os-ci-toolkit](https://github.com/victron-venus/venus-os-ci-toolkit).
