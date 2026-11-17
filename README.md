@@ -17,6 +17,8 @@ For bug reports, proposed changes and local verification, see
 [CONTRIBUTING.md](CONTRIBUTING.md). Security reports use the private process in
 [SECURITY.md](SECURITY.md). The toolkit is distributed under the [MIT license](LICENSE).
 
+Docs index: [docs/README.md](docs/README.md).
+
 [CI dependency updates](docs/DEPENDENCY_UPDATES.md): Renovate updates related
 actions and reusable workflows together, with required consistency checks.
 
