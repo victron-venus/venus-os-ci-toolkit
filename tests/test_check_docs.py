@@ -120,6 +120,17 @@ class CheckDocsTests(unittest.TestCase):
         self.repo.write('vendor/crate/README.md', '[missing](../CHANGELOG.md)\n')
         self.assertEqual(self.repo.run('links'), [])
 
+    def test_links_resolve_site_routes_to_their_page_source(self):
+        # A published site links pages by route; /getting-started is not a
+        # filesystem path but the page exists.
+        self.repo.write('docs/src/pages/getting-started/index.md', '# Start\n')
+        self.repo.write('docs/src/pages/index.md', '[start](/getting-started)\n')
+        self.assertEqual(self.repo.run('links'), [])
+
+    def test_links_still_reject_a_route_with_no_page(self):
+        self.repo.write('docs/src/pages/index.md', '[gone](/nowhere)\n')
+        self.assertTrue(self.repo.run('links'))
+
     def test_anchors_keep_the_text_inside_inline_code(self):
         # A heading written as ``### `python-minimal/` `` slugs to its contents,
         # so stripping code spans for link discovery must not affect anchors.

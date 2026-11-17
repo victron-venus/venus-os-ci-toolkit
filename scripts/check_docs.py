@@ -146,6 +146,47 @@ def anchors(text: str) -> set[str]:
     return found
 
 
+# A published site links its pages by route, not by filesystem path. Recognise
+# the page directories of the common static-site layouts; a route is accepted
+# only when the page source is really there.
+PAGE_DIRS = {'pages', 'app'}
+PAGE_SUFFIXES = ('.md', '.mdx', '.tsx', '.jsx', '.js', '.ts', '.html')
+SKIP_WALK = {'node_modules', 'vendor', 'dist', 'build', 'out', 'target'}
+
+
+def page_roots(root: Path) -> list[Path]:
+    found = []
+    for path in root.rglob('*'):
+        depth = len(path.relative_to(root).parts)
+        if depth > 4 or not path.is_dir() or path.name in SKIP_WALK:
+            continue
+        if path.name in PAGE_DIRS:
+            found.append(path)
+    return found
+
+
+def route_target(root: Path, destination: str) -> Path | None:
+    """Resolve a site route such as ``/getting-started`` to its page source.
+
+    A published site links pages by route, not by filesystem path. Only consult
+    this after the path has failed to resolve as a repository path, and only for
+    route-shaped links, so it cannot mask a genuine broken link.
+    """
+    segments = [part for part in destination.strip('/').split('/') if part]
+    if not segments:
+        return None
+    for pages in page_roots(root):
+        base = pages.joinpath(*segments)
+        for candidate in (base.with_suffix(suffix) for suffix in PAGE_SUFFIXES):
+            if candidate.is_file():
+                return candidate
+        for suffix in PAGE_SUFFIXES:
+            entry = base / f'index{suffix}'
+            if entry.is_file():
+                return entry
+    return None
+
+
 def local_target(root: Path, source: Path, link: str) -> Path | None:
     """Resolve repository links; schemes and protocol-relative URLs are external."""
     url = urlsplit(link.strip('<>'))
@@ -154,6 +195,10 @@ def local_target(root: Path, source: Path, link: str) -> Path | None:
     destination = unquote(url.path)
     target = (root / destination.lstrip('/') if destination.startswith('/')
               else source.parent / destination) if destination else source
+    if not target.exists() and destination.startswith('/'):
+        route = route_target(root, destination)
+        if route is not None:
+            return route
     # A link to a directory is valid on GitHub whether or not the directory has a
     # README. Resolve to the README only when one exists, so anchor and index
     # checks still see a document; otherwise keep the directory itself, which
