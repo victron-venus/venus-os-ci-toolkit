@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-"""Documentation checks shared by every repository in the organization.
+"""Generic documentation checks shared across repositories.
 
 Seven repositories each grew their own `check_docs.py`, differing between 37 and
 179 lines and none of them covering the same set of rules. This module is the
-single implementation. A repository runs it from a five-line wrapper, or calls
-it directly from CI.
+shared implementation. Keep repository-specific invariants in local checkers;
+call this module directly or through the reusable documentation workflow.
 
 Checks, each independently selectable:
 
-  links      every relative link and image target resolves
-  anchors    every in-page `#fragment` matches a heading or explicit anchor
+  links      inline Markdown links/images and HTML href targets resolve
+  anchors    Markdown fragments match an ATX heading or explicit anchor
   svg        every tracked SVG parses as XML
   index      every `docs/**.md` is reachable from `docs/README.md`
   fences     markdown code fences are balanced
@@ -27,8 +27,9 @@ import argparse
 import re
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
-from urllib.parse import unquote
+from urllib.parse import unquote, urlsplit
 from xml.etree import ElementTree as ET
 
 # Shared repository boilerplate. It is intentionally not part of a project's
@@ -48,14 +49,12 @@ LINK = re.compile(r'!?\[[^\]]*\]\((?P<target>[^)\s]+)(?:\s+"[^"]*")?\)')
 HTML_HREF = re.compile(r'href="(?P<target>[^"]+)"')
 HEADING = re.compile(r'^#{1,6}\s+(?P<title>.+)$', re.M)
 EXPLICIT_ANCHOR = re.compile(r'<a\s+[^>]*(?:id|name)="(?P<id>[^"]+)"')
-FENCE = re.compile(r'^```[^\n]*$', re.M)
-FENCED_BLOCK = re.compile(r'^```[^\n]*\n.*?^```[^\n]*$', re.M | re.S)
-MERMAID = re.compile(r'^```mermaid\n(?P<body>.*?)^```', re.M | re.S)
+FENCE = re.compile(r'^ {0,3}(?P<marker>`{3,}|~{3,})(?P<info>.*)$')
 MERMAID_TYPES = re.compile(
     r'^\s*(graph|flowchart|sequenceDiagram|classDiagram|stateDiagram(-v2)?|'
     r'erDiagram|journey|gantt|pie|quadrantChart|requirementDiagram|gitGraph|'
     r'C4Context|C4Container|C4Component|C4Dynamic|C4Deployment|mindmap|timeline|'
-    r'sankey-beta|xychart-beta|block-beta|packet-beta|architecture-beta|kanban)',
+    r'sankey-beta|xychart-beta|block-beta|packet-beta|architecture-beta|kanban)(?=\s|$)',
     re.M,
 )
 
@@ -76,20 +75,70 @@ def slugify(title: str) -> str:
     return re.sub(r'[\s]+', '-', text)
 
 
-def prose(text: str) -> str:
-    """Markdown with fenced code removed.
+def markdown_parts(text: str) -> tuple[str, list[tuple[str, str]], bool]:
+    """Separate prose and fenced blocks, respecting marker type and length."""
+    plain: list[str] = []
+    blocks: list[tuple[str, str]] = []
+    marker = ''
+    info = ''
+    body: list[str] = []
+    for line in text.splitlines(keepends=True):
+        if marker:
+            if re.fullmatch(r' {0,3}' + re.escape(marker[0])
+                            + '{' + str(len(marker)) + r',}[ \t]*\r?\n?', line):
+                blocks.append((info, ''.join(body)))
+                marker = ''
+            else:
+                body.append(line)
+            plain.append('\n')
+            continue
+        match = FENCE.fullmatch(line.rstrip('\r\n'))
+        if match and not (match['marker'][0] == '`' and '`' in match['info']):
+            marker = match['marker']
+            info = match['info'].strip()
+            body = []
+            plain.append('\n')
+        else:
+            plain.append(line)
+    return ''.join(plain), blocks, bool(marker)
 
-    A fenced block is example code, not documentation: an RFC pattern such as
-    ``[a-z0-9]`` inside it is not a link, and an inline ``- [x](y)`` sample in a
-    shell snippet is not a target.
-    """
-    return FENCED_BLOCK.sub('', text)
+
+def prose(text: str) -> str:
+    """Markdown prose, excluding examples inside backtick or tilde fences."""
+    return markdown_parts(text)[0]
 
 
 def anchors(text: str) -> set[str]:
-    found = {slugify(m.group('title')) for m in HEADING.finditer(text)}
+    text = prose(text)
+    found: set[str] = set()
+    for match in HEADING.finditer(text):
+        title = re.sub(r'\s+#+\s*$', '', match.group('title'))
+        base = slugify(title)
+        candidate = base
+        number = 0
+        while candidate in found:
+            number += 1
+            candidate = f'{base}-{number}'
+        found.add(candidate)
     found |= set(EXPLICIT_ANCHOR.findall(text))
     return found
+
+
+def local_target(root: Path, source: Path, link: str) -> Path | None:
+    """Resolve repository links; schemes and protocol-relative URLs are external."""
+    url = urlsplit(link.strip('<>'))
+    if url.scheme or url.netloc:
+        return None
+    destination = unquote(url.path)
+    target = (root / destination.lstrip('/') if destination.startswith('/')
+              else source.parent / destination) if destination else source
+    if target.is_dir():
+        target = target / 'README.md'
+    return target
+
+
+def inside(root: Path, path: Path) -> bool:
+    return path.resolve().is_relative_to(root.resolve())
 
 
 def check_links(root: Path, files: list[Path]) -> list[str]:
@@ -102,16 +151,9 @@ def check_links(root: Path, files: list[Path]) -> list[str]:
         body = prose(path.read_text(encoding='utf-8'))
         targets = LINK.findall(body) + HTML_HREF.findall(body)
         for link in targets:
-            if link.startswith(('http:', 'https:', 'mailto:', 'tel:', '#')):
-                continue
-            destination = unquote(link.split('#')[0]).strip('<>')
-            if not destination:
-                continue
-            target = path.parent / destination
-            if target.is_dir():
-                target = target / 'README.md'
-            if not target.exists():
-                errors.append(f'{path.relative_to(root)}: broken link {destination}')
+            target = local_target(root, path, link)
+            if target is not None and (not inside(root, target) or not target.exists()):
+                errors.append(f'{path.relative_to(root)}: broken link {link}')
     return errors
 
 
@@ -120,13 +162,16 @@ def check_anchors(root: Path, files: list[Path]) -> list[str]:
     for path in files:
         if path.suffix != '.md' or not path.is_file():
             continue
+        if TEMPLATE_DIRS & set(path.relative_to(root).parts[:-1]):
+            continue
         body = prose(path.read_text(encoding='utf-8'))
         for link in LINK.findall(body) + HTML_HREF.findall(body):
-            if '#' not in link or link.startswith(('http:', 'https:', 'mailto:')):
+            if '#' not in link:
                 continue
-            file_part, _, fragment = link.partition('#')
-            target = path if not file_part else path.parent / unquote(file_part)
-            if not target.is_file() or not fragment:
+            fragment = urlsplit(link.strip('<>')).fragment
+            target = local_target(root, path, link)
+            if (target is None or not inside(root, target) or not target.is_file()
+                    or target.suffix != '.md' or not fragment):
                 continue
             if unquote(fragment) not in anchors(target.read_text(encoding='utf-8')):
                 errors.append(f'{path.relative_to(root)}: missing anchor #{fragment}')
@@ -152,16 +197,28 @@ def check_index(root: Path, files: list[Path]) -> list[str]:
         return []
     if not index.is_file():
         return ['docs/README.md: missing navigation index']
-    body = prose(index.read_text(encoding='utf-8'))
-    linked = {unquote(t.split('#')[0]) for t in LINK.findall(body)}
+    documents = {p.resolve() for p in files if p.suffix == '.md' and docs in p.parents}
+    reached: set[Path] = set()
+    pending = [index.resolve()]
+    while pending:
+        page = pending.pop()
+        if page in reached:
+            continue
+        reached.add(page)
+        body = prose(page.read_text(encoding='utf-8'))
+        for link in LINK.findall(body) + HTML_HREF.findall(body):
+            target = local_target(root, page, link)
+            if target is not None and inside(root, target):
+                target = target.resolve()
+                if target in documents and target.is_file() and target not in reached:
+                    pending.append(target)
     errors: list[str] = []
     for path in files:
         if docs not in path.parents or path.suffix != '.md':
             continue
         if path == index or path.name in SHARED_BOILERPLATE:
             continue
-        relative = path.relative_to(docs).as_posix()
-        if relative not in linked and f'./{relative}' not in linked:
+        if path.resolve() not in reached:
             errors.append(f'{path.relative_to(root)}: not linked from docs/README.md')
     return errors
 
@@ -171,8 +228,7 @@ def check_fences(root: Path, files: list[Path]) -> list[str]:
     for path in files:
         if path.suffix != '.md' or not path.is_file():
             continue
-        count = len(FENCE.findall(path.read_text(encoding='utf-8')))
-        if count % 2:
+        if markdown_parts(path.read_text(encoding='utf-8'))[2]:
             errors.append(f'{path.relative_to(root)}: unbalanced code fence')
     return errors
 
@@ -182,8 +238,8 @@ def check_mermaid(root: Path, files: list[Path]) -> list[str]:
     for path in files:
         if path.suffix != '.md' or not path.is_file():
             continue
-        for block in MERMAID.finditer(path.read_text(encoding='utf-8')):
-            if not MERMAID_TYPES.search(block.group('body')):
+        for info, body in markdown_parts(path.read_text(encoding='utf-8'))[1]:
+            if info == 'mermaid' and not MERMAID_TYPES.search(body):
                 errors.append(
                     f'{path.relative_to(root)}: mermaid block without a diagram type'
                 )
@@ -219,9 +275,13 @@ def check_version(root: Path, _files: list[Path]) -> list[str]:
     if version_file.is_file():
         declared.append(('version', version_file.read_text(encoding='utf-8').strip()))
     if pyproject.is_file():
-        match = re.search(r'^version\s*=\s*"(?P<v>[^"]+)"', pyproject.read_text(encoding='utf-8'), re.M)
-        if match:
-            declared.append(('pyproject.toml', match.group('v')))
+        try:
+            project = tomllib.loads(pyproject.read_text(encoding='utf-8')).get('project', {})
+        except tomllib.TOMLDecodeError as error:
+            return [f'pyproject.toml: invalid TOML ({error})']
+        version = project.get('version')
+        if isinstance(version, str):
+            declared.append(('pyproject.toml', version))
     manifest = root / 'custom_components'
     for path in manifest.glob('*/manifest.json'):
         match = re.search(r'"version"\s*:\s*"(?P<v>[^"]+)"', path.read_text(encoding='utf-8'))
@@ -237,7 +297,7 @@ def check_version(root: Path, _files: list[Path]) -> list[str]:
     if tag:
         tag_key = _normalise(tag)
         newest = _normalise(declared[0][1])
-        if tag_key.split('b')[0].split('rc')[0] != newest.split('b')[0].split('rc')[0]:
+        if tag_key != newest:
             errors.append(f'version {newest} does not match newest tag {tag}')
     return errors
 
