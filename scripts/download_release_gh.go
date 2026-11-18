@@ -75,8 +75,10 @@ func fetchArchive(ctx context.Context, client *http.Client, address string, wait
 		if response.StatusCode == http.StatusOK {
 			return readArchive(ctx, response)
 		}
-		response.Body.Close()
 		statusError := fmt.Errorf("download returned HTTP %d", response.StatusCode)
+		if err := response.Body.Close(); err != nil {
+			return nil, errors.Join(statusError, fmt.Errorf("close response body: %w", err))
+		}
 		switch response.StatusCode {
 		case http.StatusTooManyRequests, http.StatusInternalServerError,
 			http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
@@ -98,8 +100,13 @@ func fetchArchive(ctx context.Context, client *http.Client, address string, wait
 }
 
 // readArchive closes the successful response and checks its size and deadline.
-func readArchive(ctx context.Context, response *http.Response) ([]byte, error) {
-	defer response.Body.Close()
+func readArchive(ctx context.Context, response *http.Response) (archive []byte, resultErr error) {
+	defer func() {
+		if err := response.Body.Close(); err != nil {
+			archive = nil
+			resultErr = errors.Join(resultErr, fmt.Errorf("close response body: %w", err))
+		}
+	}()
 	if response.ContentLength > maxArchive {
 		return nil, errors.New("archive exceeds size limit")
 	}

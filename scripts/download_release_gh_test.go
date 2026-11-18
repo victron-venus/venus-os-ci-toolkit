@@ -18,12 +18,13 @@ type testTransport func(*http.Request) (*http.Response, error)
 func (f testTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
 type testBody struct {
-	reader io.Reader
-	closed bool
+	reader   io.Reader
+	closed   bool
+	closeErr error
 }
 
 func (b *testBody) Read(p []byte) (int, error) { return b.reader.Read(p) }
-func (b *testBody) Close() error               { b.closed = true; return nil }
+func (b *testBody) Close() error               { b.closed = true; return b.closeErr }
 
 type errorReader struct{ err error }
 
@@ -69,6 +70,35 @@ func TestImmediateSuccessUsesOneRequestWithoutWaiting(t *testing.T) {
 	})
 	if err != nil || string(data) != "complete archive bytes" || calls != 1 || !body.closed {
 		t.Fatalf("calls=%d closed=%v data=%q error=%v", calls, body.closed, data, err)
+	}
+}
+
+func TestSuccessfulResponseCloseErrorRejectsArchive(t *testing.T) {
+	closeErr := errors.New("body close failed")
+	body := &testBody{reader: strings.NewReader("complete archive bytes"), closeErr: closeErr}
+	client := &http.Client{Transport: testTransport(func(*http.Request) (*http.Response, error) {
+		return response(http.StatusOK, body), nil
+	})}
+	data, err := fetchArchive(context.Background(), client, "https://example.invalid/archive", waitForRetry)
+	if !errors.Is(err, closeErr) || data != nil || !body.closed {
+		t.Fatalf("data=%q closed=%v error=%v", data, body.closed, err)
+	}
+}
+
+func TestTransientResponseCloseErrorStopsRetry(t *testing.T) {
+	closeErr := errors.New("body close failed")
+	body := &testBody{reader: strings.NewReader("temporary error"), closeErr: closeErr}
+	calls := 0
+	client := &http.Client{Transport: testTransport(func(*http.Request) (*http.Response, error) {
+		calls++
+		return response(http.StatusServiceUnavailable, body), nil
+	})}
+	data, err := fetchArchive(context.Background(), client, "https://example.invalid/archive", func(context.Context, time.Duration) error {
+		t.Fatal("must not retry when response cleanup fails")
+		return nil
+	})
+	if !errors.Is(err, closeErr) || !strings.Contains(err.Error(), "HTTP 503") || data != nil || calls != 1 || !body.closed {
+		t.Fatalf("data=%q calls=%d closed=%v error=%v", data, calls, body.closed, err)
 	}
 }
 
