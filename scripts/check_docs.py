@@ -29,6 +29,8 @@ import re
 import subprocess
 import sys
 import tomllib
+from collections.abc import Callable
+from functools import cache, partial
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
 from xml.etree import ElementTree as ET
@@ -157,21 +159,23 @@ def anchors(text: str) -> set[str]:
 # only when the page source is really there.
 PAGE_DIRS = {'pages', 'app'}
 PAGE_SUFFIXES = ('.md', '.mdx', '.tsx', '.jsx', '.js', '.ts', '.html')
-SKIP_WALK = {'node_modules', 'vendor', 'dist', 'build', 'out', 'target'}
+SKIP_WALK = {'.git', 'node_modules', 'vendor', 'dist', 'build', 'out', 'target'}
+MAX_PAGE_ROOT_DEPTH = 4
 
 
 def page_roots(root: Path) -> list[Path]:
     found = []
-    for path in root.rglob('*'):
-        depth = len(path.relative_to(root).parts)
-        if depth > 4 or not path.is_dir() or path.name in SKIP_WALK:
-            continue
-        if path.name in PAGE_DIRS:
-            found.append(path)
+    for directory, children, _ in os.walk(root):
+        parent = Path(directory)
+        found.extend(parent / name for name in children if name in PAGE_DIRS)
+        if len(parent.relative_to(root).parts) + 1 == MAX_PAGE_ROOT_DEPTH:
+            children.clear()
+        else:
+            children[:] = [name for name in children if name not in SKIP_WALK]
     return found
 
 
-def route_target(root: Path, destination: str) -> Path | None:
+def route_target(destination: str, discover_pages: Callable[[], list[Path]]) -> Path | None:
     """Resolve a site route such as ``/getting-started`` to its page source.
 
     A published site links pages by route, not by filesystem path. Only consult
@@ -179,21 +183,34 @@ def route_target(root: Path, destination: str) -> Path | None:
     route-shaped links, so it cannot mask a genuine broken link.
     """
     segments = [part for part in destination.strip('/').split('/') if part]
-    if not segments:
+    if not segments or any(part in {'.', '..'} for part in segments):
         return None
-    for pages in page_roots(root):
-        base = pages.joinpath(*segments)
-        for candidate in (base.with_suffix(suffix) for suffix in PAGE_SUFFIXES):
+    bases = [pages.joinpath(*segments) for pages in discover_pages()]
+    for base in bases:
+        if base.suffix in PAGE_SUFFIXES and base.is_file():
+            return base
+    for base in bases:
+        for candidate in (base.with_name(base.name + suffix) for suffix in PAGE_SUFFIXES):
             if candidate.is_file():
                 return candidate
         for suffix in PAGE_SUFFIXES:
             entry = base / f'index{suffix}'
             if entry.is_file():
                 return entry
+    # Some sites generate guide.html from guide.md. Other suffixes are part of
+    # the requested route, such as a dotted slug or a missing download.
+    if Path(segments[-1]).suffix == '.html':
+        for base in bases:
+            for suffix in PAGE_SUFFIXES:
+                source = base.with_suffix(suffix)
+                if source.is_file():
+                    return source
     return None
 
 
-def local_target(root: Path, source: Path, link: str) -> Path | None:
+def local_target(
+    root: Path, source: Path, link: str, *, discover_pages: Callable[[], list[Path]],
+) -> Path | None:
     """Resolve repository links; schemes and protocol-relative URLs are external."""
     url = urlsplit(link.strip('<>'))
     if url.scheme or url.netloc:
@@ -202,7 +219,7 @@ def local_target(root: Path, source: Path, link: str) -> Path | None:
     target = (root / destination.lstrip('/') if destination.startswith('/')
               else source.parent / destination) if destination else source
     if not target.exists() and destination.startswith('/'):
-        route = route_target(root, destination)
+        route = route_target(destination, discover_pages)
         if route is not None:
             return route
     # A link to a directory is valid on GitHub whether or not the directory has a
@@ -212,6 +229,11 @@ def local_target(root: Path, source: Path, link: str) -> Path | None:
     if target.is_dir() and (target / 'README.md').is_file():
         target = target / 'README.md'
     return target
+
+
+def link_resolver(root: Path) -> Callable[[Path, str], Path | None]:
+    """Reuse discovery within one check while keeping independent runs fresh."""
+    return partial(local_target, root, discover_pages=cache(lambda: page_roots(root)))
 
 
 def inside(root: Path, path: Path) -> bool:
@@ -327,6 +349,7 @@ def immutable_self_links(root: Path, documents: dict[Path, str]) -> dict[str, Pa
 
 def check_links(root: Path, files: list[Path]) -> list[str]:
     errors: list[str] = []
+    resolve = link_resolver(root)
     for path in files:
         if path.suffix != '.md' or not path.is_file():
             continue
@@ -336,7 +359,7 @@ def check_links(root: Path, files: list[Path]) -> list[str]:
         targets = [link for link in LINK.findall(body) + HTML_HREF.findall(body)
                    if not RUSTDOC_LINK.match(link)]
         for link in targets:
-            target = local_target(root, path, link)
+            target = resolve(path, link)
             if target is not None and (not inside(root, target) or not target.exists()):
                 errors.append(f'{path.relative_to(root)}: broken link {link}')
     return errors
@@ -344,6 +367,7 @@ def check_links(root: Path, files: list[Path]) -> list[str]:
 
 def check_anchors(root: Path, files: list[Path]) -> list[str]:
     errors: list[str] = []
+    resolve = link_resolver(root)
     for path in files:
         if path.suffix != '.md' or not path.is_file():
             continue
@@ -354,7 +378,7 @@ def check_anchors(root: Path, files: list[Path]) -> list[str]:
             if '#' not in link:
                 continue
             fragment = urlsplit(link.strip('<>')).fragment
-            target = local_target(root, path, link)
+            target = resolve(path, link)
             if (target is None or not inside(root, target) or not target.is_file()
                     or target.suffix != '.md' or not fragment):
                 continue
@@ -388,6 +412,7 @@ def check_index(root: Path, files: list[Path]) -> list[str]:
                  for p in files if p.suffix == '.md' and docs in p.parents
                  and regular_document(root, p)}
     permalinks = immutable_self_links(root, documents)
+    resolve = link_resolver(root)
     reached: set[Path] = set()
     index_body = prose(index.read_text(encoding='utf-8'))
     pending = [index.resolve()]
@@ -398,7 +423,7 @@ def check_index(root: Path, files: list[Path]) -> list[str]:
         reached.add(page)
         body = documents.get(page, index_body)
         for link in LINK.findall(body) + HTML_HREF.findall(body):
-            target = permalinks.get(link) or local_target(root, page, link)
+            target = permalinks.get(link) or resolve(page, link)
             if target is not None and inside(root, target):
                 target = target.resolve()
                 if target in documents and target.is_file() and target not in reached:
