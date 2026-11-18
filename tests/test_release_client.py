@@ -591,6 +591,21 @@ jobs:
         self.assertTrue(any(installer.CONTRACT_REQUIREMENTS in command for command in commands))
         self.assertFalse(any("requirements-github-lock.txt" in command for command in commands))
 
+    def test_toolkit_quality_runs_python_discovery_once_and_keeps_ruff(self):
+        files = installer.render(installer.ROOT)
+        quality = installer.yaml.load(files[".github/workflows/quality-gate.yml"], Loader=installer.WorkflowLoader)
+        adapter_path = ".github/workflows/contract-tests.yml"
+        adapter = installer.yaml.load((installer.ROOT / adapter_path).read_text(), Loader=installer.WorkflowLoader)
+        contracts = next(job for job in quality["jobs"].values() if job.get("uses") == f"./{adapter_path}")
+        release = quality["jobs"]["release-contracts"]
+        self.assertEqual(contracts["if"], release["if"])
+        self.assertIn("release-contracts", quality["jobs"]["gate"]["needs"])
+        lint = adapter["jobs"]["python-typecheck-contract"]
+        self.assertEqual(lint["name"], "Workflow contracts")
+        self.assertIn("python3 -m ruff check --config ruff.toml .", [step.get("run") for step in lint["steps"]])
+        suite = "unittest discover -s tests -p 'test_*.py'"
+        self.assertEqual(sum(suite in step.get("run", "") for job in (release, lint) for step in job["steps"]), 1)
+
     def test_exported_workflow_tests_run_without_the_generator(self):
         """A consumer's mandatory regression suite is self-contained after rendering."""
         exported = ".github/workflow-tests/test_workflow_yaml_contracts.py"
