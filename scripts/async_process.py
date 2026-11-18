@@ -12,6 +12,7 @@ import signal
 import shutil
 import stat
 import subprocess  # nosec B404: fixed absolute argv, shell-free bounded runner only
+import sys
 import threading
 import time
 from typing import Mapping, Sequence
@@ -20,7 +21,9 @@ MAX_OUTPUT_BYTES = 1024 * 1024
 READ_CHUNK_BYTES = 64 * 1024
 CLEANUP_TIMEOUT_SECONDS = 5
 POSIX_PROCESS_RUNNER = os.name == "posix"
-POSIX_ONLY_MESSAGE = "Release process runner supports POSIX systems (Linux/macOS) only"
+POSIX_ONLY_MESSAGE = (
+    "Release process runner supports Linux Python 3.12+ and macOS Python 3.13+ only"
+)
 
 
 class ProcessTimeout(TimeoutError):
@@ -110,6 +113,24 @@ def _require_nonreaping_wait_support() -> None:
         raise NotImplementedError("Release process cleanup requires POSIX waitid(WNOWAIT)")
 
 
+def _runtime_supported(platform: str, version: tuple[int, ...], os_name: str) -> bool:
+    if os_name != "posix":
+        return False
+    if platform.startswith("linux"):
+        return version >= (3, 12)
+    if platform == "darwin":
+        return version >= (3, 13)
+    return False
+
+
+def _require_supported_runtime() -> None:
+    if not POSIX_PROCESS_RUNNER or not _runtime_supported(
+        sys.platform, sys.version_info[:2], os.name,
+    ):
+        raise NotImplementedError(POSIX_ONLY_MESSAGE)
+    _require_nonreaping_wait_support()
+
+
 def _process_has_exited(process: subprocess.Popen[bytes]) -> bool:
     """Observe leader exit without reaping it or making its process-group ID reusable."""
     try:
@@ -152,9 +173,9 @@ def _run_owned_process(
     cancel_event: threading.Event | None = None,
 ) -> ProcessResult:
     """Run a POSIX child whose PID is owned before any timeout can arrive."""
-    if not POSIX_PROCESS_RUNNER:
-        raise NotImplementedError(POSIX_ONLY_MESSAGE)
-    _require_nonreaping_wait_support()
+    _require_supported_runtime()
+    if cancel_event is not None and cancel_event.is_set():
+        raise _ProcessCancelled()
     process = subprocess.Popen(  # nosec B603: validated absolute argv, shell=False, bounded pipes
         command,
         stdin=subprocess.PIPE if input_bytes is not None else None,
@@ -177,7 +198,7 @@ def _run_owned_process(
 
     captured = {"stdout": bytearray(), "stderr": bytearray()}
     output_bytes = 0
-    selector = selectors.DefaultSelector()
+    selector: selectors.BaseSelector | None = None
     output_streams: dict[int, str] = {}
     opened_streams = [process.stdout, process.stderr]
     stdin_stream = process.stdin
@@ -189,6 +210,7 @@ def _run_owned_process(
     input_view = memoryview(input_bytes or b"")
     input_offset = 0
     try:
+        selector = selectors.DefaultSelector()
         for name, stream in (("stdout", process.stdout), ("stderr", process.stderr)):
             os.set_blocking(stream.fileno(), False)
             selector.register(stream, selectors.EVENT_READ, name)
@@ -228,7 +250,11 @@ def _run_owned_process(
                 waits.append(max(0.0, deadline - now))
             if cleanup_deadline is not None:
                 waits.append(max(0.0, cleanup_deadline - now))
-            events = selector.select(min(waits)) if selector.get_map() else []
+            if selector.get_map():
+                events = selector.select(min(waits))
+            else:
+                time.sleep(min(waits))
+                events = []
             for key, _mask in events:
                 stream = key.fileobj
                 if key.data == "stdin":
@@ -253,12 +279,13 @@ def _run_owned_process(
                     output_streams.pop(stream.fileno(), None)
                     _close_registered_stream(selector, stream)
                     continue
-                if failure is not None and not isinstance(failure, ProcessTimeout):
-                    continue
                 if output_bytes + len(chunk) > max_output_bytes:
-                    failure = ProcessOutputLimit(
-                        "Release helper output exceeded its capture limit"
-                    )
+                    if failure is None:
+                        failure = ProcessOutputLimit(
+                            "Release helper output exceeded its capture limit"
+                        )
+                    continue
+                if failure is not None and not isinstance(failure, ProcessTimeout):
                     continue
                 output_bytes += len(chunk)
                 captured[name].extend(chunk)
@@ -274,6 +301,12 @@ def _run_owned_process(
             raise failure
         if isinstance(failure, _ProcessCancelled):
             raise failure
+        if deadline is not None and time.monotonic() >= deadline:
+            raise ProcessTimeout(
+                timeout or 0,
+                _format_output(bytes(captured["stdout"]), text),
+                _format_output(bytes(captured["stderr"]), text),
+            )
         return ProcessResult(
             command,
             returncode,
@@ -292,7 +325,8 @@ def _run_owned_process(
             raise ProcessCleanupError("Release helper process could not be reaped") from cleanup_error
         raise
     finally:
-        selector.close()
+        if selector is not None:
+            selector.close()
         for stream in opened_streams:
             try:
                 stream.close()
@@ -310,8 +344,7 @@ async def run_process_async(
     text: bool = False,
 ) -> ProcessResult:
     """Run argv with bounded capture; cancellation reaps the owned POSIX process."""
-    if not POSIX_PROCESS_RUNNER:
-        raise NotImplementedError(POSIX_ONLY_MESSAGE)
+    _require_supported_runtime()
     command = _validate_process_request(argv, max_output_bytes)
     cancel_event = threading.Event()
     # Keep a strong reference to the worker: cancellation must not abandon a child.
@@ -355,8 +388,7 @@ def run_process(
     max_output_bytes: int = MAX_OUTPUT_BYTES,
 ) -> ProcessResult:
     """Synchronous entry point for release helpers on Linux/macOS."""
-    if not POSIX_PROCESS_RUNNER:
-        raise NotImplementedError(POSIX_ONLY_MESSAGE)
+    _require_supported_runtime()
     if not math.isfinite(timeout) or timeout <= 0:
         raise ValueError("Process timeout must be positive")
     command = _validate_process_request(argv, max_output_bytes)

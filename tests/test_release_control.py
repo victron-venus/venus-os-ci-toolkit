@@ -3459,8 +3459,10 @@ class CurrentAttemptFreshnessTests(unittest.TestCase):
 
     def test_fresh_attempt_uses_the_real_allowlisted_transport(self):
         """Exercise API shape validation as well as the execution-time guard."""
+        resolved_gh = "/reviewed/bin/gh"
         with (
             patch.dict(os.environ, {"RELEASE_REQUIRE_WORKFLOW_SCOPE": ""}),
+            patch.object(rc, "resolve_executable", return_value=resolved_gh),
             patch.object(rc, "run_process", return_value=http_response(
                 0, rc.json_bytes(self.detail)
             )) as command,
@@ -3469,7 +3471,7 @@ class CurrentAttemptFreshnessTests(unittest.TestCase):
             rc.require_current_attempt_jobs(gh, 123, SHA, 2, [self.job])
         command.assert_called_once()
         self.assertEqual(command.call_args.args[0], [
-            "gh", "api", "--hostname", "github.com", "--include", "--method", "GET",
+            resolved_gh, "api", "--hostname", "github.com", "--include", "--method", "GET",
             "--", f"repos/{REPO}/actions/runs/123/attempts/2",
         ])
         self.assertEqual(command.call_args.kwargs["timeout"], 30)

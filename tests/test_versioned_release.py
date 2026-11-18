@@ -2151,7 +2151,9 @@ class LifecycleTests(unittest.TestCase):  # pylint: disable=too-many-public-meth
             path = Path(temp).resolve() / "app.bin"
             path.write_bytes(b"package")
             gh = rc.GitHub(REPO)
+            resolved_gh = "/reviewed/bin/gh"
             with (
+                patch.object(rc, "resolve_executable", return_value=resolved_gh),
                 patch.object(
                     rc,
                     "run_process",
@@ -2167,6 +2169,7 @@ class LifecycleTests(unittest.TestCase):  # pylint: disable=too-many-public-meth
                 ]),
             ):
                 gh.upload("v1.2.3-beta.1", path, release_id=11)
+            self.assertEqual(run.call_args.args[0][0], resolved_gh)
             self.assertEqual(run.call_args.args[0][1:3], ["api", "--hostname"])
 
 

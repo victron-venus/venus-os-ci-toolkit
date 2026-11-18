@@ -6,6 +6,7 @@ from pathlib import Path
 import signal
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from unittest.mock import patch
@@ -15,6 +16,21 @@ import async_process
 
 
 class AsyncProcessTests(unittest.TestCase):
+    def assert_process_stopped(self, pid_file: Path, timeout: float = 3.0) -> None:
+        pid = int(pid_file.read_text())
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                return
+            time.sleep(0.02)
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        self.fail(f"descendant process {pid} remained after bounded cleanup")
+
     def test_captures_both_streams_and_preserves_nonzero_status(self):
         result = async_process.run_process(
             [sys.executable, "-c", "import sys; print('out'); print('err', file=sys.stderr); sys.exit(7)"],
@@ -70,19 +86,40 @@ class AsyncProcessTests(unittest.TestCase):
         self.assertEqual(raised.exception.stderr, "detail\n")
 
     @unittest.skipUnless(os.name == "posix", "process-group cleanup is POSIX-specific")
+    def test_late_output_limit_does_not_replace_timeout_result(self):
+        script = (
+            "import sys,time; sys.stdout.buffer.write(b'a' * 100); sys.stdout.flush(); "
+            "time.sleep(.1); sys.stdout.buffer.write(b'b' * 2000); sys.stdout.flush(); time.sleep(60)"
+        )
+        kill = async_process._kill_owned_process
+
+        def delayed_kill(process):
+            time.sleep(0.2)
+            kill(process)
+
+        with patch.object(async_process, "_kill_owned_process", side_effect=delayed_kill):
+            with self.assertRaises(async_process.ProcessTimeout) as raised:
+                async_process.run_process(
+                    [sys.executable, "-c", script], timeout=0.05, max_output_bytes=1024,
+                )
+        self.assertEqual(raised.exception.stdout, b"a" * 100)
+
+    @unittest.skipUnless(os.name == "posix", "process-group cleanup is POSIX-specific")
     def test_timeout_kills_descendant_that_inherits_capture_pipes(self):
         with tempfile.TemporaryDirectory() as directory:
             started = Path(directory) / "descendant-started"
+            pid_file = Path(directory) / "descendant.pid"
             gate = Path(directory) / "release-descendant"
             survived = Path(directory) / "descendant-survived"
             descendant = (
-                "from pathlib import Path; import time; "
-                f"Path({str(started)!r}).write_text('started'); gate=Path({str(gate)!r}); "
+                "from pathlib import Path; import os,time; "
+                f"Path({str(pid_file)!r}).write_text(str(os.getpid())); Path({str(started)!r}).write_text('started'); "
+                f"gate=Path({str(gate)!r}); "
                 "exec('while not gate.exists(): time.sleep(.01)'); "
                 f"Path({str(survived)!r}).write_text('alive')"
             )
             parent = (
-                "from pathlib import Path; import subprocess,sys,time; "
+                "from pathlib import Path; import os,subprocess,sys,time; "
                 f"subprocess.Popen([sys.executable, '-c', {descendant!r}]); "
                 f"started=Path({str(started)!r}); "
                 "exec('while not started.exists(): time.sleep(.01)'); time.sleep(60)"
@@ -92,8 +129,7 @@ class AsyncProcessTests(unittest.TestCase):
                 async_process.run_process([sys.executable, "-c", parent], timeout=0.5)
             self.assertLess(time.monotonic() - start_time, 5)
             self.assertTrue(started.exists(), "test descendant did not start before timeout")
-            gate.write_text("release")
-            time.sleep(0.2)
+            self.assert_process_stopped(pid_file)
             self.assertFalse(survived.exists(), "descendant kept running after parent timeout")
 
     @unittest.skipUnless(os.name == "posix", "process-group cleanup is POSIX-specific")
@@ -103,7 +139,7 @@ class AsyncProcessTests(unittest.TestCase):
             gate = Path(directory) / "release-leader-exit-descendant"
             survived = Path(directory) / "leader-exit-descendant-survived"
             descendant = (
-                "from pathlib import Path; import time; "
+                "from pathlib import Path; import os,time; "
                 f"Path({str(started)!r}).write_text('started'); gate=Path({str(gate)!r}); "
                 "exec('while not gate.exists(): time.sleep(.01)'); "
                 f"Path({str(survived)!r}).write_text('alive')"
@@ -125,16 +161,18 @@ class AsyncProcessTests(unittest.TestCase):
     def test_output_limit_kills_descendant_that_holds_capture_pipe_open(self):
         with tempfile.TemporaryDirectory() as directory:
             started = Path(directory) / "descendant-started"
+            pid_file = Path(directory) / "descendant.pid"
             gate = Path(directory) / "release-descendant"
             survived = Path(directory) / "descendant-survived"
             descendant = (
-                "from pathlib import Path; import time; "
-                f"Path({str(started)!r}).write_text('started'); gate=Path({str(gate)!r}); "
+                "from pathlib import Path; import os,time; "
+                f"Path({str(pid_file)!r}).write_text(str(os.getpid())); Path({str(started)!r}).write_text('started'); "
+                f"gate=Path({str(gate)!r}); "
                 "exec('while not gate.exists(): time.sleep(.01)'); "
                 f"Path({str(survived)!r}).write_text('alive')"
             )
             parent = (
-                "from pathlib import Path; import subprocess,sys,time; "
+                "from pathlib import Path; import os,subprocess,sys,time; "
                 f"subprocess.Popen([sys.executable, '-c', {descendant!r}]); "
                 f"started=Path({str(started)!r}); "
                 "exec('while not started.exists(): time.sleep(.01)'); "
@@ -147,8 +185,7 @@ class AsyncProcessTests(unittest.TestCase):
                 )
             self.assertLess(time.monotonic() - start_time, 5)
             self.assertTrue(started.exists(), "test descendant did not start before output limit")
-            gate.write_text("release")
-            time.sleep(0.2)
+            self.assert_process_stopped(pid_file)
             self.assertFalse(survived.exists(), "descendant kept running after output limit")
 
     @unittest.skipUnless(os.name == "posix", "escaped-process pipe check is POSIX-specific")
@@ -182,6 +219,90 @@ class AsyncProcessTests(unittest.TestCase):
             async_process.run_process([sys.executable, "-V"], timeout=0)
         with self.assertRaisesRegex(ValueError, "output limit"):
             async_process.run_process([sys.executable, "-V"], timeout=5, max_output_bytes=0)
+
+    def test_supported_runtime_matrix_is_explicit(self):
+        supported = async_process._runtime_supported
+        self.assertTrue(supported("linux", (3, 12), "posix"))
+        self.assertTrue(supported("linux", (3, 13), "posix"))
+        self.assertFalse(supported("linux", (3, 11), "posix"))
+        self.assertTrue(supported("darwin", (3, 13), "posix"))
+        self.assertFalse(supported("darwin", (3, 12), "posix"))
+        self.assertFalse(supported("win32", (3, 13), "nt"))
+
+    def test_unsupported_macos_python_fails_before_spawning(self):
+        with (
+            patch.object(async_process, "POSIX_PROCESS_RUNNER", True),
+            patch.object(async_process.sys, "platform", "darwin"),
+            patch.object(async_process.sys, "version_info", (3, 12, 9)),
+            patch.object(async_process.os, "name", "posix"),
+            patch.object(async_process.subprocess, "Popen") as popen,
+        ):
+            with self.assertRaisesRegex(NotImplementedError, "macOS Python 3.13"):
+                async_process.run_process([sys.executable, "-c", "pass"], timeout=1)
+        popen.assert_not_called()
+
+    def test_prelaunch_cancellation_does_not_create_process(self):
+        cancelled = threading.Event()
+        cancelled.set()
+        with patch.object(async_process.subprocess, "Popen") as popen:
+            with self.assertRaises(async_process._ProcessCancelled):
+                async_process._run_owned_process(
+                    (sys.executable, "-c", "pass"), env=None, cwd=None,
+                    input_bytes=None, max_output_bytes=100, text=False,
+                    timeout=1, cancel_event=cancelled,
+                )
+        popen.assert_not_called()
+
+    @unittest.skipUnless(os.name == "posix", "process-group cleanup is POSIX-specific")
+    def test_selector_creation_failure_reaps_owned_process(self):
+        real_popen = async_process.subprocess.Popen
+        processes = []
+
+        def tracked_popen(*args, **kwargs):
+            process = real_popen(*args, **kwargs)
+            processes.append(process)
+            return process
+
+        with (
+            patch.object(async_process.subprocess, "Popen", side_effect=tracked_popen),
+            patch.object(async_process.selectors, "DefaultSelector", side_effect=OSError("no selector")),
+        ):
+            with self.assertRaisesRegex(OSError, "no selector"):
+                async_process.run_process([sys.executable, "-c", "import time; time.sleep(60)"], timeout=5)
+        self.assertEqual(len(processes), 1)
+        self.assertIsNotNone(processes[0].returncode, "selector failure leaked its child")
+
+    @unittest.skipUnless(os.name == "posix", "process-group cleanup is POSIX-specific")
+    def test_terminal_wait_crossing_deadline_reports_timeout(self):
+        real_wait = async_process._wait_owned_process
+
+        def delayed_wait(process):
+            status = real_wait(process)
+            time.sleep(0.55)
+            return status
+
+        with patch.object(async_process, "_wait_owned_process", side_effect=delayed_wait):
+            with self.assertRaises(async_process.ProcessTimeout):
+                async_process.run_process(
+                    [sys.executable, "-c", "pass"], timeout=0.5,
+                )
+
+    @unittest.skipUnless(os.name == "posix", "selector behavior is POSIX-specific")
+    def test_empty_selector_waits_while_child_runs_without_pipes(self):
+        real_sleep = time.sleep
+        sleeps = []
+
+        def observed_sleep(duration):
+            sleeps.append(duration)
+            return real_sleep(duration)
+
+        with patch.object(async_process.time, "sleep", side_effect=observed_sleep):
+            result = async_process.run_process(
+                [sys.executable, "-c", "import os,time; os.close(1); os.close(2); time.sleep(.08)"],
+                timeout=2,
+            )
+        self.assertEqual(result.returncode, 0)
+        self.assertTrue(sleeps, "empty selector loop spun without sleeping")
 
 
 @unittest.skipUnless(os.name == "posix", "process-group cleanup is POSIX-specific")
@@ -276,9 +397,9 @@ class AsyncCancellationTests(unittest.IsolatedAsyncioTestCase):
     async def test_unsupported_platform_fails_before_spawning(self):
         with patch.object(async_process, "POSIX_PROCESS_RUNNER", False), \
                 patch.object(async_process.subprocess, "Popen") as popen:
-            with self.assertRaisesRegex(NotImplementedError, "Linux/macOS"):
+            with self.assertRaisesRegex(NotImplementedError, "Linux Python 3.12"):
                 await async_process.run_process_async([sys.executable, "-c", "pass"])
-            with self.assertRaisesRegex(NotImplementedError, "Linux/macOS"):
+            with self.assertRaisesRegex(NotImplementedError, "Linux Python 3.12"):
                 async_process.run_process([sys.executable, "-c", "pass"], timeout=1)
         popen.assert_not_called()
 
