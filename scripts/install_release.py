@@ -2755,7 +2755,7 @@ def main():
         for relative, content in files.items():
             path = args.directory / relative
             if args.check:
-                if not path.is_file() or path.read_bytes() != content.encode("utf-8"):
+                if not path.is_file() or path.read_text(encoding="utf-8") != content:
                     drift.append(relative)
             else:
                 path.parent.mkdir(parents=True, exist_ok=True)

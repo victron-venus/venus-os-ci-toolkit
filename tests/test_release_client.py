@@ -661,7 +661,7 @@ jobs:
             crlf_bytes = original_bytes.replace(b"\n", b"\r\n")
             self.assertNotEqual(original_bytes, crlf_bytes)
             generated_pagination.write_bytes(crlf_bytes)
-            newline_drift = subprocess.run(
+            newline_checkout = subprocess.run(
                 [sys.executable, str(installer.ROOT / "scripts/install_release.py"),
                  str(root), "--check"],
                 cwd=installer.ROOT,
@@ -670,8 +670,10 @@ jobs:
                 check=False,
                 timeout=30,
             )
-            self.assertNotEqual(newline_drift.returncode, 0)
-            self.assertIn(pagination_test, newline_drift.stderr)
+            self.assertEqual(
+                newline_checkout.returncode, 0,
+                newline_checkout.stdout + newline_checkout.stderr,
+            )
             generated_pagination.write_bytes(original_bytes)
             generated_pagination.write_text(
                 generated_pagination.read_text().replace("paged_wire", "page_wire", 1)
