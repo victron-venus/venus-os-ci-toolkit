@@ -616,9 +616,17 @@ jobs:
             # The canonical toolkit is itself a fuzz-enabled release consumer.
             shutil.copyfile(installer.ROOT / ".github/fuzz.json", root / ".github/fuzz.json")
             files = installer.render(root)
-            for name in ("test_release_control.py", "test_version_plan.py", "test_versioned_release.py",
+            for name in ("test_release_control.py", "test_github_missing_status.py",
+                         "test_version_plan.py", "test_versioned_release.py",
                          "test_release_create.py"):
                 self.assertIn(".github/release-tests/" + name, tuple(files))
+            pagination_test = ".github/release-tests/test_github_missing_status.py"
+            self.assertEqual(
+                files[pagination_test],
+                installer.consumer_python(
+                    (installer.ROOT / "tests/test_github_http_transport.py").read_text()
+                ),
+            )
             for name in ("scripts/workflow_contracts.py", exported):
                 path = root / name
                 path.parent.mkdir(parents=True, exist_ok=True)
@@ -639,6 +647,31 @@ jobs:
                 target = root / name
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_text(content)
+            check = subprocess.run(
+                [sys.executable, str(installer.ROOT / "scripts/install_release.py"),
+                 str(root), "--check"],
+                cwd=installer.ROOT,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=30,
+            )
+            self.assertEqual(check.returncode, 0, check.stdout + check.stderr)
+            generated_pagination = root / pagination_test
+            generated_pagination.write_text(
+                generated_pagination.read_text().replace("paged_wire", "page_wire", 1)
+            )
+            drift = subprocess.run(
+                [sys.executable, str(installer.ROOT / "scripts/install_release.py"),
+                 str(root), "--check"],
+                cwd=installer.ROOT,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=30,
+            )
+            self.assertNotEqual(drift.returncode, 0)
+            self.assertIn(pagination_test, drift.stderr)
             created = subprocess.run(
                 [sys.executable, "-B", "-m", "unittest", "discover", "-s",
                  ".github/release-tests", "-p", "test_release_create.py", "-v"],

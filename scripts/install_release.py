@@ -1765,6 +1765,9 @@ def release_files(directory: Path, policy: dict) -> dict[str, str]:
         .read_text()
         .replace(TEST_ROOT_EXPRESSION, VENDORED_TEST_ROOT_EXPRESSION)
     )
+    files[".github/release-tests/test_github_missing_status.py"] = (
+        ROOT / "tests/test_github_http_transport.py"
+    ).read_text()
     for name in ("change_scope", "release_client_consumer", "release_download"):
         files[f".github/release-tests/test_{name}.py"] = (
             (ROOT / f"tests/test_{name}.py").read_text().replace(
