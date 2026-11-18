@@ -6,6 +6,7 @@
 import argparse
 import base64
 import gc
+import hashlib
 import importlib.util
 import io
 import json
@@ -372,7 +373,7 @@ class WholeReadRecoveryTests(unittest.TestCase):
                 header = b"HTTP/2.0 200 OK" + newline
                 partial = header + newline + b"partial binary" + newline
                 partial += f"HTTP/2.0 {status} body data".encode() + newline
-                result = (subprocess.TimeoutExpired(["gh"], 120, output=partial)
+                result = (rc.ProcessTimeout(120, partial, b"")
                           if failure == "timeout" else self.failed(stdout=partial))
                 with (patch.object(rc, "run_process", side_effect=[
                     result, http_response(stdout=b"COMPLETE")]) as run,
@@ -1986,9 +1987,7 @@ class TransportTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="release-versioned-") as temp:
             asset = Path(temp) / "package.tar.gz"
             asset.write_bytes(b"package")
-            timeout = subprocess.TimeoutExpired(
-                ["private-path"], 900, output=b"private-body"
-            )
+            timeout = rc.ProcessTimeout(900, b"partial-private-body", b"")
             gh = rc.GitHub(REPO)
             with (
                 patch.object(rc, "run_process", side_effect=timeout) as command,
@@ -2001,6 +2000,24 @@ class TransportTests(unittest.TestCase):
             self.assertNotIn("private", str(caught.exception))
             self.assertNotIn(temp, str(caught.exception))
             self.assertIn("reconciliation=absent", str(caught.exception))
+
+    def test_upload_output_limit_uses_exact_asset_readback_without_retry(self):
+        with tempfile.TemporaryDirectory(prefix="release-versioned-") as temp:
+            asset = Path(temp) / "package.tar.gz"
+            payload = b"package"
+            asset.write_bytes(payload)
+            expected = {
+                "id": 91, "name": asset.name, "state": "uploaded", "size": len(payload),
+                "digest": "sha256:" + hashlib.sha256(payload).hexdigest(),
+            }
+            gh = rc.GitHub(REPO)
+            with (
+                patch.object(rc, "run_process", side_effect=rc.ProcessOutputLimit("too large")) as post,
+                patch.object(gh, "pages", return_value=[expected]) as inventory,
+            ):
+                gh.upload(RC_TAG, asset, release_id=42)
+            post.assert_called_once()
+            inventory.assert_called_once_with("releases/42/assets")
 
     def test_upload_requires_created_matching_complete_asset(self):
         with tempfile.TemporaryDirectory(prefix="release-versioned-") as temp:

@@ -33,9 +33,13 @@ from typing import BinaryIO, NamedTuple, TypedDict, cast
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 if __package__:
-    from .async_process import ProcessResult, ProcessTimeout, resolve_executable, run_process
+    from .async_process import (
+        ProcessOutputLimit, ProcessResult, ProcessTimeout, resolve_executable, run_process,
+    )
 else:
-    from async_process import ProcessResult, ProcessTimeout, resolve_executable, run_process
+    from async_process import (
+        ProcessOutputLimit, ProcessResult, ProcessTimeout, resolve_executable, run_process,
+    )
 
 WORKFLOW = ".github/workflows/release-pipeline.yml"
 GITHUB_HOSTNAME = "github.com"
@@ -169,6 +173,7 @@ class CreateReadback:
         require(ordinary or page, "Invalid create readback path")
         require(not any(p in {".", ".."} for p in unquote(path).split("/")),
                 "Invalid create readback path")
+        require(self.remaining > 0, "Create readback response limit exceeded")
         self.calls += 1
         require(self.calls <= 100, "Create readback request limit exceeded")
         endpoint = f"repos/{self.repo}" + (f"/{path}" if path else "")
@@ -181,6 +186,8 @@ class CreateReadback:
             )
         except (ProcessTimeout, subprocess.TimeoutExpired) as error:
             raise GitHubError("Create readback GET timed out") from error
+        except ProcessOutputLimit as error:
+            raise GitHubError("Create readback response limit exceeded") from error
         self.check()
         self.remaining -= len(result.stdout or b"") + len(result.stderr or b"")
         require(self.remaining >= 0, "Create readback response limit exceeded")
@@ -1152,6 +1159,9 @@ class GitHub:
             )
         except (ProcessTimeout, subprocess.TimeoutExpired):
             return False, False, "timeout"
+        except ProcessOutputLimit:
+            # The write may have committed; only an exact inventory readback can resolve it.
+            return False, False, "response-limit"
         try:
             status, response = github_http_response(result.stdout or b"")
         except GitHubError:

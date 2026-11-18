@@ -1,11 +1,14 @@
 """Bounded shell-free process execution and cleanup contracts."""
 
+import asyncio
 import os
 from pathlib import Path
+import signal
 import sys
 import tempfile
 import time
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 import async_process
@@ -69,38 +72,108 @@ class AsyncProcessTests(unittest.TestCase):
     @unittest.skipUnless(os.name == "posix", "process-group cleanup is POSIX-specific")
     def test_timeout_kills_descendant_that_inherits_capture_pipes(self):
         with tempfile.TemporaryDirectory() as directory:
-            marker = Path(directory) / "descendant-survived"
-            descendant = f"import time; time.sleep(.6); open({str(marker)!r}, 'w').write('alive')"
-            parent = (
-                "import subprocess,sys,time; "
-                f"subprocess.Popen([sys.executable, '-c', {descendant!r}]); "
-                "time.sleep(60)"
+            started = Path(directory) / "descendant-started"
+            gate = Path(directory) / "release-descendant"
+            survived = Path(directory) / "descendant-survived"
+            descendant = (
+                "from pathlib import Path; import time; "
+                f"Path({str(started)!r}).write_text('started'); gate=Path({str(gate)!r}); "
+                "exec('while not gate.exists(): time.sleep(.01)'); "
+                f"Path({str(survived)!r}).write_text('alive')"
             )
-            started = time.monotonic()
+            parent = (
+                "from pathlib import Path; import subprocess,sys,time; "
+                f"subprocess.Popen([sys.executable, '-c', {descendant!r}]); "
+                f"started=Path({str(started)!r}); "
+                "exec('while not started.exists(): time.sleep(.01)'); time.sleep(60)"
+            )
+            start_time = time.monotonic()
             with self.assertRaises(async_process.ProcessTimeout):
-                async_process.run_process([sys.executable, "-c", parent], timeout=0.1)
-            self.assertLess(time.monotonic() - started, 5)
-            time.sleep(0.8)
-            self.assertFalse(marker.exists(), "descendant kept running after parent timeout")
+                async_process.run_process([sys.executable, "-c", parent], timeout=0.5)
+            self.assertLess(time.monotonic() - start_time, 5)
+            self.assertTrue(started.exists(), "test descendant did not start before timeout")
+            gate.write_text("release")
+            time.sleep(0.2)
+            self.assertFalse(survived.exists(), "descendant kept running after parent timeout")
+
+    @unittest.skipUnless(os.name == "posix", "process-group cleanup is POSIX-specific")
+    def test_timeout_kills_group_after_leader_exits_without_reaping_its_pid(self):
+        with tempfile.TemporaryDirectory() as directory:
+            started = Path(directory) / "leader-exit-descendant-started"
+            gate = Path(directory) / "release-leader-exit-descendant"
+            survived = Path(directory) / "leader-exit-descendant-survived"
+            descendant = (
+                "from pathlib import Path; import time; "
+                f"Path({str(started)!r}).write_text('started'); gate=Path({str(gate)!r}); "
+                "exec('while not gate.exists(): time.sleep(.01)'); "
+                f"Path({str(survived)!r}).write_text('alive')"
+            )
+            leader = (
+                "from pathlib import Path; import subprocess,sys,time; "
+                f"subprocess.Popen([sys.executable, '-c', {descendant!r}]); "
+                f"started=Path({str(started)!r}); "
+                "exec('while not started.exists(): time.sleep(.01)')"
+            )
+            with self.assertRaises(async_process.ProcessTimeout):
+                async_process.run_process([sys.executable, "-c", leader], timeout=0.3)
+            self.assertTrue(started.exists(), "descendant did not start before leader exit")
+            gate.write_text("release")
+            time.sleep(0.2)
+            self.assertFalse(survived.exists(), "same-group descendant survived leader timeout")
 
     @unittest.skipUnless(os.name == "posix", "process-group cleanup is POSIX-specific")
     def test_output_limit_kills_descendant_that_holds_capture_pipe_open(self):
         with tempfile.TemporaryDirectory() as directory:
-            marker = Path(directory) / "descendant-survived"
-            descendant = f"import time; time.sleep(.6); open({str(marker)!r}, 'w').write('alive')"
+            started = Path(directory) / "descendant-started"
+            gate = Path(directory) / "release-descendant"
+            survived = Path(directory) / "descendant-survived"
+            descendant = (
+                "from pathlib import Path; import time; "
+                f"Path({str(started)!r}).write_text('started'); gate=Path({str(gate)!r}); "
+                "exec('while not gate.exists(): time.sleep(.01)'); "
+                f"Path({str(survived)!r}).write_text('alive')"
+            )
             parent = (
-                "import subprocess,sys,time; "
+                "from pathlib import Path; import subprocess,sys,time; "
                 f"subprocess.Popen([sys.executable, '-c', {descendant!r}]); "
+                f"started=Path({str(started)!r}); "
+                "exec('while not started.exists(): time.sleep(.01)'); "
                 "sys.stdout.buffer.write(b'x' * 4096); sys.stdout.flush(); time.sleep(60)"
             )
-            started = time.monotonic()
+            start_time = time.monotonic()
             with self.assertRaises(async_process.ProcessOutputLimit):
                 async_process.run_process(
                     [sys.executable, "-c", parent], timeout=5, max_output_bytes=1024,
                 )
-            self.assertLess(time.monotonic() - started, 5)
-            time.sleep(0.8)
-            self.assertFalse(marker.exists(), "descendant kept running after output limit")
+            self.assertLess(time.monotonic() - start_time, 5)
+            self.assertTrue(started.exists(), "test descendant did not start before output limit")
+            gate.write_text("release")
+            time.sleep(0.2)
+            self.assertFalse(survived.exists(), "descendant kept running after output limit")
+
+    @unittest.skipUnless(os.name == "posix", "escaped-process pipe check is POSIX-specific")
+    def test_leader_exit_with_escaped_pipe_holder_fails_cleanup_closed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            pid_file = Path(directory) / "descendant.pid"
+            child = (
+                "import os,time; "
+                f"open({str(pid_file)!r}, 'w').write(str(os.getpid())); time.sleep(60)"
+            )
+            parent = (
+                "import subprocess,sys,time; "
+                f"subprocess.Popen([sys.executable, '-c', {child!r}], start_new_session=True); "
+                "time.sleep(.05)"
+            )
+            try:
+                with self.assertRaises(async_process.ProcessCleanupError):
+                    async_process.run_process([sys.executable, "-c", parent], timeout=0.2)
+                self.assertTrue(pid_file.exists(), "escaped pipe holder did not start")
+            finally:
+                if pid_file.exists():
+                    try:
+                        os.kill(int(pid_file.read_text()), signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
 
     def test_requires_absolute_executable_and_positive_bounds(self):
         with self.assertRaisesRegex(ValueError, "absolute path"):
@@ -109,6 +182,141 @@ class AsyncProcessTests(unittest.TestCase):
             async_process.run_process([sys.executable, "-V"], timeout=0)
         with self.assertRaisesRegex(ValueError, "output limit"):
             async_process.run_process([sys.executable, "-V"], timeout=5, max_output_bytes=0)
+
+
+@unittest.skipUnless(os.name == "posix", "process-group cleanup is POSIX-specific")
+class AsyncCancellationTests(unittest.IsolatedAsyncioTestCase):
+    async def test_cancellation_kills_owned_process_group(self):
+        with tempfile.TemporaryDirectory() as directory:
+            started = Path(directory) / "descendant-started"
+            gate = Path(directory) / "release-descendant"
+            survived = Path(directory) / "descendant-survived"
+            descendant = (
+                "from pathlib import Path; import time; "
+                f"Path({str(started)!r}).write_text('started'); gate=Path({str(gate)!r}); "
+                "exec('while not gate.exists(): time.sleep(.01)'); "
+                f"Path({str(survived)!r}).write_text('alive')"
+            )
+            parent = (
+                "from pathlib import Path; import subprocess,sys,time; "
+                f"subprocess.Popen([sys.executable, '-c', {descendant!r}]); "
+                f"started=Path({str(started)!r}); "
+                "exec('while not started.exists(): time.sleep(.01)'); time.sleep(60)"
+            )
+            task = asyncio.create_task(async_process.run_process_async(
+                [sys.executable, "-c", parent],
+            ))
+            try:
+                deadline = asyncio.get_running_loop().time() + 5
+                while not started.exists() and asyncio.get_running_loop().time() < deadline:
+                    await asyncio.sleep(0.01)
+                self.assertTrue(started.exists(), "test descendant did not start")
+                task.cancel()
+                with self.assertRaises(asyncio.CancelledError):
+                    await asyncio.wait_for(task, timeout=5)
+                gate.write_text("release")
+                await asyncio.sleep(0.2)
+                self.assertFalse(survived.exists(), "spawn cancellation left a descendant running")
+            finally:
+                if not task.done():
+                    task.cancel()
+                    try:
+                        await asyncio.wait_for(task, timeout=5)
+                    except asyncio.CancelledError:
+                        pass
+
+    async def test_escaped_pipe_holder_during_cancellation_fails_closed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            started = Path(directory) / "escaped-descendant-started"
+            pid_file = Path(directory) / "escaped-descendant.pid"
+            gate = Path(directory) / "release-descendant"
+            survived = Path(directory) / "escaped-descendant-survived"
+            descendant = (
+                "from pathlib import Path; import os,time; "
+                f"Path({str(started)!r}).write_text('started'); "
+                f"Path({str(pid_file)!r}).write_text(str(os.getpid())); "
+                f"gate=Path({str(gate)!r}); "
+                "exec('while not gate.exists(): time.sleep(.01)'); "
+                f"Path({str(survived)!r}).write_text('alive')"
+            )
+            parent = (
+                "import subprocess,sys,time; "
+                f"subprocess.Popen([sys.executable, '-c', {descendant!r}], start_new_session=True); "
+                "time.sleep(60)"
+            )
+            task = asyncio.create_task(async_process.run_process_async(
+                [sys.executable, "-c", parent], max_output_bytes=1024,
+            ))
+            try:
+                deadline = asyncio.get_running_loop().time() + 5
+                while not started.exists() and asyncio.get_running_loop().time() < deadline:
+                    await asyncio.sleep(0.01)
+                self.assertTrue(started.exists(), "escaped test descendant did not start")
+                task.cancel()
+                with self.assertRaises(async_process.ProcessCleanupError):
+                    await asyncio.wait_for(task, timeout=8)
+                self.assertTrue(pid_file.exists())
+                os.kill(int(pid_file.read_text()), signal.SIGKILL)
+                gate.write_text("release")
+                await asyncio.sleep(0.2)
+                self.assertFalse(survived.exists(), "escaped pipe holder survived cleanup")
+            finally:
+                if not task.done():
+                    task.cancel()
+                    try:
+                        await asyncio.wait_for(task, timeout=8)
+                    except (asyncio.CancelledError, async_process.ProcessCleanupError):
+                        pass
+                if pid_file.exists():
+                    try:
+                        os.kill(int(pid_file.read_text()), signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+
+    async def test_unsupported_platform_fails_before_spawning(self):
+        with patch.object(async_process, "POSIX_PROCESS_RUNNER", False), \
+                patch.object(async_process.subprocess, "Popen") as popen:
+            with self.assertRaisesRegex(NotImplementedError, "Linux/macOS"):
+                await async_process.run_process_async([sys.executable, "-c", "pass"])
+            with self.assertRaisesRegex(NotImplementedError, "Linux/macOS"):
+                async_process.run_process([sys.executable, "-c", "pass"], timeout=1)
+        popen.assert_not_called()
+
+    @unittest.skipUnless(os.name == "posix", "waitid capability test is POSIX-specific")
+    def test_missing_nonreaping_wait_capability_fails_before_spawning(self):
+        with patch.object(async_process.os, "waitid", None), \
+                patch.object(async_process.subprocess, "Popen") as popen:
+            with self.assertRaisesRegex(NotImplementedError, r"waitid\(WNOWAIT\)"):
+                async_process.run_process([sys.executable, "-c", "pass"], timeout=1)
+        popen.assert_not_called()
+
+    @unittest.skipUnless(os.name == "posix", "process-group cleanup is POSIX-specific")
+    def test_missing_process_group_falls_back_to_killing_owned_leader(self):
+        real_popen = async_process.subprocess.Popen
+        processes = []
+        direct_kills = []
+
+        def tracked_popen(*args, **kwargs):
+            process = real_popen(*args, **kwargs)
+            original_kill = process.kill
+
+            def tracked_kill():
+                direct_kills.append(process.pid)
+                return original_kill()
+
+            process.kill = tracked_kill
+            processes.append(process)
+            return process
+
+        with patch.object(async_process.subprocess, "Popen", side_effect=tracked_popen), \
+                patch.object(async_process.os, "killpg", side_effect=ProcessLookupError):
+            with self.assertRaises(async_process.ProcessTimeout):
+                async_process.run_process(
+                    [sys.executable, "-c", "import time; time.sleep(60)"], timeout=0.1,
+                )
+        self.assertEqual(len(processes), 1)
+        self.assertEqual(direct_kills, [processes[0].pid])
+        self.assertIsNotNone(processes[0].returncode, "owned leader was not reaped")
 
 
 if __name__ == "__main__":

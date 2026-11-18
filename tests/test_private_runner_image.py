@@ -66,9 +66,11 @@ class PrivateRunnerImageTests(unittest.TestCase):
         self.assertIn('rm -rf /tmp/private-gh', final)
         self.assertIn('--archive /tmp/private-gh/archive.tar.gz --output /usr/local/bin/gh --system-image-install', final)
         self.assertIn('COPY scripts/async_process.py /tmp/private-gh/scripts/async_process.py', source)
-        self.assertIn(
-            'cp -a --remove-destination /tmp/private-inputs/tmp/private-gh/scripts/async_process.py '
-            '/tmp/private-gh/scripts/async_process.py', final,
+        self.assertRegex(
+            final,
+            r'cp -a --remove-destination\s+'
+            r'/tmp/private-inputs/tmp/private-gh/scripts/async_process\.py\s+'
+            r'/tmp/private-gh/scripts/async_process\.py',
         )
         self.assertNotIn('--no-preserve=ownership', final)
 

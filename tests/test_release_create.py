@@ -23,6 +23,7 @@ def wire(status, body):
 class CreateTransportTests(unittest.TestCase):
     def setUp(self):
         self.enterContext(patch.dict(os.environ, {"RELEASE_REQUIRE_WORKFLOW_SCOPE": ""}))
+        self.enterContext(patch.object(rc, "resolve_executable", side_effect=lambda name: name))
         self.gh = rc.GitHub(REPO)
 
     def call(self, status, content=b'{}', code=0, stderr=b''):
@@ -63,10 +64,17 @@ class CreateTransportTests(unittest.TestCase):
             self.assertNotIsInstance(caught.exception, rc.AmbiguousCreate)
 
     def test_timeout_is_not_a_write_retry_and_denial_vetoes(self):
-        for diagnostic in (b'', b'permission denied'):
-            error = subprocess.TimeoutExpired(['gh'], 120, stderr=diagnostic)
+        cases = (
+            subprocess.TimeoutExpired(['gh'], 120, stderr=b''),
+            subprocess.TimeoutExpired(['gh'], 120, stderr=b'permission denied'),
+            rc.ProcessTimeout(120, b'', b''),
+            rc.ProcessTimeout(120, b'', b'permission denied'),
+        )
+        for error in cases:
+            diagnostic = error.stderr or b''
             expected = rc.GitHubError if diagnostic else rc.AmbiguousCreate
-            with patch.object(rc, 'run_process', side_effect=error) as call:
+            with self.subTest(error=type(error).__name__, diagnostic=diagnostic), \
+                    patch.object(rc, 'run_process', side_effect=error) as call:
                 with self.assertRaises(expected) as caught:
                     self.gh.create_release_once({"draft": True})
                 call.assert_called_once()
@@ -77,6 +85,7 @@ class CreateTransportTests(unittest.TestCase):
 class ReadbackTests(unittest.TestCase):
     def setUp(self):
         self.reader = rc.CreateReadback(REPO)
+        self.enterContext(patch.object(rc, "resolve_executable", side_effect=lambda name: name))
 
     def test_fixed_get_and_remaining_budget(self):
         self.reader.deadline = 115
@@ -90,6 +99,19 @@ class ReadbackTests(unittest.TestCase):
         self.assertEqual(kwargs['timeout'], 15)
         self.assertEqual(self.reader.deadline, 115)
         call.assert_called_once()
+
+    def test_zero_budget_rejects_before_launch_and_output_limit_maps_to_release_error(self):
+        self.reader.remaining = 0
+        with patch.object(rc, "run_process") as run:
+            with self.assertRaisesRegex(rc.ReleaseError, "response limit"):
+                self.reader.json("releases/42")
+        run.assert_not_called()
+
+        self.reader.remaining = 100
+        with patch.object(rc, "run_process", side_effect=rc.ProcessOutputLimit("too large")) as run:
+            with self.assertRaisesRegex(rc.GitHubError, "response limit"):
+                self.reader.json("releases/42")
+        run.assert_called_once()
 
     def test_explicit_pagination_and_duplicate_refusal(self):
         header = f'Link: <https://api.github.com/repos/{REPO}/releases?per_page=100&page=2>; rel="next"\r\n'.encode()
@@ -236,10 +258,12 @@ class ReadbackTests(unittest.TestCase):
         metadata = wire(200, b'{"id":17,"full_name":"example/project"}')
         self.reader.remaining = len(page) + len(metadata) - 1
         with patch.object(rc, 'run_process', side_effect=[
-                subprocess.CompletedProcess([], 0, raw, b'') for raw in (page, metadata)]) as run:
+                subprocess.CompletedProcess([], 0, page, b''),
+                rc.ProcessOutputLimit("too large")]) as run:
             with self.assertRaisesRegex(rc.ReleaseError, 'response limit'):
                 self.reader.pages('releases')
         self.assertEqual(run.call_count, 2)
+        self.assertEqual(run.call_args_list[1].kwargs["max_output_bytes"], len(metadata) - 1)
         self.assertIsNone(self.reader.repository_id)
 
     def test_cached_numeric_identity_rejects_a_later_different_id(self):

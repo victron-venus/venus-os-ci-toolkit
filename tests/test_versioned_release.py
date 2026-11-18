@@ -462,6 +462,13 @@ class AllocationTests(unittest.TestCase):
             state.write_state(client, {"schema": 1, "counter": 0, "plans": {}}, None)
         self.assertEqual(run.call_args_list[0].args[0][-1], f"repos/{REPO}/git/refs")
         self.assertEqual(ledger_run.call_count, 1)
+        expected_ledger = {"schema": 1, "counter": 0, "plans": {}}
+        expected_body = {
+            "branch": state.BRANCH,
+            "message": "Reserve release version plan",
+            "content": base64.b64encode(rc.json_bytes(expected_ledger)).decode(),
+        }
+        self.assertEqual(ledger_run.call_args.kwargs["input"], rc.json_bytes(expected_body))
         with (
             patch.object(state.subprocess, "run") as run,
             self.assertRaisesRegex(rc.ReleaseError, "branch mismatch"),

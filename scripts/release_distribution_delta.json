@@ -14,7 +14,7 @@
       "after_sha256": "8e1b089ed1e1196238c7a55818a08c3acca5eb1ddfb159d9cd8588a215eaa50a",
       "canonical_source": "scripts/release_control.py",
       "canonical_base_sha256": "04e45e71a262544086de4d2f29ab83ed08fc4ed96916b16cd559659d3db9303b",
-      "canonical_source_sha256": "2b31af75049b08ba523fc77a403a8d754598aa512928fb448e491084f79573d1",
+      "canonical_source_sha256": "c7ed7baff141d4f1a794a59fcb65a809030892f771c69bc1d795e607779ca42a",
       "hunks": [
         {
           "before": "        raise ReleaseError(str(error)) from error\n\n\ndef require_release_policy(policy: object, repo: str, qualified: bool) -> None:\n    \"\"\"Check policy identity, release mode, and required eligibility blockers.\"\"\"\n    require(isinstance(policy, dict), \"Source release policy must be an object\")\n",
@@ -111,7 +111,7 @@
       "after_sha256": "dcb7a679eedd325b4c9333afaced2279875583adb7ec0b5ad36e3be0e1ad9d9c",
       "canonical_source": "tests/test_release_control.py",
       "canonical_base_sha256": "c7e79c6e776530cb2eb9383307980fc02f0cacc9f7fa55e9d97eac146ecda705",
-      "canonical_source_sha256": "54995948a96914c540c534e50862fc720baf012070258006540570e43cf578c6",
+      "canonical_source_sha256": "5657fbd60889760c2d8604ede14a3a76fd404d0dd2e26547a467d32209ed683c",
       "hunks": [
         {
           "before": "        with self.assertRaisesRegex(rc.ReleaseError, 'outside'):\n            self.check()\n\n    def test_intentional_skips_and_unfinished_publisher_do_not_need_clocks(self):\n        self.job['steps'].append({'conclusion': 'skipped'})\n        self.job['steps'].append({'conclusion': 'failure', 'status': 'completed'})\n",
@@ -124,7 +124,7 @@
       "after_sha256": "de281d7e7d8b45bf615fb178bf3e2a59c0471628e46aa4c497afd63abafe9ede",
       "canonical_source": "tests/test_versioned_release.py",
       "canonical_base_sha256": "e48da6fbd58b42b76b35523f568ff123c613e966e227d256cb332e607240dedd",
-      "canonical_source_sha256": "f7e34ffbbd9cade0051ff9a9dbbc58f26437f3d4f40bf8ebd27dad198a0bb889",
+      "canonical_source_sha256": "8118558778308dfb97e95eaed84f209fc409cfc91677e2c1377e3a3665634d28",
       "hunks": [
         {
           "before": "        with self.assertRaisesRegex(rc.ReleaseError, \"Only release candidates\"):\n            rc.validate_manifest(encoded, REPO, \"v1.2.3\")\n\n    def test_final_build_rejects_legacy_rc_before_allocating(self):\n        self.start_run(\"stable\", 100, legacy_tests.RC_TAG)\n        # Model the real migration: legacy RC exists at old source SHA, while the\n",

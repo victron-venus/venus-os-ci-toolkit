@@ -44,6 +44,7 @@ def paged_wire(status, body, *, next_page):
 class HTTPTransportTests(unittest.TestCase):
     def setUp(self):
         self.enterContext(patch.dict(os.environ, {"RELEASE_REQUIRE_WORKFLOW_SCOPE": ""}))
+        self.enterContext(patch.object(rc, "resolve_executable", return_value="/tools/gh"))
         self.github = rc.GitHub("example/project")
 
     def failure(self, status, body, method="GET", path="git/ref/tags/v1.2.3"):
@@ -239,7 +240,9 @@ class RealGitHubCLITests(unittest.TestCase):
         server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         worker = threading.Thread(target=server.serve_forever, daemon=True)
         worker.start()
-        real_run = subprocess.run
+        real_run = rc.run_process
+        actual_gh = shutil.which("gh")
+        self.assertIsNotNone(actual_gh, "real gh CLI is required by this local protocol test")
         try:
             with tempfile.TemporaryDirectory() as config:
                 # Keep this real-CLI fixture local, including sampled gh telemetry.
@@ -260,13 +263,14 @@ class RealGitHubCLITests(unittest.TestCase):
                         self.assertIn("--include", command)
                         self.assertIn("--paginate", command)
                         self.assertEqual(command[command.index("--jq") + 1], "tojson")
-                        result = real_run(  # nosec B603
-                            [*command[:-1], f"http://127.0.0.1:{server.server_port}{path}"],
+                        result = real_run(
+                            [actual_gh, *command[1:-1],
+                             f"http://127.0.0.1:{server.server_port}{path}"],
                             env=environment,
                             input=kwargs.get("input"),
-                            capture_output=True,
                             check=kwargs.get("check", True),
                             timeout=kwargs["timeout"],
+                            max_output_bytes=kwargs.get("max_output_bytes", 64 * 1024 * 1024),
                         )
                         self.assertIn(b"HTTP/1.0 200 OK", result.stdout)
                         self.assertNotIn(b"HTTP/2.0 404 Not Found", result.stdout)
