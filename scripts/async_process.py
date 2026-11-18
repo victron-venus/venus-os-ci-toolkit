@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import suppress
 from dataclasses import dataclass
 import math
 import os
@@ -440,12 +441,8 @@ async def run_process_async(
 async def _drain_cancelled_worker(worker: asyncio.Task[ProcessResult]) -> None:
     """Wait through repeated cancellation and propagate any real cleanup failure."""
     while not worker.done():
-        try:
+        with suppress(asyncio.CancelledError, _ProcessCancelled):
             await asyncio.shield(worker)
-        except asyncio.CancelledError:
-            continue
-        except _ProcessCancelled:
-            break
     try:
         worker.result()
     except _ProcessCancelled:
