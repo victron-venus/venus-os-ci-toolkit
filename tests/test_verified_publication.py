@@ -17,7 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 import publish_verified as publisher
 import verified_images
 from release_control import ReleaseError
-from test_release_control import SHA, FakeGitHub, policy, policy_snapshot, rc
+from test_release_control import SHA, FakeGitHub, manifest as rc_manifest, policy, policy_snapshot, rc
 
 # pylint: enable=wrong-import-position
 
@@ -85,6 +85,48 @@ class StableAssetVerificationTests(unittest.TestCase):
         gh.source_policies[SHA]["mode"] = "validation-only"
         with self.assertRaisesRegex(ReleaseError, "mode must be release"):
             self.verify(gh)
+
+    def test_legacy_stable_must_match_authenticated_parent_before_download(self):
+        """A legacy stable must match its authenticated RC parent before payload reads."""
+        gh = self.github()
+        manifest = rc_manifest()
+        manifest.update(
+            channel="stable",
+            tag="v1.2.3",
+            derived_from_rc={
+                "tag": "v1.2.3-rc.1",
+                "manifest_sha256": "b" * 64,
+                "source_sha": SHA,
+                "run_id": 16,
+            },
+        )
+        raw = rc.json_bytes(manifest)
+        release = {"id": 10, "draft": False, "prerelease": False}
+        ref = {"object": {"type": "commit", "sha": SHA}}
+        assets = [
+            {"id": 20, "name": "package.tar.gz"},
+            {"id": 21, "name": rc.MANIFEST},
+        ]
+        with (
+            mock.patch.object(
+                publisher, "_read_stable_release",
+                return_value=(release, ref, assets, raw, {"tag": "v1.2.3"}),
+            ),
+            mock.patch.object(publisher, "_read_versioned_stable_release", return_value=None),
+            mock.patch.object(publisher, "validate_manifest", return_value=manifest),
+            mock.patch.object(publisher, "verify_evidence"),
+            mock.patch.object(
+                publisher, "download_asset",
+            ) as download,
+            mock.patch("release_versioned.verified_rc", return_value=({}, {
+                **manifest["derived_from_rc"], "manifest_sha256": "c" * 64,
+            })),
+            self.assertRaisesRegex(ReleaseError, "Final package RC provenance mismatch"),
+        ):
+            with tempfile.TemporaryDirectory() as temp:
+                publisher.verified_assets(gh, "v1.2.3", Path(temp))
+        download.assert_not_called()
+        self.assertEqual(gh.writes, [])
 
     def test_legacy_manifest_without_source_policy_is_rejected(self):
         """Legacy manifest without source policy is rejected."""

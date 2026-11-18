@@ -206,8 +206,8 @@
           "mode": "100644"
         },
         "scripts/install_release_gh.py": {
-          "sha256": "98e834e7e69e9f77cf4d98d3197739188d2ec450adf429404a2b9902d8dc4b64",
-          "bytes": 6291,
+          "sha256": "aa26a3997aed457af5ecf4e9801be3215d5e2d75f7d38fe439f9ef0ee322217d",
+          "bytes": 9703,
           "mode": "100755"
         },
         "scripts/install_runner_browsers.py": {
@@ -266,8 +266,8 @@
           "mode": "100644"
         },
         "scripts/install_release_gh.py": {
-          "sha256": "98e834e7e69e9f77cf4d98d3197739188d2ec450adf429404a2b9902d8dc4b64",
-          "bytes": 6291,
+          "sha256": "aa26a3997aed457af5ecf4e9801be3215d5e2d75f7d38fe439f9ef0ee322217d",
+          "bytes": 9703,
           "mode": "100755"
         }
       }

@@ -2,11 +2,13 @@
 from contextlib import redirect_stderr, redirect_stdout
 import importlib
 import io
+import hashlib
 import json
 import os
 from pathlib import Path
 import shutil
 import sys
+import tarfile
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -263,6 +265,73 @@ class DistributionGeneratorTests(unittest.TestCase):
 class ShippedDistributionDeltaTests(unittest.TestCase):
     """Keep the narrow delta tied to reviewed canonical source sections."""
 
+    def _extract_pinned_ott_snapshot(self, root):
+        fixture_dir = ROOT / "tests/fixtures/release_distribution"
+        metadata = json.loads((fixture_dir / "ottplay-foss-7677cfb.json").read_bytes())
+        self.assertEqual(metadata["repository"], "open-ott-play/ottplay-foss")
+        self.assertEqual(metadata["commit"], "7677cfbbe1395169403790307d3d9dd0fc25a43b")
+        expected = {item["path"]: item for item in metadata["members"]}
+        archive = fixture_dir / "ottplay-foss-7677cfb.tar.gz"
+        with tarfile.open(archive, "r:gz") as source:
+            members = source.getmembers()
+            self.assertEqual({item.name for item in members}, set(expected))
+            for item in members:
+                self.assertTrue(item.isfile(), item.name)
+                self.assertEqual(item.name, Path(item.name).as_posix())
+                self.assertNotIn("..", Path(item.name).parts)
+                stream = source.extractfile(item)
+                self.assertIsNotNone(stream)
+                data = stream.read()
+                self.assertEqual(len(data), expected[item.name]["size"], item.name)
+                self.assertEqual(hashlib.sha256(data).hexdigest(), expected[item.name]["sha256"], item.name)
+                destination = root / item.name
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                destination.write_bytes(data)
+        self.assertEqual(set(expected) - {".release-policy.json"},
+                         {name for name, entry in json.loads(migration.DELTA.read_bytes())["files"].items()
+                          if entry["before_sha256"] is not None})
+
+    def test_pinned_ott_base_applies_exact_postimages_and_wrong_base_is_rejected(self):
+        specification = json.loads(migration.DELTA.read_bytes())
+        self.assertEqual(specification["consumer_source"], "7677cfbbe1395169403790307d3d9dd0fc25a43b")
+        with tempfile.TemporaryDirectory() as temporary:
+            consumer = Path(temporary) / "consumer"
+            consumer.mkdir()
+            self._extract_pinned_ott_snapshot(consumer)
+            policy_before = (consumer / ".release-policy.json").read_bytes()
+            preimage = {
+                str(path.relative_to(consumer)): path.read_bytes()
+                for path in consumer.rglob("*") if path.is_file()
+            }
+            changes = migration.render(consumer)
+            self.assertEqual(set(changes), set(specification["files"]))
+            for name, entry in specification["files"].items():
+                self.assertEqual(hashlib.sha256(changes[name].encode("utf-8")).hexdigest(),
+                                 entry["after_sha256"], name)
+            self.assertEqual({str(path.relative_to(consumer)): path.read_bytes()
+                              for path in consumer.rglob("*") if path.is_file()}, preimage)
+            migration.apply(consumer, changes)
+            self.assertEqual(migration.render(consumer), {})
+            self.assertEqual((consumer / ".release-policy.json").read_bytes(), policy_before)
+            for name, entry in specification["files"].items():
+                self.assertEqual(hashlib.sha256((consumer / name).read_bytes()).hexdigest(),
+                                 entry["after_sha256"], name)
+            self.assertEqual({str(path.relative_to(consumer)) for path in consumer.rglob("*") if path.is_file()},
+                             set(preimage) | set(specification["files"]))
+
+        with tempfile.TemporaryDirectory() as temporary:
+            wrong_base = Path(temporary) / "consumer"
+            wrong_base.mkdir()
+            self._extract_pinned_ott_snapshot(wrong_base)
+            changed = wrong_base / "scripts/release_control.py"
+            changed.write_bytes(changed.read_bytes() + b"\n# not the pinned base\n")
+            before = {str(path.relative_to(wrong_base)): path.read_bytes()
+                      for path in wrong_base.rglob("*") if path.is_file()}
+            with self.assertRaisesRegex(ValueError, "Unknown compact migration preimage"):
+                migration.render(wrong_base)
+            self.assertEqual({str(path.relative_to(wrong_base)): path.read_bytes()
+                              for path in wrong_base.rglob("*") if path.is_file()}, before)
+
     def test_source_pins_and_target_boundary(self):
         specification = json.loads(migration.DELTA.read_bytes())
         self.assertEqual(specification["consumer_source"], "7677cfbbe1395169403790307d3d9dd0fc25a43b")
@@ -287,7 +356,8 @@ class ShippedDistributionDeltaTests(unittest.TestCase):
             if name.endswith(".py"):
                 text = installer.consumer_python(text)
             for hunk in entry["hunks"]:
-                self.assertEqual(text.count(hunk["after"]), 1, name)
+                for fragment in hunk.get("canonical_fragments", [hunk["after"]]):
+                    self.assertEqual(text.count(fragment), 1, name)
         workflow = specification["files"]["docs/release-workflow.md"]
         self.assertEqual(workflow["after_sha256"],
                          "8d9576bd62cfeaaebe4dfde00e7bb512c875136c630b7bfdf2148dd00d2f9144")

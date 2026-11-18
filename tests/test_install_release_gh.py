@@ -75,6 +75,48 @@ class InstallReleaseGhTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "member"):
                 installer.binary_from_archive(raw, artifact)
 
+    def test_archive_member_must_be_canonical_relative_posix_path(self):
+        raw, artifact, _ = fixture()
+        for member in ("../gh", "/release/bin/gh", "release\\..\\gh", "release//bin/gh"):
+            with self.subTest(member=member):
+                invalid = dict(artifact, member=member)
+                with self.assertRaisesRegex(ValueError, "canonical and relative"):
+                    installer.binary_from_archive(raw, invalid)
+
+    def test_cli_paths_reject_parent_traversal_before_file_operations(self):
+        raw, artifact, _ = fixture()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with self.assertRaisesRegex(ValueError, "without parent traversal"):
+                installer.verify(root / ".." / "gh", artifact, "test")
+            with patch.object(installer, "download", return_value=raw) as download, \
+                    self.assertRaisesRegex(ValueError, "without parent traversal"):
+                installer.install(root / ".." / "gh", {"version": "test"}, artifact)
+            download.assert_not_called()
+
+    def test_install_rejects_symlink_escape_and_existing_symlink_output(self):
+        raw, artifact, _ = fixture()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            outside = Path.home() / "codex-installer-must-not-create"
+            escaped_parent = root / "outside"
+            escaped_parent.symlink_to(Path.home(), target_is_directory=True)
+            with patch.object(installer, "download", return_value=raw) as download, \
+                    self.assertRaisesRegex(ValueError, "inside the checkout or runner temp"):
+                installer.install(escaped_parent / "gh", {"version": "test"}, artifact)
+            download.assert_not_called()
+            self.assertFalse(outside.exists())
+
+            real_output = root / "real-gh"
+            real_output.write_bytes(b"preserve")
+            output_link = root / "gh"
+            output_link.symlink_to(real_output)
+            with patch.object(installer, "download", return_value=raw) as download, \
+                    self.assertRaisesRegex(ValueError, "cannot replace a symlink"):
+                installer.install(output_link, {"version": "test"}, artifact)
+            download.assert_not_called()
+            self.assertEqual(real_output.read_bytes(), b"preserve")
+
     def test_tampering_preserves_previous_installed_client(self):
         raw, artifact, _ = fixture()
         with tempfile.TemporaryDirectory() as directory:
@@ -92,12 +134,13 @@ class InstallReleaseGhTests(unittest.TestCase):
             output = Path(directory) / "gh"
             output.write_bytes(b"old")
 
-            def verify(candidate, actual_artifact, version):
+            def verify(candidate, actual_artifact, version, *, allow_temporary=False):
                 self.assertEqual(output.read_bytes(), b"old")
                 self.assertEqual(candidate.read_bytes(), binary)
                 self.assertEqual(candidate.stat().st_mode & 0o777, 0o755)
                 self.assertEqual(actual_artifact, artifact)
                 self.assertEqual(version, "test")
+                self.assertTrue(allow_temporary)
 
             with patch.object(installer, "download") as download, \
                     patch.object(installer, "verify", side_effect=verify):
@@ -158,6 +201,19 @@ class InstallReleaseGhTests(unittest.TestCase):
                 installer.install(output, {"version": "test"}, artifact, archive)
             self.assertEqual(output.read_bytes(), binary)
             self.assertEqual(sorted(p.name for p in Path(directory).iterdir()), ["download.tar.gz", "gh"])
+
+    def test_install_creates_missing_directory_inside_allowed_temp_root(self):
+        raw, artifact, binary = fixture()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            archive = root / "download.tar.gz"
+            archive.write_bytes(raw)
+            output = root / "new" / "nested" / "gh"
+            with patch.object(installer, "verify") as verify:
+                installer.install(output, {"version": "test"}, artifact, archive)
+            verify.assert_called_once()
+            self.assertTrue(output.is_file())
+            self.assertEqual(output.read_bytes(), binary)
 
     def test_archive_option_cannot_be_used_with_check(self):
         with patch.object(sys, "argv", ["install_release_gh.py", "--check", "/unused", "--archive", "/unused"]), \
