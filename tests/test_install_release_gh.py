@@ -8,7 +8,8 @@ import sys
 import tarfile
 import tempfile
 import unittest
-from unittest.mock import Mock, patch
+from types import SimpleNamespace
+from unittest.mock import patch
 import zipfile
 
 import yaml
@@ -217,7 +218,10 @@ class InstallReleaseGhTests(unittest.TestCase):
             output = runner_alias / "nested" / "gh"
             with patch.dict(os.environ, {"RUNNER_TEMP": str(runner_alias), "GODEBUG": "fips140=on"}), \
                     patch.object(installer.tempfile, "gettempdir", return_value=str(unrelated_temp)), \
-                    patch.object(installer.subprocess, "run", return_value=Mock(stdout="gh version test (fixture)\n")) as run:
+                    patch.object(
+                        installer, "run_process",
+                        return_value=SimpleNamespace(stdout=b"gh version test (fixture)\n"),
+                    ) as run:
                 installer.install(output, {"version": "test"}, artifact, archive)
             self.assertEqual(output.resolve(), (physical / "nested" / "gh").resolve())
             self.assertEqual(output.read_bytes(), binary)
@@ -272,7 +276,7 @@ class InstallReleaseGhTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "gh"
             path.write_bytes(binary)
-            with patch.object(installer.subprocess, "run") as run:
+            with patch.object(installer, "run_process") as run:
                 with patch.dict(os.environ, {"GODEBUG": "fips140=off"}), self.assertRaisesRegex(ValueError, "GODEBUG"):
                     installer.verify(path, artifact, "test")
                 path.write_bytes(raw)
@@ -282,8 +286,10 @@ class InstallReleaseGhTests(unittest.TestCase):
 
     def test_downloader_requires_exact_toolchain_before_network(self):
         for version in ("go1.27.3", "go1.27.40", "go1.28.0", "devel go1.27.4"):
-            with self.subTest(version=version), patch.object(installer.subprocess, "run") as run:
-                run.return_value.stdout = f"go version {version} linux/amd64\n"
+            with self.subTest(version=version), \
+                    patch.object(installer, "resolve_executable", return_value="/tools/go"), \
+                    patch.object(installer, "run_process") as run:
+                run.return_value = SimpleNamespace(stdout=f"go version {version} linux/amd64\n".encode())
                 with self.assertRaisesRegex(ValueError, "exactly Go 1.27.4"):
                     installer.download("https://example.invalid/test")
                 self.assertEqual(run.call_count, 1)
@@ -299,21 +305,23 @@ class InstallReleaseGhTests(unittest.TestCase):
                         "GOENV": "off", "CGO_ENABLED": "0", "GODEBUG": "fips140=on",
                         "GOMAXPROCS": "2", "GOFLAGS": "-p=2"}
             self.assertEqual({key: value for key, value in env.items() if key.startswith(("GO", "CGO"))}, expected)
-            if command == ["go", "version"]:
+            if command[1:] == ["version"]:
                 self.assertEqual(kwargs["timeout"], 15)
-                return Mock(stdout="go version go1.27.4 linux/amd64\n")
-            self.assertEqual(command[:3], ["go", "run", str(ROOT / "scripts/download_release_gh.go")])
-            self.assertEqual(command[3], "https://example.invalid/test")
+                return SimpleNamespace(stdout=b"go version go1.27.4 linux/amd64\n")
+            self.assertEqual(command[1:4], ["run", str(ROOT / "scripts/download_release_gh.go"),
+                                             "https://example.invalid/test"])
             self.assertEqual(kwargs["timeout"], 180)
+            self.assertEqual(Path(command[4]), Path(kwargs["cwd"]) / "artifact")
             self.assertEqual(Path(kwargs["cwd"]), Path(command[4]).parent)
             Path(command[4]).write_bytes(b"bounded synthetic archive")
-            return Mock()
+            return SimpleNamespace()
 
         with patch.dict(os.environ, {"GOTOOLCHAIN": "auto", "GODEBUG": "fips140=off", "GOPROXY": "private"}), \
-                patch.object(installer.subprocess, "run", side_effect=run) as subprocess_run:
+                patch.object(installer, "resolve_executable", return_value="/tools/go"), \
+                patch.object(installer, "run_process", side_effect=run) as process_run:
             self.assertEqual(installer.download("https://example.invalid/test"), b"bounded synthetic archive")
-        self.assertEqual(subprocess_run.call_count, 2)
-        self.assertFalse(Path(subprocess_run.call_args.args[0][4]).parent.exists())
+        self.assertEqual(process_run.call_count, 2)
+        self.assertFalse(Path(process_run.call_args.args[0][4]).parent.exists())
 
     def test_downloader_runtime_and_all_direct_producers_use_one_sdk(self):
         for name in ("download_release_gh.go", "download_release_gh_test.go"):

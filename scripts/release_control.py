@@ -32,12 +32,22 @@ from pathlib import Path
 from typing import BinaryIO, NamedTuple, TypedDict, cast
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
+if __package__:
+    from .async_process import (
+        ProcessOutputLimit, ProcessResult, ProcessTimeout, resolve_executable, run_process,
+    )
+else:
+    from async_process import (
+        ProcessOutputLimit, ProcessResult, ProcessTimeout, resolve_executable, run_process,
+    )
+
 WORKFLOW = ".github/workflows/release-pipeline.yml"
 GITHUB_HOSTNAME = "github.com"
 POSITIVE_INTEGER_PATTERN = r"[1-9]\d*"
 MANIFEST = "release-manifest.json"
 POLICY = ".release-policy.json"
 EVIDENCE = Path(".release-evidence") / MANIFEST
+INVALID_EXECUTION_CHECK_RUN_URL = "Invalid execution check-run URL"
 
 
 class AssetRestriction(TypedDict):
@@ -163,17 +173,21 @@ class CreateReadback:
         require(ordinary or page, "Invalid create readback path")
         require(not any(p in {".", ".."} for p in unquote(path).split("/")),
                 "Invalid create readback path")
+        require(self.remaining > 0, "Create readback response limit exceeded")
         self.calls += 1
         require(self.calls <= 100, "Create readback request limit exceeded")
         endpoint = f"repos/{self.repo}" + (f"/{path}" if path else "")
         try:
-            result = subprocess.run(  # nosec B603, B607
-                ["gh", "api", "--hostname", GITHUB_HOSTNAME, "--include",
+            result = run_process(
+                [resolve_executable("gh"), "api", "--hostname", GITHUB_HOSTNAME, "--include",
                  "--method", "GET", "--", endpoint],
-                capture_output=True, check=False, timeout=min(API_READ_TIMEOUT, self.check()),
+                check=False, timeout=min(API_READ_TIMEOUT, self.check()),
+                max_output_bytes=self.remaining,
             )
-        except subprocess.TimeoutExpired as error:
+        except (ProcessTimeout, subprocess.TimeoutExpired) as error:
             raise GitHubError("Create readback GET timed out") from error
+        except ProcessOutputLimit as error:
+            raise GitHubError("Create readback response limit exceeded") from error
         self.check()
         self.remaining -= len(result.stdout or b"") + len(result.stderr or b"")
         require(self.remaining >= 0, "Create readback response limit exceeded")
@@ -696,10 +710,11 @@ class GitHub:
         command = ["gh", "api", "--hostname", GITHUB_HOSTNAME, "--include",
                    "--method", "POST", "--input", "-", "--", f"{self.base}/releases"]
         try:
-            result = subprocess.run(  # nosec B603
-                command, input=json_bytes(body), capture_output=True, check=False, timeout=120,
+            result = run_process(
+                [resolve_executable(command[0]), *command[1:]], input=json_bytes(body),
+                check=False, timeout=120, max_output_bytes=64 * 1024 * 1024,
             )
-        except subprocess.TimeoutExpired as error:
+        except (ProcessTimeout, subprocess.TimeoutExpired) as error:
             if (self._denied_partial_read(error.stdout or b"", error.stderr or b"")
                     or re.match(rb"HTTP/(?:1\.[01]|2(?:\.0)?) 4\d\d(?:\s|$)", error.stdout or b"")):
                 raise GitHubError("Release create timed out with a denial") from error
@@ -745,9 +760,9 @@ class GitHub:
             "Publication token is missing or its permission probe is not enabled",
         )
         # Developer/CI toolchain selected by the invoking operator via PATH.
-        result = subprocess.run(  # nosec B603, B607
+        result = run_process(
             [
-                "gh",
+                resolve_executable("gh"),
                 "api",
                 "--hostname",
                 GITHUB_HOSTNAME,
@@ -757,8 +772,9 @@ class GitHub:
                 "--",
                 self.base,
             ],
-            capture_output=True,
             check=False,
+            timeout=API_READ_TIMEOUT,
+            max_output_bytes=64 * 1024 * 1024,
         )
         require(result.returncode == 0, "Publication token permission probe failed")
         headers, separator, body = result.stdout.replace(b"\r\n", b"\n").partition(
@@ -793,7 +809,7 @@ class GitHub:
 
     @staticmethod
     def response(
-        result: subprocess.CompletedProcess[bytes], operation: str = "",
+        result: ProcessResult, operation: str = "",
         http: tuple[int, bytes] | None = None,
     ) -> bytes:
         """Translate a completed fixed-form command without retrying failed writes."""
@@ -871,11 +887,11 @@ class GitHub:
                 return self._read_get(command, endpoint, timeout=API_BINARY_READ_TIMEOUT)
             return self._metadata_read(command, endpoint, mode == "pages")
         # Developer/CI toolchain selected by the invoking operator via PATH.
-        result = subprocess.run(  # nosec B603
-            command,
+        result = run_process(
+            [resolve_executable(command[0]), *command[1:]],
             input=json_bytes(body) if body is not None else None,
-            capture_output=True,
-            check=False,
+            check=False, timeout=API_READ_TIMEOUT,
+            max_output_bytes=64 * 1024 * 1024,
         )
         return self.response(result, f"{method} {endpoint}", github_http_response(result.stdout))
 
@@ -888,7 +904,7 @@ class GitHub:
         return bool(re.search(pattern, stderr.lower()))
 
     @classmethod
-    def _transient_read_failure(cls, result: subprocess.CompletedProcess[bytes]) -> bool:
+    def _transient_read_failure(cls, result: ProcessResult) -> bool:
         """Recognize transport loss only for a failed GET process."""
         stderr = result.stderr or b""
         return result.returncode == 1 and not cls._denied_read_diagnostic(stderr) and bool(
@@ -898,7 +914,7 @@ class GitHub:
         )
 
     @classmethod
-    def _transient_asset_failure(cls, result: subprocess.CompletedProcess[bytes]) -> bool:
+    def _transient_asset_failure(cls, result: ProcessResult) -> bool:
         """Allow only complete, non-denial diagnostics from a failed asset GET."""
         stderr = result.stderr or b""
         # At the capture limit, a later denial may have been discarded.
@@ -936,7 +952,7 @@ class GitHub:
         """Preserve the metadata adapter and its thirty-second attempt limit."""
         return self._read_get(command, endpoint, paginated, timeout=API_READ_TIMEOUT)
 
-    def _completed_read(self, result: subprocess.CompletedProcess[bytes], endpoint: str,
+    def _completed_read(self, result: ProcessResult, endpoint: str,
                         paginated: bool, final_attempt: bool) -> bytes | None:
         """Return complete bytes, or None only when another attempt is allowed."""
         transport = self._transient_read_failure(result)
@@ -965,10 +981,11 @@ class GitHub:
         for attempt in range(API_READ_ATTEMPTS):
             final_attempt = attempt == API_READ_ATTEMPTS - 1
             try:
-                result = subprocess.run(  # nosec B603
-                    command, input=None, capture_output=True, check=False, timeout=timeout,
+                result = run_process(
+                    [resolve_executable(command[0]), *command[1:]],
+                    check=False, timeout=timeout, max_output_bytes=64 * 1024 * 1024,
                 )
-            except subprocess.TimeoutExpired as error:
+            except (ProcessTimeout, subprocess.TimeoutExpired) as error:
                 if (self._denied_partial_read(error.stdout or b"", error.stderr or b"", paginated)
                         or final_attempt):
                     raise GitHubError(
@@ -1136,11 +1153,15 @@ class GitHub:
         require(self._upload_asset_identity(path) == expected,
                 f"{context}: staged asset changed before upload")
         try:
-            result = subprocess.run(  # nosec B603, B607
-                command, capture_output=True, check=False, timeout=ASSET_UPLOAD_TIMEOUT,
+            result = run_process(
+                [resolve_executable(command[0]), *command[1:]],
+                check=False, timeout=ASSET_UPLOAD_TIMEOUT,
             )
-        except subprocess.TimeoutExpired:
+        except (ProcessTimeout, subprocess.TimeoutExpired):
             return False, False, "timeout"
+        except ProcessOutputLimit:
+            # The write may have committed; only an exact inventory readback can resolve it.
+            return False, False, "response-limit"
         try:
             status, response = github_http_response(result.stdout or b"")
         except GitHubError:
@@ -1504,8 +1525,9 @@ def check_ancestry(gh: GitHub, sha: str, default_branch: str) -> None:
 def checked_out_sha() -> str:
     """Return the exact local commit used by the publication process."""
     # Developer/CI toolchain selected by the invoking operator via PATH.
-    result = subprocess.run(  # nosec B603, B607
-        ["git", "rev-parse", "HEAD"], text=True, capture_output=True, check=False
+    result = run_process(
+        [resolve_executable("git"), "rev-parse", "HEAD"],
+        text=True, check=False, timeout=15,
     )
     require(result.returncode == 0, "Must run from the checked-out release repository")
     return result.stdout.strip()
@@ -1960,13 +1982,13 @@ def require_executing_job_timing(
 
 def execution_check_url_id(value: object, repository: str) -> int:
     """Accept only GitHub's exact check route; repository casing is not identity."""
-    require(isinstance(value, str), "Invalid execution check-run URL")
+    require(isinstance(value, str), INVALID_EXECUTION_CHECK_RUN_URL)
     match = re.fullmatch(
         r"https://api\.github\.com/repos/([^/]+/[^/]+)/check-runs/([1-9]\d*)",
         cast(str, value), re.ASCII,
     )
-    require(match is not None, "Invalid execution check-run URL")
-    assert match is not None
+    if match is None:
+        raise ReleaseError(INVALID_EXECUTION_CHECK_RUN_URL)
     require(REPO_RE.fullmatch(match[1]) and match[1].casefold() == repository.casefold(),
             "Execution check-run repository mismatch")
     return int(match[2])

@@ -448,19 +448,27 @@ class AllocationTests(unittest.TestCase):
 
     def test_branch_creation_and_cas_requests_use_real_narrow_client(self):
         client = state.StateGitHub(REPO)
-        responses = [
-            legacy_tests.http_response(stdout=b'{"ref":"refs/heads/release-version-state"}'),
-            legacy_tests.http_response(stdout=b'{"content":{"sha":"' + SHA.encode() + b'"}}'),
-        ]
-        with patch.object(state.subprocess, "run", side_effect=responses) as run:
+        responses = [legacy_tests.http_response(stdout=b'{"ref":"refs/heads/release-version-state"}')]
+        ledger_response = legacy_tests.http_response(
+            stdout=b'{"content":{"sha":"' + SHA.encode() + b'"}}'
+        )
+        with (
+            patch.object(sys.modules["release_control"], "run_process", side_effect=responses) as run,
+            patch.object(state.subprocess, "run", return_value=ledger_response) as ledger_run,
+        ):
             client.api(
                 "git/refs", "POST", {"ref": "refs/heads/" + state.BRANCH, "sha": SHA}
             )
             state.write_state(client, {"schema": 1, "counter": 0, "plans": {}}, None)
         self.assertEqual(run.call_args_list[0].args[0][-1], f"repos/{REPO}/git/refs")
-        self.assertEqual(
-            json.loads(run.call_args_list[1].kwargs["input"])["branch"], state.BRANCH
-        )
+        self.assertEqual(ledger_run.call_count, 1)
+        expected_ledger = {"schema": 1, "counter": 0, "plans": {}}
+        expected_body = {
+            "branch": state.BRANCH,
+            "message": "Reserve release version plan",
+            "content": base64.b64encode(rc.json_bytes(expected_ledger)).decode(),
+        }
+        self.assertEqual(ledger_run.call_args.kwargs["input"], rc.json_bytes(expected_body))
         with (
             patch.object(state.subprocess, "run") as run,
             self.assertRaisesRegex(rc.ReleaseError, "branch mismatch"),
@@ -2142,17 +2150,26 @@ class LifecycleTests(unittest.TestCase):  # pylint: disable=too-many-public-meth
         with tempfile.TemporaryDirectory(prefix="release-versioned-") as temp:
             path = Path(temp).resolve() / "app.bin"
             path.write_bytes(b"package")
-            with patch.object(
-                rc.subprocess,
-                "run",
-                return_value=subprocess.CompletedProcess(
+            gh = rc.GitHub(REPO)
+            resolved_gh = "/reviewed/bin/gh"
+            with (
+                patch.object(rc, "resolve_executable", return_value=resolved_gh),
+                patch.object(
+                    rc,
+                    "run_process",
+                    return_value=subprocess.CompletedProcess(
                     [],
                     0,
                     b'HTTP/2.0 201 Created\r\n\r\n{"id": 10, "name": "app.bin", "state": "uploaded", "size": 7}',
                     b"",
-                ),
-            ) as run:
-                rc.GitHub(REPO).upload("v1.2.3-beta.1", path, release_id=11)
+                    ),
+                ) as run,
+                patch.object(gh, "pages", return_value=[
+                    {"id": 10, "name": "app.bin", "state": "uploaded", "size": 7}
+                ]),
+            ):
+                gh.upload("v1.2.3-beta.1", path, release_id=11)
+            self.assertEqual(run.call_args.args[0][0], resolved_gh)
             self.assertEqual(run.call_args.args[0][1:3], ["api", "--hostname"])
 
 

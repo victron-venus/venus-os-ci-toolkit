@@ -31,6 +31,18 @@ Transport, TLS, response-body, size, other HTTP status and later checksum or
 version failures are not retried. Publication writes keep their separate
 single-attempt policy.
 
+The release process supervisor supports Linux with Python 3.12 or newer and
+macOS with Python 3.13 or newer. macOS Python 3.12 does not expose the
+`waitid(WNOWAIT)` capability needed to retain process-group identity during
+cleanup. Unsupported operating-system/runtime combinations fail closed before
+starting a process. The supervisor owns the child PID synchronously, captures
+stdout and stderr under one aggregate byte limit, and starts each command in a
+process group so timeout or cancellation can reap the group before returning.
+Leader exit is observed without reaping its PID until the pipes and process-group
+cleanup are finished. Windows browser checks do not invoke this helper.
+The caller's command timeout starts after `Popen` returns, so time spent inside
+the operating system's process-creation call is outside that deadline.
+
 `--archive FILE --output PATH` installs an already downloaded archive without
 network access or a Go compiler. The same size, archive hash, native executable
 hash, FIPS runtime setting, version and atomic replacement checks still apply;

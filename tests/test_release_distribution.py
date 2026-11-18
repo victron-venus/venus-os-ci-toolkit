@@ -6,9 +6,9 @@ import hashlib
 import json
 import os
 from pathlib import Path
-import subprocess
 import sys
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
@@ -272,13 +272,16 @@ class CompactPromotionTests(unittest.TestCase):
             path = Path(argv[argv.index("--input") + 1])
             self.assertTrue(path.parent.name.startswith("release-promote-distribution-"))
             response = {"id": 900, "name": path.name, "state": "uploaded", "size": path.stat().st_size}
-            return subprocess.CompletedProcess(argv, 0, b"HTTP/2.0 201 Created\r\n\r\n" + encoded(response), b"")
+            return SimpleNamespace(
+                argv=tuple(argv), returncode=0,
+                stdout=b"HTTP/2.0 201 Created\r\n\r\n" + encoded(response), stderr=b"",
+            )
 
         def admitted_upload(tag, path, *, release_id):
             real_client.upload(tag, path, release_id=release_id)
             fake_upload(tag, path, release_id=release_id)
 
-        with patch.object(rc.subprocess, "run", side_effect=transport) as requests, patch.object(
+        with patch.object(rc, "run_process", side_effect=transport) as requests, patch.object(
             self.gh, "upload", side_effect=admitted_upload
         ):
             _, files = self.promoted_files(args)

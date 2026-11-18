@@ -92,6 +92,7 @@ COPY scripts/install_runner_browsers.py scripts/browser-toolchains.json /opt/vic
 COPY .github/containers/runner-browsers/ /opt/victron-image-build/browsers/.github/containers/runner-browsers/
 COPY .github/gh/release.json /tmp/reserve-gh/.github/gh/release.json
 COPY scripts/install_release_gh.py /tmp/reserve-gh/scripts/install_release_gh.py
+COPY scripts/async_process.py /tmp/reserve-gh/scripts/async_process.py
 COPY .github/containers/runner-npm.json /opt/victron-image-build/npm/.github/containers/runner-npm.json
 COPY scripts/install_runner_npm.py /opt/victron-image-build/npm/scripts/install_runner_npm.py
 COPY deploy/runner-reserve/qualify-npm.cjs /opt/victron-image-build/npm/qualify-npm.cjs

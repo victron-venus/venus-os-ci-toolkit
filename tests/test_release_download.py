@@ -613,7 +613,7 @@ class ReleaseDownloadTests(unittest.TestCase):
         for method, path, body in cases:
             with (
                 self.subTest(method=method),
-                patch.object(rc.subprocess, "run", return_value=self.failed_stream()) as run,
+                patch.object(rc, "run_process", return_value=self.failed_stream()) as run,
                 patch.object(rc.time, "sleep") as sleep,
                 self.assertRaises(rc.GitHubError),
             ):

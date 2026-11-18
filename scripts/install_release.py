@@ -1620,6 +1620,7 @@ def release_files(directory: Path, policy: dict) -> dict[str, str]:
         files.update(attempt_scoped_build_adapters(directory, policy))
     for path in ("scripts/install_release_gh.py", "scripts/download_release_gh.go", ".github/gh/release.json", ".github/gh/LICENSE", "docs/release-github-cli.md"):
         files[path] = (ROOT / path).read_text()
+    files["scripts/async_process.py"] = (ROOT / "scripts/async_process.py").read_text()
     files["scripts/release_validation.py"] = (ROOT / "scripts/release_validation.py").read_text()
     if policy.get("closed_build"):
         files["scripts/release_closed.py"] = (ROOT / "scripts/release_closed.py").read_text()
@@ -1764,6 +1765,15 @@ def release_files(directory: Path, policy: dict) -> dict[str, str]:
         (ROOT / "tests/test_release_control.py")
         .read_text()
         .replace(TEST_ROOT_EXPRESSION, VENDORED_TEST_ROOT_EXPRESSION)
+        .replace(
+            "Path(__file__).resolve().parents[1]",
+            "Path(__file__).resolve().parents[2]",
+        )
+    )
+    files[".github/release-tests/test_async_process.py"] = (
+        (ROOT / "tests/test_async_process.py")
+        .read_text()
+        .replace("Path(__file__).resolve().parents[1]", "Path(__file__).resolve().parents[2]")
     )
     files[".github/release-tests/test_github_missing_status.py"] = (
         ROOT / "tests/test_github_http_transport.py"

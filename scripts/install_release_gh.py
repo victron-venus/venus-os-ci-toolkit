@@ -10,10 +10,11 @@ import os
 from pathlib import Path, PurePosixPath
 import platform
 import stat
-import subprocess
 import tarfile
 import tempfile
 import zipfile
+
+from async_process import run_process, resolve_executable
 
 ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = ROOT / ".github/gh/release.json"
@@ -67,8 +68,8 @@ def _verify_executable_bytes(path: Path, artifact: dict, version: str) -> None:
         raise ValueError("Release CLI executable does not match the qualified native build")
     if os.environ.get("GODEBUG") != "fips140=on":
         raise ValueError("Release operations require exactly GODEBUG=fips140=on")
-    result = subprocess.run([str(path), "--version"], text=True, capture_output=True, check=True, timeout=15)
-    if not result.stdout.startswith(f"gh version {version} "):
+    result = run_process([str(path), "--version"], timeout=15)
+    if not result.stdout.startswith(f"gh version {version} ".encode()):
         raise ValueError("Release CLI version does not match the reviewed version")
 
 
@@ -104,13 +105,14 @@ def download(url: str) -> bytes:
     env = {key: value for key, value in os.environ.items() if not key.startswith(("GO", "CGO"))}
     env.update({"GOTOOLCHAIN": "local", "GO111MODULE": "off", "GOWORK": "off", "GOENV": "off",
                 "CGO_ENABLED": "0", "GODEBUG": "fips140=on", "GOMAXPROCS": "2", "GOFLAGS": "-p=2"})
-    result = subprocess.run(["go", "version"], env=env, text=True, capture_output=True, check=True, timeout=15)
-    if not result.stdout.startswith("go version go1.27.4 "):
+    go = resolve_executable("go")
+    result = run_process([go, "version"], env=env, timeout=15)
+    if not result.stdout.startswith(b"go version go1.27.4 "):
         raise ValueError("Release CLI downloader requires exactly Go 1.27.4")
     with tempfile.TemporaryDirectory(prefix="release-gh-download-") as directory:
         output = Path(directory) / "artifact"
-        subprocess.run(["go", "run", str(ROOT / "scripts/download_release_gh.go"), url, str(output)],
-                       env=env, cwd=directory, check=True, timeout=180)
+        run_process([go, "run", str(ROOT / "scripts/download_release_gh.go"), url, str(output)],
+                    env=env, cwd=directory, timeout=180)
         data = output.read_bytes()
     if len(data) > MAX_ARCHIVE:
         raise ValueError("Release CLI archive exceeded its size limit")
