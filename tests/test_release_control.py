@@ -10,6 +10,7 @@ import importlib.util
 import io
 import json
 import os
+import sys
 
 # Subprocess calls below use argument vectors with shell=False.
 import subprocess  # nosec B404
@@ -24,11 +25,24 @@ from itertools import product
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-SPEC = importlib.util.spec_from_file_location(
-    "release_control", Path(__file__).parents[1] / "scripts/release_control.py"
-)
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "scripts"))
+SPEC = importlib.util.spec_from_file_location("release_control", ROOT / "scripts/release_control.py")
 rc = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(rc)
+
+
+def setUpModule():
+    """Keep command fixtures concise while process-runner tests verify absolutes."""
+    global _resolver_patch
+    _resolver_patch = patch.object(rc, "resolve_executable", side_effect=lambda name: name)
+    _resolver_patch.start()
+
+
+def tearDownModule():
+    _resolver_patch.stop()
+
+
 # These fixtures model the original unsigned publication contract. Consumers may
 # opt into signatures; that boundary is exercised with enforcement enabled in
 # test_release_signing.py, rather than requiring Cosign/network access here.
@@ -84,7 +98,7 @@ class MetadataReadRetryTests(unittest.TestCase):
             failed.stdout = partial + b"\n" + failed.stdout
             with (
                 self.subTest(status=status, error_format=error_format),
-                patch.object(rc.subprocess, "run", side_effect=[
+                patch.object(rc, "run_process", side_effect=[
                     failed,
                     self.response(stdout=b'[{"id": 42}]'),
                 ]) as run,
@@ -100,7 +114,7 @@ class MetadataReadRetryTests(unittest.TestCase):
     def test_exhausted_reads_fail_without_becoming_missing(self):
         gh = rc.GitHub(REPO)
         with (
-            patch.object(rc.subprocess, "run", return_value=self.response(502)) as run,
+            patch.object(rc, "run_process", return_value=self.response(502)) as run,
             patch.object(rc.time, "sleep") as sleep,
             self.assertRaises(rc.GitHubError) as error,
         ):
@@ -115,7 +129,7 @@ class MetadataReadRetryTests(unittest.TestCase):
         for error_format in self.ERROR_FORMATS:
             with (
                 self.subTest(error_format=error_format),
-                patch.object(rc.subprocess, "run", side_effect=self.failed_request(
+                patch.object(rc, "run_process", side_effect=self.failed_request(
                     self.response(404, error_format=error_format).stderr, status=404,
                 )) as run,
                 patch.object(rc.time, "sleep") as sleep,
@@ -143,7 +157,7 @@ class MetadataReadRetryTests(unittest.TestCase):
         for message, attempts in cases:
             with (
                 self.subTest(message=message),
-                patch.object(rc.subprocess, "run", side_effect=self.failed_request(
+                patch.object(rc, "run_process", side_effect=self.failed_request(
                     message, status=502 if attempts == 3 else 403,
                 )) as run,
                 patch.object(rc.time, "sleep"),
@@ -156,7 +170,7 @@ class MetadataReadRetryTests(unittest.TestCase):
     def test_failed_write_uses_the_same_exact_missing_status(self):
         gh = rc.GitHub(REPO)
         with (
-            patch.object(rc.subprocess, "run", side_effect=self.failed_request(
+            patch.object(rc, "run_process", side_effect=self.failed_request(
                 b"gh: Authorization error mentions HTTP 404 (HTTP 403)",
                 method="POST", path="releases",
             )) as run,
@@ -185,7 +199,7 @@ class MetadataReadRetryTests(unittest.TestCase):
             ):
                 with self.subTest(message=message, operation=operation):
                     with (
-                        patch.object(rc.subprocess, "run", side_effect=self.failed_request(message)) as run,
+                        patch.object(rc, "run_process", side_effect=self.failed_request(message)) as run,
                         patch.object(rc.time, "sleep") as sleep,
                         self.assertRaises(rc.GitHubError) as error,
                     ):
@@ -197,7 +211,7 @@ class MetadataReadRetryTests(unittest.TestCase):
     def test_timeouts_are_bounded_and_do_not_expose_partial_output(self):
         gh = rc.GitHub(REPO)
         with (
-            patch.object(rc.subprocess, "run", side_effect=subprocess.TimeoutExpired(
+            patch.object(rc, "run_process", side_effect=subprocess.TimeoutExpired(
                 ["gh"], 30, output=b"private payload", stderr=b"private diagnostics"
             )) as run,
             patch.object(rc.time, "sleep") as sleep,
@@ -217,7 +231,7 @@ class MetadataReadRetryTests(unittest.TestCase):
         ):
             with (
                 self.subTest(status=status, error_format=error_format),
-                patch.object(rc.subprocess, "run", return_value=self.response(
+                patch.object(rc, "run_process", return_value=self.response(
                     status, error_format=error_format
                 )) as run,
                 patch.object(rc.time, "sleep") as sleep,
@@ -244,7 +258,7 @@ class MetadataReadRetryTests(unittest.TestCase):
         ):
             with (
                 self.subTest(message=message),
-                patch.object(rc.subprocess, "run", return_value=subprocess.CompletedProcess(
+                patch.object(rc, "run_process", return_value=subprocess.CompletedProcess(
                     [], 1, self.response(403).stdout, message,
                 )) as run,
                 patch.object(rc.time, "sleep") as sleep,
@@ -264,7 +278,7 @@ class MetadataReadRetryTests(unittest.TestCase):
         for (path, method, body, mode), error_format in product(cases, self.ERROR_FORMATS):
             with (
                 self.subTest(method=method, path=path, error_format=error_format),
-                patch.object(rc.subprocess, "run", return_value=self.response(
+                patch.object(rc, "run_process", return_value=self.response(
                     502, error_format=error_format
                 )) as run,
                 patch.object(rc.time, "sleep") as sleep,
@@ -273,7 +287,7 @@ class MetadataReadRetryTests(unittest.TestCase):
                 gh.request(path, method, body, mode)
             run.assert_called_once()
             sleep.assert_not_called()
-            self.assertNotIn("timeout", run.call_args.kwargs)
+            self.assertEqual(run.call_args.kwargs["timeout"], rc.API_READ_TIMEOUT)
 
 
 class WholeReadRecoveryTests(unittest.TestCase):
@@ -312,7 +326,7 @@ class WholeReadRecoveryTests(unittest.TestCase):
                 return self.failed(stdout=captured)
 
             with (
-                patch.object(rc.subprocess, "run", side_effect=capture) as run,
+                patch.object(rc, "run_process", side_effect=capture) as run,
                 patch.object(rc.time, "sleep", side_effect=assert_released) as sleep,
             ):
                 self.assertEqual(self.gh.binary(path), b"COMPLETE")
@@ -331,7 +345,7 @@ class WholeReadRecoveryTests(unittest.TestCase):
         for message in (b"unexpected EOF", b"EOF", b"connection reset by peer", b"i/o timeout",
                         b"TLS handshake timeout", b"context deadline exceeded", b"Client.Timeout exceeded",
                         b"server closed idle connection", b"use of closed network connection"):
-            with self.subTest(message=message), patch.object(rc.subprocess, "run", side_effect=[
+            with self.subTest(message=message), patch.object(rc, "run_process", side_effect=[
                     self.failed(message), http_response(stdout=b'{"id":7}')]) as run, patch.object(rc.time, "sleep"):
                 self.assertEqual(self.gh.api("releases/7"), {"id": 7})
                 self.assertEqual(run.call_count, 2)
@@ -341,7 +355,7 @@ class WholeReadRecoveryTests(unittest.TestCase):
         partial = self.failed(stdout=http_response(stdout=b"PARTIAL").stdout)
         payload = bytes(range(256)) + b"HTTP/2.0 404 body data"
         for path in ("releases/assets/7", "actions/artifacts/7/zip"):
-            with self.subTest(path=path), patch.object(rc.subprocess, "run", side_effect=[
+            with self.subTest(path=path), patch.object(rc, "run_process", side_effect=[
                     partial, http_response(stdout=payload)]) as run, patch.object(rc.time, "sleep"):
                 self.assertEqual(self.gh.binary(path), payload)
                 self.assertEqual(run.call_count, 2)
@@ -360,7 +374,7 @@ class WholeReadRecoveryTests(unittest.TestCase):
                 partial += f"HTTP/2.0 {status} body data".encode() + newline
                 result = (subprocess.TimeoutExpired(["gh"], 120, output=partial)
                           if failure == "timeout" else self.failed(stdout=partial))
-                with (patch.object(rc.subprocess, "run", side_effect=[
+                with (patch.object(rc, "run_process", side_effect=[
                     result, http_response(stdout=b"COMPLETE")]) as run,
                     patch.object(rc.time, "sleep") as sleep,
                     patch.object(rc, "_github_http_head", wraps=rc._github_http_head) as parse_header):
@@ -380,7 +394,7 @@ class WholeReadRecoveryTests(unittest.TestCase):
                 if complete_header:
                     partial += newline + b"partial response body"
                 result = subprocess.TimeoutExpired(["gh"], 30, output=partial)
-                with (patch.object(rc.subprocess, "run", side_effect=[result]) as run,
+                with (patch.object(rc, "run_process", side_effect=[result]) as run,
                       patch.object(rc.time, "sleep") as sleep):
                     with self.assertRaises(rc.GitHubError) as error:
                         self.gh.optional("releases/7")
@@ -398,7 +412,7 @@ class WholeReadRecoveryTests(unittest.TestCase):
                 partial += b"\n" + f"HTTP/2.0 {status} Denied\r\n".encode()
                 result = (subprocess.TimeoutExpired(["gh"], 30, output=partial)
                           if failure == "timeout" else self.failed(stdout=partial))
-                with (patch.object(rc.subprocess, "run", side_effect=[result]) as run,
+                with (patch.object(rc, "run_process", side_effect=[result]) as run,
                       patch.object(rc.time, "sleep") as sleep):
                     with self.assertRaises(rc.GitHubError) as error:
                         self.gh.pages("releases")
@@ -411,7 +425,7 @@ class WholeReadRecoveryTests(unittest.TestCase):
             with self.subTest(status=status):
                 body = json.dumps([{"text": f"body\nHTTP/2.0 {status} data"}]).encode()
                 result = subprocess.TimeoutExpired(["gh"], 30, output=http_response(stdout=body).stdout)
-                with (patch.object(rc.subprocess, "run", side_effect=[
+                with (patch.object(rc, "run_process", side_effect=[
                     result, http_response(stdout=b'[{"id":2}]')]) as run,
                     patch.object(rc.time, "sleep")):
                     self.assertEqual(self.gh.pages("releases"), [{"id": 2}])
@@ -420,7 +434,7 @@ class WholeReadRecoveryTests(unittest.TestCase):
     def test_timed_out_body_status_cannot_establish_optional_absence(self):
         partial = http_response(stdout=b'partial\nHTTP/2.0 404 body data').stdout
         result = subprocess.TimeoutExpired(["gh"], 30, output=partial)
-        with (patch.object(rc.subprocess, "run", side_effect=[
+        with (patch.object(rc, "run_process", side_effect=[
             result, http_response(stdout=b'{"id":7}')]) as run,
             patch.object(rc.time, "sleep")):
             self.assertEqual(self.gh.optional("releases/7"), {"id": 7})
@@ -436,7 +450,7 @@ class WholeReadRecoveryTests(unittest.TestCase):
                 with self.subTest(partial=partial, failure=failure):
                     result = (subprocess.TimeoutExpired(["gh"], 120, output=partial)
                               if failure == "timeout" else self.failed(stdout=partial))
-                    with (patch.object(rc.subprocess, "run", side_effect=[result]) as run,
+                    with (patch.object(rc, "run_process", side_effect=[result]) as run,
                           patch.object(rc.time, "sleep") as sleep):
                         with self.assertRaises(rc.GitHubError) as error:
                             self.gh.binary("releases/assets/7")
@@ -448,12 +462,12 @@ class WholeReadRecoveryTests(unittest.TestCase):
         for replies, expected_calls in (([http_response(stdout=b"")], 1),
                                         ([self.failed(), http_response(stdout=b"")], 2)):
             with self.subTest(expected_calls=expected_calls), patch.object(
-                    rc.subprocess, "run", side_effect=replies) as run, patch.object(rc.time, "sleep"):
+                    rc, "run_process", side_effect=replies) as run, patch.object(rc.time, "sleep"):
                 self.assertEqual(self.gh.binary("releases/assets/7"), b"")
                 self.assertEqual(run.call_count, expected_calls)
 
     def test_repeated_asset_timeouts_are_bounded(self):
-        with patch.object(rc.subprocess, "run", side_effect=subprocess.TimeoutExpired(
+        with patch.object(rc, "run_process", side_effect=subprocess.TimeoutExpired(
                 ["gh"], 120, output=b"partial")) as run, patch.object(rc.time, "sleep") as sleep:
             with self.assertRaises(rc.GitHubError):
                 self.gh.binary("releases/assets/7")
@@ -463,12 +477,12 @@ class WholeReadRecoveryTests(unittest.TestCase):
 
     def test_binary_5xx_retries_but_other_statuses_never_do(self):
         for status in (500, 502, 503, 504):
-            with self.subTest(status=status), patch.object(rc.subprocess, "run", side_effect=[
+            with self.subTest(status=status), patch.object(rc, "run_process", side_effect=[
                     http_response(status), http_response(stdout=b"good")]) as run, patch.object(rc.time, "sleep"):
                 self.assertEqual(self.gh.binary("releases/assets/7"), b"good")
                 self.assertEqual(run.call_count, 2)
         for status in (400, 401, 403, 404, 409, 422, 429, 501):
-            with self.subTest(status=status), patch.object(rc.subprocess, "run", return_value=http_response(status)) as run:
+            with self.subTest(status=status), patch.object(rc, "run_process", return_value=http_response(status)) as run:
                 with self.assertRaises(rc.GitHubError):
                     self.gh.binary("releases/assets/7")
                 run.assert_called_once()
@@ -492,13 +506,13 @@ class WholeReadRecoveryTests(unittest.TestCase):
         for message in (b"Unauthorized; unexpected EOF", b"unauthorised; i/o timeout", b"authorization failed; EOF", b"UNAUTHORIZED; unexpected EOF", b"requires authentication; unexpected EOF", b"bad credentials; i/o timeout",
                         b"x509 certificate error; unexpected EOF", b"permission denied; EOF", b"rate limit; EOF"):
             for result in (self.failed(message), subprocess.TimeoutExpired(["gh"], 30, stderr=message)):
-                with self.subTest(message=message, result=type(result).__name__), patch.object(rc.subprocess, "run", side_effect=[result]) as run:
+                with self.subTest(message=message, result=type(result).__name__), patch.object(rc, "run_process", side_effect=[result]) as run:
                     with self.assertRaises(rc.GitHubError):
                         self.gh.api("releases")
                     run.assert_called_once()
         for status in (401, 403, 404, 429):
             result = self.failed(stdout=f"HTTP/2.0 {status} Denied\r\n".encode())
-            with self.subTest(status=status), patch.object(rc.subprocess, "run", return_value=result) as run:
+            with self.subTest(status=status), patch.object(rc, "run_process", return_value=result) as run:
                 with self.assertRaises(rc.GitHubError) as error:
                     self.gh.optional("releases/7")
                 self.assertFalse(error.exception.not_found)
@@ -506,12 +520,12 @@ class WholeReadRecoveryTests(unittest.TestCase):
 
     def test_successful_exit_with_malformed_content_never_retries(self):
         for result in (self.failed(code=0), http_response(stdout=b"{broken")):
-            with self.subTest(result=result), patch.object(rc.subprocess, "run", return_value=result) as run:
+            with self.subTest(result=result), patch.object(rc, "run_process", return_value=result) as run:
                 with self.assertRaises(rc.ReleaseError):
                     self.gh.api("releases")
                 run.assert_called_once()
         malformed = http_response(stdout=b'[]\nHTTP/2.0 200 OK\r\n\r\n{broken')
-        with patch.object(rc.subprocess, "run", return_value=malformed) as run:
+        with patch.object(rc, "run_process", return_value=malformed) as run:
             with self.assertRaises(rc.GitHubError):
                 self.gh.pages("releases")
             run.assert_called_once()
@@ -519,14 +533,14 @@ class WholeReadRecoveryTests(unittest.TestCase):
     def test_unknown_cli_failures_and_success_code_5xx_never_retry(self):
         for result in (self.failed(b"unknown CLI failure"), self.failed(b"unexpected EOF", code=2),
                        self.failed(stdout=http_response(503).stdout, code=0)):
-            with self.subTest(result=result), patch.object(rc.subprocess, "run", return_value=result) as run:
+            with self.subTest(result=result), patch.object(rc, "run_process", return_value=result) as run:
                 with self.assertRaises(rc.GitHubError):
                     self.gh.api("releases")
                 run.assert_called_once()
 
     def test_transport_retry_discards_all_paginated_prefixes(self):
         partial = self.failed(stdout=http_response(stdout=b'[{"id":1}]\nHTTP/2.0 200 OK\r\n').stdout)
-        with patch.object(rc.subprocess, "run", side_effect=[partial, http_response(stdout=b'[{"id":2}]')]) as run, patch.object(rc.time, "sleep"):
+        with patch.object(rc, "run_process", side_effect=[partial, http_response(stdout=b'[{"id":2}]')]) as run, patch.object(rc.time, "sleep"):
             self.assertEqual(self.gh.pages("releases"), [{"id": 2}])
             self.assertEqual(run.call_count, 2)
 
@@ -535,7 +549,7 @@ class WholeReadRecoveryTests(unittest.TestCase):
             stdout=b'[{"id":1}]',
             link=b'<https://api.github.com/repos/example/project/releases?per_page=100&page=2>; rel=next',
         )
-        with patch.object(rc.subprocess, "run", return_value=first):
+        with patch.object(rc, "run_process", return_value=first):
             with self.assertRaisesRegex(rc.GitHubError, "before the advertised terminal page"):
                 rc.GitHub(REPO).pages("releases")
 
@@ -545,7 +559,7 @@ class WholeReadRecoveryTests(unittest.TestCase):
             link=b'<https://api.github.com/repos/example/project/releases?per_page=100&page=2>; rel=next',
         ).stdout
         second = http_response(stdout=b'[{"id":2}]').stdout
-        with patch.object(rc.subprocess, "run", return_value=subprocess.CompletedProcess(
+        with patch.object(rc, "run_process", return_value=subprocess.CompletedProcess(
             [], 0, first + b"\n" + second, b"",
         )):
             self.assertEqual(rc.GitHub(REPO).pages("releases"), [{"id": 1}, {"id": 2}])
@@ -553,7 +567,7 @@ class WholeReadRecoveryTests(unittest.TestCase):
     def test_paginated_response_rejects_unadvertised_later_page(self):
         first = http_response(stdout=b'[{"id":1}]').stdout
         second = http_response(stdout=b'[{"id":2}]').stdout
-        with patch.object(rc.subprocess, "run", return_value=subprocess.CompletedProcess(
+        with patch.object(rc, "run_process", return_value=subprocess.CompletedProcess(
             [], 0, first + b"\n" + second, b"",
         )):
             with self.assertRaisesRegex(rc.GitHubError, "unadvertised response page"):
@@ -597,14 +611,14 @@ class JobPaginationTests(unittest.TestCase):
             self.assertIn("--paginate", command)
             return self.response(jobs)
 
-        with patch.object(rc.subprocess, "run", side_effect=service), patch.object(rc.time, "sleep"):
+        with patch.object(rc, "run_process", side_effect=service), patch.object(rc.time, "sleep"):
             self.assertEqual(gh.pages("actions/runs/17/attempts/1/jobs", "jobs"), jobs)
             rc.validate_run(gh, run(), {"default_branch": "main"}, SHA, 1, completed=True)
 
     def test_failed_last_page_gate_still_blocks_publication(self):
         jobs = self.jobs()
         jobs[-1]["conclusion"] = "failure"
-        with patch.object(rc.subprocess, "run", return_value=self.response(jobs)):
+        with patch.object(rc, "run_process", return_value=self.response(jobs)):
             with self.assertRaisesRegex(rc.ReleaseError, "successful, completed Release gate"):
                 rc.validate_run(rc.GitHub(REPO), run(), {"default_branch": "main"}, SHA, 1, completed=True)
 
@@ -616,7 +630,7 @@ class JobPaginationTests(unittest.TestCase):
         ).stdout + b"\n" + failed.stdout
         for recover in (False, True):
             responses = [failed, self.response(self.jobs())] if recover else [failed] * 3
-            with self.subTest(recover=recover), patch.object(rc.subprocess, "run", side_effect=responses) as command, patch.object(rc.time, "sleep"):
+            with self.subTest(recover=recover), patch.object(rc, "run_process", side_effect=responses) as command, patch.object(rc.time, "sleep"):
                 if recover:
                     self.assertEqual(rc.GitHub(REPO).pages("actions/runs/17/attempts/1/jobs", "jobs"), self.jobs())
                 else:
@@ -626,7 +640,7 @@ class JobPaginationTests(unittest.TestCase):
                 self.assertTrue(all(call.args[0][-1].endswith("/jobs?per_page=20") for call in command.call_args_list))
 
     def test_other_paginated_metadata_keeps_its_page_size(self):
-        with patch.object(rc.subprocess, "run", return_value=http_response(stdout=b"[]")) as command:
+        with patch.object(rc, "run_process", return_value=http_response(stdout=b"[]")) as command:
             self.assertEqual(rc.GitHub(REPO).pages("releases"), [])
         self.assertEqual(command.call_args.args[0][-1], f"repos/{REPO}/releases?per_page=100")
 
@@ -1503,7 +1517,7 @@ class PublicationPermissionTests(unittest.TestCase):
         """Consumers that did not opt in preserve their GITHUB_TOKEN behavior."""
         with (
             patch.dict(os.environ, {"RELEASE_REQUIRE_WORKFLOW_SCOPE": ""}),
-            patch.object(rc.subprocess, "run") as command,
+            patch.object(rc, "run_process") as command,
         ):
             gh = rc.GitHub(REPO)
         self.assertFalse(gh.workflow_scope_verified)
@@ -1523,7 +1537,7 @@ class PublicationPermissionTests(unittest.TestCase):
                     },
                 ),
                 patch.object(
-                    rc.subprocess, "run", return_value=self.probe(scopes)
+                    rc, "run_process", return_value=self.probe(scopes)
                 ) as command,
             ):
                 gh = rc.GitHub(REPO)
@@ -1567,7 +1581,7 @@ class PublicationPermissionTests(unittest.TestCase):
                         "RELEASE_REQUIRE_WORKFLOW_SCOPE": "true",
                     },
                 ),
-                patch.object(rc.subprocess, "run", return_value=response) as command,
+                patch.object(rc, "run_process", return_value=response) as command,
                 self.assertRaises(rc.ReleaseError),
             ):
                 rc.GitHub(REPO)
@@ -1582,7 +1596,7 @@ class PublicationPermissionTests(unittest.TestCase):
                 os.environ,
                 {"GH_TOKEN": "", "RELEASE_REQUIRE_WORKFLOW_SCOPE": "true"},  # nosec B105
             ),
-            patch.object(rc.subprocess, "run") as command,
+            patch.object(rc, "run_process") as command,
             self.assertRaises(rc.ReleaseError),
         ):
             rc.GitHub(REPO)
@@ -1596,7 +1610,7 @@ class PublicationPermissionTests(unittest.TestCase):
                 # Deliberate test credential, never used for authentication.
                 {"GH_TOKEN": "test-secret", "RELEASE_REQUIRE_WORKFLOW_SCOPE": "true"},  # nosec B105
             ),
-            patch.object(rc.subprocess, "run", return_value=self.probe()) as command,
+            patch.object(rc, "run_process", return_value=self.probe()) as command,
         ):
             gh = rc.GitHub(REPO)
             command.return_value = self.probe("repo")
@@ -1615,7 +1629,7 @@ class PublicationPermissionTests(unittest.TestCase):
                 # Deliberate test credential, never used for authentication.
                 {"GH_TOKEN": "test-secret", "RELEASE_REQUIRE_WORKFLOW_SCOPE": "true"},  # nosec B105
             ),
-            patch.object(rc.subprocess, "run", return_value=response),
+            patch.object(rc, "run_process", return_value=response),
             self.assertRaises(rc.ReleaseError) as error,
         ):
             rc.GitHub(REPO)
@@ -1629,8 +1643,7 @@ class PublicationPermissionTests(unittest.TestCase):
             gh = rc.GitHub(REPO)
         with (
             patch.object(
-                rc.subprocess,
-                "run",
+                rc, "run_process",
                 return_value=http_response(
                     403, b"private body",
                     "gh: Resource not accessible by integration (HTTP {status})",
@@ -1766,7 +1779,7 @@ class TransportTests(unittest.TestCase):
         ):
             with (
                 self.subTest(path=path, method=method),
-                patch.object(rc.subprocess, "run") as command,
+                patch.object(rc, "run_process") as command,
                 self.assertRaises(rc.ReleaseError),
             ):
                 gh.api(path, method, body)
@@ -1787,7 +1800,7 @@ class TransportTests(unittest.TestCase):
         cases += [("actions/runs/123/attempts/2", method, {})
                   for method in ("POST", "PATCH", "PUT", "DELETE")]
         for path, method, body in cases:
-            with self.subTest(path=path, method=method), patch.object(rc.subprocess, "run") as command:
+            with self.subTest(path=path, method=method), patch.object(rc, "run_process") as command:
                 with self.assertRaises(rc.ReleaseError):
                     gh.request(path, method, body)
                 command.assert_not_called()
@@ -1797,7 +1810,7 @@ class TransportTests(unittest.TestCase):
         gh = rc.GitHub(REPO)
         body = {"body": "--hostname evil.com --clobber #label"}
         with patch.object(
-            rc.subprocess, "run", return_value=http_response()
+            rc, "run_process", return_value=http_response()
         ) as command:
             gh.api("")
             gh.api("releases", "POST", body)
@@ -1844,7 +1857,7 @@ class TransportTests(unittest.TestCase):
             f"compare/{SHA}...feature%2Fbranch",
         ]
         with patch.object(
-            rc.subprocess, "run", return_value=http_response()
+            rc, "run_process", return_value=http_response()
         ) as command:
             for path in paths:
                 gh.api(path)
@@ -1881,7 +1894,7 @@ class TransportTests(unittest.TestCase):
             for tag, path in invalid:
                 with (
                     self.subTest(tag=tag, path=path),
-                    patch.object(rc.subprocess, "run") as command,
+                    patch.object(rc, "run_process") as command,
                     self.assertRaises(rc.ReleaseError),
                 ):
                     gh.upload(tag, path, release_id=10)
@@ -1895,8 +1908,7 @@ class TransportTests(unittest.TestCase):
             asset.write_bytes(b"package")
             with (
                 patch.object(
-                    rc.subprocess,
-                    "run",
+                    rc, "run_process",
                     return_value=subprocess.CompletedProcess(
                         [], 1, stderr=b"HTTP 422 already_exists"
                     ),
@@ -1921,7 +1933,6 @@ class TransportTests(unittest.TestCase):
                     "--",
                     f"https://uploads.github.com/repos/{REPO}/releases/10/assets?name=package.tar.gz",
                 ],
-                capture_output=True,
                 check=False,
                 timeout=rc.ASSET_UPLOAD_TIMEOUT,
             )
@@ -1945,7 +1956,7 @@ class TransportTests(unittest.TestCase):
                 ).encode(),
                 b"",
             )
-            with patch.object(rc.subprocess, "run", return_value=response) as command:
+            with patch.object(rc, "run_process", return_value=response) as command:
                 gh.upload(RC_TAG, asset, release_id=42)
             command.assert_called_once()
             args = command.call_args.args[0]
@@ -1965,7 +1976,7 @@ class TransportTests(unittest.TestCase):
             for release_id in (0, -1, True, "01", "42/assets?other=1", None):
                 with (
                     self.subTest(release_id=release_id),
-                    patch.object(rc.subprocess, "run") as command,
+                    patch.object(rc, "run_process") as command,
                 ):
                     with self.assertRaises(rc.ReleaseError):
                         rc.GitHub(REPO).upload(RC_TAG, asset, release_id=release_id)
@@ -1980,7 +1991,7 @@ class TransportTests(unittest.TestCase):
             )
             gh = rc.GitHub(REPO)
             with (
-                patch.object(rc.subprocess, "run", side_effect=timeout) as command,
+                patch.object(rc, "run_process", side_effect=timeout) as command,
                 patch.object(gh, "pages", return_value=[]) as inventory,
             ):
                 with self.assertRaises(rc.GitHubError) as caught:
@@ -2018,7 +2029,7 @@ class TransportTests(unittest.TestCase):
                 with (
                     self.subTest(status=status, body=body),
                     patch.object(
-                        rc.subprocess, "run", return_value=response
+                        rc, "run_process", return_value=response
                     ) as command,
                     patch.object(gh, "pages", return_value=[]),
                 ):
@@ -2043,7 +2054,7 @@ class TransportTests(unittest.TestCase):
 
             gh = rc.GitHub(REPO)
             with (
-                patch.object(rc.subprocess, "run", side_effect=mutate_after_post) as post,
+                patch.object(rc, "run_process", side_effect=mutate_after_post) as post,
                 patch.object(gh, "pages", return_value=[]) as inventory,
                 self.assertRaisesRegex(
                     rc.GitHubError,
@@ -2074,8 +2085,7 @@ class TransportTests(unittest.TestCase):
                     gh, "upload", side_effect=accepted_upload_then_failed_response
                 ) as upload,
                 patch.object(
-                    rc.subprocess,
-                    "run",
+                    rc, "run_process",
                     return_value=subprocess.CompletedProcess(
                         [], 1, b"private response body", b"unexpected end of JSON input"
                     ),
@@ -2111,7 +2121,7 @@ class TransportTests(unittest.TestCase):
                 gh = rc.GitHub(REPO)
                 with (
                     self.subTest(stdout=stdout),
-                    patch.object(rc.subprocess, "run", return_value=response) as command,
+                    patch.object(rc, "run_process", return_value=response) as command,
                     patch.object(gh, "pages", return_value=[]),
                 ):
                     with self.assertRaises(rc.GitHubError) as error:
@@ -2131,7 +2141,7 @@ class TransportTests(unittest.TestCase):
             }
             gh = rc.GitHub(REPO)
             with (
-                patch.object(rc.subprocess, "run", return_value=subprocess.CompletedProcess(
+                patch.object(rc, "run_process", return_value=subprocess.CompletedProcess(
                     [], 0, b"HTTP/2.0 201 Created\r\n\r\n{malformed", b"")) as post,
                 patch.object(gh, "pages", return_value=[entry]) as inventory,
             ):
@@ -2149,7 +2159,7 @@ class TransportTests(unittest.TestCase):
             }
             gh = rc.GitHub(REPO)
             with (
-                patch.object(rc.subprocess, "run", return_value=http_response(500)) as post,
+                patch.object(rc, "run_process", return_value=http_response(500)) as post,
                 patch.object(gh, "pages", return_value=[entry]) as inventory,
             ):
                 gh.upload(RC_TAG, asset, release_id=42)
@@ -2170,7 +2180,7 @@ class TransportTests(unittest.TestCase):
             )
             gh = rc.GitHub(REPO)
             with (
-                patch.object(rc.subprocess, "run", side_effect=[
+                patch.object(rc, "run_process", side_effect=[
                     http_response(500), created_response,
                 ]) as post,
                 patch.object(gh, "pages", return_value=[]) as inventory,
@@ -2190,7 +2200,7 @@ class TransportTests(unittest.TestCase):
             }
             gh = rc.GitHub(REPO)
             with (
-                patch.object(rc.subprocess, "run", side_effect=[
+                patch.object(rc, "run_process", side_effect=[
                     http_response(500), http_response(422),
                 ]) as post,
                 patch.object(gh, "pages", side_effect=[[], [entry]]) as inventory,
@@ -2214,7 +2224,7 @@ class TransportTests(unittest.TestCase):
             ).stdout
             pages = first_page + b"\n" + later_page
             gh = rc.GitHub(REPO)
-            with patch.object(rc.subprocess, "run", side_effect=[
+            with patch.object(rc, "run_process", side_effect=[
                 http_response(500),
                 subprocess.CompletedProcess([], 0, pages, b""),
             ]) as command:
@@ -2234,7 +2244,7 @@ class TransportTests(unittest.TestCase):
             pages = first_page + b"\n" + denied_page
             gh = rc.GitHub(REPO)
             with (
-                patch.object(rc.subprocess, "run", side_effect=[
+                patch.object(rc, "run_process", side_effect=[
                     http_response(502),
                     subprocess.CompletedProcess([], 1, pages, b"HTTP 403 private"),
                 ]) as command,
@@ -2257,7 +2267,7 @@ class TransportTests(unittest.TestCase):
             (stage / "package.bin").write_bytes(b"candidate bytes")
             with (
                 patch.object(gh, "upload", side_effect=reconcile_upload),
-                patch.object(rc.subprocess, "run", side_effect=[
+                patch.object(rc, "run_process", side_effect=[
                     http_response(503), http_response(500),
                 ]) as posts,
                 patch.object(client, "pages", side_effect=[[], []]) as inventories,
@@ -2284,7 +2294,7 @@ class TransportTests(unittest.TestCase):
                     if expected_posts == 2:
                         responses.append(http_response(422))
                     with (
-                        patch.object(rc.subprocess, "run", side_effect=responses) as post,
+                        patch.object(rc, "run_process", side_effect=responses) as post,
                         patch.object(gh, "pages", return_value=[]),
                         self.assertRaises(rc.GitHubError),
                     ):
@@ -2306,7 +2316,7 @@ class TransportTests(unittest.TestCase):
                     gh = rc.GitHub(REPO)
                     with (
                         patch.object(
-                            rc.subprocess, "run",
+                            rc, "run_process",
                             side_effect=failure if isinstance(failure, BaseException) else None,
                             return_value=None if isinstance(failure, BaseException) else failure,
                         ) as post,
@@ -2328,7 +2338,7 @@ class TransportTests(unittest.TestCase):
             }
             gh = rc.GitHub(REPO)
             with (
-                patch.object(rc.subprocess, "run", return_value=http_response(422)) as post,
+                patch.object(rc, "run_process", return_value=http_response(422)) as post,
                 patch.object(gh, "pages", return_value=[entry]) as inventory,
                 self.assertRaisesRegex(rc.GitHubError, "reconciliation=failed"),
             ):
@@ -2342,7 +2352,7 @@ class TransportTests(unittest.TestCase):
             asset.write_bytes(b"package")
             gh = rc.GitHub(REPO)
             with (
-                patch.object(rc.subprocess, "run", return_value=http_response(502)) as post,
+                patch.object(rc, "run_process", return_value=http_response(502)) as post,
                 patch.object(gh, "pages", return_value=[{
                     "id": 91, "name": "package.tar.gz", "state": "uploaded", "size": 7,
                 }]),
@@ -2374,7 +2384,7 @@ class TransportTests(unittest.TestCase):
                 with self.subTest(inventory=inventory_items):
                     gh = rc.GitHub(REPO)
                     with (
-                        patch.object(rc.subprocess, "run", return_value=http_response(502)) as post,
+                        patch.object(rc, "run_process", return_value=http_response(502)) as post,
                         patch.object(gh, "pages", return_value=inventory_items),
                         self.assertRaises(rc.GitHubError),
                     ):
@@ -2419,7 +2429,7 @@ class TransportTests(unittest.TestCase):
                 return []
 
             with (
-                patch.object(rc.subprocess, "run", return_value=http_response(503)) as post,
+                patch.object(rc, "run_process", return_value=http_response(503)) as post,
                 patch.object(gh, "pages", side_effect=remove_during_inventory),
                 self.assertRaisesRegex(
                     rc.GitHubError,
@@ -2439,7 +2449,7 @@ class TransportTests(unittest.TestCase):
                 asset.write_bytes(b"changed")
                 return []
             with (
-                patch.object(rc.subprocess, "run", return_value=http_response(503)) as post,
+                patch.object(rc, "run_process", return_value=http_response(503)) as post,
                 patch.object(gh, "pages", side_effect=absent_then_mutate),
                 self.assertRaisesRegex(rc.GitHubError, "reconciliation=failed"),
             ):
@@ -2452,7 +2462,7 @@ class TransportTests(unittest.TestCase):
             asset.write_bytes(b"package")
             gh = rc.GitHub(REPO)
             with (
-                patch.object(rc.subprocess, "run", side_effect=[
+                patch.object(rc, "run_process", side_effect=[
                     http_response(502), http_response(503),
                 ]) as post,
                 patch.object(gh, "pages", return_value=[]),
@@ -2472,7 +2482,7 @@ class TransportTests(unittest.TestCase):
             asset.write_bytes(b"package")
             gh = rc.GitHub(REPO)
             with (
-                patch.object(rc.subprocess, "run", return_value=http_response(502)) as post,
+                patch.object(rc, "run_process", return_value=http_response(502)) as post,
                 patch.object(gh, "pages", side_effect=rc.GitHubError(
                     "private response and signed URL"
                 )),
@@ -2495,7 +2505,7 @@ class TransportTests(unittest.TestCase):
             def stream_exact(_path, output):
                 output.write(b"package")
             with (
-                patch.object(rc.subprocess, "run", return_value=http_response(503)) as post,
+                patch.object(rc, "run_process", return_value=http_response(503)) as post,
                 patch.object(gh, "pages", return_value=[entry]),
                 patch.object(gh, "download_asset", side_effect=stream_exact) as download,
             ):
@@ -2621,7 +2631,7 @@ class OfflineValidationTests(unittest.TestCase):
                 data = b"release asset"
             return http_response(stdout=data)
 
-        with patch.object(rc.subprocess, "run", side_effect=service):
+        with patch.object(rc, "run_process", side_effect=service):
             self.assertEqual(gh.binary("actions/artifacts/40/zip"), b"zip archive")
             self.assertEqual(gh.binary("releases/assets/21"), b"release asset")
             with self.assertRaises(rc.ReleaseError):
@@ -2740,8 +2750,7 @@ class OfflineValidationTests(unittest.TestCase):
         """Pagination keeps gate on later pages."""
         gh = rc.GitHub(REPO)
         with patch.object(
-            rc.subprocess,
-            "run",
+            rc, "run_process",
             return_value=subprocess.CompletedProcess(
                 [],
                 0,
@@ -3291,7 +3300,7 @@ class SupersededCandidateTests(unittest.TestCase):
             f"?branch=main&event=push&head_sha={self.head}&per_page=100"
         )
         result = http_response(stdout=b'{"total_count":0,"workflow_runs":[]}')
-        with patch.object(rc.subprocess, "run", return_value=result) as command:
+        with patch.object(rc, "run_process", return_value=result) as command:
             client.api(path)
             self.assertEqual(command.call_args.args[0][-1], f"repos/{REPO}/{path}")
         for invalid in (
@@ -3435,7 +3444,7 @@ class CurrentAttemptFreshnessTests(unittest.TestCase):
         """Exercise API shape validation as well as the execution-time guard."""
         with (
             patch.dict(os.environ, {"RELEASE_REQUIRE_WORKFLOW_SCOPE": ""}),
-            patch.object(rc.subprocess, "run", return_value=http_response(
+            patch.object(rc, "run_process", return_value=http_response(
                 0, rc.json_bytes(self.detail)
             )) as command,
         ):

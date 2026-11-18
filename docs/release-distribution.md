@@ -68,6 +68,10 @@ remain absent. It does not enable `stable_distribution`; review that policy
 change separately. Do not invoke the broad renderer on a consumer whose
 accepted RC depends on unchanged workflows.
 
+This narrow backport preserves the existing consumer's process-execution
+implementation. The bounded async process helper belongs to the complete
+renderer only; this targeted path does not install or claim that helper.
+
 All preimages are checked before writes. New contents are staged and synced,
 then each destination is replaced by an atomic rename; caught write failures
 roll back already replaced files. A process crash is not a multi-file atomic

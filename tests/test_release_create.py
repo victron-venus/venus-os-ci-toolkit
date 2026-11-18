@@ -28,7 +28,7 @@ class CreateTransportTests(unittest.TestCase):
     def call(self, status, content=b'{}', code=0, stderr=b''):
         raw = wire(status, content) if status else content
         result = subprocess.CompletedProcess([], code, raw, stderr)
-        with patch.object(rc.subprocess, "run", return_value=result) as call:
+        with patch.object(rc, "run_process", return_value=result) as call:
             try:
                 return self.gh.create_release_once({"draft": True})
             finally:
@@ -66,7 +66,7 @@ class CreateTransportTests(unittest.TestCase):
         for diagnostic in (b'', b'permission denied'):
             error = subprocess.TimeoutExpired(['gh'], 120, stderr=diagnostic)
             expected = rc.GitHubError if diagnostic else rc.AmbiguousCreate
-            with patch.object(rc.subprocess, 'run', side_effect=error) as call:
+            with patch.object(rc, 'run_process', side_effect=error) as call:
                 with self.assertRaises(expected) as caught:
                     self.gh.create_release_once({"draft": True})
                 call.assert_called_once()
@@ -82,7 +82,7 @@ class ReadbackTests(unittest.TestCase):
         self.reader.deadline = 115
         response = subprocess.CompletedProcess([], 0, wire(200, b'{"id":42}'), b'')
         with (patch.object(rc.time, 'monotonic', side_effect=[100, 101]),
-              patch.object(rc.subprocess, 'run', return_value=response) as call):
+              patch.object(rc, 'run_process', return_value=response) as call):
             self.assertEqual(self.reader.json('releases/42'), {'id': 42})
         args, kwargs = call.call_args
         self.assertEqual(args[0][args[0].index('--method') + 1], 'GET')
@@ -108,7 +108,7 @@ class ReadbackTests(unittest.TestCase):
                 first = b'HTTP/2.0 200 OK\r\n' + header + b'\r\n[{"id":1}]'
                 responses = [subprocess.CompletedProcess([], 0, raw, b'')
                              for raw in (first, wire(200, b'[{"id":2}]'))]
-                with patch.object(rc.subprocess, 'run', side_effect=responses) as run:
+                with patch.object(rc, 'run_process', side_effect=responses) as run:
                     self.assertEqual(rc.CreateReadback(repo).pages(path), [{'id': 1}, {'id': 2}])
                 self.assertEqual([call.args[0][-1] for call in run.call_args_list], [
                     f'repos/{repo}/{path}?per_page=100&page=1',
@@ -150,22 +150,22 @@ class ReadbackTests(unittest.TestCase):
 
     def test_one_clock_request_and_byte_bounds(self):
         with patch.object(rc.time, 'monotonic', return_value=self.reader.deadline):
-            with patch.object(rc.subprocess, 'run') as call, self.assertRaises(rc.ReleaseError):
+            with patch.object(rc, 'run_process') as call, self.assertRaises(rc.ReleaseError):
                 self.reader.json('releases')
             call.assert_not_called()
         self.reader.calls = 100
-        with patch.object(rc.subprocess, 'run') as call, self.assertRaises(rc.ReleaseError):
+        with patch.object(rc, 'run_process') as call, self.assertRaises(rc.ReleaseError):
             self.reader.json('releases')
         call.assert_not_called()
         self.reader.calls = 0
         self.reader.remaining = 1
-        with patch.object(rc.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0, wire(200, b'[]'), b'')):
+        with patch.object(rc, 'run_process', return_value=subprocess.CompletedProcess([], 0, wire(200, b'[]'), b'')):
             with self.assertRaisesRegex(rc.ReleaseError, 'response limit'):
                 self.reader.json('releases')
 
     def test_read_error_never_returns_partial_data_or_retries(self):
         for raw in (b'HTTP/2.0 200 OK\r\n', wire(503, b'[]'), wire(200, b'[{"id":')):
-            with self.subTest(raw=raw), patch.object(rc.subprocess, 'run', return_value=
+            with self.subTest(raw=raw), patch.object(rc, 'run_process', return_value=
                     subprocess.CompletedProcess([], 1, raw, b'EOF')) as call:
                 with self.assertRaises(rc.ReleaseError):
                     self.reader.pages('releases')
@@ -220,13 +220,13 @@ class ReadbackTests(unittest.TestCase):
         reader = rc.CreateReadback(REPO)
         reader.deadline = 10
         with (patch.object(rc.time, 'monotonic', side_effect=[1, 2, 10]),
-              patch.object(rc.subprocess, 'run', return_value=result) as run):
+              patch.object(rc, 'run_process', return_value=result) as run):
             with self.assertRaisesRegex(rc.ReleaseError, 'deadline'):
                 reader.pages('releases')
         run.assert_called_once()
         reader = rc.CreateReadback(REPO)
         reader.calls = 99
-        with patch.object(rc.subprocess, 'run', return_value=result) as run:
+        with patch.object(rc, 'run_process', return_value=result) as run:
             with self.assertRaisesRegex(rc.ReleaseError, 'request limit'):
                 reader.pages('releases')
         run.assert_called_once()
@@ -235,7 +235,7 @@ class ReadbackTests(unittest.TestCase):
         page = b'HTTP/2.0 200 OK\r\nLink: <https://api.github.com/repositories/17/releases?per_page=100&page=2>; rel="next"\r\n\r\n[{"id":1}]'
         metadata = wire(200, b'{"id":17,"full_name":"example/project"}')
         self.reader.remaining = len(page) + len(metadata) - 1
-        with patch.object(rc.subprocess, 'run', side_effect=[
+        with patch.object(rc, 'run_process', side_effect=[
                 subprocess.CompletedProcess([], 0, raw, b'') for raw in (page, metadata)]) as run:
             with self.assertRaisesRegex(rc.ReleaseError, 'response limit'):
                 self.reader.pages('releases')
@@ -254,7 +254,7 @@ class ReadbackTests(unittest.TestCase):
         header = b'HTTP/2.0 200 OK\r\nLink: <https://api.github.com/repositories/17/releases?per_page=100&page=2>; rel="next"\r\n\r\n[{"id":1}]'
         responses = [header, wire(200, b'{"id":17,"full_name":"example/project"}'),
                      wire(200, b'[]'), header, wire(200, b'[]')]
-        with patch.object(rc.subprocess, 'run', side_effect=[
+        with patch.object(rc, 'run_process', side_effect=[
                 subprocess.CompletedProcess([], 0, raw, b'') for raw in responses]) as run:
             self.assertEqual(self.reader.pages('releases'), [{'id': 1}])
             self.assertEqual(self.reader.pages('releases'), [{'id': 1}])
@@ -410,7 +410,7 @@ class CreateTransportEnvironmentTests(unittest.TestCase):
             inherited = {key: os.environ[key] for key in ("RELEASE_REQUIRE_WORKFLOW_SCOPE", "GH_TOKEN")}
             fixture = CreateTransportTests(methodName="test_normal_create")
             try:
-                with patch.object(rc.subprocess, "run", side_effect=AssertionError("unexpected permission probe")) as command:
+                with patch.object(rc, "run_process", side_effect=AssertionError("unexpected permission probe")) as command:
                     fixture.setUp()
                     self.assertEqual(os.environ["RELEASE_REQUIRE_WORKFLOW_SCOPE"], "")
                     self.assertEqual(os.environ["GH_TOKEN"], inherited["GH_TOKEN"])
