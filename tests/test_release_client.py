@@ -621,11 +621,19 @@ jobs:
                          "test_release_create.py"):
                 self.assertIn(".github/release-tests/" + name, tuple(files))
             pagination_test = ".github/release-tests/test_github_missing_status.py"
+            rendered = subprocess.run(
+                [sys.executable, str(installer.ROOT / "scripts/install_release.py"),
+                 str(root)],
+                cwd=installer.ROOT,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=30,
+            )
+            self.assertEqual(rendered.returncode, 0, rendered.stdout + rendered.stderr)
             self.assertEqual(
-                files[pagination_test],
-                installer.consumer_python(
-                    (installer.ROOT / "tests/test_github_http_transport.py").read_text()
-                ),
+                (root / pagination_test).read_bytes(),
+                files[pagination_test].encode("utf-8"),
             )
             for name in ("scripts/workflow_contracts.py", exported):
                 path = root / name
