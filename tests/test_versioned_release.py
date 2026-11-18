@@ -2644,6 +2644,37 @@ class CompactConsumerTests(unittest.TestCase):
             self.verify()
         retained.assert_not_called()
 
+    def test_scheduled_reuse_hashes_compact_payloads_when_api_digests_are_missing(self):
+        candidate_id = next(key for key, value in self.gh.releases.items()
+                            if value["tag_name"] == self.manifest["tag"])
+        candidate_assets = self.gh.assets[candidate_id]
+        stable_assets = self.gh.assets[self.stable_id]
+        payload_name = self.compact["assets"][0]["name"]
+        for collection in (candidate_assets, stable_assets):
+            next(item for item in collection if item["name"] == payload_name).pop("digest")
+        lifecycle.verify_scheduled_reuse(
+            self.gh, self.gh.info, self.manifest["source_policy"],
+            self.manifest["version_plan"], 100, self.compact["tag"],
+        )
+        self.assertEqual(self.gh.writes, [])
+
+    def test_scheduled_reuse_rejects_wrong_bytes_when_digest_metadata_is_missing(self):
+        candidate_id = next(key for key, value in self.gh.releases.items()
+                            if value["tag_name"] == self.manifest["tag"])
+        candidate_assets = self.gh.assets[candidate_id]
+        asset = next(item for item in candidate_assets
+                     if item["name"] == self.compact["assets"][0]["name"])
+        asset.pop("digest")
+        raw = bytearray(self.gh.files[asset["id"]])
+        raw[0] ^= 1
+        self.gh.files[asset["id"]] = bytes(raw)
+        with self.assertRaises((ValueError, rc.ReleaseError)):
+            lifecycle.verify_scheduled_reuse(
+                self.gh, self.gh.info, self.manifest["source_policy"],
+                self.manifest["version_plan"], 100, self.compact["tag"],
+            )
+        self.assertEqual(self.gh.writes, [])
+
     def test_scheduled_reuse_accepts_compact_and_keeps_original_plan(self):
         lifecycle.verify_scheduled_reuse(self.gh, self.gh.info, self.manifest["source_policy"],
                                          self.manifest["version_plan"], 100, self.compact["tag"])

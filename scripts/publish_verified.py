@@ -56,10 +56,8 @@ ROOT = Path(__file__).resolve().parents[1]
 DOCKER_TRANSPORT = "docker://"
 
 
-# Keep source policy, run evidence and downloaded bytes in one validation scope.
-# pylint: disable-next=too-many-locals
-def verified_assets(gh, tag, directory):
-    """Verify stable provenance and source policy before downloading approved bytes."""
+def _read_stable_release(gh, tag):
+    """Read the published release, tag and bounded manifest before trusting contents."""
     require(
         re.fullmatch(r"v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)", tag),
         "An exact stable vX.Y.Z tag is required",
@@ -71,24 +69,32 @@ def verified_assets(gh, tag, directory):
     )
     ref = gh.api(f"git/ref/tags/{quote(tag, safe='')}")
     assets = gh.pages(f"releases/{positive(release['id'], 'release ID')}/assets")
-    manifests = [a for a in assets if a["name"] == MANIFEST]
-    require(len(manifests) == 1 and 0 < manifests[0].get("size", 2_000_001) <= 2_000_000,
-            "Stable release has no bounded unambiguous manifest")
+    manifests = [asset for asset in assets if asset["name"] == MANIFEST]
+    require(
+        len(manifests) == 1 and 0 < manifests[0].get("size", 2_000_001) <= 2_000_000,
+        "Stable release has no bounded unambiguous manifest",
+    )
     raw = gh.binary(f"releases/assets/{manifests[0]['id']}")
     candidate = json.loads(raw)
-    if isinstance(candidate, dict) and type(candidate.get("schema")) is int and candidate["schema"] == 2:
-        # Resolve the full RC before admitting any receipt-free stable payload.
-        # pylint: disable-next=import-outside-toplevel
-        if __package__:
-            from .release_versioned import read_verified_distribution
-        else:
-            from release_versioned import read_verified_distribution
+    require(isinstance(candidate, dict), "Stable manifest must be an object")
+    return release, ref, assets, raw, candidate
 
-        manifest, _, _ = read_verified_distribution(gh, tag, raw, stage=directory)
-        return manifest
-    manifest = validate_manifest(
-        raw, gh.repo, candidate.get("tag", ""), allow_final=True
-    )
+
+def _read_versioned_stable_release(gh, tag, directory, raw, candidate):
+    """Resolve the strict schema-2 compact distribution through its RC evidence."""
+    if type(candidate.get("schema")) is not int or candidate["schema"] != 2:
+        return None
+    if __package__:
+        from .release_versioned import read_verified_distribution
+    else:
+        from release_versioned import read_verified_distribution
+    manifest, _, _ = read_verified_distribution(gh, tag, raw, stage=directory)
+    return manifest
+
+
+def _validate_legacy_stable_provenance(gh, tag, release, ref, raw, candidate):
+    """Validate original policy, tag source and immutable run evidence."""
+    manifest = validate_manifest(raw, gh.repo, candidate.get("tag", ""), allow_final=True)
     original_policy = source_policy_snapshot(gh, manifest["source_sha"])
     require_release_policy(original_policy["data"], gh.repo, qualified=True)
     require(
@@ -104,31 +110,31 @@ def verified_assets(gh, tag, directory):
     info = repository_info(gh)
     run = gh.api(f"actions/runs/{manifest['run_id']}")
     require(run.get("id") == manifest["run_id"], "Source run identity mismatch")
-    require(
-        run.get("event") == "workflow_dispatch",
-        "Release candidate must come from a manual workflow dispatch",
-    )
-    validate_run(
-        gh, run, info, manifest["source_sha"], manifest["run_attempt"], completed=True
-    )
+    require(run.get("event") == "workflow_dispatch",
+            "Release candidate must come from a manual workflow dispatch")
+    validate_run(gh, run, info, manifest["source_sha"], manifest["run_attempt"], completed=True)
     verify_evidence(gh, manifest, raw)
     if manifest["channel"] == "stable":
-        # Legacy consumers do not vendor optional versioning modules.
-        # pylint: disable-next=import-outside-toplevel
         if __package__:
             from .release_versioned import verified_rc
         else:
             from release_versioned import verified_rc
-
-        _, parent = verified_rc(gh, manifest["derived_from_rc"]["tag"], info, run)
+        _, parent = verified_rc(
+            gh, manifest["derived_from_rc"]["tag"], info, run,
+        )
         require(
             parent == manifest["derived_from_rc"],
             "Final package RC provenance mismatch",
         )
+    return manifest, original_policy
+
+
+def _download_stable_inventory(gh, assets, manifest, directory):
+    """Download each exact stable payload using one inventory-wide byte budget."""
     expected = {item["name"]: item for item in manifest["assets"]}
     require(
         len(assets) == len(expected) + 1
-        and {a["name"] for a in assets} == set(expected) | {MANIFEST},
+        and {asset["name"] for asset in assets} == set(expected) | {MANIFEST},
         "Stable inventory differs from RC evidence",
     )
     budget = DownloadBudget(sum(item["size"] for item in expected.values()))
@@ -146,24 +152,32 @@ def verified_assets(gh, tag, directory):
             and identity["sha256"] == item["sha256"],
             f"Stable payload changed: {asset['name']}",
         )
-    if manifest.get("version_plan"):
-        # pylint: disable-next=import-outside-toplevel
-        if __package__:
-            from .version_receipt import verify_declared_artifacts, verify_receipts
-        else:
-            from version_receipt import verify_declared_artifacts, verify_receipts
 
-        verify_receipts(
-            directory,
-            manifest["version_plan"],
-            manifest["assets"],
-            original_policy["data"],
-        )
-        verify_declared_artifacts(
-            directory, original_policy["data"], manifest["version_plan"]
-        )
+
+def _verify_stable_receipts(directory, manifest, original_policy):
+    """Check any package and declared-artifact receipts after byte verification."""
+    if not manifest.get("version_plan"):
+        return
+    if __package__:
+        from .version_receipt import verify_declared_artifacts, verify_receipts
+    else:
+        from version_receipt import verify_declared_artifacts, verify_receipts
+    verify_receipts(directory, manifest["version_plan"], manifest["assets"], original_policy["data"])
+    verify_declared_artifacts(directory, original_policy["data"], manifest["version_plan"])
+
+
+def verified_assets(gh, tag, directory):
+    """Verify stable provenance and source policy before downloading approved bytes."""
+    release, ref, assets, raw, candidate = _read_stable_release(gh, tag)
+    manifest = _read_versioned_stable_release(gh, tag, directory, raw, candidate)
+    if manifest is not None:
+        return manifest
+    manifest, original_policy = _validate_legacy_stable_provenance(
+        gh, tag, release, ref, raw, candidate,
+    )
+    _download_stable_inventory(gh, assets, manifest, directory)
+    _verify_stable_receipts(directory, manifest, original_policy)
     return manifest
-
 
 def verified_publication_config(policy, manifest, field):
     """Reject destination mappings that differ from the immutable RC policy."""

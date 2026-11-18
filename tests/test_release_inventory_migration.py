@@ -145,6 +145,19 @@ class InventoryMigrationTests(unittest.TestCase):
 
 
 class InventoryOracleTests(unittest.TestCase):
+    def test_digestless_source_layer_resolves_exact_prior_source_and_rejects_mutation(self):
+        current = (ROOT / receipts.PUBLISHER).read_text()
+        previous = migration._before_digestless_metadata(current)
+        self.assertEqual(hashlib.sha256(previous.encode()).hexdigest(),
+                         "9d8957d25de18740c016da30774a47b7e2dc934a4d2d7bde96c4cdf8017908d8")
+        self.assertEqual(migration._before_digestless_metadata(previous), previous)
+
+        changed = current.replace("Undigested qualified payload differs from its manifest",
+                                  "Undigested qualified payload was not verified", 1)
+        self.assertEqual(migration._before_digestless_metadata(changed), changed)
+        with self.assertRaisesRegex(ValueError, "Unknown current inventory source"):
+            migration.previous_canonical_source(changed, receipts.PUBLISHER)
+
     def test_shipped_delta_preserves_exact_accepted_pre_inventory_sources(self):
         # These hashes identify literal source files at accepted commit 9c1031e.
         previous = {
@@ -402,10 +415,11 @@ class PlanLayerCompatibilityTests(unittest.TestCase):
                 self.assertEqual(self.snapshot(), before)
 
     def test_legacy_rc_compatibility_layer_preserves_compact_oracle_and_header(self):
-        self.assertEqual(receipts.digest(self.compat_publisher),
+        legacy_current = migration._before_digestless_metadata(self.compat_publisher)
+        self.assertEqual(receipts.digest(legacy_current),
                          "9d8957d25de18740c016da30774a47b7e2dc934a4d2d7bde96c4cdf8017908d8")
         previous = self.compact_publisher.replace("#!/usr/bin/env python3\n", PREFIX, 1)
-        current = self.compat_publisher.replace("#!/usr/bin/env python3\n", PREFIX, 1)
+        current = legacy_current.replace("#!/usr/bin/env python3\n", PREFIX, 1)
         self.assertEqual(receipts.transform(previous, receipts.PUBLISHER, migration.LEGACY_RC_COMPATIBILITY),
                          ("original", current))
         self.assertEqual(migration._before_legacy_rc_compatibility(current), previous)

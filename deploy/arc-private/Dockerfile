@@ -31,7 +31,7 @@ RUN --mount=type=bind,from=private-inputs,target=/tmp/private-inputs,ro \
         "https://github.com/cli/cli/releases/download/v2.103.0/gh_2.103.0_linux_${arch}.tar.gz" \
         --output /tmp/private-gh/archive.tar.gz \
     && GODEBUG=fips140=on python3 /tmp/private-gh/scripts/install_release_gh.py \
-        --archive /tmp/private-gh/archive.tar.gz --output /usr/local/bin/gh \
+        --archive /tmp/private-gh/archive.tar.gz --output /usr/local/bin/gh --system-image-install \
     && test "$(command -v gh)" = /usr/local/bin/gh \
     && gh api --paginate --slurp --help >/dev/null \
     && gh api --help | grep -F -- '--slurp' >/dev/null \

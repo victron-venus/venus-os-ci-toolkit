@@ -63,6 +63,7 @@ class PrivateRunnerImageTests(unittest.TestCase):
         self.assertIn('FROM scratch AS private-inputs', source)
         self.assertIn('test ! -e /home/runner/.runner', final)
         self.assertIn('rm -rf /tmp/private-gh', final)
+        self.assertIn('--archive /tmp/private-gh/archive.tar.gz --output /usr/local/bin/gh --system-image-install', final)
         self.assertNotIn('--no-preserve=ownership', final)
 
     def test_actual_payload_copy_preserves_ca_and_wrapper_order(self):

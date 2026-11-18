@@ -2,11 +2,13 @@
 from contextlib import redirect_stderr, redirect_stdout
 import importlib
 import io
+import hashlib
 import json
 import os
 from pathlib import Path
 import shutil
 import sys
+import tarfile
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -263,6 +265,149 @@ class DistributionGeneratorTests(unittest.TestCase):
 class ShippedDistributionDeltaTests(unittest.TestCase):
     """Keep the narrow delta tied to reviewed canonical source sections."""
 
+    def test_rendered_publication_dispatches_schema_one_and_two(self):
+        """Exercise both paths in the actual pinned OTT consumer postimage."""
+        import importlib.util
+        import types
+
+        with tempfile.TemporaryDirectory() as temporary:
+            consumer = Path(temporary) / "consumer"
+            consumer.mkdir()
+            self._extract_pinned_ott_snapshot(consumer)
+            migration.apply(consumer, migration.render(consumer))
+
+            control = types.ModuleType("release_control")
+            for name, value in {
+                "MANIFEST": "release-manifest.json",
+                "DownloadBudget": object,
+                "GitHub": object,
+                "ReleaseError": RuntimeError,
+                "download_asset": lambda *args, **kwargs: None,
+                "positive": lambda value, label: value,
+                "repository_info": lambda gh: {},
+                "require": lambda *args, **kwargs: None,
+                "require_release_policy": lambda *args, **kwargs: None,
+                "source_policy_snapshot": lambda *args, **kwargs: {},
+                "validate_manifest": lambda *args, **kwargs: {},
+                "validate_run": lambda *args, **kwargs: None,
+                "verify_evidence": lambda *args, **kwargs: None,
+            }.items():
+                setattr(control, name, value)
+            versioned = types.ModuleType("release_versioned")
+            versioned.read_verified_distribution = lambda *args, **kwargs: ({"schema": 2}, b"", {})
+            module_name = "_pinned_ott_publish_verified"
+            spec = importlib.util.spec_from_file_location(
+                module_name, consumer / "scripts/publish_verified.py",
+            )
+            self.assertIsNotNone(spec)
+            module = importlib.util.module_from_spec(spec)
+            with patch.dict(sys.modules, {"release_control": control, "release_versioned": versioned}):
+                sys.modules[module_name] = module
+                self.addCleanup(sys.modules.pop, module_name, None)
+                spec.loader.exec_module(module)
+
+                gh, directory = object(), Path(temporary)
+                legacy = {"schema": 1}
+                manifest, policy = {"tag": "v1.2.3"}, {"data": {}}
+                with (
+                    patch.object(module, "_read_stable_release", return_value=(
+                        {}, {}, [], b"legacy", legacy,
+                    )) as reader,
+                    patch.object(module, "_validate_legacy_stable_provenance",
+                                 return_value=(manifest, policy)) as validate,
+                    patch.object(module, "_download_stable_inventory") as download,
+                    patch.object(module, "_verify_stable_receipts") as receipts,
+                ):
+                    self.assertEqual(module.verified_assets(gh, "v1.2.3", directory), manifest)
+                    reader.assert_called_once_with(gh, "v1.2.3")
+                    validate.assert_called_once_with(gh, "v1.2.3", {}, {}, b"legacy", legacy)
+                    download.assert_called_once_with(gh, [], manifest, directory)
+                    receipts.assert_called_once_with(directory, manifest, policy)
+
+                compact_manifest = {"schema": 2, "source": "retained-rc"}
+                with (
+                    patch.object(module, "_read_stable_release", return_value=(
+                        {}, {}, [], b"compact", {"schema": 2},
+                    )),
+                    patch.object(module, "_validate_legacy_stable_provenance") as legacy_validate,
+                    patch.object(module, "_download_stable_inventory") as legacy_download,
+                    patch.object(module, "_verify_stable_receipts") as legacy_receipts,
+                    patch.object(versioned, "read_verified_distribution",
+                                 return_value=(compact_manifest, b"", {})) as read_compact,
+                ):
+                    self.assertEqual(module.verified_assets(gh, "v1.2.3", directory), compact_manifest)
+                    read_compact.assert_called_once_with(gh, "v1.2.3", b"compact", stage=directory)
+                    legacy_validate.assert_not_called()
+                    legacy_download.assert_not_called()
+                    legacy_receipts.assert_not_called()
+
+    def _extract_pinned_ott_snapshot(self, root):
+        fixture_dir = ROOT / "tests/fixtures/release_distribution"
+        metadata = json.loads((fixture_dir / "ottplay-foss-7677cfb.json").read_bytes())
+        self.assertEqual(metadata["repository"], "open-ott-play/ottplay-foss")
+        self.assertEqual(metadata["commit"], "7677cfbbe1395169403790307d3d9dd0fc25a43b")
+        expected = {item["path"]: item for item in metadata["members"]}
+        archive = fixture_dir / "ottplay-foss-7677cfb.tar.gz"
+        with tarfile.open(archive, "r:gz") as source:
+            members = source.getmembers()
+            self.assertEqual({item.name for item in members}, set(expected))
+            for item in members:
+                self.assertTrue(item.isfile(), item.name)
+                self.assertEqual(item.name, Path(item.name).as_posix())
+                self.assertNotIn("..", Path(item.name).parts)
+                stream = source.extractfile(item)
+                self.assertIsNotNone(stream)
+                data = stream.read()
+                self.assertEqual(len(data), expected[item.name]["size"], item.name)
+                self.assertEqual(hashlib.sha256(data).hexdigest(), expected[item.name]["sha256"], item.name)
+                destination = root / item.name
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                destination.write_bytes(data)
+        self.assertEqual(set(expected) - {".release-policy.json"},
+                         {name for name, entry in json.loads(migration.DELTA.read_bytes())["files"].items()
+                          if entry["before_sha256"] is not None})
+
+    def test_pinned_ott_base_applies_exact_postimages_and_wrong_base_is_rejected(self):
+        specification = json.loads(migration.DELTA.read_bytes())
+        self.assertEqual(specification["consumer_source"], "7677cfbbe1395169403790307d3d9dd0fc25a43b")
+        with tempfile.TemporaryDirectory() as temporary:
+            consumer = Path(temporary) / "consumer"
+            consumer.mkdir()
+            self._extract_pinned_ott_snapshot(consumer)
+            policy_before = (consumer / ".release-policy.json").read_bytes()
+            preimage = {
+                str(path.relative_to(consumer)): path.read_bytes()
+                for path in consumer.rglob("*") if path.is_file()
+            }
+            changes = migration.render(consumer)
+            self.assertEqual(set(changes), set(specification["files"]))
+            for name, entry in specification["files"].items():
+                self.assertEqual(hashlib.sha256(changes[name].encode("utf-8")).hexdigest(),
+                                 entry["after_sha256"], name)
+            self.assertEqual({str(path.relative_to(consumer)): path.read_bytes()
+                              for path in consumer.rglob("*") if path.is_file()}, preimage)
+            migration.apply(consumer, changes)
+            self.assertEqual(migration.render(consumer), {})
+            self.assertEqual((consumer / ".release-policy.json").read_bytes(), policy_before)
+            for name, entry in specification["files"].items():
+                self.assertEqual(hashlib.sha256((consumer / name).read_bytes()).hexdigest(),
+                                 entry["after_sha256"], name)
+            self.assertEqual({str(path.relative_to(consumer)) for path in consumer.rglob("*") if path.is_file()},
+                             set(preimage) | set(specification["files"]))
+
+        with tempfile.TemporaryDirectory() as temporary:
+            wrong_base = Path(temporary) / "consumer"
+            wrong_base.mkdir()
+            self._extract_pinned_ott_snapshot(wrong_base)
+            changed = wrong_base / "scripts/release_control.py"
+            changed.write_bytes(changed.read_bytes() + b"\n# not the pinned base\n")
+            before = {str(path.relative_to(wrong_base)): path.read_bytes()
+                      for path in wrong_base.rglob("*") if path.is_file()}
+            with self.assertRaisesRegex(ValueError, "Unknown compact migration preimage"):
+                migration.render(wrong_base)
+            self.assertEqual({str(path.relative_to(wrong_base)): path.read_bytes()
+                              for path in wrong_base.rglob("*") if path.is_file()}, before)
+
     def test_source_pins_and_target_boundary(self):
         specification = json.loads(migration.DELTA.read_bytes())
         self.assertEqual(specification["consumer_source"], "7677cfbbe1395169403790307d3d9dd0fc25a43b")
@@ -287,7 +432,8 @@ class ShippedDistributionDeltaTests(unittest.TestCase):
             if name.endswith(".py"):
                 text = installer.consumer_python(text)
             for hunk in entry["hunks"]:
-                self.assertEqual(text.count(hunk["after"]), 1, name)
+                for fragment in hunk.get("canonical_fragments", [hunk["after"]]):
+                    self.assertEqual(text.count(fragment), 1, name)
         workflow = specification["files"]["docs/release-workflow.md"]
         self.assertEqual(workflow["after_sha256"],
                          "8d9576bd62cfeaaebe4dfde00e7bb512c875136c630b7bfdf2148dd00d2f9144")

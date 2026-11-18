@@ -402,7 +402,7 @@ class PublicRunnerImageTests(unittest.TestCase):
                              'https://github.com/cli/cli/releases/download/v' + manifest['version']
                              + '/' + manifest['artifacts']['linux_' + architecture]['asset'])
         self.assertIn('GODEBUG=fips140=on python3 /tmp/reserve-gh/scripts/install_release_gh.py', source)
-        self.assertIn('--archive /tmp/reserve-gh/archive.tar.gz --output /usr/local/bin/gh', source)
+        self.assertIn('--archive /tmp/reserve-gh/archive.tar.gz --output /usr/local/bin/gh --system-image-install', source)
         self.assertIn('test "$(command -v gh)" = /usr/local/bin/gh', source)
         for check in self.capability_checks():
             self.assertIn(check, source)

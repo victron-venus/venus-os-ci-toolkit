@@ -403,7 +403,7 @@ def read_verified_distribution(
     inventory = {asset["name"]: asset for asset in initial[2]}
     rc.require(set(inventory) == set(declarations), "Compact stable asset inventory mismatch")
     rc.require(all(asset.get("size") == declarations[name]["size"]
-                   and asset.get("digest") == "sha256:" + declarations[name]["sha256"]
+                   and _asset_digest_metadata_matches(asset, declarations[name]["sha256"])
                    for name, asset in inventory.items()), "Compact stable asset metadata mismatch")
     if stage is not None:
         rc.require(stage.is_dir() and not stage.is_symlink() and not any(stage.iterdir()),
@@ -506,6 +506,12 @@ def verify_final_toolchains(
         )
 
 
+def _asset_digest_metadata_matches(asset: dict[str, object], expected: str) -> bool:
+    """Accept omitted API digests only when the caller verifies downloaded bytes."""
+    actual = asset.get("digest")
+    return actual is None or actual == "sha256:" + expected
+
+
 def published_plan_snapshot(
     gh: rc.GitHub, tag: str, source: str, prerelease: bool
 ) -> tuple[dict[str, object], dict[str, object], list[dict[str, object]]]:
@@ -549,7 +555,7 @@ def verify_scheduled_reuse(
     initial = published_plan_snapshot(
         gh, tag, cast(str, plan["source_sha"]), tag != f"v{plan['base_version']}"
     )
-    identity = rc.snapshot_identity(initial)
+    snapshot_identity = rc.snapshot_identity(initial)
     inventory = {asset["name"]: asset for asset in initial[2]}
     asset = inventory[rc.MANIFEST]
     rc.require(cast(int, asset["size"]) <= 2_000_000, "Qualified manifest is too large")
@@ -593,7 +599,7 @@ def verify_scheduled_reuse(
     rc.require(
         all(
             inventory[name].get("size") == entry["size"]
-            and inventory[name].get("digest") == "sha256:" + cast(str, entry["sha256"])
+            and _asset_digest_metadata_matches(inventory[name], cast(str, entry["sha256"]))
             for name, entry in declarations.items()
         ),
         "Qualified asset metadata mismatch",
@@ -622,11 +628,27 @@ def verify_scheduled_reuse(
             "Qualified run has no successful CI and Release gates",
         )
     rc.verify_evidence(gh, manifest, raw)
+    undigested_payloads = [
+        (name, entry) for name, entry in declarations.items()
+        if name != rc.MANIFEST and inventory[name].get("digest") is None
+    ]
+    if undigested_payloads:
+        with tempfile.TemporaryDirectory(prefix="scheduled-release-verify-") as temporary:
+            directory = Path(temporary)
+            budget = rc.DownloadBudget(sum(cast(int, entry["size"]) for _, entry in undigested_payloads))
+            for name, entry in undigested_payloads:
+                downloaded_identity = rc.download_asset(
+                    gh, inventory[name]["id"], directory / name,
+                    expected=cast(rc.AssetIdentity, {key: entry[key] for key in ("size", "sha256")}),
+                    budget=budget,
+                )
+                rc.require(downloaded_identity == {key: entry[key] for key in ("size", "sha256")},
+                           "Undigested qualified payload differs from its manifest")
     current = published_plan_snapshot(
         gh, tag, cast(str, plan["source_sha"]), tag != f"v{plan['base_version']}"
     )
     rc.require(
-        rc.snapshot_identity(current) == identity,
+        rc.snapshot_identity(current) == snapshot_identity,
         "Qualified release changed during verification",
     )
 
