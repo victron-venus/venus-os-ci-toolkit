@@ -634,6 +634,12 @@ jobs:
                 (root / pagination_test).read_bytes(),
                 files[pagination_test].encode("utf-8"),
             )
+            self.assertEqual(
+                files[pagination_test],
+                installer.consumer_python(
+                    (installer.ROOT / "tests/test_github_http_transport.py").read_text()
+                ),
+            )
             run = subprocess.run(
                 [sys.executable, "-m", "unittest", "discover", "-s",
                  ".github/workflow-tests", "-p", "test_*.py", "-v"],
