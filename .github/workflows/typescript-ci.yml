@@ -452,24 +452,35 @@ jobs:
           const lines = text.match(/[^\n]*\n|[^\n]+$/g) || [];
           const entries = lines.map((line, index) => ({index, fields: line.trim().split(/[ \t]+/)}))
             .filter(({fields}) => fields[0] && !fields[0].startsWith('#'));
-          const azure = entries.filter(({fields}) => fields[0] === 'http://azure.archive.ubuntu.com/ubuntu/');
-          if (!azure.length) {
-            console.log('Azure Ubuntu mirror is not configured; leaving APT unchanged');
+          const preferred = entries.filter(({fields}) =>
+            fields[0] === 'http://azure.archive.ubuntu.com/ubuntu/' ||
+            fields[0] === 'http://us-east-2.ec2.archive.ubuntu.com/ubuntu/'
+          );
+          if (!preferred.length) {
+            console.log('No recognized slow Ubuntu mirror is configured; leaving APT unchanged');
             process.exit(0);
           }
           const fallback = entries.filter(({fields}) => fields[0] === 'https://archive.ubuntu.com/ubuntu/');
-          if (azure.length !== 1 || azure[0].fields.length !== 2 || azure[0].fields[1] !== 'priority:1' ||
+          if (preferred.length !== 1 || preferred[0].fields.length !== 2 || preferred[0].fields[1] !== 'priority:1' ||
               fallback.length !== 1 || fallback[0].fields.length !== 2 || fallback[0].fields[1] !== 'priority:2') {
             console.log('::warning::Unrecognized Ubuntu mirror configuration; leaving APT unchanged');
             process.exit(0);
           }
-          const updated = lines.filter((_, index) => index !== azure[0].index).join('');
+          const updated = lines.filter((_, index) => index !== preferred[0].index).join('');
           if (!fs.readFileSync(mirrorFile).equals(original)) throw new Error('Ubuntu mirror list changed during preparation');
           fs.writeFileSync(mirrorFile, updated);
-          console.log('Removed the Azure entry; retained the image-provisioned HTTPS Ubuntu fallback');
+          console.log(`Removed the recognized preferred Ubuntu mirror (${preferred[0].fields[0]}); retained the image-provisioned HTTPS fallback`);
           NODE
+      - name: Install hosted Linux WebKit system dependencies
+        if: ${{ runner.environment == 'github-hosted' && runner.os == 'Linux' && matrix.engine == 'webkit' && matrix.channel == '' }}
+        timeout-minutes: 10
+        run: node "$CI_PLAYWRIGHT_MODULE/cli.js" install-deps webkit
+      - name: Install hosted Linux WebKit browser
+        if: ${{ runner.environment == 'github-hosted' && runner.os == 'Linux' && matrix.engine == 'webkit' && matrix.channel == '' }}
+        timeout-minutes: 5
+        run: node "$CI_PLAYWRIGHT_MODULE/cli.js" install webkit
       - name: Install selected browser and hosted system dependencies
-        if: runner.environment == 'github-hosted'
+        if: ${{ runner.environment == 'github-hosted' && !(runner.os == 'Linux' && matrix.engine == 'webkit' && matrix.channel == '') }}
         run: node "$CI_PLAYWRIGHT_MODULE/cli.js" install --with-deps "${CI_BROWSER_CHANNEL:-$CI_BROWSER_ENGINE}"
       # Branded installers may run a system package manager even without --with-deps.
       # Reserve images must provision those channels before accepting jobs.
