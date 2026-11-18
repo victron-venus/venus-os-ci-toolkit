@@ -428,24 +428,28 @@ async def run_process_async(
     ))
     try:
         result = await asyncio.shield(worker)
-    except asyncio.CancelledError as cancellation:
+    except asyncio.CancelledError:
         cancel_event.set()
-        # Repeated cancellation must not abandon the worker while it still owns a PID.
-        while not worker.done():
-            try:
-                await asyncio.shield(worker)
-            except asyncio.CancelledError:
-                continue
-            except _ProcessCancelled:
-                break
-        try:
-            worker.result()
-        except _ProcessCancelled:
-            pass
+        await _drain_cancelled_worker(worker)
         # Re-raise the caller's cancellation only after cleanup is confirmed. A
         # cleanup failure from worker.result() intentionally takes precedence.
-        raise cancellation
+        raise
     return result
+
+
+async def _drain_cancelled_worker(worker: asyncio.Task[ProcessResult]) -> None:
+    """Wait through repeated cancellation and propagate any real cleanup failure."""
+    while not worker.done():
+        try:
+            await asyncio.shield(worker)
+        except asyncio.CancelledError:
+            continue
+        except _ProcessCancelled:
+            break
+    try:
+        worker.result()
+    except _ProcessCancelled:
+        pass
 
 
 def _format_output(output: bytes, text: bool) -> bytes | str:
