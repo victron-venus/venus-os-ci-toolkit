@@ -387,6 +387,19 @@ does not prepare video playback. Installer failures fail the job, and the
 application's actual decoded-playback assertions remain required. This setup
 does not claim support for DRM or additional media codecs.
 
+Hosted Linux bundled-WebKit jobs remove a preferred Ubuntu archive mirror only
+when the image-provided mirror list has the exact Azure endpoint or the exact
+`us-east-2.ec2.archive.ubuntu.com` endpoint at priority 1 and the already
+provisioned `https://archive.ubuntu.com/ubuntu/` fallback at priority 2. The
+workflow preserves that HTTPS fallback and every unrelated mirror entry; an
+ambiguous or unrecognized list is left unchanged and does not qualify the job.
+This narrowly addresses the observed slow regional mirror path and does not
+promise mirror throughput. Linux WebKit dependency installation and browser
+download are separate fatal steps bounded to ten and five minutes respectively
+inside the existing 35-minute browser-job budget. Either timeout fails the
+browser target; runtime identity, application scenarios, evidence and the
+selected-scope/release gates still have to pass.
+
 GitHub-hosted systems remain the default. Only `ubuntu-latest` targets may select
 the existing, opt-in, isolated Linux reserve via `CI_RUNNER_MODE`. The planner
 uses that same reserve policy. Forks and untrusted events stay hosted. Fixed

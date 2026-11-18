@@ -843,12 +843,16 @@ class BrowserCompatibilityTests(unittest.TestCase):
     def test_prepared_reserve_does_not_install_system_packages(self):
         steps = WORKFLOW["jobs"]["browser"]["steps"]
         installers = [step for step in steps if "cli.js\" install" in step.get("run", "")]
-        self.assertEqual(len(installers), 3)
-        hosted = next(step for step in installers if "--with-deps" in step["run"])
+        self.assertEqual(len(installers), 5)
+        hosted = next(step for step in installers if step.get("name") == "Install selected browser and hosted system dependencies")
         reserve = next(step for step in installers if "self-hosted" in step["if"])
-        self.assertEqual(hosted["if"], "runner.environment == 'github-hosted'")
+        linux_webkit = [step for step in installers if "Linux WebKit" in step.get("name", "")]
+        self.assertEqual(hosted["if"], "${{ runner.environment == 'github-hosted' && !(runner.os == 'Linux' && matrix.engine == 'webkit' && matrix.channel == '') }}")
+        self.assertEqual(len(linux_webkit), 2)
+        self.assertTrue(all(step["if"] == "${{ runner.environment == 'github-hosted' && runner.os == 'Linux' && matrix.engine == 'webkit' && matrix.channel == '' }}" for step in linux_webkit))
         self.assertEqual(reserve["if"], "${{ runner.environment == 'self-hosted' && matrix.channel == '' }}")
         self.assertNotIn("sudo", reserve["run"])
+        self.assertNotIn("--with-deps", reserve["run"])
 
     def test_windows_webkit_installs_only_locked_media_dependencies_and_propagates_failure(self):
         steps = WORKFLOW["jobs"]["browser"]["steps"]
@@ -1310,6 +1314,7 @@ class BrowserCompatibilityTests(unittest.TestCase):
 class HostedUbuntuMirrorTests(unittest.TestCase):
     STEP_NAME = "Prefer the provisioned Ubuntu archive fallback"
     AZURE = "http://azure.archive.ubuntu.com/ubuntu/\tpriority:1\n"
+    AWS = "http://us-east-2.ec2.archive.ubuntu.com/ubuntu/\tpriority:1\n"
     FALLBACK = "https://archive.ubuntu.com/ubuntu/\tpriority:2\n"
 
     def setUp(self):
@@ -1348,6 +1353,21 @@ class HostedUbuntuMirrorTests(unittest.TestCase):
         self.assertEqual(self.mirrors.read_bytes(), expected.encode())
         self.assertIn("leaving APT unchanged", result.stdout)
 
+    def test_only_exact_aws_regional_line_removed_and_other_bytes_and_mode_preserved(self):
+        others = ("# Mirrors provisioned by the runner image\n" + self.FALLBACK +
+                  "https://security.ubuntu.com/ubuntu/\tpriority:3\n")
+        original = "# Keep this header\n" + self.AWS + others
+        expected = "# Keep this header\n" + others
+        self.mirrors.write_bytes(original.encode())
+        self.mirrors.chmod(0o640)
+        result = self.execute()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.mirrors.read_bytes(), expected.encode())
+        self.assertEqual(self.mirrors.stat().st_mode & 0o777, 0o640)
+        self.assertIn("us-east-2.ec2.archive.ubuntu.com", result.stdout)
+        self.assertEqual(self.execute().returncode, 0)
+        self.assertEqual(self.mirrors.read_bytes(), expected.encode())
+
     def test_whitespace_and_crlf_preserved(self):
         azure = " \t" + self.AZURE.rstrip("\n") + "  \r\n"
         fallback = "  " + self.FALLBACK.rstrip("\n") + " \r\n"
@@ -1360,6 +1380,9 @@ class HostedUbuntuMirrorTests(unittest.TestCase):
     def test_no_azure_and_lookalike_uris_are_untouched(self):
         original = ("# " + self.AZURE + "http://azure.archive.ubuntu.com/ubuntu-other/ priority:1\n" +
                     "http://azure.archive.ubuntu.com.example.invalid/ubuntu/ priority:1\n" +
+                    "http://us-east-2.ec2.archive.ubuntu.com.example.invalid/ubuntu/ priority:1\n" +
+                    "http://us-east-2.ec2.archive.ubuntu.com/ubuntu-other/ priority:1\n" +
+                    "https://us-east-2.ec2.archive.ubuntu.com/ubuntu/ priority:1\n" +
                     "https://azure.archive.ubuntu.com/ubuntu/ priority:1\n" + self.FALLBACK)
         self.mirrors.write_bytes(original.encode())
         result = self.execute()
@@ -1368,12 +1391,19 @@ class HostedUbuntuMirrorTests(unittest.TestCase):
 
     def test_unrecognized_source_shapes_warn_without_any_write(self):
         for original in (
-            self.AZURE, self.AZURE + self.FALLBACK.replace("https:", "http:"),
+            self.AZURE, self.AWS, self.AZURE + self.FALLBACK.replace("https:", "http:"),
+            self.AWS + self.FALLBACK.replace("https:", "http:"),
             self.AZURE + self.FALLBACK.replace("priority:2", "priority:1"),
+            self.AWS + self.FALLBACK.replace("priority:2", "priority:1"),
             self.AZURE.replace("priority:1", "priority:2") + self.FALLBACK,
+            self.AWS.replace("priority:1", "priority:2") + self.FALLBACK,
             self.AZURE + self.FALLBACK.replace("priority:2", "priority:2 arch:amd64"),
+            self.AWS + self.FALLBACK.replace("priority:2", "priority:2 arch:amd64"),
             self.AZURE.replace("priority:1", "priority:1 arch:amd64") + self.FALLBACK,
+            self.AWS.replace("priority:1", "priority:1 arch:amd64") + self.FALLBACK,
             self.AZURE * 2 + self.FALLBACK, self.AZURE + self.FALLBACK * 2,
+            self.AWS * 2 + self.FALLBACK, self.AWS + self.FALLBACK * 2,
+            self.AZURE + self.AWS + self.FALLBACK, self.AWS + self.AZURE + self.FALLBACK,
             self.AZURE.replace("priority:1", "priority:2") + self.FALLBACK.replace("priority:2", "priority:1"),
             self.AZURE + self.FALLBACK.rstrip("\n") + " # official fallback\n",
         ):
@@ -1435,6 +1465,21 @@ class HostedUbuntuMirrorTests(unittest.TestCase):
         self.assertEqual(install["run"],
                          'node "$CI_PLAYWRIGHT_MODULE/cli.js" install --with-deps '
                          '"${CI_BROWSER_CHANNEL:-$CI_BROWSER_ENGINE}"')
+        steps = WORKFLOW["jobs"]["browser"]["steps"]
+        linux_webkit_deps = next(step for step in steps
+                                 if step.get("name") == "Install hosted Linux WebKit system dependencies")
+        linux_webkit_browser = next(step for step in steps
+                                    if step.get("name") == "Install hosted Linux WebKit browser")
+        self.assertEqual(linux_webkit_deps["timeout-minutes"], "10")
+        self.assertEqual(linux_webkit_deps["run"], 'node "$CI_PLAYWRIGHT_MODULE/cli.js" install-deps webkit')
+        self.assertEqual(linux_webkit_browser["timeout-minutes"], "5")
+        self.assertEqual(linux_webkit_browser["run"], 'node "$CI_PLAYWRIGHT_MODULE/cli.js" install webkit')
+        self.assertLess(steps.index(self.step), steps.index(linux_webkit_deps))
+        self.assertLess(steps.index(linux_webkit_deps), steps.index(linux_webkit_browser))
+        self.assertLess(steps.index(linux_webkit_browser), steps.index(install))
+        for step in (linux_webkit_deps, linux_webkit_browser, install):
+            self.assertNotIn("continue-on-error", step)
+        self.assertEqual(WORKFLOW["jobs"]["browser"]["timeout-minutes"], "35")
 
     def test_python_ci_does_not_force_the_browser_mirror_workaround(self):
         workflow = yaml.load(
