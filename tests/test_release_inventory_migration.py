@@ -145,6 +145,19 @@ class InventoryMigrationTests(unittest.TestCase):
 
 
 class InventoryOracleTests(unittest.TestCase):
+    def test_publisher_execution_boundary_is_an_exact_reversible_layer(self):
+        current = (ROOT / receipts.PUBLISHER).read_text()
+        previous = migration._before_publisher_execution_boundary(current)
+        self.assertEqual(hashlib.sha256(previous.encode()).hexdigest(),
+                         "855728a86446b1062417a9b3ba75f0e3ad2329ecef9df6586dba547f4662f223")
+        self.assertEqual(migration._before_publisher_execution_boundary(previous), previous)
+
+        changed = current.replace("Publisher run has not reached in_progress",
+                                  "Publisher run is not active", 1)
+        self.assertEqual(migration._before_publisher_execution_boundary(changed), changed)
+        with self.assertRaisesRegex(ValueError, "Unknown current inventory source"):
+            migration.previous_canonical_source(changed, receipts.PUBLISHER)
+
     def test_digestless_source_layer_resolves_exact_prior_source_and_rejects_mutation(self):
         current = (ROOT / receipts.PUBLISHER).read_text()
         previous = migration._before_digestless_metadata(current)
@@ -175,7 +188,9 @@ class InventoryOracleTests(unittest.TestCase):
                 self.assertEqual(state, "original")
                 inventory_v1 = migration._before_casefold(current) if name == migration.PLAN else current
                 if name == receipts.PUBLISHER:
-                    inventory_v1 = migration._before_notes_provenance(current)
+                    inventory_v1 = migration._before_notes_provenance(
+                        migration._before_publisher_execution_boundary(current)
+                    )
                 self.assertEqual(result, inventory_v1.replace("#!/usr/bin/env python3\n", PREFIX, 1))
                 with self.assertRaisesRegex(ValueError, "Unknown current"):
                     migration.previous_canonical_source(current + "# unknown\n", name)
@@ -186,7 +201,9 @@ class PlanLayerCompatibilityTests(unittest.TestCase):
         """Freeze real canonical states, including the literal accepted v1 plan hash."""
         self.current = {name: (ROOT / name).read_text() for name in migration.FILES}
         self.compat_publisher = self.current[receipts.PUBLISHER]
-        self.compact_publisher = migration._before_legacy_rc_compatibility(self.compat_publisher)
+        self.compact_publisher = migration._before_legacy_rc_compatibility(
+            migration._before_publisher_execution_boundary(self.compat_publisher)
+        )
         self.notes_publisher = migration._before_compact_distribution(self.compact_publisher)
         # Inventory-only upgrades retain their literal pre-notes publisher scope.
         self.current[receipts.PUBLISHER] = migration._before_notes_provenance(self.notes_publisher)

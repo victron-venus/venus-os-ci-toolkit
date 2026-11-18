@@ -12,6 +12,7 @@ import sys
 import tempfile
 import time
 import unittest
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
@@ -78,6 +79,29 @@ class ReleaseDownloadTests(unittest.TestCase):
     def assert_reaped(self):
         self.assertTrue(self.children)
         self.assertTrue(all(child.poll() is not None for child in self.children))
+
+    def test_retry_free_space_is_checked_after_owned_partial_is_truncated(self):
+        self.output.write_bytes(b"x" * 6)
+        budget = rc.DownloadBudget(20, reserve_bytes=5)
+        expected = self.identity(b"x" * 10)
+        observed = []
+        with self.output.open("r+b", buffering=0) as handle:
+            writer = rc._AssetWriter(handle, self.output, expected, budget)
+            writer.size = 6
+            writer.checksum.update(b"x" * 6)
+            budget.written = 6
+
+            def free_after_truncate(_path):
+                size = self.output.stat().st_size
+                observed.append(size)
+                return SimpleNamespace(total=100, used=85, free=15)
+
+            with patch.object(rc.shutil, "disk_usage", side_effect=free_after_truncate):
+                writer.reset_for_retry()
+            self.assertEqual(observed, [0])
+            self.assertEqual(handle.tell(), 0)
+            self.assertEqual(writer.size, 0)
+            self.assertEqual(budget.written, 6)
 
     def test_exact_empty_and_multichunk_streams(self):
         for data in [b"", b"one", b"a" * 19]:

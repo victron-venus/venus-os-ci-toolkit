@@ -1,6 +1,7 @@
 """Bounded shell-free process execution and cleanup contracts."""
 
 import asyncio
+import contextvars
 import os
 from pathlib import Path
 import signal
@@ -268,9 +269,40 @@ class AsyncProcessTests(unittest.TestCase):
             patch.object(async_process.selectors, "DefaultSelector", side_effect=OSError("no selector")),
         ):
             with self.assertRaisesRegex(OSError, "no selector"):
-                async_process.run_process([sys.executable, "-c", "import time; time.sleep(60)"], timeout=5)
+                async_process.run_process(
+                    [sys.executable, "-c", "import time; time.sleep(60)"],
+                    timeout=5, input=b"payload",
+                )
         self.assertEqual(len(processes), 1)
         self.assertIsNotNone(processes[0].returncode, "selector failure leaked its child")
+        self.assertTrue(all(stream is None or stream.closed for stream in (
+            processes[0].stdin, processes[0].stdout, processes[0].stderr,
+        )), "selector failure leaked an owned pipe")
+
+    @unittest.skipUnless(os.name == "posix", "process-group cleanup is POSIX-specific")
+    def test_nonblocking_setup_failure_closes_all_owned_pipes(self):
+        real_popen = async_process.subprocess.Popen
+        processes = []
+
+        def tracked_popen(*args, **kwargs):
+            process = real_popen(*args, **kwargs)
+            processes.append(process)
+            return process
+
+        with (
+            patch.object(async_process.subprocess, "Popen", side_effect=tracked_popen),
+            patch.object(async_process.os, "set_blocking", side_effect=OSError("fd setup failed")),
+        ):
+            with self.assertRaisesRegex(OSError, "fd setup failed"):
+                async_process.run_process(
+                    [sys.executable, "-c", "import time; time.sleep(60)"],
+                    timeout=5, input=b"payload",
+                )
+        self.assertEqual(len(processes), 1)
+        self.assertIsNotNone(processes[0].returncode, "fd setup failure leaked its child")
+        self.assertTrue(all(stream is None or stream.closed for stream in (
+            processes[0].stdin, processes[0].stdout, processes[0].stderr,
+        )), "fd setup failure leaked an owned pipe")
 
     @unittest.skipUnless(os.name == "posix", "process-group cleanup is POSIX-specific")
     def test_terminal_wait_crossing_deadline_reports_timeout(self):
@@ -345,6 +377,70 @@ class AsyncCancellationTests(unittest.IsolatedAsyncioTestCase):
                         await asyncio.wait_for(task, timeout=5)
                     except asyncio.CancelledError:
                         pass
+
+    async def test_repeated_cancellation_waits_until_owned_process_cleanup_finishes(self):
+        kill_started = threading.Event()
+        process_started = threading.Event()
+        release_kill = threading.Event()
+        real_kill = async_process._kill_owned_process
+        real_popen = async_process.subprocess.Popen
+
+        def started_popen(*args, **kwargs):
+            process = real_popen(*args, **kwargs)
+            process_started.set()
+            return process
+
+        def held_kill(process):
+            real_kill(process)
+            kill_started.set()
+            if not release_kill.wait(timeout=5):
+                raise AssertionError("test did not release the process cleanup gate")
+
+        with (
+            patch.object(async_process.subprocess, "Popen", side_effect=started_popen),
+            patch.object(async_process, "_kill_owned_process", side_effect=held_kill),
+        ):
+            task = asyncio.create_task(async_process.run_process_async(
+                [sys.executable, "-c", "import time; time.sleep(60)"],
+            ))
+            try:
+                self.assertTrue(await asyncio.to_thread(process_started.wait, 3))
+                task.cancel()
+                self.assertTrue(await asyncio.to_thread(kill_started.wait, 3))
+                task.cancel()
+                await asyncio.sleep(0.05)
+                self.assertFalse(task.done(), "repeated cancellation abandoned the owned worker")
+                release_kill.set()
+                with self.assertRaises(asyncio.CancelledError):
+                    await asyncio.wait_for(task, timeout=5)
+            finally:
+                release_kill.set()
+                if not task.done():
+                    task.cancel()
+                    _done, pending = await asyncio.wait({task}, timeout=5)
+                    self.assertFalse(pending, "owned worker did not finish after cleanup")
+                    if not task.cancelled():
+                        task.result()
+                    self.assertTrue(task.cancelled(), "cleanup unexpectedly completed without cancellation")
+
+    async def test_caller_cancellation_wins_over_output_limit_after_worker_cleanup(self):
+        worker_started = threading.Event()
+
+        def output_limit_after_cancel(*_args, cancel_event, **_kwargs):
+            worker_started.set()
+            if not cancel_event.wait(timeout=3):
+                raise AssertionError("caller cancellation did not reach the process worker")
+            raise async_process.ProcessOutputLimit("fixture output limit")
+
+        with patch.object(async_process, "_run_owned_process", side_effect=output_limit_after_cancel):
+            task = asyncio.create_task(async_process.run_process_async(
+                [sys.executable, "-c", "pass"],
+            ))
+            self.assertTrue(await asyncio.to_thread(worker_started.wait, 3))
+            task.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await asyncio.wait_for(task, timeout=3)
+
 
     async def test_escaped_pipe_holder_during_cancellation_fails_closed(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -438,6 +534,52 @@ class AsyncCancellationTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(processes), 1)
         self.assertEqual(direct_kills, [processes[0].pid])
         self.assertIsNotNone(processes[0].returncode, "owned leader was not reaped")
+
+
+class AsyncRunnerShutdownTests(unittest.TestCase):
+    def test_asyncio_run_shutdown_waits_for_executor_before_caller_finalizes(self):
+        worker_started = threading.Event()
+        worker_finished = threading.Event()
+        outcomes = []
+
+        def blocked_worker(*_args, cancel_event, **_kwargs):
+            worker_started.set()
+            if not cancel_event.wait(timeout=3):
+                raise AssertionError("caller shutdown did not signal worker cancellation")
+            worker_finished.set()
+            return async_process.ProcessResult((sys.executable, "-c", "pass"), 0, b"", b"")
+
+        def record_outcome(task):
+            outcomes.append((worker_finished.is_set(), task.cancelled()))
+
+        async def start_worker_task():
+            task = asyncio.create_task(async_process.run_process_async([sys.executable, "-c", "pass"]))
+            task.add_done_callback(record_outcome)
+            if not await asyncio.to_thread(worker_started.wait, 3):
+                self.fail("executor worker did not start")
+
+        with patch.object(async_process, "_run_owned_process", side_effect=blocked_worker):
+            asyncio.run(start_worker_task())
+
+        self.assertEqual(outcomes, [(True, True)], "caller finalized before worker cleanup")
+
+    def test_run_process_async_preserves_contextvars(self):
+        request_id = contextvars.ContextVar("request_id", default=None)
+        request_id.set("release-test")
+        observed = []
+
+        def read_context(*_args, **_kwargs):
+            observed.append(request_id.get())
+            return async_process.ProcessResult((sys.executable, "-c", "pass"), 0, b"", b"")
+
+        async def run():
+            return await async_process.run_process_async([sys.executable, "-c", "pass"])
+
+        with patch.object(async_process, "_run_owned_process", side_effect=read_context):
+            result = asyncio.run(run())
+
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(observed, ["release-test"])
 
 
 if __name__ == "__main__":
