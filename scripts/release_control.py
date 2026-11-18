@@ -1887,8 +1887,15 @@ def release_gate_ready(
         require(job.get("run_id") == run_id and job.get("head_sha") == sha
                 and job_attempt_matches(job, attempt),
                 "Current publisher job differs from its attempt")
-        observed = require_executing_job(job, cast(JSONObject, current), gh.repo,
-                                         publisher_proof.check_run_id)
+        observed = require_executing_job(
+            job,
+            cast(JSONObject, current),
+            gh.repo,
+            publisher_proof.check_run_id,
+            allow_pending_steps=allow_pending,
+        )
+        if observed is None:
+            return False
         require(observed == publisher_proof,
                 "Publisher execution proof is stale or changed")
     return True

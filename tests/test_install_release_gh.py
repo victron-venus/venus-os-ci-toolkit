@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import re
 import stat
+import subprocess
 import sys
 import tarfile
 import tempfile
@@ -192,6 +193,28 @@ class InstallReleaseGhTests(unittest.TestCase):
                 for invalid in (link, folder, outside, allowed / ".." / outside.name):
                     with self.subTest(path=invalid), self.assertRaises(ValueError):
                         installer._read_local_archive(invalid)
+
+    @unittest.skipUnless(hasattr(os, "mkfifo"), "FIFO files are POSIX-specific")
+    def test_local_fifo_archive_is_rejected_without_blocking(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fifo = Path(directory) / "release.tar.gz"
+            os.mkfifo(fifo)
+            script = (
+                "import sys; from pathlib import Path; "
+                f"sys.path.insert(0, {str(ROOT / 'scripts')!r}); "
+                "import install_release_gh; "
+                "install_release_gh._read_local_archive(Path(sys.argv[1]))"
+            )
+            result = subprocess.run(
+                [sys.executable, "-c", script, str(fifo)],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                timeout=3,
+                check=False,
+            )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Release CLI archive must be a regular file", result.stderr)
 
     def test_local_archive_size_limit_preserves_installed_client(self):
         raw, artifact, _ = fixture()

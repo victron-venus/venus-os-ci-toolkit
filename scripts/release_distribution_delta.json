@@ -14,7 +14,7 @@
       "after_sha256": "8e1b089ed1e1196238c7a55818a08c3acca5eb1ddfb159d9cd8588a215eaa50a",
       "canonical_source": "scripts/release_control.py",
       "canonical_base_sha256": "04e45e71a262544086de4d2f29ab83ed08fc4ed96916b16cd559659d3db9303b",
-      "canonical_source_sha256": "097de71c7465002b0897ffd0dc8da57c802c265d9574f7b3010e192c0a5b3792",
+      "canonical_source_sha256": "75bb7c7bf975121baf60018491ebab36aae6b629535b74d43cf59586591960c4",
       "hunks": [
         {
           "before": "        raise ReleaseError(str(error)) from error\n\n\ndef require_release_policy(policy: object, repo: str, qualified: bool) -> None:\n    \"\"\"Check policy identity, release mode, and required eligibility blockers.\"\"\"\n    require(isinstance(policy, dict), \"Source release policy must be an object\")\n",
@@ -111,7 +111,7 @@
       "after_sha256": "dcb7a679eedd325b4c9333afaced2279875583adb7ec0b5ad36e3be0e1ad9d9c",
       "canonical_source": "tests/test_release_control.py",
       "canonical_base_sha256": "c7e79c6e776530cb2eb9383307980fc02f0cacc9f7fa55e9d97eac146ecda705",
-      "canonical_source_sha256": "dadfc000f1909609716fa827f635f74b278da1e475e6fd0dc78ea6d3454b1a0f",
+      "canonical_source_sha256": "39cc9c9821212921e5f8f730967d91274950ff5a6d17d9e7529a36ed8894e3c4",
       "hunks": [
         {
           "before": "        with self.assertRaisesRegex(rc.ReleaseError, 'outside'):\n            self.check()\n\n    def test_intentional_skips_and_unfinished_publisher_do_not_need_clocks(self):\n        self.job['steps'].append({'conclusion': 'skipped'})\n        self.job['steps'].append({'conclusion': 'failure', 'status': 'completed'})\n",

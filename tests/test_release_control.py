@@ -3669,6 +3669,26 @@ class CheckRunExecutionTests(unittest.TestCase):
                 publisher_run=current,
             ))
 
+    def test_successful_gate_waits_for_pending_publisher_steps_when_allowed(self):
+        current, publisher = self.pending_step_job()
+        gate = {"id": 701, "run_id": 99, "head_sha": SHA,
+                "name": "Release gate", "status": "completed", "conclusion": "success"}
+        proof = rc.ExecutionJobProof(700, 800, 900, "runner-example")
+        with patch.object(self.gh, "api", return_value=current), \
+                patch.object(self.gh, "pages", return_value=[gate, publisher]):
+            self.assertFalse(rc.release_gate_ready(
+                self.gh, 99, SHA, 1, allow_pending=True,
+                publisher_proof=proof, publisher_run=current,
+            ))
+
+        with patch.object(self.gh, "api", return_value=current), \
+                patch.object(self.gh, "pages", return_value=[gate, publisher]), \
+                self.assertRaisesRegex(rc.ReleaseError, "Exactly one executing step"):
+            rc.release_gate_ready(
+                self.gh, 99, SHA, 1,
+                publisher_proof=proof, publisher_run=current,
+            )
+
     def test_attempt_in_progress_is_used_without_rewriting_aggregate(self):
         current, _ = self.execution()
         active = {**current, "status": "in_progress"}

@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 from contextlib import suppress
 from dataclasses import dataclass
+from functools import partial
 import math
 import os
 from pathlib import Path
@@ -415,8 +417,12 @@ async def run_process_async(
     _require_supported_runtime()
     command = _validate_process_request(argv, max_output_bytes)
     cancel_event = threading.Event()
-    # Keep a strong reference to the worker: cancellation must not abandon a child.
-    worker = asyncio.create_task(asyncio.to_thread(
+    # Keep the executor Future itself, rather than a Task wrapping to_thread.
+    # asyncio.run cancels every Task during shutdown; cancellation of that wrapper
+    # would otherwise look complete before its thread has reaped the child.
+    loop = asyncio.get_running_loop()
+    context = contextvars.copy_context()
+    operation = partial(
         _run_owned_process,
         command,
         env=env,
@@ -426,7 +432,8 @@ async def run_process_async(
         text=text,
         timeout=None,
         cancel_event=cancel_event,
-    ))
+    )
+    worker = loop.run_in_executor(None, context.run, operation)
     try:
         result = await asyncio.shield(worker)
     except asyncio.CancelledError:
@@ -438,14 +445,14 @@ async def run_process_async(
     return result
 
 
-async def _drain_cancelled_worker(worker: asyncio.Task[ProcessResult]) -> None:
+async def _drain_cancelled_worker(worker: asyncio.Future[ProcessResult]) -> None:
     """Wait through repeated cancellation and propagate any real cleanup failure."""
     while not worker.done():
-        with suppress(asyncio.CancelledError, _ProcessCancelled):
+        with suppress(asyncio.CancelledError, ProcessOutputLimit, _ProcessCancelled):
             await asyncio.shield(worker)
     try:
         worker.result()
-    except _ProcessCancelled:
+    except (ProcessOutputLimit, _ProcessCancelled):
         pass
 
 

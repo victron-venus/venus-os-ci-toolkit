@@ -104,7 +104,10 @@ def _read_local_archive(path: Path) -> bytes:
     roots = [root.resolve() for root in _trusted_path_roots()]
     if not any(resolved.is_relative_to(root) for root in roots):
         raise ValueError("Release CLI archive must be inside the checkout or runner temp directory")
-    descriptor = os.open(resolved, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    descriptor = os.open(
+        resolved,
+        os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0),
+    )
     metadata = os.fstat(descriptor)
     if not stat.S_ISREG(metadata.st_mode):
         os.close(descriptor)
