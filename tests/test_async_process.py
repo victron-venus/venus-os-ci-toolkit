@@ -2,6 +2,7 @@
 
 import asyncio
 import contextvars
+import gc
 import os
 from pathlib import Path
 import signal
@@ -349,6 +350,27 @@ class AsyncProcessTests(unittest.TestCase):
 
 @unittest.skipUnless(os.name == "posix", "process-group cleanup is POSIX-specific")
 class AsyncCancellationTests(unittest.IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        self.loop = asyncio.get_running_loop()
+        self.loop_exceptions = []
+        self.previous_exception_handler = self.loop.get_exception_handler()
+        self.loop.set_exception_handler(
+            lambda _loop, context: self.loop_exceptions.append(context),
+        )
+
+    async def asyncTearDown(self):
+        # Flush callbacks and collect completed futures before checking that
+        # cancellation did not orphan a shield wrapper's exception.
+        await asyncio.sleep(0)
+        gc.collect()
+        await asyncio.sleep(0)
+        self.loop.set_exception_handler(self.previous_exception_handler)
+        self.assertEqual(
+            self.loop_exceptions,
+            [],
+            "asyncio reported an unretrieved cancellation/worker exception",
+        )
+
     async def test_cancellation_kills_owned_process_group(self):
         with tempfile.TemporaryDirectory() as directory:
             started = Path(directory) / "descendant-started"

@@ -186,8 +186,8 @@
           "mode": "100644"
         },
         "scripts/async_process.py": {
-          "sha256": "5d09472196428abdc401d1886567b9a515c49db0c3e15665f97c7f7708045c45",
-          "bytes": 17591,
+          "sha256": "60638960da1f5146ab95931fcd4d8ea899401bb81e5fa72f7164d45d8ca9641c",
+          "bytes": 17781,
           "mode": "100644"
         },
         "scripts/browser-toolchains.json": {
@@ -271,8 +271,8 @@
           "mode": "100644"
         },
         "scripts/async_process.py": {
-          "sha256": "5d09472196428abdc401d1886567b9a515c49db0c3e15665f97c7f7708045c45",
-          "bytes": 17591,
+          "sha256": "60638960da1f5146ab95931fcd4d8ea899401bb81e5fa72f7164d45d8ca9641c",
+          "bytes": 17781,
           "mode": "100644"
         },
         "scripts/install_release_gh.py": {

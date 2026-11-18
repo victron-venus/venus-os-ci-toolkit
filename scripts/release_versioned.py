@@ -412,7 +412,19 @@ def read_verified_distribution(
     with (nullcontext(str(stage)) if stage is not None else
           tempfile.TemporaryDirectory(prefix="verified-distribution-")) as temporary:
         directory = Path(temporary)
-        budget = rc.DownloadBudget(sum(item["size"] for item in expected.values()))
+        budget = rc.DownloadBudget(
+            sum(item["size"] for item in expected.values()) + len(raw)
+        )
+        manifest_identity = {"size": len(raw), "sha256": rc.digest(raw)}
+        with tempfile.TemporaryDirectory(prefix="verified-distribution-manifest-") as manifest_temp:
+            manifest_path = Path(manifest_temp) / rc.MANIFEST
+            observed_manifest = rc.download_asset(
+                gh, inventory[rc.MANIFEST]["id"], manifest_path,
+                expected=cast(rc.AssetIdentity, manifest_identity), budget=budget,
+            )
+            rc.require(observed_manifest == manifest_identity
+                       and manifest_path.read_bytes() == raw,
+                       "Compact stable manifest changed from its caller-supplied bytes")
         for name, item in expected.items():
             identity = rc.download_asset(
                 gh, inventory[name]["id"], directory / name,

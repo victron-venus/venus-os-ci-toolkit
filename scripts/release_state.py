@@ -8,6 +8,7 @@ an existing plan, a release tag, or published package bytes.
 from __future__ import annotations
 
 import base64
+from collections.abc import Callable
 
 # Subprocess calls below use argument vectors with shell=False.
 import subprocess  # nosec B404
@@ -303,6 +304,7 @@ def begin_publication(
     run_id: int,
     parent: dict[str, object] | None = None,
     promotion: bool = False,
+    confirm_before_write: Callable[[], None] | None = None,
 ) -> bytes:
     """Consume the package number with CAS before the first public tag mutation.
 
@@ -320,6 +322,10 @@ def begin_publication(
     else:
         _verify_reservation(gh, state, plan, run_id, parent)
     state["publication_floor"] = cast(int, plan["build_number"])
+    # This is the last point after remote validation and before the single CAS PUT.
+    if confirm_before_write is not None:
+        rc.require(promotion, "Publisher recheck is only valid for promotion")
+        confirm_before_write()
     write_state(gh, state, previous)
     # In-memory confirmation for this call only; never a persisted resume token.
     return rc.json_bytes(state)

@@ -435,21 +435,24 @@ async def run_process_async(
     )
     worker = loop.run_in_executor(None, context.run, operation)
     try:
-        result = await asyncio.shield(worker)
+        # `wait()` does not propagate caller cancellation to the executor
+        # Future. Unlike `shield()`, it also does not attach a logging callback
+        # that treats a worker exception after cancellation as unobserved.
+        await asyncio.wait({worker})
     except asyncio.CancelledError:
         cancel_event.set()
         await _drain_cancelled_worker(worker)
         # Re-raise the caller's cancellation only after cleanup is confirmed. A
         # cleanup failure from worker.result() intentionally takes precedence.
         raise
-    return result
+    return worker.result()
 
 
 async def _drain_cancelled_worker(worker: asyncio.Future[ProcessResult]) -> None:
     """Wait through repeated cancellation and propagate any real cleanup failure."""
     while not worker.done():
-        with suppress(asyncio.CancelledError, ProcessOutputLimit, _ProcessCancelled):
-            await asyncio.shield(worker)
+        with suppress(asyncio.CancelledError):
+            await asyncio.wait({worker})
     try:
         worker.result()
     except (ProcessOutputLimit, _ProcessCancelled):
