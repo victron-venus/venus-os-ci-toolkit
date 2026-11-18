@@ -14,7 +14,7 @@
       "after_sha256": "388bbc513854ec1f67bdc87e6ef8d9203359d90fa969fd6ba563a67ce73b1286",
       "canonical_source": "scripts/release_control.py",
       "canonical_base_sha256": "04e45e71a262544086de4d2f29ab83ed08fc4ed96916b16cd559659d3db9303b",
-      "canonical_source_sha256": "17798f5ad0d745cc7ff13b8f1868baba758c42d0d5a59c872481cf3840b18384",
+      "canonical_source_sha256": "edb5c9db771de1deb5955d1a3e8a15470cfad34fcb62adad0b1f15fd68b37c22",
       "hunks": [
         {
           "before": "        raise ReleaseError(str(error)) from error\n\n\ndef require_release_policy(policy: object, repo: str, qualified: bool) -> None:\n    \"\"\"Check policy identity, release mode, and required eligibility blockers.\"\"\"\n    require(isinstance(policy, dict), \"Source release policy must be an object\")\n",

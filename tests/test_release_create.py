@@ -99,6 +99,35 @@ class ReadbackTests(unittest.TestCase):
             with self.assertRaisesRegex(rc.ReleaseError, 'Duplicate'):
                 self.reader.pages('releases')
 
+    def test_named_pagination_accepts_canonical_case_and_reconstructs_routes(self):
+        repo = 'Example/Project'
+        for path in ('releases', 'releases/42/assets'):
+            with self.subTest(path=path):
+                header = (f'Link: <https://api.github.com/repos/example/project/{path}'
+                          '?per_page=100&page=2>; rel="next"\r\n').encode()
+                first = b'HTTP/2.0 200 OK\r\n' + header + b'\r\n[{"id":1}]'
+                responses = [subprocess.CompletedProcess([], 0, raw, b'')
+                             for raw in (first, wire(200, b'[{"id":2}]'))]
+                with patch.object(rc.subprocess, 'run', side_effect=responses) as run:
+                    self.assertEqual(rc.CreateReadback(repo).pages(path), [{'id': 1}, {'id': 2}])
+                self.assertEqual([call.args[0][-1] for call in run.call_args_list], [
+                    f'repos/{repo}/{path}?per_page=100&page=1',
+                    f'repos/{repo}/{path}?per_page=100&page=2',
+                ])
+
+    def test_named_pagination_keeps_repository_and_route_boundaries_strict(self):
+        for path in ('/repos/example/other/releases', '/repos/ex%61mple/project/releases',
+                     '/Repos/example/project/releases', '/repos/example/project/Releases',
+                     '/repos/example/project/releases/42/assets'):
+            with self.subTest(path=path):
+                header = (f'Link: <https://api.github.com{path}'
+                          '?per_page=100&page=2>; rel="next"\r\n').encode()
+                reader = rc.CreateReadback('Example/Project')
+                with patch.object(reader, 'get', return_value=([{'id': 1}], header)) as get:
+                    with self.assertRaisesRegex(rc.ReleaseError, 'Unexpected create pagination path'):
+                        reader.pages('releases')
+                get.assert_called_once()
+
     def test_foreign_skipped_and_duplicate_next_links_fail(self):
         urls = [f'https://evil.test/repos/{REPO}/releases?per_page=100&page=2',
                 f'https://api.github.com/repos/{REPO}/releases?per_page=100&page=3',
