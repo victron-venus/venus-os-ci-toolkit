@@ -212,7 +212,10 @@ class CreateReadback:
                                 and parse_qs(target.query, strict_parsing=True, keep_blank_values=True)
                                 == {"per_page": ["100"], "page": [str(page + 1)]},
                                 "Unexpected create pagination target")
-                        if target.path != f"/repos/{self.repo}/{path}":
+                        named = re.fullmatch(r"/repos/([^/]+/[^/]+)/" + re.escape(path), target.path)
+                        named_matches = (named is not None and REPO_RE.fullmatch(named[1])
+                                         and named[1].casefold() == self.repo.casefold())
+                        if not named_matches:
                             numeric = re.fullmatch(
                                 r"/repositories/([1-9][0-9]*)/" + re.escape(path), target.path
                             )
