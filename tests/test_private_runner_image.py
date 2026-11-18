@@ -13,6 +13,7 @@ PRIVATE = ROOT / 'deploy/arc-private'
 INPUTS = {
     '.github/gh/release.json',
     'scripts/install_release_gh.py',
+    'scripts/async_process.py',
     'deploy/arc-private/Dockerfile',
     'deploy/arc-private/Dockerfile.dockerignore',
     'deploy/arc-private/sandbox-docker.sh',
@@ -64,6 +65,11 @@ class PrivateRunnerImageTests(unittest.TestCase):
         self.assertIn('test ! -e /home/runner/.runner', final)
         self.assertIn('rm -rf /tmp/private-gh', final)
         self.assertIn('--archive /tmp/private-gh/archive.tar.gz --output /usr/local/bin/gh --system-image-install', final)
+        self.assertIn('COPY scripts/async_process.py /tmp/private-gh/scripts/async_process.py', source)
+        self.assertIn(
+            'cp -a --remove-destination /tmp/private-inputs/tmp/private-gh/scripts/async_process.py '
+            '/tmp/private-gh/scripts/async_process.py', final,
+        )
         self.assertNotIn('--no-preserve=ownership', final)
 
     def test_actual_payload_copy_preserves_ca_and_wrapper_order(self):
@@ -83,6 +89,7 @@ class PrivateRunnerImageTests(unittest.TestCase):
             files = {
                 '/tmp/private-inputs/tmp/private-gh/.github/gh/release.json': 'locked-gh',
                 '/tmp/private-inputs/tmp/private-gh/scripts/install_release_gh.py': 'installer',
+                '/tmp/private-inputs/tmp/private-gh/scripts/async_process.py': 'process-helper',
                 '/tmp/private-inputs/opt/victron-ci-reserve/start-runner.sh': 'bootstrap',
                 '/tmp/private-inputs/opt/victron-ci-reserve/sandbox-docker.sh': 'base-wrapper',
                 '/tmp/private-inputs/opt/victron-ci-reserve/qualify.sh': 'probe',

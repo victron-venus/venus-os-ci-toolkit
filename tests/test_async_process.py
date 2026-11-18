@@ -53,6 +53,19 @@ class AsyncProcessTests(unittest.TestCase):
                 [sys.executable, "-c", script], timeout=5, max_output_bytes=1000,
             )
 
+    def test_timeout_preserves_partial_stdout_and_stderr(self):
+        script = (
+            "import sys,time; "
+            "print('ready', flush=True); print('detail', file=sys.stderr, flush=True); "
+            "time.sleep(60)"
+        )
+        with self.assertRaises(async_process.ProcessTimeout) as raised:
+            async_process.run_process(
+                [sys.executable, "-c", script], timeout=0.2, text=True,
+            )
+        self.assertEqual(raised.exception.stdout, "ready\n")
+        self.assertEqual(raised.exception.stderr, "detail\n")
+
     @unittest.skipUnless(os.name == "posix", "process-group cleanup is POSIX-specific")
     def test_timeout_kills_descendant_that_inherits_capture_pipes(self):
         with tempfile.TemporaryDirectory() as directory:

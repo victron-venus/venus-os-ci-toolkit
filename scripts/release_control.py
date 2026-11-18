@@ -43,6 +43,7 @@ POSITIVE_INTEGER_PATTERN = r"[1-9]\d*"
 MANIFEST = "release-manifest.json"
 POLICY = ".release-policy.json"
 EVIDENCE = Path(".release-evidence") / MANIFEST
+INVALID_EXECUTION_CHECK_RUN_URL = "Invalid execution check-run URL"
 
 
 class AssetRestriction(TypedDict):
@@ -1971,14 +1972,13 @@ def require_executing_job_timing(
 
 def execution_check_url_id(value: object, repository: str) -> int:
     """Accept only GitHub's exact check route; repository casing is not identity."""
-    require(isinstance(value, str), "Invalid execution check-run URL")
+    require(isinstance(value, str), INVALID_EXECUTION_CHECK_RUN_URL)
     match = re.fullmatch(
         r"https://api\.github\.com/repos/([^/]+/[^/]+)/check-runs/([1-9]\d*)",
         cast(str, value), re.ASCII,
     )
-    require(match is not None, "Invalid execution check-run URL")
     if match is None:
-        raise ReleaseError("Invalid execution check-run URL")
+        raise ReleaseError(INVALID_EXECUTION_CHECK_RUN_URL)
     require(REPO_RE.fullmatch(match[1]) and match[1].casefold() == repository.casefold(),
             "Execution check-run repository mismatch")
     return int(match[2])

@@ -50,6 +50,16 @@ class ProcessResult:
     stderr: bytes | str
 
 
+@dataclass
+class _CapturedOutput:
+    stdout: bytearray
+    stderr: bytearray
+
+    @classmethod
+    def create(cls) -> _CapturedOutput:
+        return cls(bytearray(), bytearray())
+
+
 def resolve_executable(name: str) -> str:
     """Resolve a PATH command once and return its absolute regular executable."""
     located = shutil.which(name)
@@ -105,28 +115,23 @@ async def _reap_after_failure(
         raise ProcessCleanupError("Release helper output pipes could not be closed") from error
 
 
-async def run_process_async(
-    argv: Sequence[str],
-    *,
-    env: Mapping[str, str] | None = None,
-    cwd: str | Path | None = None,
-    timeout: float,
-    input_bytes: bytes | None = None,
-    max_output_bytes: int = MAX_OUTPUT_BYTES,
-    text: bool = False,
-) -> ProcessResult:
-    """Run argv directly, with bounded output and timeout cleanup."""
+def _validate_process_request(argv: Sequence[str], max_output_bytes: int) -> tuple[str, ...]:
     command = tuple(argv)
     if not command or not all(isinstance(item, str) and item for item in command):
         raise ValueError("Process argv must contain non-empty strings")
     if not Path(command[0]).is_absolute():
         raise ValueError("Process executable must be an absolute path")
-    if not math.isfinite(timeout) or timeout <= 0:
-        raise ValueError("Process timeout must be positive")
     if type(max_output_bytes) is not int or max_output_bytes <= 0:
         raise ValueError("Process output limit must be a positive integer")
+    return command
 
-    process_options: dict[str, object] = {
+
+def _process_options(
+    env: Mapping[str, str] | None,
+    cwd: str | Path | None,
+    input_bytes: bytes | None,
+) -> dict[str, object]:
+    options: dict[str, object] = {
         "cwd": str(cwd) if cwd is not None else None,
         "env": dict(env) if env is not None else None,
         "stdin": asyncio.subprocess.PIPE if input_bytes is not None else None,
@@ -134,54 +139,77 @@ async def run_process_async(
         "stderr": asyncio.subprocess.PIPE,
     }
     if os.name == "posix":
-        process_options["start_new_session"] = True
-    process = await asyncio.create_subprocess_exec(*command, **process_options)
+        options["start_new_session"] = True
+    return options
+
+
+async def _write_stdin(process: asyncio.subprocess.Process, input_bytes: bytes) -> None:
+    if process.stdin is None:
+        raise RuntimeError("Process stdin pipe was not created")
+    try:
+        process.stdin.write(input_bytes)
+        await process.stdin.drain()
+    except (BrokenPipeError, ConnectionResetError):
+        pass
+    finally:
+        process.stdin.close()
+    try:
+        await process.stdin.wait_closed()
+    except (BrokenPipeError, ConnectionResetError):
+        pass
+
+
+async def _capture_process(
+    process: asyncio.subprocess.Process,
+    command: tuple[str, ...],
+    capture: _CapturedOutput,
+    max_output_bytes: int,
+    input_bytes: bytes | None,
+    text: bool,
+) -> ProcessResult:
     if process.stdout is None or process.stderr is None:
         await _reap_after_failure(process, ())
         raise RuntimeError("Process capture pipes were not created")
 
-    stdout_buffer = bytearray()
-    stderr_buffer = bytearray()
     output_budget = [0]
     budget_lock = asyncio.Lock()
     readers: tuple[asyncio.Task[bytes], ...] = (
         asyncio.create_task(_read_bounded(
-            process.stdout, stdout_buffer, output_budget, budget_lock, max_output_bytes,
+            process.stdout, capture.stdout, output_budget, budget_lock, max_output_bytes,
         )),
         asyncio.create_task(_read_bounded(
-            process.stderr, stderr_buffer, output_budget, budget_lock, max_output_bytes,
+            process.stderr, capture.stderr, output_budget, budget_lock, max_output_bytes,
         )),
     )
     tasks: tuple[asyncio.Task[object], ...] = tuple(readers) + (asyncio.create_task(process.wait()),)
     if input_bytes is not None:
-        async def write_input() -> None:
-            if process.stdin is None:
-                raise RuntimeError("Process stdin pipe was not created")
-            try:
-                process.stdin.write(input_bytes)
-                await process.stdin.drain()
-            except (BrokenPipeError, ConnectionResetError):
-                pass
-            finally:
-                process.stdin.close()
-            try:
-                await process.stdin.wait_closed()
-            except (BrokenPipeError, ConnectionResetError):
-                pass
-
-        tasks = tasks + (asyncio.create_task(write_input()),)
+        tasks += (asyncio.create_task(_write_stdin(process, input_bytes)),)
     try:
-        stdout, stderr, returncode, *unused = await asyncio.wait_for(
-            asyncio.gather(*tasks), timeout=timeout,
-        )
-    except asyncio.TimeoutError as error:
-        await _reap_after_failure(process, tasks)
-        raise ProcessTimeout(timeout, _format_output(bytes(stdout_buffer), text),
-                             _format_output(bytes(stderr_buffer), text)) from error
+        stdout, stderr, returncode, *_unused = await asyncio.gather(*tasks)
     except BaseException:
         await _reap_after_failure(process, tasks)
         raise
     return ProcessResult(command, returncode, _format_output(stdout, text), _format_output(stderr, text))
+
+
+async def run_process_async(
+    argv: Sequence[str],
+    *,
+    env: Mapping[str, str] | None = None,
+    cwd: str | Path | None = None,
+    input_bytes: bytes | None = None,
+    max_output_bytes: int = MAX_OUTPUT_BYTES,
+    text: bool = False,
+    _capture: _CapturedOutput | None = None,
+) -> ProcessResult:
+    """Run argv directly with bounded output; callers own their async deadline."""
+    command = _validate_process_request(argv, max_output_bytes)
+    process = await asyncio.create_subprocess_exec(
+        *command, **_process_options(env, cwd, input_bytes),
+    )
+    capture = _capture if _capture is not None else _CapturedOutput.create()
+    result = await _capture_process(process, command, capture, max_output_bytes, input_bytes, text)
+    return ProcessResult(command, result.returncode, result.stdout, result.stderr)
 
 
 def _format_output(output: bytes, text: bool) -> bytes | str:
@@ -200,10 +228,21 @@ def run_process(
     max_output_bytes: int = MAX_OUTPUT_BYTES,
 ) -> ProcessResult:
     """Synchronous entry point for CLI code using the bounded async runner."""
-    result = asyncio.run(run_process_async(
-        argv, env=env, cwd=cwd, timeout=timeout, input_bytes=input,
-        max_output_bytes=max_output_bytes, text=text,
-    ))
+    if not math.isfinite(timeout) or timeout <= 0:
+        raise ValueError("Process timeout must be positive")
+    capture = _CapturedOutput.create()
+
+    try:
+        result = asyncio.run(asyncio.wait_for(
+            run_process_async(
+                argv, env=env, cwd=cwd, input_bytes=input,
+                max_output_bytes=max_output_bytes, text=text, _capture=capture,
+            ),
+            timeout=timeout,
+        ))
+    except asyncio.TimeoutError as error:
+        raise ProcessTimeout(timeout, _format_output(bytes(capture.stdout), text),
+                             _format_output(bytes(capture.stderr), text)) from error
     if check and result.returncode != 0:
         raise ProcessExecutionError(result.returncode)
     return result
