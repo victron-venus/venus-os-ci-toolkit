@@ -131,6 +131,31 @@ class CheckDocsTests(unittest.TestCase):
         self.repo.write('docs/src/pages/index.md', '[gone](/nowhere)\n')
         self.assertTrue(self.repo.run('links'))
 
+    def test_routes_keep_dotted_slugs_and_exact_files(self):
+        self.repo.write('site/pages/guide.md', '# Guide\n')
+        self.repo.write('site/pages/guide.v2.md', '# Guide v2\n')
+        self.repo.write('site/pages/guide.html', '<h1>Guide</h1>\n')
+        self.repo.write('downloads/manual.txt', 'Manual\n')
+        self.repo.write('README.md', '[missing text file](/guide.txt)\n'
+                        '[dotted slug](/guide.v2#guide-v2)\n'
+                        '[HTML page](/guide.html)\n'
+                        '[download](/downloads/manual.txt)\n')
+        self.assertEqual(self.repo.run('links'), ['README.md: broken link /guide.txt'])
+        self.assertEqual(self.repo.run('anchors'), [])
+
+    def test_routes_discover_bounded_source_roots_once_per_check(self):
+        self.repo.write('docs/site/src/pages/valid.md', '# Valid\n')
+        self.repo.write('docs/site/src/extra/pages/too-deep.md', '# Too deep\n')
+        self.repo.write('site/node_modules/addon/pages/vendor-page.md', '# Vendor page\n')
+        self.repo.write('README.md', '[valid](/valid)\n[deep](/too-deep)\n'
+                        '[vendor](/vendor-page)\n')
+        with mock.patch.object(check_docs, 'page_roots', wraps=check_docs.page_roots) as discover:
+            self.assertEqual(self.repo.run('links'), ['README.md: broken link /too-deep',
+                                                      'README.md: broken link /vendor-page'])
+            discover.assert_called_once_with(self.repo.root)
+        self.repo.write('site/pages/vendor-page.md', '# Project page\n')
+        self.assertEqual(self.repo.run('links'), ['README.md: broken link /too-deep'])
+
     def test_anchors_follow_github_heading_slugging(self):
         # GitHub turns every space into a hyphen, so "Intercom / Drop In" is
         # #intercom--drop-in, not #intercom-drop-in.
