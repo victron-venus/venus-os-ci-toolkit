@@ -608,7 +608,6 @@ jobs:
 
     def test_exported_workflow_tests_run_without_the_generator(self):
         """A consumer's mandatory regression suite is self-contained after rendering."""
-        exported = ".github/workflow-tests/test_workflow_yaml_contracts.py"
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             shutil.copytree(installer.ROOT / ".github/workflows", root / ".github/workflows")
@@ -635,10 +634,6 @@ jobs:
                 (root / pagination_test).read_bytes(),
                 files[pagination_test].encode("utf-8"),
             )
-            for name in ("scripts/workflow_contracts.py", exported):
-                path = root / name
-                path.parent.mkdir(parents=True, exist_ok=True)
-                path.write_text(files[name])
             run = subprocess.run(
                 [sys.executable, "-m", "unittest", "discover", "-s",
                  ".github/workflow-tests", "-p", "test_*.py", "-v"],
@@ -651,10 +646,6 @@ jobs:
             self.assertIn("test_docker_actions_require_full_content_digest", run.stderr)
             # Exercise the new transport tests with only the generated consumer
             # bundle on sys.path, including its adapted lifecycle dependencies.
-            for name, content in files.items():
-                target = root / name
-                target.parent.mkdir(parents=True, exist_ok=True)
-                target.write_text(content)
             check = subprocess.run(
                 [sys.executable, str(installer.ROOT / "scripts/install_release.py"),
                  str(root), "--check"],
@@ -666,6 +657,22 @@ jobs:
             )
             self.assertEqual(check.returncode, 0, check.stdout + check.stderr)
             generated_pagination = root / pagination_test
+            original_bytes = generated_pagination.read_bytes()
+            crlf_bytes = original_bytes.replace(b"\n", b"\r\n")
+            self.assertNotEqual(original_bytes, crlf_bytes)
+            generated_pagination.write_bytes(crlf_bytes)
+            newline_drift = subprocess.run(
+                [sys.executable, str(installer.ROOT / "scripts/install_release.py"),
+                 str(root), "--check"],
+                cwd=installer.ROOT,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=30,
+            )
+            self.assertNotEqual(newline_drift.returncode, 0)
+            self.assertIn(pagination_test, newline_drift.stderr)
+            generated_pagination.write_bytes(original_bytes)
             generated_pagination.write_text(
                 generated_pagination.read_text().replace("paged_wire", "page_wire", 1)
             )
