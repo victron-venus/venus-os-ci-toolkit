@@ -428,7 +428,7 @@ async def run_process_async(
     ))
     try:
         result = await asyncio.shield(worker)
-    except asyncio.CancelledError:
+    except asyncio.CancelledError as cancellation:
         cancel_event.set()
         # Repeated cancellation must not abandon the worker while it still owns a PID.
         while not worker.done():
@@ -444,7 +444,7 @@ async def run_process_async(
             pass
         # Re-raise the caller's cancellation only after cleanup is confirmed. A
         # cleanup failure from worker.result() intentionally takes precedence.
-        raise
+        raise cancellation
     return result
 
 

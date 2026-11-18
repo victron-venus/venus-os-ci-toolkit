@@ -10,6 +10,7 @@ import version_plan
 PLAN = "scripts/version_plan.py"
 FILES = (PLAN, receipts.RECEIPT, receipts.PUBLISHER)
 DELTA = Path(__file__).with_name("release_inventory_delta.json")
+SHEBANG = "#!/usr/bin/env python3\n"
 
 # Keep the accepted inventory-v1 delta and reversal oracle immutable.
 CASEFOLD = {
@@ -328,7 +329,7 @@ LEGACY_RC_COMPATIBILITY = {
 
 def _before_layer(source: str, layer: dict, label: str) -> str:
     """Reverse one exact accepted layer, preserving a vendor header."""
-    prefix = "#!/usr/bin/env python3\n" + receipts.HEADER
+    prefix = SHEBANG + receipts.HEADER
     vendored = source.startswith(prefix)
     body = source.replace(receipts.HEADER, "", 1) if vendored else source
     current = receipts.digest(body)
@@ -340,7 +341,7 @@ def _before_layer(source: str, layer: dict, label: str) -> str:
         body = body.replace(hunk["after"], hunk["before"], 1)
     if layer["original_to_current"].get(receipts.digest(body)) != current:
         raise ValueError(f"{label} reverse result changed")
-    return body.replace("#!/usr/bin/env python3\n", prefix, 1) if vendored else body
+    return body.replace(SHEBANG, prefix, 1) if vendored else body
 
 
 def _before_digestless_metadata(source: str) -> str:
@@ -400,7 +401,7 @@ def _before_publisher_execution_boundary(source: str) -> str:
 
 def _apply_publisher_execution_boundary(source: str) -> str:
     """Apply the exact source hunks to the already inventory-migrated publisher."""
-    prefix = "#!/usr/bin/env python3\n" + receipts.HEADER
+    prefix = SHEBANG + receipts.HEADER
     vendored = source.startswith(prefix)
     body = source.replace(receipts.HEADER, "", 1) if vendored else source
     original = next(iter(PUBLISHER_EXECUTION_BOUNDARY["original_to_current"]))
@@ -416,7 +417,7 @@ def _apply_publisher_execution_boundary(source: str) -> str:
         body = body.replace(hunk["before"], hunk["after"], 1)
     if receipts.digest(body) != target:
         raise ValueError("Publisher execution boundary output changed")
-    return body.replace("#!/usr/bin/env python3\n", prefix, 1) if vendored else body
+    return body.replace(SHEBANG, prefix, 1) if vendored else body
 
 
 def _before_name_limit(source: str) -> str:

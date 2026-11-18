@@ -721,8 +721,9 @@ class LifecycleTests(unittest.TestCase):  # pylint: disable=too-many-public-meth
         confirm = lifecycle.create_confirmation(
             publisher_run, source_ref, consumed, execution_proof=proof,
         )
+        readback = Readback()
         with self.assertRaisesRegex(rc.ReleaseError, "not executing"):
-            confirm(Readback())
+            confirm(readback)
 
     def build_current(self):
         plan = json.loads(lifecycle.PLAN.read_text(encoding="utf-8"))

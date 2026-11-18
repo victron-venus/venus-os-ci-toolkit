@@ -111,7 +111,7 @@
       "after_sha256": "dcb7a679eedd325b4c9333afaced2279875583adb7ec0b5ad36e3be0e1ad9d9c",
       "canonical_source": "tests/test_release_control.py",
       "canonical_base_sha256": "c7e79c6e776530cb2eb9383307980fc02f0cacc9f7fa55e9d97eac146ecda705",
-      "canonical_source_sha256": "c065208b91f9ac6422020b86c7b1d58bdda3703387acb1e88b7e66fc6d453a44",
+      "canonical_source_sha256": "dadfc000f1909609716fa827f635f74b278da1e475e6fd0dc78ea6d3454b1a0f",
       "hunks": [
         {
           "before": "        with self.assertRaisesRegex(rc.ReleaseError, 'outside'):\n            self.check()\n\n    def test_intentional_skips_and_unfinished_publisher_do_not_need_clocks(self):\n        self.job['steps'].append({'conclusion': 'skipped'})\n        self.job['steps'].append({'conclusion': 'failure', 'status': 'completed'})\n",
@@ -128,7 +128,7 @@
       "after_sha256": "de281d7e7d8b45bf615fb178bf3e2a59c0471628e46aa4c497afd63abafe9ede",
       "canonical_source": "tests/test_versioned_release.py",
       "canonical_base_sha256": "e48da6fbd58b42b76b35523f568ff123c613e966e227d256cb332e607240dedd",
-      "canonical_source_sha256": "aff5f55bc0906264acb70f21fc1ecad3b2b4e4d9b1dcb767755e0429024d53d7",
+      "canonical_source_sha256": "6b6d7a5f31be5ad74685e1c4708b34e5b62142e47f9b0faf6e774f94d423cf53",
       "hunks": [
         {
           "before": "        with self.assertRaisesRegex(rc.ReleaseError, \"Only release candidates\"):\n            rc.validate_manifest(encoded, REPO, \"v1.2.3\")\n\n    def test_final_build_rejects_legacy_rc_before_allocating(self):\n        self.start_run(\"stable\", 100, legacy_tests.RC_TAG)\n        # Model the real migration: legacy RC exists at old source SHA, while the\n",

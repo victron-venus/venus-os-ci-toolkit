@@ -3646,12 +3646,13 @@ class CheckRunExecutionTests(unittest.TestCase):
                          completed_at="2026-01-01T00:01:00Z")
         gate = {"id": 701, "run_id": 99, "head_sha": SHA,
                 "name": "Release gate", "status": "completed", "conclusion": "success"}
+        proof = rc.ExecutionJobProof(700, 800, 900, "runner-example")
         with patch.object(self.gh, "api", return_value=current), \
                 patch.object(self.gh, "pages", return_value=[gate, publisher]), \
                 self.assertRaisesRegex(rc.ReleaseError, "not executing"):
             rc.release_gate_ready(
                 self.gh, 99, SHA, 1,
-                publisher_proof=rc.ExecutionJobProof(700, 800, 900, "runner-example"),
+                publisher_proof=proof,
                 publisher_run=current,
             )
 
