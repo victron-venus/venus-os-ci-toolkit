@@ -14,7 +14,7 @@
       "after_sha256": "388bbc513854ec1f67bdc87e6ef8d9203359d90fa969fd6ba563a67ce73b1286",
       "canonical_source": "scripts/release_control.py",
       "canonical_base_sha256": "04e45e71a262544086de4d2f29ab83ed08fc4ed96916b16cd559659d3db9303b",
-      "canonical_source_sha256": "edb5c9db771de1deb5955d1a3e8a15470cfad34fcb62adad0b1f15fd68b37c22",
+      "canonical_source_sha256": "b53cdcf83d0a75ad871e621bf1c70b32dc3adeef017eb0d4a03b19beca18463f",
       "hunks": [
         {
           "before": "        raise ReleaseError(str(error)) from error\n\n\ndef require_release_policy(policy: object, repo: str, qualified: bool) -> None:\n    \"\"\"Check policy identity, release mode, and required eligibility blockers.\"\"\"\n    require(isinstance(policy, dict), \"Source release policy must be an object\")\n",
@@ -109,7 +109,7 @@
       "after_sha256": "dcb7a679eedd325b4c9333afaced2279875583adb7ec0b5ad36e3be0e1ad9d9c",
       "canonical_source": "tests/test_release_control.py",
       "canonical_base_sha256": "c7e79c6e776530cb2eb9383307980fc02f0cacc9f7fa55e9d97eac146ecda705",
-      "canonical_source_sha256": "b95ed2809af803e09d01677bd381094f1ad01df63a63106c5ab1a51ecf951e59",
+      "canonical_source_sha256": "8b0a1ad8202d0d6fd7251f28c731e2712cfc7885fa0f16a87455ecc96bdf3ba2",
       "hunks": [
         {
           "before": "        with self.assertRaisesRegex(rc.ReleaseError, 'outside'):\n            self.check()\n\n    def test_intentional_skips_and_unfinished_publisher_do_not_need_clocks(self):\n        self.job['steps'].append({'conclusion': 'skipped'})\n        self.job['steps'].append({'conclusion': 'failure', 'status': 'completed'})\n",
@@ -152,7 +152,7 @@
       "after_sha256": "8d9576bd62cfeaaebe4dfde00e7bb512c875136c630b7bfdf2148dd00d2f9144",
       "canonical_source": "docs/release-workflow.md",
       "canonical_base_sha256": "1473f61d92e79cdf1ab99363ae6fab5373d23341bf5ddc3a2a0b63cfbbe880a0",
-      "canonical_source_sha256": "e83427753fb2d8ef69a9d414385fe44cbc640e732b767bf45d8c8319f7e597e5",
+      "canonical_source_sha256": "9001ddb720bcc510aee45c55a0845981f25d2b30d15b27895709ad8ae8ba2bb4",
       "hunks": [
         {
           "before": "Stable `vX.Y.Z` copies the tested RC bytes without rebuilding. No override or\nforce-tag option exists. Expired/missing evidence requires a new RC. A partial\nupload remains an unpublished draft; inspect it before any manual recovery.\n\nAssets are uploaded to the draft's known release ID, using one bounded request\nper file. Publication does not repeat a tag lookup for each upload: a draft may\n",

@@ -280,10 +280,19 @@ class ShippedDistributionDeltaTests(unittest.TestCase):
             if entry["canonical_source"].startswith("tests/"):
                 text = text.replace("Path(__file__).parents[1]", "Path(__file__).parents[2]")
                 text = text.replace("Path(__file__).resolve().parents[1]", "Path(__file__).resolve().parents[2]")
+            if name == "docs/release-workflow.md":
+                # The compact migration deliberately retains its prior one-POST
+                # guide until its selective consumer also adopts this uploader.
+                continue
             if name.endswith(".py"):
                 text = installer.consumer_python(text)
             for hunk in entry["hunks"]:
                 self.assertEqual(text.count(hunk["after"]), 1, name)
+        workflow = specification["files"]["docs/release-workflow.md"]
+        self.assertEqual(workflow["after_sha256"],
+                         "8d9576bd62cfeaaebe4dfde00e7bb512c875136c630b7bfdf2148dd00d2f9144")
+        self.assertIn("using one bounded request\nper file", workflow["hunks"][0]["after"])
+        self.assertNotIn("Only an explicit HTTP 500", workflow["hunks"][0]["after"])
 
 
 if __name__ == "__main__":
