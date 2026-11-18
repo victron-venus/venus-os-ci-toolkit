@@ -202,6 +202,42 @@ class InstallReleaseGhTests(unittest.TestCase):
             self.assertEqual(output.read_bytes(), binary)
             self.assertEqual(sorted(p.name for p in Path(directory).iterdir()), ["download.tar.gz", "gh"])
 
+    def test_symlinked_runner_temp_uses_resolved_roots_for_staged_verification(self):
+        raw, artifact, binary = fixture()
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            physical = root / "runner-temp-real"
+            physical.mkdir()
+            runner_alias = root / "runner-temp-link"
+            runner_alias.symlink_to(physical, target_is_directory=True)
+            unrelated_temp = root / "unrelated-system-temp"
+            unrelated_temp.mkdir()
+            archive = root / "archive.tar.gz"
+            archive.write_bytes(raw)
+            output = runner_alias / "nested" / "gh"
+            with patch.dict(os.environ, {"RUNNER_TEMP": str(runner_alias), "GODEBUG": "fips140=on"}), \
+                    patch.object(installer.tempfile, "gettempdir", return_value=str(unrelated_temp)), \
+                    patch.object(installer.subprocess, "run", return_value=Mock(stdout="gh version test (fixture)\n")) as run:
+                installer.install(output, {"version": "test"}, artifact, archive)
+            self.assertEqual(output.resolve(), (physical / "nested" / "gh").resolve())
+            self.assertEqual(output.read_bytes(), binary)
+            run.assert_called_once()
+
+    def test_system_image_install_allows_only_root_owned_exact_destination(self):
+        expected = Path("/usr/local/bin/gh")
+        with patch.object(installer.os, "geteuid", return_value=0):
+            self.assertEqual(installer._install_destination(expected, allow_system_image=True), expected)
+            for unsafe in (Path("/gh"), Path("/usr/local/gh")):
+                with self.subTest(path=unsafe), self.assertRaisesRegex(ValueError, "inside the checkout or runner temp"):
+                    installer._install_destination(unsafe, allow_system_image=True)
+            with self.assertRaisesRegex(ValueError, "must name gh"):
+                installer._install_destination(Path("/usr/local/bin/other"), allow_system_image=True)
+            with self.assertRaisesRegex(ValueError, "inside the checkout or runner temp"):
+                installer._install_destination(Path("/usr/local/bin/gh"))
+        with patch.object(installer.os, "geteuid", return_value=1001), \
+                self.assertRaisesRegex(ValueError, "inside the checkout or runner temp"):
+            installer._install_destination(expected, allow_system_image=True)
+
     def test_install_creates_missing_directory_inside_allowed_temp_root(self):
         raw, artifact, binary = fixture()
         with tempfile.TemporaryDirectory() as directory:

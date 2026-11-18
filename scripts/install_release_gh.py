@@ -45,10 +45,10 @@ def _verified_executable_path(path: Path, *, allow_temporary: bool = False) -> P
     )
     if _path_has_parent_reference(path) or not allowed_name:
         raise ValueError("Release CLI check path must name gh without parent traversal")
-    candidate = path.absolute()
-    if not any(candidate.is_relative_to(root) for root in _trusted_path_roots(include_path=True)):
-        raise ValueError("Release CLI check target must be inside a trusted executable directory")
     resolved = path.resolve(strict=True)
+    roots = [root.resolve() for root in _trusted_path_roots(include_path=True)]
+    if not any(resolved.is_relative_to(root) for root in roots):
+        raise ValueError("Release CLI check target must be inside a trusted executable directory")
     metadata = resolved.stat()
     resolved_name_ok = resolved.name == EXECUTABLE_NAME or (
         allow_temporary and resolved.name.startswith(".gh-")
@@ -72,13 +72,19 @@ def _verify_executable_bytes(path: Path, artifact: dict, version: str) -> None:
         raise ValueError("Release CLI version does not match the reviewed version")
 
 
-def _install_destination(path: Path) -> Path:
-    """Canonicalize an install target under the checkout or runner temp area."""
+def _install_destination(path: Path, *, allow_system_image: bool = False) -> Path:
+    """Canonicalize a target under an allowed root or the exact image path."""
     if _path_has_parent_reference(path) or path.name != EXECUTABLE_NAME:
         raise ValueError("Release CLI output path must name gh without parent traversal")
     destination = path.parent.resolve() / EXECUTABLE_NAME
     roots = [root.resolve() for root in _trusted_path_roots()]
-    if not any(destination.is_relative_to(root) for root in roots):
+    private_image_target = Path("/usr/local/bin/gh")
+    exact_system_install = (
+        allow_system_image and path == private_image_target and os.name == "posix"
+        and hasattr(os, "geteuid") and os.geteuid() == 0
+        and destination == private_image_target
+    )
+    if not exact_system_install and not any(destination.is_relative_to(root) for root in roots):
         raise ValueError("Release CLI output must be inside the checkout or runner temp directory")
     if destination.is_symlink():
         raise ValueError("Release CLI output cannot replace a symlink")
@@ -152,8 +158,11 @@ def verify(path: Path, artifact: dict, version: str, *, allow_temporary: bool = 
     _verify_executable_bytes(executable, artifact, version)
 
 
-def install(output: Path, manifest: dict, artifact: dict, archive: Path | None = None) -> None:
-    output = _install_destination(output)
+def install(
+    output: Path, manifest: dict, artifact: dict, archive: Path | None = None,
+    *, allow_system_image: bool = False,
+) -> None:
+    output = _install_destination(output, allow_system_image=allow_system_image)
     if archive is None:
         url = f'https://github.com/cli/cli/releases/download/v{manifest["version"]}/{artifact["asset"]}'
         data = download(url)
@@ -181,16 +190,21 @@ def main() -> None:
     choice = parser.add_mutually_exclusive_group(required=True)
     choice.add_argument("--output", type=Path)
     choice.add_argument("--check", type=Path)
+    parser.add_argument("--system-image-install", action="store_true",
+                        help="Allow only root-owned /usr/local/bin/gh image-layer installation")
     parser.add_argument("--archive", type=Path,
                         help="Install a previously downloaded archive without network access; requires --output")
     args = parser.parse_args()
     if args.archive and not args.output:
         parser.error("--archive requires --output")
+    if args.system_image_install and (not args.archive or not args.output):
+        parser.error("--system-image-install requires --archive and --output")
     manifest = json.loads(MANIFEST.read_text())
     target = native_target()
     artifact = manifest["artifacts"][target]
     if args.output:
-        install(args.output, manifest, artifact, args.archive)
+        install(args.output, manifest, artifact, args.archive,
+                allow_system_image=args.system_image_install)
     else:
         verify(args.check, artifact, manifest["version"])
     print(f'Qualified gh {manifest["version"]}, {manifest["go_version"]}, {target}, FIPS TLS enabled')

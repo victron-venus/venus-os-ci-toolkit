@@ -49,6 +49,39 @@ NAME_LIMIT = {
 }
 
 
+# Preserve the exact pre-digestless release verifier source for older renderers.
+DIGESTLESS_METADATA = {
+    "hunks": [
+        {
+            "before": "    rc.require(set(inventory) == set(declarations), \"Compact stable asset inventory mismatch\")\n    rc.require(all(asset.get(\"size\") == declarations[name][\"size\"]\n                   and asset.get(\"digest\") == \"sha256:\" + declarations[name][\"sha256\"]\n                   for name, asset in inventory.items()), \"Compact stable asset metadata mismatch\")\n    if stage is not None:\n",
+            "after": "    rc.require(set(inventory) == set(declarations), \"Compact stable asset inventory mismatch\")\n    rc.require(all(asset.get(\"size\") == declarations[name][\"size\"]\n                   and _asset_digest_metadata_matches(asset, declarations[name][\"sha256\"])\n                   for name, asset in inventory.items()), \"Compact stable asset metadata mismatch\")\n    if stage is not None:\n"
+        },
+        {
+            "before": "\n\ndef published_plan_snapshot(\n    gh: rc.GitHub, tag: str, source: str, prerelease: bool\n",
+            "after": "\n\ndef _asset_digest_metadata_matches(asset: dict[str, object], expected: str) -> bool:\n    \"\"\"Accept omitted API digests only when the caller verifies downloaded bytes.\"\"\"\n    actual = asset.get(\"digest\")\n    return actual is None or actual == \"sha256:\" + expected\n\n\ndef published_plan_snapshot(\n    gh: rc.GitHub, tag: str, source: str, prerelease: bool\n"
+        },
+        {
+            "before": "        gh, tag, cast(str, plan[\"source_sha\"]), tag != f\"v{plan['base_version']}\"\n    )\n    identity = rc.snapshot_identity(initial)\n    inventory = {asset[\"name\"]: asset for asset in initial[2]}\n    asset = inventory[rc.MANIFEST]\n",
+            "after": "        gh, tag, cast(str, plan[\"source_sha\"]), tag != f\"v{plan['base_version']}\"\n    )\n    snapshot_identity = rc.snapshot_identity(initial)\n    inventory = {asset[\"name\"]: asset for asset in initial[2]}\n    asset = inventory[rc.MANIFEST]\n"
+        },
+        {
+            "before": "        all(\n            inventory[name].get(\"size\") == entry[\"size\"]\n            and inventory[name].get(\"digest\") == \"sha256:\" + cast(str, entry[\"sha256\"])\n            for name, entry in declarations.items()\n        ),\n",
+            "after": "        all(\n            inventory[name].get(\"size\") == entry[\"size\"]\n            and _asset_digest_metadata_matches(inventory[name], cast(str, entry[\"sha256\"]))\n            for name, entry in declarations.items()\n        ),\n"
+        },
+        {
+            "before": "        )\n    rc.verify_evidence(gh, manifest, raw)\n    current = published_plan_snapshot(\n        gh, tag, cast(str, plan[\"source_sha\"]), tag != f\"v{plan['base_version']}\"\n    )\n    rc.require(\n        rc.snapshot_identity(current) == identity,\n        \"Qualified release changed during verification\",\n    )\n",
+            "after": "        )\n    rc.verify_evidence(gh, manifest, raw)\n    undigested_payloads = [\n        (name, entry) for name, entry in declarations.items()\n        if name != rc.MANIFEST and inventory[name].get(\"digest\") is None\n    ]\n    if undigested_payloads:\n        with tempfile.TemporaryDirectory(prefix=\"scheduled-release-verify-\") as temporary:\n            directory = Path(temporary)\n            budget = rc.DownloadBudget(sum(cast(int, entry[\"size\"]) for _, entry in undigested_payloads))\n            for name, entry in undigested_payloads:\n                downloaded_identity = rc.download_asset(\n                    gh, inventory[name][\"id\"], directory / name,\n                    expected=cast(rc.AssetIdentity, {key: entry[key] for key in (\"size\", \"sha256\")}),\n                    budget=budget,\n                )\n                rc.require(downloaded_identity == {key: entry[key] for key in (\"size\", \"sha256\")},\n                           \"Undigested qualified payload differs from its manifest\")\n    current = published_plan_snapshot(\n        gh, tag, cast(str, plan[\"source_sha\"]), tag != f\"v{plan['base_version']}\"\n    )\n    rc.require(\n        rc.snapshot_identity(current) == snapshot_identity,\n        \"Qualified release changed during verification\",\n    )\n"
+        }
+    ],
+    "original_to_current": {
+        "9d8957d25de18740c016da30774a47b7e2dc934a4d2d7bde96c4cdf8017908d8": "855728a86446b1062417a9b3ba75f0e3ad2329ecef9df6586dba547f4662f223"
+    },
+    "current": [
+        "855728a86446b1062417a9b3ba75f0e3ad2329ecef9df6586dba547f4662f223"
+    ]
+}
+
+
 # Recognize the independently reviewed notes fix without changing inventory-only scope.
 NOTES_PROVENANCE = {
     "hunks": [
@@ -281,9 +314,14 @@ def _before_layer(source: str, layer: dict, label: str) -> str:
     return body.replace("#!/usr/bin/env python3\n", prefix, 1) if vendored else body
 
 
+def _before_digestless_metadata(source: str) -> str:
+    """Reverse only the exact absent-digest byte-verification source layer."""
+    return _before_layer(source, DIGESTLESS_METADATA, "Digestless metadata")
+
+
 def _before_legacy_rc_compatibility(source: str) -> str:
     """Reverse only the exact dispatch-wrapper compatibility correction."""
-    return _before_layer(source, LEGACY_RC_COMPATIBILITY, "Legacy RC compatibility")
+    return _before_layer(_before_digestless_metadata(source), LEGACY_RC_COMPATIBILITY, "Legacy RC compatibility")
 
 
 def _before_compact_distribution(source: str) -> str:
@@ -377,6 +415,8 @@ def render(directory: Path) -> dict[str, str]:
                 _, result = receipts.transform(result, name, COMPACT_DISTRIBUTION)
             if _before_legacy_rc_compatibility(source) != source:
                 _, result = receipts.transform(result, name, LEGACY_RC_COMPATIBILITY)
+            if _before_digestless_metadata(source) != source:
+                _, result = receipts.transform(result, name, DIGESTLESS_METADATA)
         states.add(state)
         if result != source:
             changes[name] = result

@@ -265,6 +265,82 @@ class DistributionGeneratorTests(unittest.TestCase):
 class ShippedDistributionDeltaTests(unittest.TestCase):
     """Keep the narrow delta tied to reviewed canonical source sections."""
 
+    def test_rendered_publication_dispatches_schema_one_and_two(self):
+        """Exercise both paths in the actual pinned OTT consumer postimage."""
+        import importlib.util
+        import types
+
+        with tempfile.TemporaryDirectory() as temporary:
+            consumer = Path(temporary) / "consumer"
+            consumer.mkdir()
+            self._extract_pinned_ott_snapshot(consumer)
+            migration.apply(consumer, migration.render(consumer))
+
+            control = types.ModuleType("release_control")
+            for name, value in {
+                "MANIFEST": "release-manifest.json",
+                "DownloadBudget": object,
+                "GitHub": object,
+                "ReleaseError": RuntimeError,
+                "download_asset": lambda *args, **kwargs: None,
+                "positive": lambda value, label: value,
+                "repository_info": lambda gh: {},
+                "require": lambda *args, **kwargs: None,
+                "require_release_policy": lambda *args, **kwargs: None,
+                "source_policy_snapshot": lambda *args, **kwargs: {},
+                "validate_manifest": lambda *args, **kwargs: {},
+                "validate_run": lambda *args, **kwargs: None,
+                "verify_evidence": lambda *args, **kwargs: None,
+            }.items():
+                setattr(control, name, value)
+            versioned = types.ModuleType("release_versioned")
+            versioned.read_verified_distribution = lambda *args, **kwargs: ({"schema": 2}, b"", {})
+            module_name = "_pinned_ott_publish_verified"
+            spec = importlib.util.spec_from_file_location(
+                module_name, consumer / "scripts/publish_verified.py",
+            )
+            self.assertIsNotNone(spec)
+            module = importlib.util.module_from_spec(spec)
+            with patch.dict(sys.modules, {"release_control": control, "release_versioned": versioned}):
+                sys.modules[module_name] = module
+                self.addCleanup(sys.modules.pop, module_name, None)
+                spec.loader.exec_module(module)
+
+                gh, directory = object(), Path(temporary)
+                legacy = {"schema": 1}
+                manifest, policy = {"tag": "v1.2.3"}, {"data": {}}
+                with (
+                    patch.object(module, "_read_stable_release", return_value=(
+                        {}, {}, [], b"legacy", legacy,
+                    )) as reader,
+                    patch.object(module, "_validate_legacy_stable_provenance",
+                                 return_value=(manifest, policy)) as validate,
+                    patch.object(module, "_download_stable_inventory") as download,
+                    patch.object(module, "_verify_stable_receipts") as receipts,
+                ):
+                    self.assertEqual(module.verified_assets(gh, "v1.2.3", directory), manifest)
+                    reader.assert_called_once_with(gh, "v1.2.3")
+                    validate.assert_called_once_with(gh, "v1.2.3", {}, {}, b"legacy", legacy)
+                    download.assert_called_once_with(gh, [], manifest, directory)
+                    receipts.assert_called_once_with(directory, manifest, policy)
+
+                compact_manifest = {"schema": 2, "source": "retained-rc"}
+                with (
+                    patch.object(module, "_read_stable_release", return_value=(
+                        {}, {}, [], b"compact", {"schema": 2},
+                    )),
+                    patch.object(module, "_validate_legacy_stable_provenance") as legacy_validate,
+                    patch.object(module, "_download_stable_inventory") as legacy_download,
+                    patch.object(module, "_verify_stable_receipts") as legacy_receipts,
+                    patch.object(versioned, "read_verified_distribution",
+                                 return_value=(compact_manifest, b"", {})) as read_compact,
+                ):
+                    self.assertEqual(module.verified_assets(gh, "v1.2.3", directory), compact_manifest)
+                    read_compact.assert_called_once_with(gh, "v1.2.3", b"compact", stage=directory)
+                    legacy_validate.assert_not_called()
+                    legacy_download.assert_not_called()
+                    legacy_receipts.assert_not_called()
+
     def _extract_pinned_ott_snapshot(self, root):
         fixture_dir = ROOT / "tests/fixtures/release_distribution"
         metadata = json.loads((fixture_dir / "ottplay-foss-7677cfb.json").read_bytes())
