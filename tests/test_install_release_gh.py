@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import re
+import stat
 import sys
 import tarfile
 import tempfile
@@ -27,7 +28,13 @@ def fixture(kind="tar", *, duplicate=False, symlink=False):
     name = "release/bin/gh"
     if kind == "zip":
         with zipfile.ZipFile(stream, "w") as archive:
-            archive.writestr(name, data)
+            member = zipfile.ZipInfo(name)
+            if symlink:
+                member.create_system = 3
+                member.external_attr = (stat.S_IFLNK | 0o777) << 16
+            archive.writestr(member, b"../../outside" if symlink else data)
+            if duplicate:
+                archive.writestr(member, b"duplicate")
     else:
         with tarfile.open(fileobj=stream, mode="w:gz") as archive:
             member = tarfile.TarInfo(name)
@@ -71,10 +78,26 @@ class InstallReleaseGhTests(unittest.TestCase):
                 installer.binary_from_archive(raw, artifact)
 
     def test_ambiguous_and_link_members_are_rejected(self):
-        for option in ({"duplicate": True}, {"symlink": True}):
-            raw, artifact, _ = fixture(**option)
-            with self.assertRaisesRegex(ValueError, "member"):
+        for kind in ("tar", "zip"):
+            for option in ({"duplicate": True}, {"symlink": True}):
+                raw, artifact, _ = fixture(kind, **option)
+                with self.subTest(kind=kind, **option), self.assertRaisesRegex(ValueError, "member"):
+                    installer.binary_from_archive(raw, artifact)
+
+    def test_member_size_limit_applies_to_zip_and_tar_bytes(self):
+        for kind in ("tar", "zip"):
+            raw, artifact, _ = fixture(kind)
+            with self.subTest(kind=kind), patch.object(installer, "MAX_BINARY", 4), \
+                    self.assertRaisesRegex(ValueError, "member.*oversized|executable differs"):
                 installer.binary_from_archive(raw, artifact)
+
+    def test_truncated_archives_fail_closed(self):
+        for kind in ("tar", "zip"):
+            raw, artifact, _ = fixture(kind)
+            truncated = raw[: max(1, len(raw) // 2)]
+            invalid = dict(artifact, archive_sha256=installer.digest(truncated))
+            with self.subTest(kind=kind), self.assertRaises((ValueError, OSError, tarfile.TarError, zipfile.BadZipFile)):
+                installer.binary_from_archive(truncated, invalid)
 
     def test_archive_member_must_be_canonical_relative_posix_path(self):
         raw, artifact, _ = fixture()
@@ -150,6 +173,39 @@ class InstallReleaseGhTests(unittest.TestCase):
             self.assertEqual(output.read_bytes(), binary)
             self.assertEqual(list(Path(directory).glob(".gh-*")), [])
 
+    def test_local_archive_requires_trusted_regular_nonsymlink_file(self):
+        raw, _, _ = fixture()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            allowed = root / "allowed"
+            allowed.mkdir()
+            archive = allowed / "download.tar.gz"
+            archive.write_bytes(raw)
+            link = allowed / "archive-link.tar.gz"
+            link.symlink_to(archive)
+            folder = allowed / "directory"
+            folder.mkdir()
+            outside = root / "outside.tar.gz"
+            outside.write_bytes(raw)
+            with patch.object(installer, "_trusted_path_roots", return_value=[allowed]):
+                self.assertEqual(installer._read_local_archive(archive), raw)
+                for invalid in (link, folder, outside, allowed / ".." / outside.name):
+                    with self.subTest(path=invalid), self.assertRaises(ValueError):
+                        installer._read_local_archive(invalid)
+
+    def test_local_archive_size_limit_preserves_installed_client(self):
+        raw, artifact, _ = fixture()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            archive = root / "download.tar.gz"
+            archive.write_bytes(raw)
+            output = root / "gh"
+            output.write_bytes(b"old")
+            with patch.object(installer, "MAX_ARCHIVE", len(raw) - 1), \
+                    self.assertRaisesRegex(ValueError, "archive exceeded its size limit"):
+                installer.install(output, {"version": "test"}, artifact, archive)
+            self.assertEqual(output.read_bytes(), b"old")
+
     def test_offline_corrupt_wrong_arch_and_oversize_never_fall_back(self):
         raw, artifact, _ = fixture()
         wrong_arch = dict(artifact, archive_sha256="0" * 64)
@@ -213,7 +269,7 @@ class InstallReleaseGhTests(unittest.TestCase):
             runner_alias.symlink_to(physical, target_is_directory=True)
             unrelated_temp = root / "unrelated-system-temp"
             unrelated_temp.mkdir()
-            archive = root / "archive.tar.gz"
+            archive = physical / "archive.tar.gz"
             archive.write_bytes(raw)
             output = runner_alias / "nested" / "gh"
             with patch.dict(os.environ, {"RUNNER_TEMP": str(runner_alias), "GODEBUG": "fips140=on"}), \

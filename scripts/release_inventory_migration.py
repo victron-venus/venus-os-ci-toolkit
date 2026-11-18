@@ -111,6 +111,35 @@ NOTES_PROVENANCE = {
 }
 
 
+# Keep publisher-job proof fresh through the last pre-publication boundary.
+PUBLISHER_EXECUTION_BOUNDARY = {
+    "hunks": [
+        {
+            "before": "        if current.get(\"status\") != \"in_progress\":\n            rc.require(type(execution_proof) is rc.ExecutionJobProof,\n                       \"Create readback lacks a local executing-job proof\")\n",
+            "after": "        if type(execution_proof) is rc.ExecutionJobProof:\n",
+        },
+        {
+            "before": "            rc.require(observed == proof, \"Create readback executing-job identity changed\")\n        info = readback.json(\"\")\n",
+            "after": "            rc.require(observed == proof, \"Create readback executing-job identity changed\")\n        else:\n            rc.require(current.get(\"status\") == \"in_progress\",\n                       \"Create readback lacks a local executing-job proof\")\n        info = readback.json(\"\")\n",
+        },
+        {
+            "before": "            rc.require(gh.api(source_path) == source_ref[1],\n                       \"Automatic publication default source changed; draft left unpublished\")\n\n        consumed = begin_publication(gh, plan, cast(int, run[\"id\"]), parent)\n",
+            "after": "            rc.require(gh.api(source_path) == source_ref[1],\n                       \"Automatic publication default source changed; draft left unpublished\")\n\n        def confirm_publisher_execution() -> None:\n            # Preserve the original local proof; never trust a proof inferred\n            # from a newer or different publisher job.\n            current = gh.api(f\"actions/runs/{run['id']}/attempts/{run['run_attempt']}\")\n            current_run = rc.require_active_attempt(current, run)\n            if not execution_proof:\n                rc.require(current_run.get(\"status\") == \"in_progress\",\n                           \"Publisher run has not reached in_progress\")\n            rc.require(rc.release_gate_ready(\n                gh, cast(int, run[\"id\"]), cast(str, run[\"head_sha\"]),\n                cast(int, run[\"run_attempt\"]),\n                publisher_proof=execution_proof[0] if execution_proof else None,\n                publisher_run=current_run,\n            ), \"Release gate is no longer ready before publication\")\n\n        def confirm_before_publish() -> None:\n            confirm_publisher_execution()\n            if automatic:\n                confirm_automatic_source()\n\n        # Execution admission may be minutes old after downloads and signatures.\n        # Recheck immediately before the first persistent ledger mutation.\n        confirm_publisher_execution()\n        consumed = begin_publication(gh, plan, cast(int, run[\"id\"]), parent)\n",
+        },
+        {
+            "before": "            confirm_publish=confirm_automatic_source if automatic else None,\n",
+            "after": "            confirm_publish=confirm_before_publish,\n",
+        },
+    ],
+    "original_to_current": {
+        "855728a86446b1062417a9b3ba75f0e3ad2329ecef9df6586dba547f4662f223": "f202a8706ed481f71076c4dc66c68c145a1f993e33589ed341bdcb5a9dc8dc1c"
+    },
+    "current": [
+        "f202a8706ed481f71076c4dc66c68c145a1f993e33589ed341bdcb5a9dc8dc1c"
+    ],
+}
+
+
 # Recognize response reconciliation without adding it through inventory-only updates.
 CREATE_READBACK = {
     "hunks": [
@@ -316,7 +345,10 @@ def _before_layer(source: str, layer: dict, label: str) -> str:
 
 def _before_digestless_metadata(source: str) -> str:
     """Reverse only the exact absent-digest byte-verification source layer."""
-    return _before_layer(source, DIGESTLESS_METADATA, "Digestless metadata")
+    return _before_layer(
+        _before_publisher_execution_boundary(source), DIGESTLESS_METADATA,
+        "Digestless metadata",
+    )
 
 
 def _before_legacy_rc_compatibility(source: str) -> str:
@@ -359,6 +391,32 @@ def _before_create_readback(source: str) -> str:
 def _before_notes_provenance(source: str) -> str:
     """Unwrap exact known publisher layers for the unchanged historical oracle."""
     return _before_layer(_before_create_readback(source), NOTES_PROVENANCE, "Notes provenance")
+
+
+def _before_publisher_execution_boundary(source: str) -> str:
+    """Reverse the current publisher-job revalidation layer when exact."""
+    return _before_layer(source, PUBLISHER_EXECUTION_BOUNDARY, "Publisher execution boundary")
+
+
+def _apply_publisher_execution_boundary(source: str) -> str:
+    """Apply the exact source hunks to the already inventory-migrated publisher."""
+    prefix = "#!/usr/bin/env python3\n" + receipts.HEADER
+    vendored = source.startswith(prefix)
+    body = source.replace(receipts.HEADER, "", 1) if vendored else source
+    original = next(iter(PUBLISHER_EXECUTION_BOUNDARY["original_to_current"]))
+    target = PUBLISHER_EXECUTION_BOUNDARY["original_to_current"][original]
+    identity = receipts.digest(body)
+    if identity == target:
+        return source
+    if identity != original:
+        raise ValueError("Publisher execution boundary input changed")
+    for hunk in PUBLISHER_EXECUTION_BOUNDARY["hunks"]:
+        if body.count(hunk["before"]) != 1:
+            raise ValueError("Publisher execution boundary context changed")
+        body = body.replace(hunk["before"], hunk["after"], 1)
+    if receipts.digest(body) != target:
+        raise ValueError("Publisher execution boundary output changed")
+    return body.replace("#!/usr/bin/env python3\n", prefix, 1) if vendored else body
 
 
 def _before_name_limit(source: str) -> str:
@@ -417,6 +475,8 @@ def render(directory: Path) -> dict[str, str]:
                 _, result = receipts.transform(result, name, LEGACY_RC_COMPATIBILITY)
             if _before_digestless_metadata(source) != source:
                 _, result = receipts.transform(result, name, DIGESTLESS_METADATA)
+            if _before_publisher_execution_boundary(source) != source:
+                result = _apply_publisher_execution_boundary(result)
         states.add(state)
         if result != source:
             changes[name] = result

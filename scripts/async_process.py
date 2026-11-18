@@ -64,6 +64,28 @@ class ProcessResult:
     stderr: bytes | str
 
 
+@dataclass
+class _OwnedProcessState:
+    """Mutable I/O and termination state for one already-owned process."""
+
+    process: subprocess.Popen[bytes]
+    command: tuple[str, ...]
+    selector: selectors.BaseSelector
+    opened_streams: list[object]
+    captured: dict[str, bytearray]
+    input_view: memoryview
+    max_output_bytes: int
+    text: bool
+    timeout: float | None
+    deadline: float | None
+    cancel_event: threading.Event | None
+    input_offset: int = 0
+    output_bytes: int = 0
+    failure: ProcessTimeout | ProcessOutputLimit | _ProcessCancelled | None = None
+    cleanup_deadline: float | None = None
+    killed: bool = False
+
+
 def resolve_executable(name: str) -> str:
     """Resolve a PATH command once and return its absolute regular executable."""
     located = shutil.which(name)
@@ -161,6 +183,156 @@ def _wait_owned_process(process: subprocess.Popen[bytes]) -> int:
         raise ProcessCleanupError("Release helper process could not be reaped promptly") from error
 
 
+def _register_owned_process_streams(
+    process: subprocess.Popen[bytes],
+    selector: selectors.BaseSelector,
+    input_bytes: bytes | None,
+) -> None:
+    """Register nonblocking capture pipes and optional input under the selector."""
+    if process.stdout is None or process.stderr is None:
+        _kill_owned_process(process)
+        try:
+            process.wait(timeout=CLEANUP_TIMEOUT_SECONDS)
+        except subprocess.TimeoutExpired as error:
+            raise ProcessCleanupError("Release helper process could not be reaped") from error
+        raise ProcessCleanupError("Release helper capture pipes were not created")
+
+    for name, stream in (("stdout", process.stdout), ("stderr", process.stderr)):
+        os.set_blocking(stream.fileno(), False)
+        selector.register(stream, selectors.EVENT_READ, name)
+
+    stdin_stream = process.stdin
+    input_view = memoryview(input_bytes or b"")
+    if stdin_stream is not None:
+        os.set_blocking(stdin_stream.fileno(), False)
+        if input_view:
+            selector.register(stdin_stream, selectors.EVENT_WRITE, "stdin")
+        else:
+            _close_registered_stream(selector, stdin_stream)
+
+
+def _advance_owned_process_failure(state: _OwnedProcessState, now: float) -> None:
+    """Record cancellation/deadline and begin bounded process-group cleanup."""
+    if state.failure is None and state.cancel_event is not None and state.cancel_event.is_set():
+        state.failure = _ProcessCancelled()
+    if state.failure is None and state.deadline is not None and now >= state.deadline:
+        state.failure = ProcessTimeout(
+            state.timeout or 0,
+            _format_output(bytes(state.captured["stdout"]), state.text),
+            _format_output(bytes(state.captured["stderr"]), state.text),
+        )
+    if state.failure is not None and not state.killed:
+        _kill_owned_process(state.process)
+        state.killed = True
+        state.cleanup_deadline = now + CLEANUP_TIMEOUT_SECONDS
+    if state.cleanup_deadline is not None and now >= state.cleanup_deadline:
+        _kill_owned_process(state.process)
+        for stream in state.opened_streams:
+            _close_registered_stream(state.selector, stream)
+        _wait_owned_process(state.process)
+        raise ProcessCleanupError("Release helper output pipes did not reach EOF")
+
+
+def _owned_process_wait_time(state: _OwnedProcessState, now: float) -> float:
+    waits = [0.05]
+    if state.failure is None and state.deadline is not None:
+        waits.append(max(0.0, state.deadline - now))
+    if state.cleanup_deadline is not None:
+        waits.append(max(0.0, state.cleanup_deadline - now))
+    return min(waits)
+
+
+def _write_owned_process_input(state: _OwnedProcessState, stream: object) -> None:
+    try:
+        written = os.write(stream.fileno(), state.input_view[state.input_offset:])  # type: ignore[attr-defined]
+    except (BrokenPipeError, ConnectionResetError):
+        _close_registered_stream(state.selector, stream)
+        return
+    state.input_offset += written
+    if state.input_offset >= len(state.input_view):
+        _close_registered_stream(state.selector, stream)
+
+
+def _read_owned_process_output(state: _OwnedProcessState, stream: object, name: str) -> None:
+    try:
+        chunk = os.read(stream.fileno(), READ_CHUNK_BYTES)  # type: ignore[attr-defined]
+    except BlockingIOError:
+        return
+    if not chunk:
+        _close_registered_stream(state.selector, stream)
+        return
+    if state.output_bytes + len(chunk) > state.max_output_bytes:
+        if state.failure is None:
+            state.failure = ProcessOutputLimit(
+                "Release helper output exceeded its capture limit"
+            )
+        return
+    if state.failure is not None and not isinstance(state.failure, ProcessTimeout):
+        return
+    state.output_bytes += len(chunk)
+    state.captured[name].extend(chunk)
+
+
+def _handle_owned_process_events(
+    state: _OwnedProcessState,
+    events: Sequence[tuple[selectors.SelectorKey, int]],
+) -> None:
+    for key, _mask in events:
+        stream = key.fileobj
+        if key.data == "stdin":
+            _write_owned_process_input(state, stream)
+            continue
+        _read_owned_process_output(state, stream, key.data)
+
+
+def _complete_owned_process(state: _OwnedProcessState) -> ProcessResult:
+    returncode = _wait_owned_process(state.process)
+    if isinstance(state.failure, ProcessTimeout):
+        raise ProcessTimeout(
+            state.failure.timeout,
+            _format_output(bytes(state.captured["stdout"]), state.text),
+            _format_output(bytes(state.captured["stderr"]), state.text),
+        )
+    if isinstance(state.failure, ProcessOutputLimit):
+        raise state.failure
+    if isinstance(state.failure, _ProcessCancelled):
+        raise state.failure
+    if state.deadline is not None and time.monotonic() >= state.deadline:
+        raise ProcessTimeout(
+            state.timeout or 0,
+            _format_output(bytes(state.captured["stdout"]), state.text),
+            _format_output(bytes(state.captured["stderr"]), state.text),
+        )
+    return ProcessResult(
+        state.command,
+        returncode,
+        _format_output(bytes(state.captured["stdout"]), state.text),
+        _format_output(bytes(state.captured["stderr"]), state.text),
+    )
+
+
+def _drive_owned_process(state: _OwnedProcessState) -> ProcessResult:
+    while state.selector.get_map() or not _process_has_exited(state.process):
+        now = time.monotonic()
+        _advance_owned_process_failure(state, now)
+        wait_time = _owned_process_wait_time(state, now)
+        if state.selector.get_map():
+            events = state.selector.select(wait_time)
+        else:
+            time.sleep(wait_time)
+            events = []
+        _handle_owned_process_events(state, events)
+    return _complete_owned_process(state)
+
+
+def _reap_owned_process_after_error(process: subprocess.Popen[bytes]) -> None:
+    _kill_owned_process(process)
+    try:
+        process.wait(timeout=CLEANUP_TIMEOUT_SECONDS)
+    except subprocess.TimeoutExpired as cleanup_error:
+        raise ProcessCleanupError("Release helper process could not be reaped") from cleanup_error
+
+
 def _run_owned_process(
     command: tuple[str, ...],
     *,
@@ -188,141 +360,36 @@ def _run_owned_process(
         close_fds=True,
         start_new_session=True,
     )
-    if process.stdout is None or process.stderr is None:
-        _kill_owned_process(process)
-        try:
-            process.wait(timeout=CLEANUP_TIMEOUT_SECONDS)
-        except subprocess.TimeoutExpired as error:
-            raise ProcessCleanupError("Release helper process could not be reaped") from error
-        raise ProcessCleanupError("Release helper capture pipes were not created")
-
-    captured = {"stdout": bytearray(), "stderr": bytearray()}
-    output_bytes = 0
+    # Own every pipe immediately after Popen, before selector or fd setup can
+    # fail. Cleanup must close even streams that were never registered.
+    opened_streams = [
+        stream for stream in (process.stdin, process.stdout, process.stderr)
+        if stream is not None
+    ]
     selector: selectors.BaseSelector | None = None
-    output_streams: dict[int, str] = {}
-    opened_streams = [process.stdout, process.stderr]
-    stdin_stream = process.stdin
-    if stdin_stream is not None:
-        opened_streams.append(stdin_stream)
-    failure: ProcessTimeout | ProcessOutputLimit | _ProcessCancelled | None = None
-    cleanup_deadline: float | None = None
-    killed = False
-    input_view = memoryview(input_bytes or b"")
-    input_offset = 0
     try:
         selector = selectors.DefaultSelector()
-        for name, stream in (("stdout", process.stdout), ("stderr", process.stderr)):
-            os.set_blocking(stream.fileno(), False)
-            selector.register(stream, selectors.EVENT_READ, name)
-            output_streams[stream.fileno()] = name
-        if stdin_stream is not None:
-            os.set_blocking(stdin_stream.fileno(), False)
-            if input_view:
-                selector.register(stdin_stream, selectors.EVENT_WRITE, "stdin")
-            else:
-                _close_registered_stream(selector, stdin_stream)
-                stdin_stream = None
-
-        deadline = time.monotonic() + timeout if timeout is not None else None
-        while selector.get_map() or not _process_has_exited(process):
-            now = time.monotonic()
-            if failure is None and cancel_event is not None and cancel_event.is_set():
-                failure = _ProcessCancelled()
-            if failure is None and deadline is not None and now >= deadline:
-                failure = ProcessTimeout(
-                    timeout or 0,
-                    _format_output(bytes(captured["stdout"]), text),
-                    _format_output(bytes(captured["stderr"]), text),
-                )
-            if failure is not None and not killed:
-                _kill_owned_process(process)
-                killed = True
-                cleanup_deadline = now + CLEANUP_TIMEOUT_SECONDS
-            if cleanup_deadline is not None and now >= cleanup_deadline:
-                _kill_owned_process(process)
-                for stream in opened_streams:
-                    _close_registered_stream(selector, stream)
-                _wait_owned_process(process)
-                raise ProcessCleanupError("Release helper output pipes did not reach EOF")
-
-            waits = [0.05]
-            if failure is None and deadline is not None:
-                waits.append(max(0.0, deadline - now))
-            if cleanup_deadline is not None:
-                waits.append(max(0.0, cleanup_deadline - now))
-            if selector.get_map():
-                events = selector.select(min(waits))
-            else:
-                time.sleep(min(waits))
-                events = []
-            for key, _mask in events:
-                stream = key.fileobj
-                if key.data == "stdin":
-                    try:
-                        written = os.write(stream.fileno(), input_view[input_offset:])
-                    except (BrokenPipeError, ConnectionResetError):
-                        _close_registered_stream(selector, stream)
-                        stdin_stream = None
-                    else:
-                        input_offset += written
-                        if input_offset >= len(input_view):
-                            _close_registered_stream(selector, stream)
-                            stdin_stream = None
-                    continue
-
-                name = key.data
-                try:
-                    chunk = os.read(stream.fileno(), READ_CHUNK_BYTES)
-                except BlockingIOError:
-                    continue
-                if not chunk:
-                    output_streams.pop(stream.fileno(), None)
-                    _close_registered_stream(selector, stream)
-                    continue
-                if output_bytes + len(chunk) > max_output_bytes:
-                    if failure is None:
-                        failure = ProcessOutputLimit(
-                            "Release helper output exceeded its capture limit"
-                        )
-                    continue
-                if failure is not None and not isinstance(failure, ProcessTimeout):
-                    continue
-                output_bytes += len(chunk)
-                captured[name].extend(chunk)
-
-        returncode = _wait_owned_process(process)
-        if isinstance(failure, ProcessTimeout):
-            raise ProcessTimeout(
-                failure.timeout,
-                _format_output(bytes(captured["stdout"]), text),
-                _format_output(bytes(captured["stderr"]), text),
-            )
-        if isinstance(failure, ProcessOutputLimit):
-            raise failure
-        if isinstance(failure, _ProcessCancelled):
-            raise failure
-        if deadline is not None and time.monotonic() >= deadline:
-            raise ProcessTimeout(
-                timeout or 0,
-                _format_output(bytes(captured["stdout"]), text),
-                _format_output(bytes(captured["stderr"]), text),
-            )
-        return ProcessResult(
-            command,
-            returncode,
-            _format_output(bytes(captured["stdout"]), text),
-            _format_output(bytes(captured["stderr"]), text),
+        _register_owned_process_streams(process, selector, input_bytes)
+        state = _OwnedProcessState(
+            process=process,
+            command=command,
+            selector=selector,
+            opened_streams=opened_streams,
+            captured={"stdout": bytearray(), "stderr": bytearray()},
+            input_view=memoryview(input_bytes or b""),
+            max_output_bytes=max_output_bytes,
+            text=text,
+            timeout=timeout,
+            deadline=time.monotonic() + timeout if timeout is not None else None,
+            cancel_event=cancel_event,
         )
+        return _drive_owned_process(state)
     except (ProcessTimeout, ProcessOutputLimit, _ProcessCancelled):
         raise
     except ProcessCleanupError:
         raise
     except BaseException:
-        _kill_owned_process(process)
-        try:
-            process.wait(timeout=CLEANUP_TIMEOUT_SECONDS)
-        except subprocess.TimeoutExpired as cleanup_error:
-            raise ProcessCleanupError("Release helper process could not be reaped") from cleanup_error
+        _reap_owned_process_after_error(process)
         raise
     finally:
         if selector is not None:
@@ -363,11 +430,20 @@ async def run_process_async(
         result = await asyncio.shield(worker)
     except asyncio.CancelledError:
         cancel_event.set()
-        # The worker owns the PID synchronously and doesn't return until cleanup is proven.
+        # Repeated cancellation must not abandon the worker while it still owns a PID.
+        while not worker.done():
+            try:
+                await asyncio.shield(worker)
+            except asyncio.CancelledError:
+                continue
+            except _ProcessCancelled:
+                break
         try:
-            await asyncio.shield(worker)
+            worker.result()
         except _ProcessCancelled:
             pass
+        # Re-raise the caller's cancellation only after cleanup is confirmed. A
+        # cleanup failure from worker.result() intentionally takes precedence.
         raise
     return result
 

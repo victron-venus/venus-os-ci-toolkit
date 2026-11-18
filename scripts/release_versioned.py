@@ -174,9 +174,7 @@ def create_confirmation(
                            ("id", "run_attempt", "head_sha", "path", "event")),
                    "Create readback run identity changed")
         current = rc.require_active_attempt(current, run)
-        if current.get("status") != "in_progress":
-            rc.require(type(execution_proof) is rc.ExecutionJobProof,
-                       "Create readback lacks a local executing-job proof")
+        if type(execution_proof) is rc.ExecutionJobProof:
             proof = cast(rc.ExecutionJobProof, execution_proof)
             rc.require(type(proof.job_id) is int and proof.job_id > 0
                        and type(proof.check_run_id) is int and proof.check_run_id > 0,
@@ -190,6 +188,9 @@ def create_confirmation(
             job = readback.json(f"actions/jobs/{proof.job_id}")
             observed = rc.require_executing_job(job, current, readback.repo, proof.check_run_id)
             rc.require(observed == proof, "Create readback executing-job identity changed")
+        else:
+            rc.require(current.get("status") == "in_progress",
+                       "Create readback lacks a local executing-job proof")
         info = readback.json("")
         rc.require(isinstance(info, dict) and isinstance(info.get("default_branch"), str)
                    and f"git/ref/heads/{quote(info['default_branch'], safe='')}" == source_ref[0],
@@ -1037,6 +1038,29 @@ def publish_versioned(args: argparse.Namespace) -> dict[str, object]:
             rc.require(gh.api(source_path) == source_ref[1],
                        "Automatic publication default source changed; draft left unpublished")
 
+        def confirm_publisher_execution() -> None:
+            # Preserve the original local proof; never trust a proof inferred
+            # from a newer or different publisher job.
+            current = gh.api(f"actions/runs/{run['id']}/attempts/{run['run_attempt']}")
+            current_run = rc.require_active_attempt(current, run)
+            if not execution_proof:
+                rc.require(current_run.get("status") == "in_progress",
+                           "Publisher run has not reached in_progress")
+            rc.require(rc.release_gate_ready(
+                gh, cast(int, run["id"]), cast(str, run["head_sha"]),
+                cast(int, run["run_attempt"]),
+                publisher_proof=execution_proof[0] if execution_proof else None,
+                publisher_run=current_run,
+            ), "Release gate is no longer ready before publication")
+
+        def confirm_before_publish() -> None:
+            confirm_publisher_execution()
+            if automatic:
+                confirm_automatic_source()
+
+        # Execution admission may be minutes old after downloads and signatures.
+        # Recheck immediately before the first persistent ledger mutation.
+        confirm_publisher_execution()
         consumed = begin_publication(gh, plan, cast(int, run["id"]), parent)
         confirm_create = create_confirmation(
             run, source_ref, consumed, execution_proof[0] if execution_proof else None
@@ -1049,7 +1073,7 @@ def publish_versioned(args: argparse.Namespace) -> dict[str, object]:
             channel != "stable",
             body,
             confirm_create=confirm_create,
-            confirm_publish=confirm_automatic_source if automatic else None,
+            confirm_publish=confirm_before_publish,
         )
     return {
         "status": "published",

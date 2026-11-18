@@ -1,11 +1,14 @@
 """Keep automatic test-only release admission reproducible and fail closed."""
 
 import copy
+import importlib.util
 import json
 import sys
 import tempfile
 import unittest
+from types import ModuleType
 from pathlib import Path
+from unittest.mock import Mock
 
 import yaml
 
@@ -37,6 +40,33 @@ class GeneratorTests(unittest.TestCase):
 
     def enable(self):
         self.policy["change_scope"]["automatic_release_test_paths"] = PATHS
+
+    def test_opt_in_contract_import_works_when_loaded_as_a_package(self):
+        package_name = "toolkit_contract_package_fixture"
+        package = ModuleType(package_name)
+        package.__path__ = [str(ROOT / "scripts")]
+        helper = ModuleType(package_name + ".release_push_scope")
+        helper.validate_workflow = Mock()
+        sys.modules[package_name] = package
+        sys.modules[helper.__name__] = helper
+        try:
+            spec = importlib.util.spec_from_file_location(
+                package_name + ".workflow_contracts",
+                ROOT / "scripts" / "workflow_contracts.py",
+            )
+            self.assertIsNotNone(spec)
+            module = importlib.util.module_from_spec(spec)
+            sys.modules[spec.name] = module
+            spec.loader.exec_module(module)
+            module.validate_automatic_push_admission(
+                {"change_scope": {"automatic_release_test_paths": PATHS}},
+                {"release-pipeline.yml": {}},
+            )
+            helper.validate_workflow.assert_called_once()
+        finally:
+            sys.modules.pop(package_name + ".workflow_contracts", None)
+            sys.modules.pop(helper.__name__, None)
+            sys.modules.pop(package_name, None)
 
     def test_only_opted_in_prepare_receipt_changes_and_other_callers_stay_full(self):
         before = installer.release(self.policy)

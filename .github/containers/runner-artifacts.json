@@ -186,8 +186,8 @@
           "mode": "100644"
         },
         "scripts/async_process.py": {
-          "sha256": "ed075b12b43403fa7c01345bae647289379589c31de6cb679adf10fbcb460d6d",
-          "bytes": 14844,
+          "sha256": "50ce8ac7958c88974b50c48ddb6c9176b4282d23e23e1ea09628fd5b662fceea",
+          "bytes": 17175,
           "mode": "100644"
         },
         "scripts/browser-toolchains.json": {
@@ -211,8 +211,8 @@
           "mode": "100644"
         },
         "scripts/install_release_gh.py": {
-          "sha256": "78ec831e8a8c302733d1f62ad94fe5b1e18cac3ed9f14d4eae83e2abb1b39991",
-          "bytes": 10498,
+          "sha256": "cea6fbe34a1e8a1a9d1496ee794f70eed82b1ff988dc01685a41182fc483df14",
+          "bytes": 12267,
           "mode": "100755"
         },
         "scripts/install_runner_browsers.py": {
@@ -271,13 +271,13 @@
           "mode": "100644"
         },
         "scripts/async_process.py": {
-          "sha256": "ed075b12b43403fa7c01345bae647289379589c31de6cb679adf10fbcb460d6d",
-          "bytes": 14844,
+          "sha256": "50ce8ac7958c88974b50c48ddb6c9176b4282d23e23e1ea09628fd5b662fceea",
+          "bytes": 17175,
           "mode": "100644"
         },
         "scripts/install_release_gh.py": {
-          "sha256": "78ec831e8a8c302733d1f62ad94fe5b1e18cac3ed9f14d4eae83e2abb1b39991",
-          "bytes": 10498,
+          "sha256": "cea6fbe34a1e8a1a9d1496ee794f70eed82b1ff988dc01685a41182fc483df14",
+          "bytes": 12267,
           "mode": "100755"
         }
       }

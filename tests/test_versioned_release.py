@@ -686,6 +686,44 @@ class LifecycleTests(unittest.TestCase):  # pylint: disable=too-many-public-meth
         (self.root / "version").write_text("1.2.3\n")
         self.args.assets = str(self.root / f"assets-{run_id}")
 
+    def test_create_readback_rechecks_local_job_even_when_run_is_in_progress(self):
+        publisher_run = legacy_tests.run(99, completed=False)
+        publisher_run["run_started_at"] = "2026-11-01T00:00:00Z"
+        proof = rc.ExecutionJobProof(700, 800, 900, "runner-example")
+        terminal_job = {
+            "id": 700, "run_id": 99, "run_attempt": 1, "head_sha": SHA,
+            "check_run_url": f"https://api.github.com/repos/{REPO}/check-runs/800",
+            "runner_id": 900, "runner_name": "runner-example",
+            "status": "completed", "conclusion": "cancelled",
+            "completed_at": "2026-11-01T00:05:00Z",
+        }
+        consumed = b"ledger"
+        source_path = "git/ref/heads/main"
+        source_ref = (source_path, {"ref": "refs/heads/main", "object": {"sha": SHA}})
+        encoded = base64.b64encode(consumed).decode()
+
+        class Readback:
+            repo = REPO
+
+            def json(self, path):
+                if path == "actions/runs/99/attempts/1":
+                    return publisher_run
+                if path == "actions/jobs/700":
+                    return terminal_job
+                if path == "":
+                    return {"default_branch": "main"}
+                if path == source_path:
+                    return source_ref[1]
+                if path == "contents/release-version-state.json?ref=release-version-state":
+                    return {"type": "file", "encoding": "base64", "content": encoded}
+                raise AssertionError(f"Unexpected create readback path: {path}")
+
+        confirm = lifecycle.create_confirmation(
+            publisher_run, source_ref, consumed, execution_proof=proof,
+        )
+        with self.assertRaisesRegex(rc.ReleaseError, "not executing"):
+            confirm(Readback())
+
     def build_current(self):
         plan = json.loads(lifecycle.PLAN.read_text(encoding="utf-8"))
         evidence = versions.sync_versions(self.root, self.policy, plan)
@@ -785,13 +823,23 @@ class LifecycleTests(unittest.TestCase):  # pylint: disable=too-many-public-meth
 
     def add_windows_package(self):
         assets = Path(self.args.assets)
+        package_bytes = b"synthetic Windows package"
         with tempfile.TemporaryDirectory(dir=self.root) as directory:
             package = Path(directory)
-            (package / "windows.bin").write_bytes(b"synthetic Windows package")
-            receipt.create_receipt(lifecycle.PLAN, self.root / ".release-inputs.json",
-                                   package, package / "release-inputs-windows.json")
-            for path in package.iterdir():
-                (assets / path.name).write_bytes(path.read_bytes())
+            (package / "windows.bin").write_bytes(package_bytes)
+            receipt_value = receipt.create_receipt(
+                lifecycle.PLAN,
+                self.root / ".release-inputs.json",
+                package,
+                package / "release-inputs-windows.json",
+            )
+            receipt_bytes = receipt.canonical(receipt_value)
+        (assets / "windows.bin").write_bytes(package_bytes)
+        (assets / "release-inputs-windows.json").write_bytes(receipt_bytes)
+        return {
+            "windows.bin": package_bytes,
+            "release-inputs-windows.json": receipt_bytes,
+        }
 
     def test_partial_current_attempt_missing_platform_fails_before_publication(self):
         self.require_build_receipts(["release-inputs-linux.json", "release-inputs-windows.json"])
@@ -816,15 +864,17 @@ class LifecycleTests(unittest.TestCase):  # pylint: disable=too-many-public-meth
         self.require_build_receipts(["release-inputs-linux.json", "release-inputs-windows.json"])
         lifecycle.prepare(self.args)
         self.build_current()
-        self.add_windows_package()
-        previous = Path(self.args.assets)
+        previous_assets = self.add_windows_package()
         self.fresh_attempt()
         (self.root / "version").write_text("1.2.3\n")
         self.args.assets = str(self.root / "attempt-2")
         lifecycle.prepare(self.args)
         self.build_current()
-        for name in ("windows.bin", "release-inputs-windows.json"):
-            (Path(self.args.assets) / name).write_bytes((previous / name).read_bytes())
+        attempt_two = Path(self.args.assets)
+        (attempt_two / "windows.bin").write_bytes(previous_assets["windows.bin"])
+        (attempt_two / "release-inputs-windows.json").write_bytes(
+            previous_assets["release-inputs-windows.json"]
+        )
         writes = copy.deepcopy(self.gh.writes)
         ledger = copy.deepcopy(self.gh.ledger)
         allocations = copy.deepcopy(self.gh.ledger_writes)
@@ -1768,6 +1818,27 @@ class LifecycleTests(unittest.TestCase):  # pylint: disable=too-many-public-meth
         self.assertEqual(len(self.gh.ledger_writes), 2)
         self.assertNotIn(plan["tag"], self.gh.refs)
 
+    def test_publisher_termination_during_upload_stops_before_public_release(self):
+        plan = self.automatic_build()
+        verify = rc.verify_uploaded_asset
+        changed = []
+
+        def terminate_during_readback(*args, **kwargs):
+            result = verify(*args, **kwargs)
+            if not changed:
+                changed.append(True)
+                self.gh.runs[99].update(status="completed", conclusion="cancelled")
+            return result
+
+        with patch.object(rc, "verify_uploaded_asset", side_effect=terminate_during_readback):
+            with self.assertRaisesRegex(rc.ReleaseError, "not active"):
+                lifecycle.publish_versioned(self.args)
+        draft = next(release for release in self.gh.releases.values()
+                     if release["tag_name"] == plan["tag"])
+        self.assertTrue(draft["draft"])
+        self.assertTrue(self.gh.assets[draft["id"]])
+        self.assertFalse(any(method == "PATCH" for _, method, _ in self.gh.writes))
+
     def reject_workflow_drift_without_publication(self, publish):
         """Keep an allocated plan reusable when a known permission failure is found."""
         self.gh.default_head = "b" * 40
@@ -2302,7 +2373,7 @@ class LifecycleTests(unittest.TestCase):  # pylint: disable=too-many-public-meth
         def move_tag(path, *args, **kwargs):
             result = api(path, *args, **kwargs)
             draft = next((r for r in self.gh.releases.values() if r['tag_name'] == plan['tag']), None)
-            if path == 'git/ref/heads/main' and draft and self.gh.assets[draft['id']]:
+            if path == 'git/ref/heads/main' and draft and self.gh.assets[draft['id']] and not callback_reads:
                 callback_reads.append(path)
                 self.gh.refs[plan['tag']]['object']['sha'] = 'b' * 40
             return result

@@ -92,7 +92,7 @@ def _read_versioned_stable_release(gh, tag, directory, raw, candidate):
     return manifest
 
 
-def _validate_legacy_stable_provenance(gh, tag, release, ref, raw, candidate):
+def _validate_legacy_stable_provenance(gh, tag, ref, raw, candidate):
     """Validate original policy, tag source and immutable run evidence."""
     manifest = validate_manifest(raw, gh.repo, candidate.get("tag", ""), allow_final=True)
     original_policy = source_policy_snapshot(gh, manifest["source_sha"])
@@ -168,12 +168,12 @@ def _verify_stable_receipts(directory, manifest, original_policy):
 
 def verified_assets(gh, tag, directory):
     """Verify stable provenance and source policy before downloading approved bytes."""
-    release, ref, assets, raw, candidate = _read_stable_release(gh, tag)
+    _release, ref, assets, raw, candidate = _read_stable_release(gh, tag)
     manifest = _read_versioned_stable_release(gh, tag, directory, raw, candidate)
     if manifest is not None:
         return manifest
     manifest, original_policy = _validate_legacy_stable_provenance(
-        gh, tag, release, ref, raw, candidate,
+        gh, tag, ref, raw, candidate,
     )
     _download_stable_inventory(gh, assets, manifest, directory)
     _verify_stable_receipts(directory, manifest, original_policy)

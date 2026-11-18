@@ -2870,6 +2870,7 @@ class ExecutingRunStatusTests(unittest.TestCase):
             self.assertEqual(call.args, ("actions/runs/99/attempts/1/jobs", "jobs"))
         self.assertEqual(self.gh.writes, [])
 
+
     def test_run_and_gate_propagation_share_one_deadline(self):
         """Becoming active must not restart the five-minute publication wait."""
 
@@ -3507,7 +3508,9 @@ class CurrentAttemptFreshnessTests(unittest.TestCase):
         self.check()
 
     def test_setup_boundary_exception_cannot_admit_other_steps_or_intervals(self):
-        for change in ({'started_at': '2026-11-08T18:46:19Z'}, {'name': 'Run checks'},
+        for change in ({'started_at': '2026-11-08T18:46:19Z'},
+                       {'completed_at': '2026-11-08T18:46:20.500Z'},
+                       {'name': 'Run checks'},
                        {'number': 2}, {'number': True}, {'number': '1'},
                        {'completed_at': '2026-11-08T18:46:20Z'},
                        {'completed_at': '2026-11-08T18:47:28Z'}, {'status': 'in_progress'}):
@@ -3555,6 +3558,10 @@ class CurrentAttemptFreshnessTests(unittest.TestCase):
         self.job['steps'] = [{'status': 'completed', 'conclusion': 'skipped'}]
         with self.assertRaisesRegex(rc.ReleaseError, "lacks successful execution steps"):
             self.check()
+
+    def test_attempt_jobs_endpoint_allows_omitted_optional_run_attempt(self):
+        self.job.pop("run_attempt")
+        self.check([self.job])
 
     def test_wrong_successful_job_identity_is_rejected(self):
         for key, value in [('head_sha', 'b' * 40), ('run_attempt', 1), ('head_sha', None)]:
@@ -3626,6 +3633,41 @@ class CheckRunExecutionTests(unittest.TestCase):
         self.assertNotIn("_execution_job_id", observed)
         self.assertEqual(self.gh.writes, [])
 
+    def test_exact_attempt_jobs_endpoint_allows_optional_attempt_field_omission(self):
+        current, job = self.execution()
+        job.pop("run_attempt")
+        with patch.object(self.gh, "pages", return_value=[job]):
+            proof = rc.current_execution_job(self.gh, current, 800)
+        self.assertEqual(proof, rc.ExecutionJobProof(700, 800, 900, "runner-example"))
+
+    def test_successful_gate_rejects_publisher_proof_if_job_is_now_terminal(self):
+        current, publisher = self.execution()
+        publisher.update(status="completed", conclusion="success",
+                         completed_at="2026-01-01T00:01:00Z")
+        gate = {"id": 701, "run_id": 99, "head_sha": SHA,
+                "name": "Release gate", "status": "completed", "conclusion": "success"}
+        with patch.object(self.gh, "api", return_value=current), \
+                patch.object(self.gh, "pages", return_value=[gate, publisher]), \
+                self.assertRaisesRegex(rc.ReleaseError, "not executing"):
+            rc.release_gate_ready(
+                self.gh, 99, SHA, 1,
+                publisher_proof=rc.ExecutionJobProof(700, 800, 900, "runner-example"),
+                publisher_run=current,
+            )
+
+    def test_successful_gate_accepts_current_publisher_proof_and_omitted_attempt(self):
+        current, publisher = self.execution()
+        publisher.pop("run_attempt")
+        gate = {"id": 701, "run_id": 99, "head_sha": SHA,
+                "name": "Release gate", "status": "completed", "conclusion": "success"}
+        with patch.object(self.gh, "api", return_value=current), \
+                patch.object(self.gh, "pages", return_value=[gate, publisher]):
+            self.assertTrue(rc.release_gate_ready(
+                self.gh, 99, SHA, 1,
+                publisher_proof=rc.ExecutionJobProof(700, 800, 900, "runner-example"),
+                publisher_run=current,
+            ))
+
     def test_attempt_in_progress_is_used_without_rewriting_aggregate(self):
         current, _ = self.execution()
         active = {**current, "status": "in_progress"}
@@ -3696,6 +3738,7 @@ class CheckRunExecutionTests(unittest.TestCase):
     def test_hostile_job_identity_status_runner_and_timing_fail_closed(self):
         current, job = self.execution()
         changes = [{"id": True}, {"run_id": 100}, {"run_attempt": True},
+                   {"run_attempt": None},
                    {"head_sha": "b" * 40}, {"runner_id": 0}, {"runner_name": "other"},
                    {"check_run_url": "https://foreign.test/check-runs/800"},
                    {"status": "completed"}, {"conclusion": "failure"},
@@ -3754,6 +3797,33 @@ class CheckRunExecutionTests(unittest.TestCase):
         with patch.object(self.gh, "pages", return_value=[job]):
             self.assertIsNone(rc.current_execution_job(self.gh, current, 800))
 
+    def test_first_setup_step_one_second_before_job_start_is_allowed_for_pending_job(self):
+        current, job = self.pending_step_job()
+        current["run_started_at"] = "2026-01-01T00:00:00Z"
+        job["started_at"] = "2026-01-01T00:00:01Z"
+        job["steps"][0].update(
+            name="Set up job", number=1,
+            started_at="2026-01-01T00:00:00Z", completed_at="2026-01-01T00:00:01Z",
+        )
+        with patch.object(self.gh, "pages", return_value=[job]):
+            self.assertIsNone(rc.current_execution_job(self.gh, current, 800))
+
+    def test_setup_step_offset_still_cannot_cross_attempt_or_exceed_one_second(self):
+        current, job = self.pending_step_job()
+        job["started_at"] = "2026-01-01T00:00:02Z"
+        job["steps"][0].update(
+            name="Set up job", number=1,
+            started_at="2026-01-01T00:00:00Z", completed_at="2026-01-01T00:00:01Z",
+        )
+        with patch.object(self.gh, "pages", return_value=[job]), \
+                self.assertRaisesRegex(rc.ReleaseError, "outside"):
+            rc.current_execution_job(self.gh, current, 800)
+        current["run_started_at"] = "2026-01-01T00:00:01Z"
+        job["started_at"] = "2026-01-01T00:00:01Z"
+        with patch.object(self.gh, "pages", return_value=[job]), \
+                self.assertRaisesRegex(rc.ReleaseError, "outside"):
+            rc.current_execution_job(self.gh, current, 800)
+
     def test_step_becoming_active_uses_the_original_wait_budget(self):
         current, pending = self.pending_step_job()
         active = deepcopy(pending)
@@ -3803,6 +3873,61 @@ class CheckRunExecutionTests(unittest.TestCase):
                     patch.object(self.gh, "pages", return_value=[{**job, **change}]), \
                     self.assertRaises(rc.ReleaseError):
                 rc.current_execution_job(self.gh, current, 800)
+
+
+class PublishBoundaryOrderingTests(unittest.TestCase):
+    def test_publish_confirmation_runs_after_final_tag_read_and_before_patch(self):
+        events = []
+
+        class Client:
+            repo = REPO
+            tag_sha = SHA
+
+            def api(self, path, method="GET", body=None):
+                events.append((path, method))
+                if path == "git/refs" and method == "POST":
+                    return {"ref": "refs/tags/v1.2.3"}
+                if path == "releases" and method == "POST":
+                    return {"id": 20, "tag_name": "v1.2.3", "draft": True}
+                if path == "git/ref/tags/v1.2.3":
+                    return {"ref": "refs/tags/v1.2.3", "object": {"type": "commit", "sha": self.tag_sha}}
+                if path == "releases/20" and method == "PATCH":
+                    return {"id": 20, "html_url": "https://example.invalid/release"}
+                raise AssertionError(f"Unexpected API call {method} {path}")
+
+            def upload(self, *_args, **_kwargs):
+                events.append(("upload", "POST"))
+
+            def pages(self, *_args, **_kwargs):
+                return [{"name": "package.bin"}]
+
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            (directory / "package.bin").write_bytes(b"package")
+
+            def confirm_publish():
+                events.append(("confirm", "READ"))
+                self.assertIn(("git/ref/tags/v1.2.3", "GET"), events)
+                self.assertNotIn(("releases/20", "PATCH"), events)
+                # The tag can move while source/publisher checks are running.
+                # A final tag read must catch it before the public PATCH.
+                client.tag_sha = "b" * 40
+
+            client = Client()
+            with (
+                patch.object(rc, "verify_required_signatures"),
+                patch.object(rc, "reject_restricted_assets"),
+                patch.object(rc, "ensure_absent"),
+                patch.object(rc, "check_workflow_publication"),
+                patch.object(rc, "verify_uploaded_asset"),
+                self.assertRaisesRegex(rc.ReleaseError, "Tag moved before publication"),
+            ):
+                rc._publish_prepared(
+                    client, "v1.2.3", SHA, directory, True, "notes",
+                    confirm_publish=confirm_publish,
+                )
+        self.assertEqual(events[-1], ("git/ref/tags/v1.2.3", "GET"))
+        self.assertNotIn(("releases/20", "PATCH"), events)
 
 
 if __name__ == "__main__":

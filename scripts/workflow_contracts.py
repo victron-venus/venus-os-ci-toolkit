@@ -443,7 +443,10 @@ def validate_automatic_push_admission(policy, workflows):
         if present and (name != RELEASE_PIPELINE or selected is None):
             raise ValueError("Unconfigured automatic push admission")
     if selected is not None:
-        from release_push_scope import validate_workflow  # pylint: disable=import-outside-toplevel
+        if __package__:
+            from .release_push_scope import validate_workflow  # pylint: disable=import-outside-toplevel
+        else:
+            from release_push_scope import validate_workflow  # pylint: disable=import-outside-toplevel
         validate_workflow(policy, workflows.get(RELEASE_PIPELINE, {}))
 
 

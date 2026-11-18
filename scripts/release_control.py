@@ -48,6 +48,7 @@ MANIFEST = "release-manifest.json"
 POLICY = ".release-policy.json"
 EVIDENCE = Path(".release-evidence") / MANIFEST
 INVALID_EXECUTION_CHECK_RUN_URL = "Invalid execution check-run URL"
+CREATE_READBACK_RESPONSE_LIMIT_ERROR = "Create readback response limit exceeded"
 
 
 class AssetRestriction(TypedDict):
@@ -173,7 +174,7 @@ class CreateReadback:
         require(ordinary or page, "Invalid create readback path")
         require(not any(p in {".", ".."} for p in unquote(path).split("/")),
                 "Invalid create readback path")
-        require(self.remaining > 0, "Create readback response limit exceeded")
+        require(self.remaining > 0, CREATE_READBACK_RESPONSE_LIMIT_ERROR)
         self.calls += 1
         require(self.calls <= 100, "Create readback request limit exceeded")
         endpoint = f"repos/{self.repo}" + (f"/{path}" if path else "")
@@ -187,10 +188,10 @@ class CreateReadback:
         except (ProcessTimeout, subprocess.TimeoutExpired) as error:
             raise GitHubError("Create readback GET timed out") from error
         except ProcessOutputLimit as error:
-            raise GitHubError("Create readback response limit exceeded") from error
+            raise GitHubError(CREATE_READBACK_RESPONSE_LIMIT_ERROR) from error
         self.check()
         self.remaining -= len(result.stdout or b"") + len(result.stderr or b"")
-        require(self.remaining >= 0, "Create readback response limit exceeded")
+        require(self.remaining >= 0, CREATE_READBACK_RESPONSE_LIMIT_ERROR)
         status, body = github_http_response(result.stdout or b"")
         require(result.returncode == 0 and status == 200, "Create readback GET failed")
         header = (result.stdout or b"")[:len(result.stdout or b"") - len(body)]
@@ -404,10 +405,11 @@ class _AssetWriter:
                 and (current.st_dev, current.st_ino) == identity
                 and (opened.st_dev, opened.st_ino) == identity,
                 "Asset destination changed during transfer")
-        # A retry needs room for the whole asset, not just its missing suffix.
-        self.budget.check(self.directory, self.expected["size"])
         self.output.seek(0)
         self.output.truncate(0)
+        # The verified owned partial is now discardable. Keep cumulative bytes
+        # charged, but measure space for a complete retry after reclaiming it.
+        self.budget.check(self.directory, self.expected["size"])
         self.size = 0
         self.checksum = hashlib.sha256()
 
@@ -1831,13 +1833,15 @@ def require_current_attempt_jobs(
     for job in jobs:
         if job.get("status") != "completed" or job.get("conclusion") != "success":
             continue
-        require(job.get("head_sha") == sha and job.get("run_attempt") == attempt,
+        require(job.get("head_sha") == sha and job_attempt_matches(job, attempt),
                 "Successful job differs from the current release attempt")
         _require_fresh_job_timing(job, boundary)
 
 
 def release_gate_ready(
-    gh: GitHub, run_id: int, sha: str, attempt: int, *, allow_pending: bool = False
+    gh: GitHub, run_id: int, sha: str, attempt: int, *, allow_pending: bool = False,
+    publisher_proof: ExecutionJobProof | None = None,
+    publisher_run: JSONObject | None = None,
 ) -> bool:
     """Require exact gate success; optionally report unfinished API metadata."""
     jobs = gh.pages(f"actions/runs/{run_id}/attempts/{attempt}/jobs", "jobs")
@@ -1862,6 +1866,31 @@ def release_gate_ready(
         failure,
     )
     require_current_attempt_jobs(gh, run_id, sha, attempt, jobs)
+    if publisher_proof is not None:
+        require(isinstance(publisher_run, dict),
+                "Publisher proof requires a fresh exact-attempt response")
+        current = cast(JSONObject, publisher_run)
+        require(current.get("id") == run_id and current.get("run_attempt") == attempt
+                and current.get("head_sha") == sha and current.get("path") == WORKFLOW
+                and current.get("conclusion") is None
+                and current.get("status") in {
+                    "queued", "requested", "pending", "waiting", "in_progress",
+                }, "Publisher attempt is no longer active")
+        matches = [
+            job for job in jobs
+            if job.get("check_run_url") is not None
+            and execution_check_url_id(job.get("check_run_url"), gh.repo)
+            == publisher_proof.check_run_id
+        ]
+        require(len(matches) == 1, "Current publisher job is missing from its attempt")
+        job = matches[0]
+        require(job.get("run_id") == run_id and job.get("head_sha") == sha
+                and job_attempt_matches(job, attempt),
+                "Current publisher job differs from its attempt")
+        observed = require_executing_job(job, cast(JSONObject, current), gh.repo,
+                                         publisher_proof.check_run_id)
+        require(observed == publisher_proof,
+                "Publisher execution proof is stale or changed")
     return True
 
 
@@ -1900,6 +1929,14 @@ class ExecutionJobProof(NamedTuple):
     runner_name: str
 
 
+def job_attempt_matches(job: JSONObject, attempt: int) -> bool:
+    """Use the exact-attempt endpoint when GitHub omits optional job run_attempt."""
+    if "run_attempt" not in job:
+        return True
+    value = job["run_attempt"]
+    return type(value) is int and value == attempt
+
+
 def execution_check_run_id() -> int | None:
     """Only a workflow step's official job context enables the alternate proof."""
     value = os.environ.get("RELEASE_EXECUTION_CHECK_RUN_ID", "")
@@ -1923,7 +1960,9 @@ def require_active_attempt(current: object, run: JSONObject) -> JSONObject:
     return current
 
 
-def require_pending_execution_steps(steps: list[JSONObject], start: datetime, now: datetime) -> None:
+def require_pending_execution_steps(
+    steps: list[JSONObject], start: datetime, now: datetime, boundary: datetime,
+) -> None:
     """Only consistent queued steps may wait; completed-only or invalid data fails."""
     pending = False
     for step in steps:
@@ -1942,7 +1981,16 @@ def require_pending_execution_steps(steps: list[JSONObject], start: datetime, no
                 continue
             step_start = _execution_timestamp(step.get("started_at"), "completed step start")
             step_end = _execution_timestamp(step.get("completed_at"), "completed step end")
-            require(start <= step_start <= step_end <= now,
+            setup_boundary = (
+                step is steps[0]
+                and type(step.get("number")) is int
+                and step["number"] == 1
+                and step.get("name") == "Set up job"
+                and 0 < (start - step_start).total_seconds() <= 1
+                and boundary <= step_start
+                and start <= step_end
+            )
+            require((start <= step_start or setup_boundary) and step_start <= step_end <= now,
                     "Completed step lies outside its current job")
     require(pending, "Executing job has only terminal steps")
 
@@ -1969,7 +2017,7 @@ def require_executing_job_timing(
         if step.get("status") == "in_progress":
             active.append(step)
     if not active and allow_pending_steps:
-        require_pending_execution_steps(cast(list[JSONObject], steps), start, now)
+        require_pending_execution_steps(cast(list[JSONObject], steps), start, now, boundary)
         return False
     require(len(active) == 1, "Exactly one executing step is required")
     step = active[0]
@@ -2002,10 +2050,14 @@ def require_executing_job(
     require(type(check_run_id) is int and check_run_id > 0, "Invalid execution check-run ID")
     require(isinstance(job, dict), "Malformed executing job")
     job = cast(JSONObject, job)
-    for field, value in (("run_id", run["id"]), ("run_attempt", run["run_attempt"]),
-                         ("head_sha", run["head_sha"])):
+    for field, value in (("run_id", run["id"]), ("head_sha", run["head_sha"])):
         require(type(job.get(field)) is type(value) and job[field] == value,
                 "Executing job identity changed")
+    # The attempt-specific jobs endpoint is authoritative for attempt identity.
+    # GitHub's REST schema does not require run_attempt on job objects; if it is
+    # present, it must still agree with the exact attempt requested above.
+    require(job_attempt_matches(job, cast(int, run["run_attempt"])),
+            "Executing job attempt differs from its exact-attempt endpoint")
     require(execution_check_url_id(job.get("check_run_url"), repository) == check_run_id,
             "Executing check-run URL changed")
     require(job.get("status") == "in_progress" and job.get("conclusion") is None
@@ -2034,16 +2086,18 @@ def current_execution_job(
         require(type(identity) is int and identity > 0 and identity not in ids,
                 "Invalid or duplicate execution job ID")
         ids.add(cast(int, identity))
-        if execution_check_url_id(job.get("check_run_url"), gh.repo) == check_run_id:
+        check_url = job.get("check_run_url")
+        if check_url is not None and execution_check_url_id(check_url, gh.repo) == check_run_id:
             matches.append(job)
     require(len(matches) <= 1, "Duplicate current check-run jobs")
     if not matches:
         return None
     job = matches[0]
-    for field, value in (("run_id", run["id"]), ("run_attempt", run["run_attempt"]),
-                         ("head_sha", run["head_sha"])):
+    for field, value in (("run_id", run["id"]), ("head_sha", run["head_sha"])):
         require(type(job.get(field)) is type(value) and job[field] == value,
                 "Executing job identity changed")
+    require(job_attempt_matches(job, cast(int, run["run_attempt"])),
+            "Executing job attempt differs from its exact-attempt endpoint")
     if job.get("status") in {"queued", "requested", "pending", "waiting"}:
         require(job.get("conclusion") is None and job.get("completed_at") is None,
                 "Pending execution job has a conclusion")
@@ -2131,7 +2185,10 @@ def wait_for_executing_run(
         )
         status = run.get("status")
         if executing and (
-            not gate or release_gate_ready(gh, run_id, sha, attempt, allow_pending=True)
+            not gate or release_gate_ready(
+                gh, run_id, sha, attempt, allow_pending=True,
+                publisher_proof=proof, publisher_run=run if proof is not None else None,
+            )
         ):
             return accepted_execution_run(run, proof, execution_proof, deadline)
         waiting_for = (
@@ -2692,16 +2749,24 @@ def _publish_prepared(
     budget = DownloadBudget(sum(path.stat().st_size for path in expected.values()) * API_READ_ATTEMPTS)
     for item in uploaded:
         verify_uploaded_asset(gh, item, expected[cast(str, item["name"])], budget=budget)
+    def confirm_tag() -> None:
+        ref = cast(JSONObject, gh.api(f"git/ref/tags/{quote(tag, safe='')}"))
+        require(
+            isinstance(ref, dict) and ref.get("ref") == f"refs/tags/{tag}"
+            and isinstance(ref.get("object"), dict)
+            and cast(JSONObject, ref["object"]).get("type") == "commit"
+            and cast(JSONObject, ref["object"]).get("sha") == sha,
+            "Tag moved before publication; draft left unpublished",
+        )
+
+    # Verify the tag once, run every mutable source/publisher callback, then
+    # make the final tag GET immediately before the public flip. GitHub exposes
+    # no conditional release PATCH bound to a tag SHA, so a caller must retain
+    # its narrow mutable-source window after this final tag read.
+    confirm_tag()
     if confirm_publish is not None:
         confirm_publish()
-    ref = cast(JSONObject, gh.api(f"git/ref/tags/{quote(tag, safe='')}"))
-    require(
-        isinstance(ref, dict) and ref.get("ref") == f"refs/tags/{tag}"
-        and isinstance(ref.get("object"), dict)
-        and cast(JSONObject, ref["object"]).get("type") == "commit"
-        and cast(JSONObject, ref["object"]).get("sha") == sha,
-        "Tag moved before publication; draft left unpublished",
-    )
+    confirm_tag()
     result = cast(
         JSONObject,
         gh.api(

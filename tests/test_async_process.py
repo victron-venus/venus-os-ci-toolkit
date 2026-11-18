@@ -268,9 +268,40 @@ class AsyncProcessTests(unittest.TestCase):
             patch.object(async_process.selectors, "DefaultSelector", side_effect=OSError("no selector")),
         ):
             with self.assertRaisesRegex(OSError, "no selector"):
-                async_process.run_process([sys.executable, "-c", "import time; time.sleep(60)"], timeout=5)
+                async_process.run_process(
+                    [sys.executable, "-c", "import time; time.sleep(60)"],
+                    timeout=5, input=b"payload",
+                )
         self.assertEqual(len(processes), 1)
         self.assertIsNotNone(processes[0].returncode, "selector failure leaked its child")
+        self.assertTrue(all(stream is None or stream.closed for stream in (
+            processes[0].stdin, processes[0].stdout, processes[0].stderr,
+        )), "selector failure leaked an owned pipe")
+
+    @unittest.skipUnless(os.name == "posix", "process-group cleanup is POSIX-specific")
+    def test_nonblocking_setup_failure_closes_all_owned_pipes(self):
+        real_popen = async_process.subprocess.Popen
+        processes = []
+
+        def tracked_popen(*args, **kwargs):
+            process = real_popen(*args, **kwargs)
+            processes.append(process)
+            return process
+
+        with (
+            patch.object(async_process.subprocess, "Popen", side_effect=tracked_popen),
+            patch.object(async_process.os, "set_blocking", side_effect=OSError("fd setup failed")),
+        ):
+            with self.assertRaisesRegex(OSError, "fd setup failed"):
+                async_process.run_process(
+                    [sys.executable, "-c", "import time; time.sleep(60)"],
+                    timeout=5, input=b"payload",
+                )
+        self.assertEqual(len(processes), 1)
+        self.assertIsNotNone(processes[0].returncode, "fd setup failure leaked its child")
+        self.assertTrue(all(stream is None or stream.closed for stream in (
+            processes[0].stdin, processes[0].stdout, processes[0].stderr,
+        )), "fd setup failure leaked an owned pipe")
 
     @unittest.skipUnless(os.name == "posix", "process-group cleanup is POSIX-specific")
     def test_terminal_wait_crossing_deadline_reports_timeout(self):
@@ -345,6 +376,41 @@ class AsyncCancellationTests(unittest.IsolatedAsyncioTestCase):
                         await asyncio.wait_for(task, timeout=5)
                     except asyncio.CancelledError:
                         pass
+
+    async def test_repeated_cancellation_waits_until_owned_process_cleanup_finishes(self):
+        kill_started = threading.Event()
+        release_kill = threading.Event()
+        real_kill = async_process._kill_owned_process
+
+        def held_kill(process):
+            real_kill(process)
+            kill_started.set()
+            if not release_kill.wait(timeout=5):
+                raise AssertionError("test did not release the process cleanup gate")
+
+        with patch.object(async_process, "_kill_owned_process", side_effect=held_kill):
+            task = asyncio.create_task(async_process.run_process_async(
+                [sys.executable, "-c", "import time; time.sleep(60)"],
+            ))
+            try:
+                await asyncio.sleep(0.05)
+                task.cancel()
+                self.assertTrue(await asyncio.to_thread(kill_started.wait, 3))
+                task.cancel()
+                await asyncio.sleep(0.05)
+                self.assertFalse(task.done(), "repeated cancellation abandoned the owned worker")
+                release_kill.set()
+                with self.assertRaises(asyncio.CancelledError):
+                    await asyncio.wait_for(task, timeout=5)
+            finally:
+                release_kill.set()
+                if not task.done():
+                    task.cancel()
+                    _done, pending = await asyncio.wait({task}, timeout=5)
+                    self.assertFalse(pending, "owned worker did not finish after cleanup")
+                    if not task.cancelled():
+                        task.result()
+                    self.assertTrue(task.cancelled(), "cleanup unexpectedly completed without cancellation")
 
     async def test_escaped_pipe_holder_during_cancellation_fails_closed(self):
         with tempfile.TemporaryDirectory() as directory:
