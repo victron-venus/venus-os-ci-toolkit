@@ -25,6 +25,7 @@ from datetime import datetime, timezone
 from itertools import product
 from pathlib import Path
 from unittest.mock import Mock, patch
+from urllib.parse import urlsplit
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -3789,8 +3790,7 @@ class CheckRunExecutionTests(unittest.TestCase):
     def test_repository_case_is_compatible_but_other_url_components_are_strict(self):
         current, job = self.execution()
         self.assertEqual(rc.require_executing_job(job, current, REPO.upper(), 800).job_id, 700)
-        for url in (f"http://api.github.com/repos/{REPO}/check-runs/800",
-                    f"https://api.github.com/repos/{REPO}/check-runs/800?extra=1",
+        for url in (f"https://api.github.com/repos/{REPO}/check-runs/800?extra=1",
                     f"https://api.github.com/repos/{REPO}/check-runs/800#fragment",
                     f"https://api.github.com/repos/{REPO}/check-runs/800?",
                     f"https://api.github.com/repos/{REPO}/check-runs/800#",
@@ -3801,6 +3801,18 @@ class CheckRunExecutionTests(unittest.TestCase):
                     f"https://user@api.github.com/repos/{REPO}/check-runs/800"):
             with self.subTest(url=url), self.assertRaises(rc.ReleaseError):
                 rc.require_executing_job({**job, "check_run_url": url}, current, REPO, 800)
+
+    def test_insecure_scheme_is_rejected_with_other_execution_identity_unchanged(self):
+        current, job = self.execution()
+        self.assertEqual(rc.require_executing_job(job, current, REPO, 800).job_id, 700)
+        accepted = urlsplit(job["check_run_url"])
+        # Mutate only the scheme of an otherwise accepted route, without sending it.
+        rejected = accepted._replace(scheme="http")
+        self.assertEqual(rejected.scheme, "http")
+        self.assertEqual(rejected._replace(scheme=accepted.scheme), accepted)
+        rejected_job = {**job, "check_run_url": rejected.geturl()}
+        with self.assertRaisesRegex(rc.ReleaseError, "Invalid execution check-run URL"):
+            rc.require_executing_job(rejected_job, current, REPO, 800)
 
     def pending_step_job(self):
         """Model step propagation while the exact current job already runs."""

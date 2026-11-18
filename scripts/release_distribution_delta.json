@@ -111,7 +111,7 @@
       "after_sha256": "dcb7a679eedd325b4c9333afaced2279875583adb7ec0b5ad36e3be0e1ad9d9c",
       "canonical_source": "tests/test_release_control.py",
       "canonical_base_sha256": "c7e79c6e776530cb2eb9383307980fc02f0cacc9f7fa55e9d97eac146ecda705",
-      "canonical_source_sha256": "39cc9c9821212921e5f8f730967d91274950ff5a6d17d9e7529a36ed8894e3c4",
+      "canonical_source_sha256": "5c6573796f3bc4b27c64995d2536c3eb3ed7bbbfd139fac72cc77bb64578c9a7",
       "hunks": [
         {
           "before": "        with self.assertRaisesRegex(rc.ReleaseError, 'outside'):\n            self.check()\n\n    def test_intentional_skips_and_unfinished_publisher_do_not_need_clocks(self):\n        self.job['steps'].append({'conclusion': 'skipped'})\n        self.job['steps'].append({'conclusion': 'failure', 'status': 'completed'})\n",
