@@ -16,6 +16,16 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 import async_process
 
 
+async def cancel_test_task(task, timeout=5):
+    """Drain an owned test task without catching cancellation of its caller."""
+    task.cancel()
+    _done, pending = await asyncio.wait({task}, timeout=timeout)
+    if pending:
+        raise AssertionError("owned test task did not finish within cleanup timeout")
+    if not task.cancelled():
+        task.result()
+
+
 class AsyncProcessTests(unittest.TestCase):
     def assert_process_stopped(self, pid_file: Path, timeout: float = 3.0) -> None:
         pid = int(pid_file.read_text())
@@ -372,11 +382,76 @@ class AsyncCancellationTests(unittest.IsolatedAsyncioTestCase):
                 self.assertFalse(survived.exists(), "spawn cancellation left a descendant running")
             finally:
                 if not task.done():
-                    task.cancel()
-                    try:
-                        await asyncio.wait_for(task, timeout=5)
-                    except asyncio.CancelledError:
-                        pass
+                    await cancel_test_task(task)
+
+    async def test_test_task_cleanup_accepts_owned_task_cancellation(self):
+        task = asyncio.create_task(asyncio.sleep(60))
+        await cancel_test_task(task)
+        self.assertTrue(task.cancelled())
+
+    async def test_test_task_cleanup_propagates_caller_cancellation(self):
+        started = asyncio.Event()
+        cleanup_started = asyncio.Event()
+        release_cleanup = asyncio.Event()
+
+        async def owned_task():
+            try:
+                started.set()
+                await asyncio.Event().wait()
+            finally:
+                cleanup_started.set()
+                await release_cleanup.wait()
+
+        task = asyncio.create_task(owned_task())
+        await asyncio.wait_for(started.wait(), timeout=1)
+        cleanup = asyncio.create_task(cancel_test_task(task))
+        try:
+            await asyncio.wait_for(cleanup_started.wait(), timeout=1)
+            cleanup.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await asyncio.wait_for(cleanup, timeout=1)
+            self.assertFalse(task.done(), "caller cancellation interrupted owned task cleanup")
+        finally:
+            release_cleanup.set()
+            _done, pending = await asyncio.wait({cleanup, task}, timeout=1)
+            self.assertFalse(pending, "test cleanup left pending tasks")
+        self.assertTrue(task.cancelled())
+
+    async def test_test_task_cleanup_remains_bounded(self):
+        started = asyncio.Event()
+        release_cleanup = asyncio.Event()
+
+        async def owned_task():
+            try:
+                started.set()
+                await asyncio.Event().wait()
+            finally:
+                await release_cleanup.wait()
+
+        task = asyncio.create_task(owned_task())
+        await asyncio.wait_for(started.wait(), timeout=1)
+        try:
+            with self.assertRaisesRegex(AssertionError, "cleanup timeout"):
+                await cancel_test_task(task, timeout=0.01)
+            self.assertFalse(task.done())
+        finally:
+            release_cleanup.set()
+            _done, pending = await asyncio.wait({task}, timeout=1)
+            self.assertFalse(pending, "test cleanup left a pending task")
+        self.assertTrue(task.cancelled())
+
+    async def test_test_task_cleanup_preserves_owned_task_failure(self):
+        failure = RuntimeError("owned test task cleanup failed")
+
+        async def owned_task():
+            raise failure
+
+        task = asyncio.create_task(owned_task())
+        _done, pending = await asyncio.wait({task}, timeout=1)
+        self.assertFalse(pending, "owned task did not fail within the test timeout")
+        with self.assertRaises(RuntimeError) as raised:
+            await cancel_test_task(task)
+        self.assertIs(raised.exception, failure)
 
     async def test_repeated_cancellation_waits_until_owned_process_cleanup_finishes(self):
         kill_started = threading.Event()
