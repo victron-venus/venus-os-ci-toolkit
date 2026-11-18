@@ -2461,14 +2461,24 @@ and its immutable Actions evidence available and unexpired. Old schema-1 stable
 and final-build paths remain supported. See [compact distribution](release-distribution.md)
 for the narrow scripts/tests/docs migration and its workflow-preservation limits.
 
-Assets are uploaded to the draft's known release ID, using one bounded request
-per file. Publication does not repeat a tag lookup for each upload: a draft may
-not appear in the published-release-by-tag API. Each response must confirm a
-created asset with the expected name and size; the final verification still
-downloads and checks every payload before making the release public. A timeout,
-incomplete response or upload conflict stops publication without retrying or
-overwriting the asset. Preserve the draft and its evidence for inspection;
-do not reset the version allocation ledger to reuse the failed build number.
+Assets are uploaded to the draft's known release ID. Publication does not
+repeat a tag lookup for each upload: a draft may not appear in the
+published-release-by-tag API. After a non-201 response, timeout or malformed
+response, the publisher reads the complete asset inventory for that exact release
+ID. An exact name, size and digest match confirms the upload; if the API omits its
+digest, the publisher downloads and hashes that exact asset. The final verification
+still downloads and checks every payload before making the release public.
+
+Only an explicit HTTP 500, 502, 503 or 504 followed by a successful complete
+inventory showing the exact asset name absent allows one retry. A timeout, lost
+or malformed HTTP response, or any other status never authorizes a retry, but an
+exact matching inventory may still confirm that upload. Conflicting assets,
+malformed or unavailable inventory, or an asset still absent after the permitted
+retry stop publication. No retry overwrites or deletes an asset. The bounded
+error records the attempt, HTTP outcome when available, and reconciliation state
+without response bodies or credentials. Preserve the draft and its evidence for
+inspection; do not reset the version allocation ledger to reuse the failed build
+number.
 
 Release-asset downloads use the expected size and SHA-256 from the validated
 inventory before opening a new destination. Every chunk is checked before it is
@@ -2498,8 +2508,9 @@ of three times their total expected inventory size, with at most three GET
 attempts per asset within one shared transfer deadline. Failed prefixes remain
 charged to that allowance; each retry clears only its own staging file and
 resets the per-file hash. Every accepted file must still
-match its expected size and SHA-256. Authentication failures, transfer timeouts,
-and cancellations are not retried, and publication writes are never replayed.
+match its expected size and SHA-256. Authentication failures, download timeouts
+and cancellations are not retried. Publication writes other than the bounded
+upload exception above are never replayed.
 Operator-supplied budgets and other download paths keep their existing caps:
 a retry stops if the remaining budget cannot fit the complete expected asset.
 A consumer backport must update `release_control.py`, `release_closed.py`,

@@ -79,11 +79,18 @@ conservative authorization-diagnostic veto can then prevent a retry even for
 HTTP 503. Keep that veto intact; API debug traces are for diagnosis, not normal
 automated read recovery.
 
-POST, PATCH, PUT and uploads are never replayed. Large streamed downloads retain
-their separate 900-second limit, expected size/hash, cumulative byte budget and
-free-space floor. They remain single attempts: restarting them requires an
-explicit budget for transferred-and-discarded bytes. Recovery does not relax
-source, manifest, signature, provenance or payload validation.
+POST, PATCH and PUT writes are never replayed. An upload POST may be retried once
+only after an explicit HTTP 500/502/503/504 and a complete exact-release inventory
+proves that asset absent; timeouts and other outcomes never authorize a retry.
+Any matching asset still needs exact identity and byte verification. See the
+[release workflow upload-recovery rule](release-workflow.md#stable-promotion).
+
+Large streamed downloads retain their separate 900-second limit, expected
+size/hash, cumulative byte budget and free-space floor. Recognized transient GET
+connection or server failures may retry the whole asset up to three times;
+transfer timeouts remain terminal. Discarded bytes stay charged to the same
+budget. Recovery does not relax source, manifest, signature, provenance or
+payload validation.
 
 ## Scoped dependency assessment — 2026-10-22
 

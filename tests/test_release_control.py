@@ -39,10 +39,13 @@ SHA = "a" * 40
 RC_TAG = "v1.2.3-rc.2"
 
 
-def http_response(status=0, stdout=b"{}", error_format="gh: API failed (HTTP {status})"):
+def http_response(status=0, stdout=b"{}", error_format="gh: API failed (HTTP {status})", link=None):
     """Return a complete gh --include fixture independent of retry support."""
+    headers = b"Content-Type: application/json\r\n"
+    if link is not None:
+        headers += b"Link: " + link + b"\r\n"
     return subprocess.CompletedProcess(
-        [], bool(status), f"HTTP/2.0 {status or 200} Test\nContent-Type: application/json\r\n\r\n".encode() + stdout,
+        [], bool(status), f"HTTP/2.0 {status or 200} Test\n".encode() + headers + b"\r\n" + stdout,
         error_format.format(status=status).encode() if status else b"",
     )
 
@@ -73,7 +76,10 @@ class MetadataReadRetryTests(unittest.TestCase):
 
     def test_transient_read_retries_and_discards_partial_pages(self):
         for status, error_format in product((500, 502, 503, 504), self.ERROR_FORMATS):
-            partial = self.response(stdout=b'[{"partial": true}]').stdout
+            partial = self.response(
+                stdout=b'[{"partial": true}]',
+                link=b'<https://api.github.com/repos/example/project/releases?per_page=100&page=2>; rel="next"',
+            ).stdout
             failed = self.response(status, b'{"errors":"HTTP 404"}', error_format)
             failed.stdout = partial + b"\n" + failed.stdout
             with (
@@ -385,8 +391,11 @@ class WholeReadRecoveryTests(unittest.TestCase):
     def test_later_partial_page_denials_still_veto_retry(self):
         for status, failure in product((401, 403, 404, 429), ("timeout", "eof")):
             with self.subTest(status=status, failure=failure):
-                partial = http_response(stdout=b'[{"id":1}]\n').stdout
-                partial += f"HTTP/2.0 {status} Denied\r\n".encode()
+                partial = http_response(
+                    stdout=b'[{"id":1}]',
+                    link=b'<https://api.github.com/repos/example/project/releases?per_page=100&page=2>; rel="next"',
+                ).stdout
+                partial += b"\n" + f"HTTP/2.0 {status} Denied\r\n".encode()
                 result = (subprocess.TimeoutExpired(["gh"], 30, output=partial)
                           if failure == "timeout" else self.failed(stdout=partial))
                 with (patch.object(rc.subprocess, "run", side_effect=[result]) as run,
@@ -521,6 +530,35 @@ class WholeReadRecoveryTests(unittest.TestCase):
             self.assertEqual(self.gh.pages("releases"), [{"id": 2}])
             self.assertEqual(run.call_count, 2)
 
+    def test_paginated_response_must_reach_advertised_terminal_page(self):
+        first = http_response(
+            stdout=b'[{"id":1}]',
+            link=b'<https://api.github.com/repos/example/project/releases?per_page=100&page=2>; rel=next',
+        )
+        with patch.object(rc.subprocess, "run", return_value=first):
+            with self.assertRaisesRegex(rc.GitHubError, "before the advertised terminal page"):
+                rc.GitHub(REPO).pages("releases")
+
+    def test_paginated_response_accepts_unquoted_next_when_followed(self):
+        first = http_response(
+            stdout=b'[{"id":1}]',
+            link=b'<https://api.github.com/repos/example/project/releases?per_page=100&page=2>; rel=next',
+        ).stdout
+        second = http_response(stdout=b'[{"id":2}]').stdout
+        with patch.object(rc.subprocess, "run", return_value=subprocess.CompletedProcess(
+            [], 0, first + b"\n" + second, b"",
+        )):
+            self.assertEqual(rc.GitHub(REPO).pages("releases"), [{"id": 1}, {"id": 2}])
+
+    def test_paginated_response_rejects_unadvertised_later_page(self):
+        first = http_response(stdout=b'[{"id":1}]').stdout
+        second = http_response(stdout=b'[{"id":2}]').stdout
+        with patch.object(rc.subprocess, "run", return_value=subprocess.CompletedProcess(
+            [], 0, first + b"\n" + second, b"",
+        )):
+            with self.assertRaisesRegex(rc.GitHubError, "unadvertised response page"):
+                rc.GitHub(REPO).pages("releases")
+
 
 
 class JobPaginationTests(unittest.TestCase):
@@ -539,8 +577,12 @@ class JobPaginationTests(unittest.TestCase):
     @staticmethod
     def response(jobs):
         pages = [
-            http_response(stdout=json.dumps({"total_count": len(jobs), "jobs": jobs[start:start + 20]}).encode()).stdout
-            for start in range(0, len(jobs), 20)
+            http_response(
+                stdout=json.dumps({"total_count": len(jobs), "jobs": jobs[start:start + 20]}).encode(),
+                link=(f'<https://api.github.com/repos/{REPO}/actions/runs/17/attempts/1/jobs?per_page=20&page={index + 2}>; rel="next"'.encode()
+                      if start + 20 < len(jobs) else None),
+            ).stdout
+            for index, start in enumerate(range(0, len(jobs), 20))
         ]
         return subprocess.CompletedProcess([], 0, b"\n".join(pages), b"")
 
@@ -568,7 +610,10 @@ class JobPaginationTests(unittest.TestCase):
 
     def test_later_page_failure_discards_partial_jobs_before_retry(self):
         failed = http_response(502)
-        failed.stdout = http_response(stdout=b'{"total_count":94,"jobs":[{"id":999}]}').stdout + b"\n" + failed.stdout
+        failed.stdout = http_response(
+            stdout=b'{"total_count":94,"jobs":[{"id":999}]}',
+            link=b'<https://api.github.com/repos/example/project/actions/runs/17/attempts/1/jobs?per_page=20&page=2>; rel="next"',
+        ).stdout + b"\n" + failed.stdout
         for recover in (False, True):
             responses = [failed, self.response(self.jobs())] if recover else [failed] * 3
             with self.subTest(recover=recover), patch.object(rc.subprocess, "run", side_effect=responses) as command, patch.object(rc.time, "sleep"):
@@ -1856,6 +1901,7 @@ class TransportTests(unittest.TestCase):
                         [], 1, stderr=b"HTTP 422 already_exists"
                     ),
                 ) as command,
+                patch.object(gh, "pages", return_value=[]),
                 self.assertRaises(rc.GitHubError),
             ):
                 gh.upload("v1.2.3", asset, release_id=10)
@@ -1932,12 +1978,18 @@ class TransportTests(unittest.TestCase):
             timeout = subprocess.TimeoutExpired(
                 ["private-path"], 900, output=b"private-body"
             )
-            with patch.object(rc.subprocess, "run", side_effect=timeout) as command:
+            gh = rc.GitHub(REPO)
+            with (
+                patch.object(rc.subprocess, "run", side_effect=timeout) as command,
+                patch.object(gh, "pages", return_value=[]) as inventory,
+            ):
                 with self.assertRaises(rc.GitHubError) as caught:
-                    rc.GitHub(REPO).upload(RC_TAG, asset, release_id=42)
+                    gh.upload(RC_TAG, asset, release_id=42)
                 command.assert_called_once()
+                inventory.assert_called_once_with("releases/42/assets")
             self.assertNotIn("private", str(caught.exception))
             self.assertNotIn(temp, str(caught.exception))
+            self.assertIn("reconciliation=absent", str(caught.exception))
 
     def test_upload_requires_created_matching_complete_asset(self):
         with tempfile.TemporaryDirectory(prefix="release-versioned-") as temp:
@@ -1952,6 +2004,7 @@ class TransportTests(unittest.TestCase):
                 (201, {**expected, "state": "starter"}),
                 (201, {**expected, "size": 6}),
                 (201, {**expected, "size": True}),
+                (201, {**expected, "digest": "sha256:" + "0" * 64}),
             ]
             for status, body in variants:
                 response = subprocess.CompletedProcess(
@@ -1961,15 +2014,45 @@ class TransportTests(unittest.TestCase):
                     + json.dumps(body).encode(),
                     b"",
                 )
+                gh = rc.GitHub(REPO)
                 with (
                     self.subTest(status=status, body=body),
                     patch.object(
                         rc.subprocess, "run", return_value=response
                     ) as command,
+                    patch.object(gh, "pages", return_value=[]),
                 ):
                     with self.assertRaises(rc.ReleaseError):
-                        rc.GitHub(REPO).upload(RC_TAG, asset, release_id=42)
+                        gh.upload(RC_TAG, asset, release_id=42)
                     command.assert_called_once()
+
+    def test_success_status_cannot_hide_staged_file_mutation_during_post(self):
+        with tempfile.TemporaryDirectory(prefix="release-versioned-") as temp:
+            asset = Path(temp) / "package.tar.gz"
+            asset.write_bytes(b"package")
+            created = {"id": 91, "name": asset.name, "state": "uploaded", "size": 7}
+            response = subprocess.CompletedProcess(
+                [], 0,
+                b"HTTP/2.0 201 Created\r\n\r\n" + json.dumps(created).encode(),
+                b"",
+            )
+
+            def mutate_after_post(*_args, **_kwargs):
+                asset.write_bytes(b"changed")
+                return response
+
+            gh = rc.GitHub(REPO)
+            with (
+                patch.object(rc.subprocess, "run", side_effect=mutate_after_post) as post,
+                patch.object(gh, "pages", return_value=[]) as inventory,
+                self.assertRaisesRegex(
+                    rc.GitHubError,
+                    "outcome=http-201-invalid-response.*reconciliation=failed",
+                ),
+            ):
+                gh.upload(RC_TAG, asset, release_id=42)
+            post.assert_called_once()
+            inventory.assert_called_once_with("releases/42/assets")
 
     def test_upload_parse_failure_keeps_draft_and_reports_safe_asset_context(self):
         """A committed upload with a broken response must not be retried or published."""
@@ -1997,6 +2080,7 @@ class TransportTests(unittest.TestCase):
                         [], 1, b"private response body", b"unexpected end of JSON input"
                     ),
                 ) as command,
+                patch.object(client, "pages", return_value=[]),
                 self.assertRaises(rc.GitHubError) as error,
             ):
                 rc.publish(gh, tag, SHA, Path(temp), True, "private release body")
@@ -2014,10 +2098,8 @@ class TransportTests(unittest.TestCase):
             self.assertNotIn("--clobber", command.call_args.args[0])
             self.assertNotIn(temp, str(error.exception))
             self.assertNotIn("private", str(error.exception))
-            self.assertEqual(
-                str(error.exception),
-                f"upload {tag} {asset.name}: unexpected end of JSON input",
-            )
+            self.assertIn("outcome=invalid-http-response", str(error.exception))
+            self.assertIn("reconciliation=absent", str(error.exception))
 
     def test_upload_unconfirmed_http_response_is_never_retried(self):
         """A successful CLI exit alone cannot confirm the committed asset."""
@@ -2026,18 +2108,400 @@ class TransportTests(unittest.TestCase):
             asset.write_bytes(b"package")
             for stdout in (None, b"private response body", b"HTTP/2.0 201 Created\r\n"):
                 response = subprocess.CompletedProcess([], 0, stdout, b"")
+                gh = rc.GitHub(REPO)
                 with (
                     self.subTest(stdout=stdout),
-                    patch.object(
-                        rc.subprocess, "run", return_value=response
-                    ) as command,
+                    patch.object(rc.subprocess, "run", return_value=response) as command,
+                    patch.object(gh, "pages", return_value=[]),
                 ):
                     with self.assertRaises(rc.GitHubError) as error:
-                        rc.GitHub(REPO).upload(RC_TAG, asset, release_id=42)
+                        gh.upload(RC_TAG, asset, release_id=42)
                     command.assert_called_once()
                     self.assertIn(f"upload {RC_TAG} {asset.name}", str(error.exception))
                     self.assertNotIn("private response body", str(error.exception))
                     self.assertNotIn(temp, str(error.exception))
+
+    def test_malformed_201_is_confirmed_only_by_exact_matching_inventory(self):
+        with tempfile.TemporaryDirectory(prefix="release-versioned-") as temp:
+            asset = Path(temp) / "package.tar.gz"
+            asset.write_bytes(b"package")
+            entry = {
+                "id": 91, "name": asset.name, "state": "uploaded", "size": 7,
+                "digest": "sha256:" + rc.hashlib.sha256(b"package").hexdigest(),
+            }
+            gh = rc.GitHub(REPO)
+            with (
+                patch.object(rc.subprocess, "run", return_value=subprocess.CompletedProcess(
+                    [], 0, b"HTTP/2.0 201 Created\r\n\r\n{malformed", b"")) as post,
+                patch.object(gh, "pages", return_value=[entry]) as inventory,
+            ):
+                gh.upload(RC_TAG, asset, release_id=42)
+            post.assert_called_once()
+            inventory.assert_called_once_with("releases/42/assets")
+
+    def test_upload_http_500_reconciles_matching_server_digest_without_retry(self):
+        with tempfile.TemporaryDirectory(prefix="release-versioned-") as temp:
+            asset = Path(temp) / "package.tar.gz"
+            asset.write_bytes(b"package")
+            entry = {
+                "id": 91, "name": asset.name, "state": "uploaded", "size": 7,
+                "digest": "sha256:" + rc.hashlib.sha256(b"package").hexdigest(),
+            }
+            gh = rc.GitHub(REPO)
+            with (
+                patch.object(rc.subprocess, "run", return_value=http_response(500)) as post,
+                patch.object(gh, "pages", return_value=[entry]) as inventory,
+            ):
+                gh.upload(RC_TAG, asset, release_id=42)
+            post.assert_called_once()
+            inventory.assert_called_once_with("releases/42/assets")
+
+    def test_upload_http_500_absent_allows_one_retry_after_exact_inventory_read(self):
+        with tempfile.TemporaryDirectory(prefix="release-versioned-") as temp:
+            asset = Path(temp) / "package.tar.gz"
+            asset.write_bytes(b"package")
+            created = {
+                "id": 91, "name": asset.name, "state": "uploaded", "size": 7,
+            }
+            created_response = subprocess.CompletedProcess(
+                [], 0,
+                b"HTTP/2.0 201 Created\r\n\r\n" + json.dumps(created).encode(),
+                b"",
+            )
+            gh = rc.GitHub(REPO)
+            with (
+                patch.object(rc.subprocess, "run", side_effect=[
+                    http_response(500), created_response,
+                ]) as post,
+                patch.object(gh, "pages", return_value=[]) as inventory,
+            ):
+                gh.upload(RC_TAG, asset, release_id=42)
+            self.assertEqual(post.call_count, 2)
+            self.assertEqual(post.call_args_list[0], post.call_args_list[1])
+            inventory.assert_called_once_with("releases/42/assets")
+
+    def test_delayed_first_commit_confirms_after_retry_conflict_without_overwrite(self):
+        with tempfile.TemporaryDirectory(prefix="release-versioned-") as temp:
+            asset = Path(temp) / "package.tar.gz"
+            asset.write_bytes(b"package")
+            entry = {
+                "id": 91, "name": asset.name, "state": "uploaded", "size": 7,
+                "digest": "sha256:" + rc.hashlib.sha256(b"package").hexdigest(),
+            }
+            gh = rc.GitHub(REPO)
+            with (
+                patch.object(rc.subprocess, "run", side_effect=[
+                    http_response(500), http_response(422),
+                ]) as post,
+                patch.object(gh, "pages", side_effect=[[], [entry]]) as inventory,
+            ):
+                gh.upload(RC_TAG, asset, release_id=42)
+            self.assertEqual(post.call_count, 2)
+            self.assertEqual(inventory.call_count, 2)
+            self.assertTrue(all(call.args == ("releases/42/assets",)
+                                for call in inventory.call_args_list))
+
+    def test_matching_asset_on_later_inventory_page_confirms_upload(self):
+        with tempfile.TemporaryDirectory(prefix="release-versioned-") as temp:
+            asset = Path(temp) / "package.tar.gz"
+            asset.write_bytes(b"package")
+            entry = {"id": 91, "name": asset.name, "state": "uploaded", "size": 7,
+                     "digest": "sha256:" + rc.hashlib.sha256(b"package").hexdigest()}
+            later_page = http_response(stdout=json.dumps([entry]).encode()).stdout
+            first_page = http_response(
+                stdout=b"[]",
+                link=b'<https://api.github.com/repos/example/project/releases/42/assets?per_page=100&page=2>; rel="next"',
+            ).stdout
+            pages = first_page + b"\n" + later_page
+            gh = rc.GitHub(REPO)
+            with patch.object(rc.subprocess, "run", side_effect=[
+                http_response(500),
+                subprocess.CompletedProcess([], 0, pages, b""),
+            ]) as command:
+                gh.upload(RC_TAG, asset, release_id=42)
+            self.assertEqual(command.call_count, 2)
+            self.assertIn("--paginate", command.call_args_list[1].args[0])
+
+    def test_later_inventory_page_failure_blocks_retry(self):
+        with tempfile.TemporaryDirectory(prefix="release-versioned-") as temp:
+            asset = Path(temp) / "package.tar.gz"
+            asset.write_bytes(b"package")
+            first_page = http_response(
+                stdout=b"[]",
+                link=b'<https://api.github.com/repos/example/project/releases/42/assets?per_page=100&page=2>; rel="next"',
+            ).stdout
+            denied_page = http_response(403, b'{"message":"private"}').stdout
+            pages = first_page + b"\n" + denied_page
+            gh = rc.GitHub(REPO)
+            with (
+                patch.object(rc.subprocess, "run", side_effect=[
+                    http_response(502),
+                    subprocess.CompletedProcess([], 1, pages, b"HTTP 403 private"),
+                ]) as command,
+                self.assertRaisesRegex(rc.GitHubError, "reconciliation=failed"),
+            ):
+                gh.upload(RC_TAG, asset, release_id=42)
+            self.assertEqual(command.call_count, 2)
+            self.assertEqual(command.call_args_list[0].args[0][command.call_args_list[0].args[0].index("--method") + 1], "POST")
+            self.assertEqual(command.call_args_list[1].args[0][command.call_args_list[1].args[0].index("--method") + 1], "GET")
+
+    def test_upload_publish_path_never_patches_public_after_retry_is_unconfirmed(self):
+        gh = FakeGitHub()
+        client = rc.GitHub(REPO)
+
+        def reconcile_upload(tag, path, *, release_id):
+            client.upload(tag, path, release_id=release_id)
+
+        with tempfile.TemporaryDirectory(prefix="release-versioned-") as temp:
+            stage = Path(temp)
+            (stage / "package.bin").write_bytes(b"candidate bytes")
+            with (
+                patch.object(gh, "upload", side_effect=reconcile_upload),
+                patch.object(rc.subprocess, "run", side_effect=[
+                    http_response(503), http_response(500),
+                ]) as posts,
+                patch.object(client, "pages", side_effect=[[], []]) as inventories,
+                self.assertRaisesRegex(rc.GitHubError,
+                                       "attempt 2.*outcome=http-500.*reconciliation=absent"),
+            ):
+                rc.publish(gh, "v1.2.3-beta.9", SHA, stage, True, "")
+            draft = next(item for item in gh.releases.values()
+                         if item["tag_name"] == "v1.2.3-beta.9")
+            self.assertTrue(draft["draft"])
+            self.assertFalse(any(write[1] == "PATCH" for write in gh.writes))
+            self.assertEqual(posts.call_count, 2)
+            self.assertEqual(inventories.call_count, 2)
+
+    def test_only_explicit_server_5xx_can_authorize_one_retry(self):
+        with tempfile.TemporaryDirectory(prefix="release-versioned-") as temp:
+            asset = Path(temp) / "package.tar.gz"
+            asset.write_bytes(b"package")
+            for status, expected_posts in ((500, 2), (502, 2), (503, 2), (504, 2),
+                                           (429, 1), (422, 1)):
+                with self.subTest(status=status):
+                    gh = rc.GitHub(REPO)
+                    responses = [http_response(status)]
+                    if expected_posts == 2:
+                        responses.append(http_response(422))
+                    with (
+                        patch.object(rc.subprocess, "run", side_effect=responses) as post,
+                        patch.object(gh, "pages", return_value=[]),
+                        self.assertRaises(rc.GitHubError),
+                    ):
+                        gh.upload(RC_TAG, asset, release_id=42)
+                    self.assertEqual(post.call_count, expected_posts)
+
+    def test_upload_timeout_or_transport_absence_never_replays_post(self):
+        with tempfile.TemporaryDirectory(prefix="release-versioned-") as temp:
+            asset = Path(temp) / "package.tar.gz"
+            asset.write_bytes(b"package")
+            failures = (
+                subprocess.TimeoutExpired(["gh", "api"], 900),
+                subprocess.CompletedProcess(
+                    [], 1, b"", b"gh: connection reset by peer",
+                ),
+            )
+            for failure in failures:
+                with self.subTest(failure=type(failure).__name__):
+                    gh = rc.GitHub(REPO)
+                    with (
+                        patch.object(
+                            rc.subprocess, "run",
+                            side_effect=failure if isinstance(failure, BaseException) else None,
+                            return_value=None if isinstance(failure, BaseException) else failure,
+                        ) as post,
+                        patch.object(gh, "pages", return_value=[]) as inventory,
+                        self.assertRaises(rc.GitHubError) as error,
+                    ):
+                        gh.upload(RC_TAG, asset, release_id=42)
+                    post.assert_called_once()
+                    inventory.assert_called_once_with("releases/42/assets")
+                    self.assertIn("reconciliation=absent", str(error.exception))
+
+    def test_upload_conflicting_existing_asset_stops_without_retry(self):
+        with tempfile.TemporaryDirectory(prefix="release-versioned-") as temp:
+            asset = Path(temp) / "package.tar.gz"
+            asset.write_bytes(b"package")
+            entry = {
+                "id": 91, "name": asset.name, "state": "uploaded", "size": 7,
+                "digest": "sha256:" + "0" * 64,
+            }
+            gh = rc.GitHub(REPO)
+            with (
+                patch.object(rc.subprocess, "run", return_value=http_response(422)) as post,
+                patch.object(gh, "pages", return_value=[entry]) as inventory,
+                self.assertRaisesRegex(rc.GitHubError, "reconciliation=failed"),
+            ):
+                gh.upload(RC_TAG, asset, release_id=42)
+            post.assert_called_once()
+            inventory.assert_called_once_with("releases/42/assets")
+
+    def test_upload_rejects_casefold_name_collision(self):
+        with tempfile.TemporaryDirectory(prefix="release-versioned-") as temp:
+            asset = Path(temp) / "Package.tar.gz"
+            asset.write_bytes(b"package")
+            gh = rc.GitHub(REPO)
+            with (
+                patch.object(rc.subprocess, "run", return_value=http_response(502)) as post,
+                patch.object(gh, "pages", return_value=[{
+                    "id": 91, "name": "package.tar.gz", "state": "uploaded", "size": 7,
+                }]),
+                self.assertRaises(rc.GitHubError),
+            ):
+                gh.upload(RC_TAG, asset, release_id=42)
+            post.assert_called_once()
+
+    def test_upload_malformed_inventory_fails_closed_without_retry(self):
+        with tempfile.TemporaryDirectory(prefix="release-versioned-") as temp:
+            asset = Path(temp) / "package.tar.gz"
+            asset.write_bytes(b"package")
+            malformed = [
+                [{"id": 91, "name": asset.name, "state": "uploaded", "size": 7,
+                  "digest": "sha256:invalid"}],
+                [{"id": 91, "name": asset.name, "state": "starter", "size": 7}],
+                [{"id": 91, "name": asset.name, "state": "uploaded", "size": 8}],
+                [{"id": 91, "name": asset.name, "state": "uploaded", "size": True}],
+                [{"id": 91, "name": "other.tar.gz", "state": "uploaded", "size": True}],
+                [{"id": 91, "name": "other.tar.gz", "state": "unknown", "size": 7}],
+                [{"id": 91, "name": "other.tar.gz", "state": "uploaded", "size": 7,
+                  "digest": "sha256:bad"}],
+                [{"id": 91, "name": asset.name, "state": "uploaded", "size": 7},
+                 {"id": 91, "name": "other.tar.gz", "state": "uploaded", "size": 7}],
+                [{"id": 91, "name": asset.name, "state": "uploaded", "size": 7},
+                 {"id": 92, "name": asset.name, "state": "uploaded", "size": 7}],
+            ]
+            for inventory_items in malformed:
+                with self.subTest(inventory=inventory_items):
+                    gh = rc.GitHub(REPO)
+                    with (
+                        patch.object(rc.subprocess, "run", return_value=http_response(502)) as post,
+                        patch.object(gh, "pages", return_value=inventory_items),
+                        self.assertRaises(rc.GitHubError),
+                    ):
+                        gh.upload(RC_TAG, asset, release_id=42)
+                    post.assert_called_once()
+
+    def test_digestless_inventory_download_is_bound_to_captured_identity(self):
+        with tempfile.TemporaryDirectory(prefix="release-versioned-") as temp:
+            asset = Path(temp) / "package.tar.gz"
+            asset.write_bytes(b"package")
+            expected = {
+                "size": 7,
+                "sha256": rc.hashlib.sha256(b"package").hexdigest(),
+            }
+            item = {"id": 91, "name": asset.name, "state": "uploaded", "size": 7}
+
+            def mutate_during_download(_gh, _asset_id, _destination, *, expected, budget):
+                self.assertEqual(expected, {
+                    "size": 7,
+                    "sha256": rc.hashlib.sha256(b"package").hexdigest(),
+                })
+                asset.write_bytes(b"changed")
+                return expected
+
+            gh = rc.GitHub(REPO)
+            with (
+                patch.object(rc, "download_asset", side_effect=mutate_during_download),
+                self.assertRaisesRegex(rc.ReleaseError, "changed during upload readback"),
+            ):
+                rc.verify_uploaded_asset(
+                    gh, item, asset, budget=rc.DownloadBudget(21), expected=expected,
+                )
+
+    def test_reconciliation_local_io_error_is_redacted_and_never_retries(self):
+        with tempfile.TemporaryDirectory(prefix="release-versioned-") as temp:
+            asset = Path(temp) / "package.tar.gz"
+            asset.write_bytes(b"package")
+            gh = rc.GitHub(REPO)
+
+            def remove_during_inventory(_endpoint):
+                asset.unlink()
+                return []
+
+            with (
+                patch.object(rc.subprocess, "run", return_value=http_response(503)) as post,
+                patch.object(gh, "pages", side_effect=remove_during_inventory),
+                self.assertRaisesRegex(
+                    rc.GitHubError,
+                    "outcome=http-503; reconciliation=failed; draft remains unpublished",
+                ) as error,
+            ):
+                gh.upload(RC_TAG, asset, release_id=42)
+            post.assert_called_once()
+            self.assertNotIn(temp, str(error.exception))
+
+    def test_staged_file_change_between_attempts_blocks_second_post(self):
+        with tempfile.TemporaryDirectory(prefix="release-versioned-") as temp:
+            asset = Path(temp) / "package.tar.gz"
+            asset.write_bytes(b"package")
+            gh = rc.GitHub(REPO)
+            def absent_then_mutate(_endpoint):
+                asset.write_bytes(b"changed")
+                return []
+            with (
+                patch.object(rc.subprocess, "run", return_value=http_response(503)) as post,
+                patch.object(gh, "pages", side_effect=absent_then_mutate),
+                self.assertRaisesRegex(rc.GitHubError, "reconciliation=failed"),
+            ):
+                gh.upload(RC_TAG, asset, release_id=42)
+            post.assert_called_once()
+
+    def test_upload_failure_reports_bounded_status_attempt_and_reconciliation(self):
+        with tempfile.TemporaryDirectory(prefix="release-versioned-") as temp:
+            asset = Path(temp) / "package.tar.gz"
+            asset.write_bytes(b"package")
+            gh = rc.GitHub(REPO)
+            with (
+                patch.object(rc.subprocess, "run", side_effect=[
+                    http_response(502), http_response(503),
+                ]) as post,
+                patch.object(gh, "pages", return_value=[]),
+                self.assertRaises(rc.GitHubError) as caught,
+            ):
+                gh.upload(RC_TAG, asset, release_id=42)
+            self.assertEqual(post.call_count, 2)
+            message = str(caught.exception)
+            self.assertIn("attempt 2", message)
+            self.assertIn("outcome=http-503", message)
+            self.assertIn("reconciliation=absent", message)
+            self.assertNotIn("response body", message)
+
+    def test_upload_reconciliation_error_is_redacted_and_never_retried(self):
+        with tempfile.TemporaryDirectory(prefix="release-versioned-") as temp:
+            asset = Path(temp) / "package.tar.gz"
+            asset.write_bytes(b"package")
+            gh = rc.GitHub(REPO)
+            with (
+                patch.object(rc.subprocess, "run", return_value=http_response(502)) as post,
+                patch.object(gh, "pages", side_effect=rc.GitHubError(
+                    "private response and signed URL"
+                )),
+                self.assertRaises(rc.GitHubError) as caught,
+            ):
+                gh.upload(RC_TAG, asset, release_id=42)
+            post.assert_called_once()
+            message = str(caught.exception)
+            self.assertIn("outcome=http-502", message)
+            self.assertIn("reconciliation=failed", message)
+            self.assertNotIn("private", message)
+            self.assertNotIn("signed URL", message)
+
+    def test_upload_without_api_digest_verifies_asset_bytes_before_accepting(self):
+        with tempfile.TemporaryDirectory(prefix="release-versioned-") as temp:
+            asset = Path(temp) / "package.tar.gz"
+            asset.write_bytes(b"package")
+            entry = {"id": 91, "name": asset.name, "state": "uploaded", "size": 7}
+            gh = rc.GitHub(REPO)
+            def stream_exact(_path, output):
+                output.write(b"package")
+            with (
+                patch.object(rc.subprocess, "run", return_value=http_response(503)) as post,
+                patch.object(gh, "pages", return_value=[entry]),
+                patch.object(gh, "download_asset", side_effect=stream_exact) as download,
+            ):
+                gh.upload(RC_TAG, asset, release_id=42)
+            post.assert_called_once()
+            download.assert_called_once_with("releases/assets/91", unittest.mock.ANY)
 
     def test_canonical_numeric_fields_remain_ascii(self):
         """Reject Unicode digits after adopting concise regexes with ASCII flags."""
@@ -2281,7 +2745,10 @@ class OfflineValidationTests(unittest.TestCase):
             return_value=subprocess.CompletedProcess(
                 [],
                 0,
-                http_response(stdout=b'{"jobs":[{"name":"build"}]}').stdout
+                http_response(
+                    stdout=b'{"jobs":[{"name":"build"}]}',
+                    link=b'<https://api.github.com/repos/example/project/actions/runs/17/attempts/1/jobs?per_page=20&page=2>; rel=next',
+                ).stdout
                 + b"\n"
                 + http_response(stdout=b'{"jobs":[{"name":"Release gate"}]}').stdout,
             ),

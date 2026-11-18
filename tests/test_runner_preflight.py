@@ -482,9 +482,12 @@ class MetadataPathTests(unittest.TestCase):
 
 class BoundedDownloadTests(unittest.TestCase):
     @staticmethod
-    def http_bytes(payload, status=200):
+    def http_bytes(payload, status=200, *, next_page=False):
+        pagination = b'Link: <https://api.github.com/next>; rel="next"\r\n' if next_page else b""
         return (
-            f"HTTP/2.0 {status}\r\nContent-Type: application/octet-stream\r\n\r\n".encode()
+            f"HTTP/2.0 {status}\r\nContent-Type: application/octet-stream\r\n".encode()
+            + pagination
+            + b"\r\n"
             + payload
         )
 
@@ -542,7 +545,7 @@ class BoundedDownloadTests(unittest.TestCase):
         self.assertEqual(self.fetch(self.program(self.http_bytes(payload))), payload)
 
     def test_paginated_responses_keep_every_page_without_slurp(self):
-        wire = self.http_bytes(b"[1]") + b"\n" + self.http_bytes(b"[2]")
+        wire = self.http_bytes(b"[1]", next_page=True) + b"\n" + self.http_bytes(b"[2]")
         result = self.fetch(self.program(wire), "releases", "pages")
         self.assertEqual(json.loads(result), [[1], [2]])
         self.assertIn("--include", self.calls[0])

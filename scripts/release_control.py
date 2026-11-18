@@ -550,6 +550,31 @@ def _github_http_head(data: bytes) -> tuple[int, bytes]:
     return int(status.group(1)), data[separator.end():]
 
 
+def _github_page_has_next(header: bytes) -> bool:
+    """Read GitHub's Link relation so truncated --paginate output cannot prove absence."""
+    lines = header.splitlines()
+    links = [line.partition(b":")[2].strip() for line in lines[1:]
+             if line.partition(b":")[0].lower() == b"link"]
+    if len(links) > 1:
+        raise GitHubError("GitHub response has duplicate pagination headers")
+    if not links:
+        return False
+    try:
+        value = links[0].decode("ascii")
+    except UnicodeDecodeError as error:
+        raise GitHubError("GitHub pagination header is not ASCII") from error
+    has_next = False
+    for item in value.split(","):
+        match = re.fullmatch(
+            r'\s*<([^<>]+)>\s*;\s*rel\s*=\s*(?:"(next|prev|first|last)"|(next|prev|first|last))\s*',
+            item,
+        )
+        if match is None:
+            raise GitHubError("GitHub pagination link is malformed")
+        has_next = has_next or cast(str, match[2] or match[3]) == "next"
+    return has_next
+
+
 def github_http_response(stdout: bytes, paginated: bool = False) -> tuple[int, bytes]:
     """Decode protocol headers emitted by gh --include, never its error prose.
 
@@ -557,9 +582,14 @@ def github_http_response(stdout: bytes, paginated: bool = False) -> tuple[int, b
     gh normalizes those server-generated objects (including duplicate keys);
     nonpaginated bodies retain their exact bytes and strict JSON validation.
     """
+    first_separator = re.search(rb"\r?\n\r?\n", stdout)
+    if first_separator is None:
+        raise GitHubError("GitHub response headers are missing or truncated")
+    first_header = stdout[:first_separator.start()]
     status, body = _github_http_head(stdout)
     if not paginated:
         return status, body
+    expected_next = _github_page_has_next(first_header) if 200 <= status < 300 else False
     pages: list[object] = []
     # Decode once: page boundaries are character offsets, including non-ASCII
     # JSON. Surrogate escapes preserve a later arbitrary error body unchanged.
@@ -579,10 +609,19 @@ def github_http_response(stdout: bytes, paginated: bool = False) -> tuple[int, b
         while position < len(text) and text[position] in " \t\r\n":
             position += 1
         if position == len(text):
+            if expected_next:
+                raise GitHubError(
+                    "GitHub pagination ended before the advertised terminal page"
+                )
             return status, json_bytes(pages)
         separator = re.compile(r"\r?\n\r?\n").search(text, position)
         if separator is None:
             raise GitHubError("GitHub response headers are missing or truncated")
+        if not expected_next:
+            raise GitHubError("GitHub pagination included an unadvertised response page")
+        header_start = text.rfind("\n", 0, position) + 1
+        header = text[header_start:separator.end()].encode("utf-8", errors="surrogateescape")
+        expected_next = _github_page_has_next(header)
         header = text[position:separator.end()].encode("utf-8", errors="surrogateescape")
         status, _ = _github_http_head(header)
         position = separator.end()
@@ -973,8 +1012,87 @@ class GitHub:
             ) from error
         raise AssertionError("Asset GET retry loop must return or raise")
 
+    @staticmethod
+    def _upload_asset_identity(path: Path) -> AssetIdentity:
+        """Hash one staged asset without loading it into memory."""
+        with path.open("rb") as stream:
+            return stream_identity(stream)
+
+    def _readback_uploaded_asset(
+        self, tag: str, path: Path, release_id: int, expected: AssetIdentity,
+    ) -> bool:
+        """Reconcile one upload against the exact draft asset inventory."""
+        try:
+            assets = self.pages(f"releases/{release_id}/assets")
+        except (GitHubError, ValueError, KeyError, TypeError) as error:
+            raise GitHubError(
+                f"upload {tag} {path.name}: asset reconciliation read failed"
+            ) from error
+        ids: set[int] = set()
+        folded_names: set[str] = set()
+        matches: list[JSONObject] = []
+        for asset in assets:
+            require(isinstance(asset, dict), "Invalid release asset inventory entry")
+            asset = cast(JSONObject, asset)
+            identity = positive(asset.get("id"), "release asset ID")
+            name = asset.get("name")
+            require(isinstance(name, str) and bool(NAME_RE.fullmatch(name)),
+                    "Invalid release asset name")
+            require(asset.get("state") in {"uploaded", "starter"},
+                    "Invalid release asset inventory state")
+            size = asset.get("size")
+            require(type(size) is int and size >= 0,
+                    "Invalid release asset inventory size")
+            digest = asset.get("digest")
+            require(digest is None or isinstance(digest, str)
+                    and re.fullmatch(r"sha256:" + SHA256_PATTERN, digest, re.ASCII),
+                    "Invalid release asset inventory digest")
+            folded = name.casefold()
+            require(identity not in ids and folded not in folded_names,
+                    "Release asset inventory contains duplicate identities")
+            ids.add(identity)
+            folded_names.add(folded)
+            if name == path.name:
+                matches.append(asset)
+            elif folded == path.name.casefold():
+                raise GitHubError(
+                    f"upload {tag} {path.name}: conflicting asset name already exists"
+                )
+        require(len(matches) <= 1, "Release asset inventory contains duplicate names")
+        if not matches:
+            require(self._upload_asset_identity(path) == expected,
+                    "Staged asset changed during upload reconciliation")
+            return False
+
+        asset = matches[0]
+        require(asset.get("state") == "uploaded"
+                and type(asset.get("size")) is int
+                and asset["size"] == expected["size"],
+                f"upload {tag} {path.name}: existing asset size or state conflicts")
+        digest = asset.get("digest")
+        if digest is not None:
+            require(isinstance(digest, str)
+                    and re.fullmatch(r"sha256:" + SHA256_PATTERN, digest, re.ASCII)
+                    and digest.removeprefix("sha256:") == expected["sha256"],
+                    f"upload {tag} {path.name}: existing asset digest conflicts")
+        else:
+            # Older API responses may omit the digest. Re-download this exact
+            # asset ID through the existing bounded verifier before accepting it.
+            require(self._upload_asset_identity(path) == expected,
+                    "Staged asset changed during upload reconciliation")
+            budget = DownloadBudget(expected["size"] * API_READ_ATTEMPTS)
+            try:
+                verify_uploaded_asset(self, asset, path, budget=budget, expected=expected)
+            except (GitHubError, ValueError, KeyError, TypeError) as error:
+                raise GitHubError(
+                    f"upload {tag} {path.name}: existing asset bytes could not be confirmed"
+                ) from error
+        require(self._upload_asset_identity(path) == expected,
+                "Staged asset changed during upload reconciliation")
+        return True
+
     def upload(self, tag: str, path: Path, *, release_id: int) -> None:
-        """Upload once to the transaction's known draft, without tag lookup."""
+        """Upload once, reconciling ambiguous outcomes before one safe retry."""
         require(TAG_RE.fullmatch(tag), "Unsupported release upload tag")
         release_id = positive(release_id, "release ID")
         require(
@@ -1000,53 +1118,82 @@ class GitHub:
             f"?name={quote(path.name, safe='')}"
         )
         context = f"upload {tag} {path.name}"
-        try:
-            # Developer/CI toolchain selected by the invoking operator via PATH.
-            result = subprocess.run(  # nosec B603, B607
-                [
-                    "gh",
-                    "api",
-                    "--hostname",
-                    GITHUB_HOSTNAME,
-                    "--include",
-                    "--method",
-                    "POST",
-                    "-H",
-                    "Content-Type: application/octet-stream",
-                    "--input",
-                    str(parent / path.name),
-                    "--",
-                    endpoint,
-                ],
-                capture_output=True,
-                check=False,
-                timeout=ASSET_UPLOAD_TIMEOUT,
-            )
-        except subprocess.TimeoutExpired as error:
-            # The server may have received the bytes. Leave the draft intact;
-            # replaying this write could replace or duplicate an existing asset.
-            raise GitHubError(
-                f"{context}: asset upload exceeded {ASSET_UPLOAD_TIMEOUT} seconds"
-            ) from error
-        try:
-            http = github_http_response(result.stdout or b"")
-        except GitHubError as error:
-            # A transport/CLI failure may precede any HTTP response. Preserve
-            # its error context, but never retry a possibly committed write.
-            self.response(result, context)
-            raise GitHubError(f"{context}: {error}") from error
-        response = self.response(result, context, http)
-        require(http[0] == 201, f"{context}: upload was not confirmed as created")
-        asset = parse_json(response, context)
-        require(isinstance(asset, dict), f"{context}: invalid asset response")
-        positive(asset.get("id"), "uploaded asset ID")
-        require(
-            asset.get("name") == path.name
-            and asset.get("state") == "uploaded"
-            and type(asset.get("size")) is int
-            and asset.get("size") == path.stat().st_size,
-            f"{context}: upload response did not confirm the staged asset",
-        )
+        expected = self._upload_asset_identity(path)
+        command = [
+            "gh", "api", "--hostname", GITHUB_HOSTNAME, "--include",
+            "--method", "POST", "-H", "Content-Type: application/octet-stream",
+            "--input", str(parent / path.name), "--", endpoint,
+        ]
+
+        def post_once() -> tuple[bool, bool, str]:
+            """Return confirmation, retry eligibility and a safe outcome label."""
+            require(self._upload_asset_identity(path) == expected,
+                    f"{context}: staged asset changed before upload")
+            try:
+                result = subprocess.run(  # nosec B603, B607
+                    command, capture_output=True, check=False,
+                    timeout=ASSET_UPLOAD_TIMEOUT,
+                )
+            except subprocess.TimeoutExpired:
+                # A delayed server commit can race a later absence read. Reconcile
+                # the exact asset, but never replay without an explicit 5xx.
+                return False, False, "timeout"
+            try:
+                status, response = github_http_response(result.stdout or b"")
+            except GitHubError:
+                # Even an unusable response can follow a committed upload.
+                # Reconcile it, but it does not authorize a second POST.
+                return False, False, "invalid-http-response"
+            if status != 201:
+                # A response can accompany committed bytes. Always reconcile
+                # the exact release ID before deciding whether another POST is safe.
+                return False, status in {500, 502, 503, 504}, f"http-{status}"
+            if result.returncode != 0:
+                return False, False, "http-201-cli-error"
+            try:
+                asset = parse_json(response, context)
+                require(isinstance(asset, dict), f"{context}: invalid asset response")
+                asset = cast(JSONObject, asset)
+                positive(asset.get("id"), "uploaded asset ID")
+                require(asset.get("name") == path.name
+                        and asset.get("state") == "uploaded"
+                        and type(asset.get("size")) is int
+                        and asset["size"] == expected["size"],
+                        f"{context}: upload response did not confirm the staged asset")
+                response_digest = asset.get("digest")
+                require(response_digest is None
+                        or isinstance(response_digest, str)
+                        and re.fullmatch(r"sha256:" + SHA256_PATTERN,
+                                         response_digest, re.ASCII)
+                        and response_digest.removeprefix("sha256:") == expected["sha256"],
+                        f"{context}: upload response digest conflicts with staged asset")
+                require(self._upload_asset_identity(path) == expected,
+                        f"{context}: staged asset changed during upload")
+            except (ReleaseError, ValueError, KeyError, TypeError):
+                return False, False, "http-201-invalid-response"
+            return True, False, "http-201-confirmed"
+
+        for attempt in range(2):
+            confirmed, retryable, outcome = post_once()
+            if confirmed:
+                return
+            try:
+                if self._readback_uploaded_asset(tag, path, release_id, expected):
+                    return
+            except (ReleaseError, OSError) as error:
+                # Never echo API bodies, headers, asset URLs, or subprocess output.
+                raise GitHubError(
+                    f"{context}: attempt {attempt + 1} outcome={outcome}; "
+                    "reconciliation=failed; draft remains unpublished"
+                ) from error
+            if not retryable or attempt != 0:
+                raise GitHubError(
+                    f"{context}: attempt {attempt + 1} outcome={outcome}; "
+                    "reconciliation=absent; draft remains unpublished"
+                )
+            # The completed inventory GET proved that the exact asset was absent.
+            # Permit a single bounded retry; the next outcome can only reconcile.
+        raise AssertionError("Upload reconciliation loop must return or raise")
 
 
 def repository_info(gh: GitHub) -> JSONObject:
@@ -2068,20 +2215,26 @@ def stage_assets(source: Path, destination: Path) -> list[JSONObject]:
 
 
 def verify_uploaded_asset(gh: GitHub, item: JSONObject, path: Path, *,
-                          budget: DownloadBudget) -> None:
+                          budget: DownloadBudget,
+                          expected: AssetIdentity | None = None) -> None:
     """Re-download every uploaded byte before making the draft public."""
     with path.open("rb") as source:
         local = stream_identity(source)
+    expected = local if expected is None else expected
+    require(local == expected, "Staged asset changed before upload readback")
     require(
-        item.get("state") == "uploaded" and item.get("size") == local["size"],
+        item.get("state") == "uploaded" and item.get("size") == expected["size"],
         "Incomplete asset upload; draft left unpublished",
     )
     with tempfile.TemporaryDirectory(prefix="release-readback-") as temporary:
         remote = download_asset(
-            gh, item.get("id"), Path(temporary) / "payload", expected=local,
+            gh, item.get("id"), Path(temporary) / "payload", expected=expected,
             budget=budget,
         )
-    require(remote == local, "Uploaded bytes differ; draft left unpublished")
+    require(remote == expected, "Uploaded bytes differ; draft left unpublished")
+    with path.open("rb") as source:
+        require(stream_identity(source) == expected,
+                "Staged asset changed during upload readback")
 
 
 def _release_fence(line: str) -> tuple[str, int, str] | None:
