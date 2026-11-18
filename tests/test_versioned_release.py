@@ -2593,6 +2593,35 @@ class CompactConsumerTests(unittest.TestCase):
         self.assertEqual(self.gh.writes, [])
         self.assertEqual(self.gh.ledger_writes, [])
 
+    def test_digestless_stable_manifest_is_bound_to_snapshot_bytes(self):
+        asset = next(item for item in self.gh.assets[self.stable_id]
+                     if item["name"] == rc.MANIFEST)
+        asset.pop("digest")
+        original = self.gh.files[asset["id"]]
+        self.assertIn(b"v1.2.3", original)
+        replacement = original.replace(b"v1.2.3", b"v9.9.9", 1)
+        self.assertEqual(len(replacement), len(original))
+        snapshot = lifecycle.published_plan_snapshot
+        changed = False
+
+        def mutate_after_caller_read(gh, tag, source, prerelease):
+            nonlocal changed
+            if tag == self.compact["tag"] and not changed:
+                # The caller has already supplied the original manifest bytes.
+                # Simulate a same-size replacement just before the inventory
+                # snapshot; GitHub's asset API omits its digest.
+                gh.files[asset["id"]] = replacement
+                changed = True
+            return snapshot(gh, tag, source, prerelease)
+
+        with patch.object(lifecycle, "published_plan_snapshot",
+                          side_effect=mutate_after_caller_read), \
+                self.assertRaisesRegex(rc.ReleaseError, "size or checksum mismatch"):
+            self.verify()
+        self.assertTrue(changed)
+        self.assertEqual(self.gh.writes, [])
+        self.assertEqual(self.gh.ledger_writes, [])
+
     def test_omitted_receipt_still_downloaded_and_authenticated_before_stable_payload(self):
         receipt_id = next(item["id"] for assets in self.gh.assets.values() for item in assets
                           if item["name"] == "release-inputs-linux.json")

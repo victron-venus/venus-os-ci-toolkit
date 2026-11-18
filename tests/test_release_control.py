@@ -1066,7 +1066,7 @@ class ReleaseControlTests(unittest.TestCase):
     def test_promotion_waits_for_fresh_active_run_and_keeps_rc_bytes(self):
         """A stale post-approval status delays, rather than bypasses, promotion."""
         original_api = self.gh.api
-        statuses = iter(("waiting", "queued", "in_progress"))
+        statuses = iter(("waiting", "queued", "in_progress", "in_progress", "in_progress"))
 
         def delayed(path, method="GET", body=None):
             value = original_api(path, method, body)
@@ -1091,6 +1091,132 @@ class ReleaseControlTests(unittest.TestCase):
             a["name"]: self.gh.files[a["id"]] for a in self.gh.assets[stable["id"]]
         }
         self.assertEqual(actual, expected)
+
+    def active_publisher_job(self):
+        """Install one exact check-run job and no Release gate."""
+        self.gh.runs[99]["run_started_at"] = "2026-01-01T00:00:00Z"
+        job = {
+            "id": 701, "run_id": 99, "run_attempt": 1, "head_sha": SHA,
+            "check_run_url": f"https://api.github.com/repos/{REPO}/check-runs/800",
+            "runner_id": 900, "runner_name": "runner-example", "name": "stable publisher",
+            "status": "in_progress", "conclusion": None, "completed_at": None,
+            "started_at": "2026-01-01T00:00:01Z", "steps": [
+                {"number": 1, "status": "in_progress", "conclusion": None,
+                 "started_at": "2026-01-01T00:00:02Z", "completed_at": None}],
+        }
+        return job
+
+    def test_promotion_rechecks_check_run_proof_without_a_release_gate(self):
+        """The same live publisher proof is required at both callbacks, with no gate job."""
+        publisher = self.active_publisher_job()
+        pages = self.gh.pages
+        observations = []
+
+        def observe(path, field=None):
+            if path == "actions/runs/99/attempts/1/jobs":
+                observations.append(path)
+                return [publisher]
+            return pages(path, field)
+
+        with patch.dict(os.environ, {
+            "RELEASE_EXECUTION_CHECK_RUN_ID": "800",
+            "RUNNER_NAME": "runner-example",
+            "GITHUB_JOB": "stable-publisher-job",
+        }), patch.object(self.gh, "pages", side_effect=observe):
+            result = rc.promote(self.args)
+
+        self.assertEqual(result["tag"], "v1.2.3")
+        self.assertEqual(len(observations), 2)  # Admission and before public flip.
+
+    def test_cancel_during_final_promotion_order_read_prevents_ledger_put(self):
+        """Publisher cancellation after order reads is checked before ledger CAS."""
+        from test_versioned_release import LedgerGitHub, policy as version_policy, state
+
+        gh = LedgerGitHub()
+        gh.releases.clear()
+        plan = state.reserve_plan(
+            gh, version_policy("promote-bytes"), "1.2.3", "rc", SHA, 99, 1,
+            datetime(2026, 9, 13, tzinfo=timezone.utc), None,
+        )
+        state.begin_publication(gh, plan, 99)
+        gh.releases[50] = {"tag_name": plan["tag"], "draft": False}
+        before_writes = len(gh.ledger_writes)
+        publisher = {
+            "id": 100, "run_attempt": 1, "head_sha": SHA, "path": rc.WORKFLOW,
+            "event": "workflow_dispatch", "status": "in_progress", "conclusion": None,
+        }
+        gh.runs[100] = publisher.copy()
+        order_reads = 0
+        events = []
+        original_pages = gh.pages
+
+        def mutate_after_final_order_read(path, field=None):
+            nonlocal order_reads
+            result = original_pages(path, field)
+            if path == "releases":
+                order_reads += 1
+                events.append(f"order-read-{order_reads}")
+                if order_reads == 2:
+                    gh.runs[100].update(status="completed", conclusion="cancelled")
+            return result
+
+        def confirm_active_attempt():
+            current = gh.api("actions/runs/100/attempts/1")
+            events.append(f"publisher-{current['status']}")
+            rc.require_active_attempt(current, publisher)
+
+        with patch.object(gh, "pages", side_effect=mutate_after_final_order_read):
+            with self.assertRaisesRegex(rc.ReleaseError, "not active"):
+                rc._begin_promotion_publication(
+                    gh, {"version_plan": plan}, 100, confirm_active_attempt,
+                )
+
+        self.assertEqual(order_reads, 2)
+        self.assertEqual(events, ["order-read-1", "order-read-2", "publisher-completed"])
+        self.assertEqual(len(gh.ledger_writes), before_writes)
+
+    def test_promotion_rechecks_publisher_before_public_release_patch(self):
+        """A publisher cancelled after draft upload leaves the release unpublished."""
+        original_api = self.gh.api
+        attempt_reads = 0
+        publisher = self.active_publisher_job()
+        original_pages = self.gh.pages
+
+        def cancel_before_confirm_publish(path, method="GET", body=None):
+            nonlocal attempt_reads
+            if path == "actions/runs/99/attempts/1":
+                attempt_reads += 1
+                status = "in_progress" if attempt_reads == 1 else "completed"
+                conclusion = None if status == "in_progress" else "cancelled"
+                current = original_api(path, method, body)
+                current.update(status=status, conclusion=conclusion)
+                return current
+            return original_api(path, method, body)
+
+        def active_job(path, field=None):
+            if path == "actions/runs/99/attempts/1/jobs":
+                return [publisher]
+            return original_pages(path, field)
+
+        with (
+            patch.dict(os.environ, {
+                "RELEASE_EXECUTION_CHECK_RUN_ID": "800",
+                "RUNNER_NAME": "runner-example",
+                "GITHUB_JOB": "stable-publisher-job",
+                "GITHUB_REPOSITORY": REPO,
+            }),
+            patch.object(self.gh, "api", side_effect=cancel_before_confirm_publish),
+            patch.object(self.gh, "pages", side_effect=active_job),
+        ):
+            with self.assertRaisesRegex(rc.ReleaseError, "not active"):
+                rc.promote(self.args)
+
+        self.assertGreaterEqual(attempt_reads, 2)
+        stable = next(item for item in self.gh.releases.values()
+                      if item["tag_name"] == "v1.2.3")
+        self.assertTrue(stable["draft"])
+        self.assertTrue(any(write[0] == "upload" for write in self.gh.writes))
+        self.assertFalse(any(write[1] == "PATCH" for write in self.gh.writes))
 
     def test_candidate_waits_for_fresh_active_run_before_gate(self):
         """The unversioned publisher uses the same bounded execution check."""
@@ -3669,6 +3795,31 @@ class CheckRunExecutionTests(unittest.TestCase):
                 publisher_proof=rc.ExecutionJobProof(700, 800, 900, "runner-example"),
                 publisher_run=current,
             ))
+
+    def test_live_publisher_rejects_terminal_exact_attempt_despite_stale_active_snapshot(self):
+        """Fresh attempt metadata wins over a previously active publisher snapshot."""
+        current, publisher = self.execution()
+        current["run_attempt"] = 2
+        current["status"] = "in_progress"
+        current["run_started_at"] = "2026-01-01T00:00:00Z"
+        current["event"] = "workflow_dispatch"
+        publisher.update(run_attempt=2)
+        gate = {"id": 701, "run_id": 99, "run_attempt": 2, "head_sha": SHA,
+                "name": "Release gate", "status": "completed", "conclusion": "success"}
+        terminal = {
+            "id": 99, "run_attempt": 2, "head_sha": SHA,
+            "path": rc.WORKFLOW, "event": "workflow_dispatch",
+            "status": "completed", "conclusion": "cancelled",
+            "run_started_at": "2026-01-01T00:00:00Z",
+        }
+        with patch.object(self.gh, "api", return_value=terminal), \
+                patch.object(self.gh, "pages", return_value=[gate, publisher]), \
+                self.assertRaisesRegex(rc.ReleaseError, "not active"):
+            rc.release_gate_ready(
+                self.gh, 99, SHA, 2,
+                publisher_proof=rc.ExecutionJobProof(700, 800, 900, "runner-example"),
+                publisher_run=current,
+            )
 
     def test_successful_gate_waits_for_pending_publisher_steps_when_allowed(self):
         current, publisher = self.pending_step_job()

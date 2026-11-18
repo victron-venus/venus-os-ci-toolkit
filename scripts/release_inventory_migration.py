@@ -141,6 +141,25 @@ PUBLISHER_EXECUTION_BOUNDARY = {
 }
 
 
+# Preserve the compact stable reader's exact manifest bytes across inventory-only
+# installs. This layer is newer than the publisher execution-boundary layer.
+COMPACT_MANIFEST_RECHECK = {
+    "hunks": [
+        {
+            "before": "        budget = rc.DownloadBudget(sum(item[\"size\"] for item in expected.values()))\n        for name, item in expected.items():\n",
+            "after": "        budget = rc.DownloadBudget(\n            sum(item[\"size\"] for item in expected.values()) + len(raw)\n        )\n        manifest_identity = {\"size\": len(raw), \"sha256\": rc.digest(raw)}\n        with tempfile.TemporaryDirectory(prefix=\"verified-distribution-manifest-\") as manifest_temp:\n            manifest_path = Path(manifest_temp) / rc.MANIFEST\n            observed_manifest = rc.download_asset(\n                gh, inventory[rc.MANIFEST][\"id\"], manifest_path,\n                expected=cast(rc.AssetIdentity, manifest_identity), budget=budget,\n            )\n            rc.require(observed_manifest == manifest_identity\n                       and manifest_path.read_bytes() == raw,\n                       \"Compact stable manifest changed from its caller-supplied bytes\")\n        for name, item in expected.items():\n",
+        }
+    ],
+    "original_to_current": {
+        "f202a8706ed481f71076c4dc66c68c145a1f993e33589ed341bdcb5a9dc8dc1c":
+        "c5f203a3bc5fb4adb8ed9cb6c7de4dba66488c648f729f8f50f7b25e596c9c94"
+    },
+    "current": [
+        "c5f203a3bc5fb4adb8ed9cb6c7de4dba66488c648f729f8f50f7b25e596c9c94"
+    ],
+}
+
+
 # Recognize response reconciliation without adding it through inventory-only updates.
 CREATE_READBACK = {
     "hunks": [
@@ -395,8 +414,14 @@ def _before_notes_provenance(source: str) -> str:
 
 
 def _before_publisher_execution_boundary(source: str) -> str:
-    """Reverse the current publisher-job revalidation layer when exact."""
+    """Reverse compact manifest and publisher-job revalidation layers when exact."""
+    source = _before_compact_manifest_recheck(source)
     return _before_layer(source, PUBLISHER_EXECUTION_BOUNDARY, "Publisher execution boundary")
+
+
+def _before_compact_manifest_recheck(source: str) -> str:
+    """Reverse only the exact compact stable manifest byte reread layer."""
+    return _before_layer(source, COMPACT_MANIFEST_RECHECK, "Compact manifest reread")
 
 
 def _apply_publisher_execution_boundary(source: str) -> str:
@@ -478,6 +503,8 @@ def render(directory: Path) -> dict[str, str]:
                 _, result = receipts.transform(result, name, DIGESTLESS_METADATA)
             if _before_publisher_execution_boundary(source) != source:
                 result = _apply_publisher_execution_boundary(result)
+            if _before_compact_manifest_recheck(source) != source:
+                _, result = receipts.transform(result, name, COMPACT_MANIFEST_RECHECK)
         states.add(state)
         if result != source:
             changes[name] = result
