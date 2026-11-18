@@ -2759,7 +2759,7 @@ def main():
                     drift.append(relative)
             else:
                 path.parent.mkdir(parents=True, exist_ok=True)
-                path.write_text(content, encoding="utf-8")
+                path.write_bytes(content.encode("utf-8"))
                 if path.suffix == ".py":
                     path.chmod(0o755)
         if drift:
