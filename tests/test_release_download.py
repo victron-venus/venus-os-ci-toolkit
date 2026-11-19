@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import ExitStack
+import json
 from pathlib import Path
 import os
 import shutil
@@ -46,31 +48,49 @@ class ReleaseDownloadTests(unittest.TestCase):
         return Mock(download_asset=lambda _path, sink: sink.write(data))
 
     def fixture_process(self, code):
-        original = subprocess.Popen
-
-        def start(command, **options):
-            self.assertEqual(command[:3], ["gh", "api", "--hostname"])
-            process = original([sys.executable, "-c", code], **options)
-            self.children.append(process)
-            return process
-
-        return patch.object(rc.subprocess, "Popen", side_effect=start)
+        return self.fixture_processes(code)
 
     def fixture_processes(self, *programs):
-        """Substitute only gh with a fixed sequence of tiny offline children."""
-        original = subprocess.Popen
-        remaining = iter(programs)
+        """Run each fixed offline response through the real supervisor and fake gh."""
+        fake_bin = self.root / "bin"
+        fake_bin.mkdir(exist_ok=True)
+        executable = fake_bin / "gh"
+        call_index = self.root / "gh-call-index"
+        call_index.unlink(missing_ok=True)
+        code = (
+            "import json,os,pathlib,sys\n"
+            f"programs=json.loads({json.dumps(programs)!r})\n"
+            f"counter=pathlib.Path({str(call_index)!r})\n"
+            "index=int(counter.read_text()) if counter.exists() else 0\n"
+            "counter.write_text(str(index+1))\n"
+            "expected=['api','--hostname','github.com','--method','GET','-H',"
+            "'Accept: application/octet-stream','--','repos/test/repo/releases/assets/1']\n"
+            "if sys.argv[1:] != expected: sys.stderr.write(repr(sys.argv[1:])); raise SystemExit(97)\n"
+            "if index >= len(programs): sys.stderr.write('unexpected call'); raise SystemExit(98)\n"
+            "os.execv(sys.executable,[sys.executable,'-c',programs[index]])\n"
+        )
+        executable.write_text(f"#!{sys.executable}\n" + code)
+        executable.chmod(0o755)
+        original_launch = rc._launch_supervised_process
 
-        def start(command, **options):
-            self.assertEqual(command[:3], ["gh", "api", "--hostname"])
-            self.assertEqual(command[command.index("--method") + 1], "GET")
-            self.assertEqual(command[-1], "repos/test/repo/releases/assets/1")
+        def launch(command, **options):
+            self.assertEqual(Path(command[0]), executable.resolve())
+            self.assertTrue(Path(command[0]).is_absolute())
+            self.assertEqual(command[1:], (
+                "api", "--hostname", "github.com", "--method", "GET", "-H",
+                "Accept: application/octet-stream", "--", "repos/test/repo/releases/assets/1",
+            ))
             self.assertTrue(all(child.poll() is not None for child in self.children))
-            process = original([sys.executable, "-c", next(remaining)], **options)
-            self.children.append(process)
-            return process
+            started = original_launch(command, **options)
+            self.children.append(started.process)
+            return started
 
-        return patch.object(rc.subprocess, "Popen", side_effect=start)
+        stack = ExitStack()
+        stack.enter_context(patch.dict(os.environ, {
+            "PATH": f"{fake_bin}{os.pathsep}{os.environ.get('PATH', '')}",
+        }))
+        stack.enter_context(patch.object(rc, "_launch_supervised_process", side_effect=launch))
+        return stack
 
     @staticmethod
     def failed_stream(stderr=b"gh: unexpected end of JSON input", code=1):
@@ -353,7 +373,7 @@ class ReleaseDownloadTests(unittest.TestCase):
             self.download(rc.GitHub("test/repo"))
         self.assertFalse(self.output.exists())
         self.assert_reaped()
-        self.assertEqual(len(readers), 2)
+        self.assertEqual(len(readers), 3)
         self.assertTrue(all(not reader.is_alive() for reader in readers))
 
     def test_direct_transport_cannot_bypass_expected_identity_and_budget(self):
@@ -624,7 +644,7 @@ class ReleaseDownloadTests(unittest.TestCase):
         self.assertEqual(self.budget.written, 1)
         self.assertEqual(len(self.children), 2)
         self.assert_reaped()
-        self.assertEqual(len(readers), 4)
+        self.assertEqual(len(readers), 6)
         self.assertTrue(all(not reader.is_alive() for reader in readers))
 
     def test_json_eof_retry_does_not_extend_metadata_or_mutation_retry_policy(self):

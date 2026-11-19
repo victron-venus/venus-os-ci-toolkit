@@ -46,7 +46,7 @@
     }
   },
   "go_version": "go1.27.4",
-  "header_disposition_sha256": "b84c88acfb4db081b4f8294bd7691939b7f751e45ecb8b448acc2e831de17f9f",
+  "header_disposition_sha256": "07033b3dbc3f3c0a10abb5cce93a73ed094ae1631b4bfa2d2fceaa967af9628b",
   "locks_reviewed": true,
   "native_locks": {
     "amd64": "5eb1bf975aceed36715936bf75fdd8b23ef111151bedf348eec5c9da173619e8",

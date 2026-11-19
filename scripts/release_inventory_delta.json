@@ -91,6 +91,76 @@
               "after": "            confirm_publish=confirm_before_publish,\n            confirm_final_publish=confirm_final_publisher_attempt,\n        )\n"
             }
           ]
+        },
+        {
+          "before_sha256": "6bbc1b9be793a4f2d65d6819bb2fda78963faaa98ec7a26352908fdc413c7d43",
+          "after_sha256": "9239726eeb16ff0d334b886b25e1de94f336b4fe56a87c291b18f67392b09c93",
+          "hunks": [
+            {
+              "before": "            payload = directory / (cast(str, item[\"name\"]) if retained else \"payload\")\n            identity = rc.download_asset(\n",
+              "after": "            payload = directory / (cast(str, item[\"name\"]) if retained else \"payload\")\n            # Keep candidate transfers on the shared bounded supervisor; it\n            # retains PID/PGID ownership through deadline cleanup before reaping.\n            identity = rc.download_asset(\n"
+            }
+          ]
+        },
+        {
+          "before_sha256": "9239726eeb16ff0d334b886b25e1de94f336b4fe56a87c291b18f67392b09c93",
+          "after_sha256": "a5559b466e5e85058ed8a193d46af472763b5b5dc01909de0eba30685de6b556",
+          "hunks": [
+            {
+              "before": "            # retains PID/PGID ownership through deadline cleanup before reaping.\n",
+              "after": "            # retains PID/PGID ownership through deadline cleanup before reaping.\n            # If group signaling is denied, its error still surfaces after reap.\n"
+            }
+          ]
+        },
+        {
+          "before_sha256": "a5559b466e5e85058ed8a193d46af472763b5b5dc01909de0eba30685de6b556",
+          "after_sha256": "c8d7f718e00a5043896311f60805c452172c49e9dd148c17b1e50a5f8b98e088",
+          "hunks": [
+            {
+              "before": "            # The final boundary shares a short deadline with the tag GET, so\n            # keep this to one exact attempt read without aggregate/jobs calls.\n",
+              "after": "            # The final boundary shares a short deadline with the tag GET, so\n            # keep this to one exact attempt read without aggregate/jobs calls.\n            # The release-control caller invokes it immediately after the last\n            # tag GET and before its protected public PATCH.\n"
+            }
+          ]
+        },
+        {
+          "before_sha256": "c8d7f718e00a5043896311f60805c452172c49e9dd148c17b1e50a5f8b98e088",
+          "after_sha256": "77b551f0de5ec378edcf5f0a25f731f77e65ee08986d1ba824ed078e83439d24",
+          "hunks": [
+            {
+              "before": "            # The release-control caller invokes it immediately after the last\n            # tag GET and before its protected public PATCH.\n",
+              "after": "            # The release-control caller invokes it immediately after the last\n            # tag GET and before its protected public PATCH.\n            # This callback is deliberately distinct from the full pre-tag\n            # publisher validation above; it closes only the last attempt race.\n"
+            }
+          ]
+        },
+        {
+          "before_sha256": "77b551f0de5ec378edcf5f0a25f731f77e65ee08986d1ba824ed078e83439d24",
+          "after_sha256": "7ce99af939a8c0f7c61ebf681295f780154976321284bb4df7a08aa7b69dbedd",
+          "hunks": [
+            {
+              "before": "            # This callback is deliberately distinct from the full pre-tag\n            # publisher validation above; it closes only the last attempt race.\n",
+              "after": "            # The shared confirm_publish contract separates this last-attempt\n            # recheck from the full pre-tag provenance callback above.\n"
+            }
+          ]
+        },
+        {
+          "before_sha256": "7ce99af939a8c0f7c61ebf681295f780154976321284bb4df7a08aa7b69dbedd",
+          "after_sha256": "bcd7ad592c9fdb5b668584d56b50fc7a13737853206f92acce2d37fcc1ece4f9",
+          "hunks": [
+            {
+              "before": "            # retains PID/PGID ownership through deadline cleanup before reaping.\n            # If group signaling is denied, its error still surfaces after reap.\n",
+              "after": "            # resolves gh and bounds post-status pipe cleanup before reaping.\n            # Signal failures still surface after bounded reap.\n"
+            }
+          ]
+        },
+        {
+          "before_sha256": "bcd7ad592c9fdb5b668584d56b50fc7a13737853206f92acce2d37fcc1ece4f9",
+          "after_sha256": "479ca7320f453dad0382c9f6b7292f41d9384e2c6db0f992f556ba858ae3d8c6",
+          "hunks": [
+            {
+              "before": "            # Keep candidate transfers on the shared bounded supervisor; it\n            # resolves gh and bounds post-status pipe cleanup before reaping.\n            # Signal failures still surface after bounded reap.\n",
+              "after": "            # The shared supervisor resolves gh and bounds post-status cleanup.\n            # Its ProcessCleanupError stays fatal; retrying could mask live work.\n"
+            }
+          ]
         }
       ]
     }

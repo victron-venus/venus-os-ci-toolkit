@@ -271,12 +271,87 @@ class ShippedDistributionDeltaTests(unittest.TestCase):
         ".github/release-tests/test_versioned_release.py",
     )
 
-    def _historical_consumer(self, temporary):
+    @staticmethod
+    def _expected_postimage(entry):
+        copy_layers = entry.get("copy_successor_layers", [])
+        if copy_layers:
+            return copy_layers[-1]["after_sha256"]
+        production = entry["successor_layers"][-1]["after_sha256"] if entry.get("successor_layers") else entry["after_sha256"]
+        overlays = [group for group in entry.get("test_only_overlay_successors", [])
+                    if group.get("base_sha256") == production]
+        if overlays:
+            return overlays[-1]["layers"][-1]["after_sha256"]
+        test_layers = entry.get("test_only_successor_layers", [])
+        if test_layers and test_layers[0].get("before_sha256") == production:
+            return test_layers[-1]["after_sha256"]
+        return production
+
+    def test_compact_consumer_adds_shared_process_supervisor_and_regressions(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            consumer = Path(temporary) / "consumer"
+            consumer.mkdir()
+            self._extract_pinned_ott_snapshot(consumer)
+            changes = migration.render(consumer)
+        helper = changes["scripts/async_process.py"]
+        tests = changes[".github/release-tests/test_async_process.py"]
+        publisher = changes["scripts/release_control.py"]
+        self.assertIn("_SUPERVISOR_SOURCE", helper)
+        self.assertIn("test_supervisor_control_pipe_eof_kills_owned_group", tests)
+        self.assertIn("_launch_supervised_process", publisher)
+        self.assertIn("supervisor status frame", helper)
+
+    def test_async_helper_copy_successor_preserves_old_layer_and_rejects_unknown_hash(self):
+        specification = json.loads(migration.DELTA.read_bytes())
+        entry = specification["files"]["scripts/async_process.py"]
+        layers = entry["copy_successor_layers"]
+        layer = layers[-1]
+        expected_before = layers[-2]["after_sha256"] if len(layers) > 1 else entry["after_sha256"]
+        self.assertEqual(layer["before_sha256"], expected_before)
+        helper_text = (ROOT / "scripts/async_process.py").read_text(encoding="utf-8")
+        for hunk in reversed(layer["source_hunks"]):
+            self.assertEqual(helper_text.count(hunk["after"]), 1)
+            helper_text = helper_text.replace(hunk["after"], hunk["before"], 1)
+        self.assertEqual(
+            migration.digest(helper_text.encode()),
+            layer["canonical_source_before_sha256"],
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            wrong_source_root = Path(temporary)
+            (wrong_source_root / "scripts").mkdir()
+            (wrong_source_root / "scripts/async_process.py").write_text(
+                "# unknown source state\n", encoding="utf-8",
+            )
+            with patch.object(migration, "ROOT", wrong_source_root):
+                with self.assertRaisesRegex(ValueError, "source changed"):
+                    migration.canonical_copy(entry)
+        with tempfile.TemporaryDirectory() as temporary:
+            consumer = Path(temporary) / "consumer"
+            consumer.mkdir()
+            self._extract_pinned_ott_snapshot(consumer)
+            unknown = consumer / "scripts/async_process.py"
+            unknown.parent.mkdir(parents=True, exist_ok=True)
+            unknown.write_bytes(b"unknown helper source\n")
+            with self.assertRaisesRegex(ValueError, "Unknown compact migration preimage"):
+                migration.render(consumer)
+
+    def _historical_consumer(self, temporary, include_old_test_overlay=False):
         """Return the pinned consumer after applying the prior four-file layer."""
         specification = json.loads(migration.DELTA.read_bytes())
         historical = json.loads(json.dumps(specification))
         for name in self.ADVANCED_SUCCESSOR_FILES:
-            historical["files"][name]["successor_layers"].pop()
+            rewinds = 3 if include_old_test_overlay else 1
+            for _ in range(rewinds):
+                historical["files"][name]["successor_layers"].pop()
+        for name, entry in historical["files"].items():
+            if entry.get("copy_successor_layers"):
+                entry["copy_successor_layers"].pop()
+        if not include_old_test_overlay:
+            historical["files"][".github/release-tests/test_release_control.py"].pop(
+                "test_only_successor_layers", None,
+            )
+            historical["files"][".github/release-tests/test_release_control.py"].pop(
+                "test_only_overlay_successors", None,
+            )
         for name in ("scripts/release_distribution.py", ".github/release-tests/test_release_distribution.py"):
             historical["files"][name]["successor_layers"].pop()
         historical["files"].pop("scripts/release_state.py")
@@ -287,6 +362,21 @@ class ShippedDistributionDeltaTests(unittest.TestCase):
         canonical = Path(temporary) / "historical-canonical"
         for name in ("scripts", "tests", "docs"):
             shutil.copytree(ROOT / name, canonical / name, dirs_exist_ok=True)
+        for name, entry in specification["files"].items():
+            if not entry.get("copy_successor_layers"):
+                continue
+            source = canonical / entry["source"]
+            source_text = source.read_text(encoding="utf-8")
+            latest = entry["copy_successor_layers"][-1]
+            for hunk in reversed(latest["source_hunks"]):
+                if not hunk["after"] or source_text.count(hunk["after"]) != 1:
+                    raise AssertionError("copied-source successor cannot be reversed exactly: " + name)
+                source_text = source_text.replace(hunk["after"], hunk["before"], 1)
+            self.assertEqual(
+                migration.digest(source_text.encode()),
+                latest["canonical_source_before_sha256"],
+            )
+            source.write_text(source_text, encoding="utf-8")
         for name in ("scripts/release_distribution.py", ".github/release-tests/test_release_distribution.py"):
             entry = specification["files"][name]
             source = entry["source"]
@@ -439,8 +529,7 @@ class ShippedDistributionDeltaTests(unittest.TestCase):
             changes = migration.render(consumer)
             self.assertEqual(set(changes), set(specification["files"]))
             for name, entry in specification["files"].items():
-                expected_sha = (entry["successor_layers"][-1]["after_sha256"]
-                                if entry.get("successor_layers") else entry["after_sha256"])
+                expected_sha = self._expected_postimage(entry)
                 self.assertEqual(hashlib.sha256(changes[name].encode("utf-8")).hexdigest(),
                                  expected_sha, name)
             self.assertEqual({str(path.relative_to(consumer)): path.read_bytes()
@@ -449,8 +538,7 @@ class ShippedDistributionDeltaTests(unittest.TestCase):
             self.assertEqual(migration.render(consumer), {})
             self.assertEqual((consumer / ".release-policy.json").read_bytes(), policy_before)
             for name, entry in specification["files"].items():
-                expected_sha = (entry["successor_layers"][-1]["after_sha256"]
-                                if entry.get("successor_layers") else entry["after_sha256"])
+                expected_sha = self._expected_postimage(entry)
                 self.assertEqual(hashlib.sha256((consumer / name).read_bytes()).hexdigest(),
                                  expected_sha, name)
             self.assertEqual({str(path.relative_to(consumer)) for path in consumer.rglob("*") if path.is_file()},
@@ -478,13 +566,31 @@ class ShippedDistributionDeltaTests(unittest.TestCase):
         for name, entry in specification["files"].items():
             self.assertTrue(migration.destination(name), name)
             if entry["before_sha256"] is None:
-                latest = (entry["successor_layers"][-1]["after_sha256"]
+                copy_layers = entry.get("copy_successor_layers", [])
+                latest = (copy_layers[-1]["after_sha256"] if copy_layers else
+                          entry["successor_layers"][-1]["after_sha256"]
                           if entry.get("successor_layers") else entry["after_sha256"])
                 self.assertEqual(migration.digest(migration.canonical_copy(entry)), latest)
                 continue
             source = (ROOT / entry["canonical_source"]).read_bytes()
-            source_pin = (entry.get("successor_layers", [{}])[-1].get("canonical_source_sha256")
-                          if entry.get("successor_layers") else None)
+            independent_test_layers = entry.get("test_only_successor_layers", [])
+            independent_test_overlays = entry.get("test_only_overlay_successors", [])
+            production_layers = entry.get("successor_layers", [])
+            production_base = production_layers[-1]["after_sha256"] if production_layers else entry["after_sha256"]
+            production_overlay = next(
+                (group for group in reversed(independent_test_overlays)
+                 if group.get("base_sha256") == production_base),
+                None,
+            )
+            source_pin = (
+                entry["copy_successor_layers"][-1].get("canonical_source_sha256")
+                if entry.get("copy_successor_layers") else
+                production_overlay["layers"][-1].get("canonical_source_sha256")
+                if production_overlay else
+                independent_test_layers[-1].get("canonical_source_sha256")
+                if independent_test_layers and independent_test_layers[0].get("before_sha256") == production_base else
+                production_layers[-1].get("canonical_source_sha256") if production_layers else None
+            )
             self.assertEqual(migration.digest(source),
                              source_pin or entry["canonical_source_sha256"], name)
             text = source.decode()
@@ -506,6 +612,17 @@ class ShippedDistributionDeltaTests(unittest.TestCase):
                     continue
                 for fragment in layer.get("canonical_fragments", []):
                     self.assertEqual(text.count(fragment), 1, name)
+            for layer in independent_test_layers:
+                if layer.get("canonical_source_sha256") != migration.digest(source):
+                    continue
+                for fragment in layer.get("canonical_fragments", []):
+                    self.assertEqual(text.count(fragment), 1, name)
+            for overlay in independent_test_overlays:
+                for layer in overlay["layers"]:
+                    if layer.get("canonical_source_sha256") != migration.digest(source):
+                        continue
+                    for fragment in layer.get("canonical_fragments", []):
+                        self.assertEqual(text.count(fragment), 1, name)
         workflow = specification["files"]["docs/release-workflow.md"]
         self.assertEqual(workflow["after_sha256"],
                          "8d9576bd62cfeaaebe4dfde00e7bb512c875136c630b7bfdf2148dd00d2f9144")
@@ -519,6 +636,7 @@ class ShippedDistributionDeltaTests(unittest.TestCase):
             self.assertEqual(set(new_changes), set(self.ADVANCED_SUCCESSOR_FILES) | {
                 "scripts/release_state.py", "scripts/release_distribution.py",
                 ".github/release-tests/test_release_distribution.py",
+                "scripts/async_process.py", ".github/release-tests/test_async_process.py",
             })
             for name in self.ADVANCED_SUCCESSOR_FILES:
                 entry = current_specification["files"][name]
@@ -527,8 +645,7 @@ class ShippedDistributionDeltaTests(unittest.TestCase):
             migration.apply(consumer, new_changes)
             self.assertEqual(migration.render(consumer), {})
             for name, entry in current_specification["files"].items():
-                final_sha = (entry["successor_layers"][-1]["after_sha256"]
-                             if entry.get("successor_layers") else entry["after_sha256"])
+                final_sha = self._expected_postimage(entry)
                 self.assertEqual(hashlib.sha256((consumer / name).read_bytes()).hexdigest(), final_sha)
 
     def test_new_successor_rejects_partial_and_mutated_four_file_bundles(self):
@@ -551,6 +668,89 @@ class ShippedDistributionDeltaTests(unittest.TestCase):
                 migration.render(consumer)
             self.assertEqual({str(path.relative_to(consumer)): path.read_bytes()
                               for path in consumer.rglob("*") if path.is_file()}, snapshot)
+
+    def test_old_production_overlay_advances_to_new_atomic_bundle_and_overlay(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            consumer, specification, _ = self._historical_consumer(
+                temporary, include_old_test_overlay=True,
+            )
+            target = ".github/release-tests/test_release_control.py"
+            old_overlay = specification["files"][target]["test_only_overlay_successors"][-1]
+            self.assertEqual(
+                hashlib.sha256((consumer / target).read_bytes()).hexdigest(),
+                old_overlay["layers"][-1]["after_sha256"],
+            )
+            changes = migration.render(consumer)
+            self.assertLessEqual(set(self.ADVANCED_SUCCESSOR_FILES), set(changes))
+            migration.apply(consumer, changes)
+            self.assertEqual(migration.render(consumer), {})
+            self.assertEqual(
+                hashlib.sha256((consumer / target).read_bytes()).hexdigest(),
+                self._expected_postimage(specification["files"][target]),
+            )
+
+    def test_unknown_overlay_hash_and_partial_overlay_bundle_fail_closed(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            consumer = Path(temporary) / "consumer"
+            consumer.mkdir()
+            self._extract_pinned_ott_snapshot(consumer)
+            target = ".github/release-tests/test_release_control.py"
+
+            unknown = consumer / target
+            unknown.write_bytes(unknown.read_bytes() + b"# unknown overlay state\n")
+            snapshot = {str(path.relative_to(consumer)): path.read_bytes()
+                        for path in consumer.rglob("*") if path.is_file()}
+            with self.assertRaisesRegex(ValueError, "Unknown compact migration preimage"):
+                migration.render(consumer)
+            self.assertEqual({str(path.relative_to(consumer)): path.read_bytes()
+                              for path in consumer.rglob("*") if path.is_file()}, snapshot)
+
+            invalid_spec = json.loads(migration.DELTA.read_bytes())
+            invalid_spec["files"][target]["test_only_overlay_successors"][-1][
+                "base_sha256"
+            ] = "f" * 64
+            invalid_delta = Path(temporary) / "invalid-overlay-delta.json"
+            invalid_delta.write_text(json.dumps(invalid_spec))
+            with patch.object(migration, "DELTA", invalid_delta), \
+                    self.assertRaisesRegex(ValueError, "unknown production base"):
+                migration.render(consumer)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            consumer, _, _ = self._historical_consumer(temporary, include_old_test_overlay=True)
+            target = ".github/release-tests/test_release_control.py"
+            current = migration.render(consumer)
+            # Advance just the test overlay target, while leaving the four-file
+            # production generation old. This must not authorize a partial state.
+            consumer_path = consumer / target
+            consumer_path.write_text(current[target], encoding="utf-8")
+            snapshot = {str(path.relative_to(consumer)): path.read_bytes()
+                        for path in consumer.rglob("*") if path.is_file()}
+            with self.assertRaisesRegex(ValueError, "Partially migrated"):
+                migration.render(consumer)
+            self.assertEqual({str(path.relative_to(consumer)): path.read_bytes()
+                              for path in consumer.rglob("*") if path.is_file()}, snapshot)
+
+
+    def test_old_test_overlay_is_not_reapplied_to_new_production_bundle(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            consumer = Path(temporary) / "consumer"
+            consumer.mkdir()
+            self._extract_pinned_ott_snapshot(consumer)
+            specification = json.loads(migration.DELTA.read_bytes())
+            target = ".github/release-tests/test_release_control.py"
+            base_only = json.loads(json.dumps(specification))
+            base_only["files"][target].pop("test_only_successor_layers", None)
+            base_only["files"][target].pop("test_only_overlay_successors", None)
+            base_delta = Path(temporary) / "base-only-delta.json"
+            base_delta.write_text(json.dumps(base_only))
+            with patch.object(migration, "DELTA", base_delta):
+                migration.apply(consumer, migration.render(consumer))
+
+            self.assertEqual(migration.render(consumer), {})
+            self.assertEqual(
+                hashlib.sha256((consumer / target).read_bytes()).hexdigest(),
+                self._expected_postimage(specification["files"][target]),
+            )
 
     def test_mixed_successor_and_unknown_postimage_are_rejected(self):
         with tempfile.TemporaryDirectory() as temporary:

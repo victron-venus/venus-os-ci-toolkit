@@ -27,6 +27,29 @@ async def cancel_test_task(task, timeout=5):
         task.result()
 
 
+def descendant_pipe_fixture(directory: str, after_start: str) -> tuple[Path, Path, Path, str]:
+    """Build one child fixture whose descendant inherits the captured pipes."""
+    root = Path(directory)
+    started = root / "descendant-started"
+    pid_file = root / "descendant.pid"
+    gate = root / "release-descendant"
+    survived = root / "descendant-survived"
+    descendant = (
+        "from pathlib import Path; import os,time; "
+        f"Path({str(pid_file)!r}).write_text(str(os.getpid())); "
+        f"Path({str(started)!r}).write_text('started'); gate=Path({str(gate)!r}); "
+        "exec('while not gate.exists(): time.sleep(.01)'); "
+        f"Path({str(survived)!r}).write_text('alive')"
+    )
+    parent = (
+        "from pathlib import Path; import os,subprocess,sys,time; "
+        f"subprocess.Popen([sys.executable, '-c', {descendant!r}]); "
+        f"started=Path({str(started)!r}); "
+        f"exec('while not started.exists(): time.sleep(.01)'); {after_start}"
+    )
+    return started, pid_file, survived, parent
+
+
 class AsyncProcessTests(unittest.TestCase):
     def assert_process_stopped(self, pid_file: Path, timeout: float = 3.0) -> None:
         pid = int(pid_file.read_text())
@@ -120,21 +143,35 @@ class AsyncProcessTests(unittest.TestCase):
                 "sys.stdout.buffer.write(b'b' * 2000); sys.stdout.flush(); "
                 "overflowed.write_text('yes'); time.sleep(60)"
             )
+            launch = async_process._launch_supervised_process
             kill = async_process._kill_owned_process
-            popen = async_process.subprocess.Popen
 
             def start_after_initial_output(*args, **kwargs):
-                process = popen(*args, **kwargs)
+                supervised = launch(*args, **kwargs)
                 deadline = time.monotonic() + 5
                 while not ready.exists() and time.monotonic() < deadline:
-                    if process.poll() is not None:
+                    if async_process._process_has_exited(supervised.process):
                         break
                     time.sleep(0.005)
                 if not ready.exists():
-                    process.kill()
-                    process.wait(timeout=2)
+                    try:
+                        group_error = kill(supervised.process)
+                        if group_error is not None:
+                            async_process._reap_after_group_signal_error(
+                                supervised.process, group_error,
+                            )
+                        supervised.process.wait(timeout=2)
+                    finally:
+                        async_process._close_supervisor_fd(supervised.control_fd)
+                        async_process._close_supervisor_stream(supervised.status_stream)
+                        for stream in (
+                            supervised.process.stdin,
+                            supervised.process.stdout,
+                            supervised.process.stderr,
+                        ):
+                            async_process._close_supervisor_stream(stream)
                     raise AssertionError("child did not flush initial output before timeout starts")
-                return process
+                return supervised
 
             def delayed_kill(process):
                 gate.write_text("release")
@@ -145,7 +182,7 @@ class AsyncProcessTests(unittest.TestCase):
                     raise AssertionError("child did not write overflowing output after timeout")
                 kill(process)
 
-            with patch.object(async_process.subprocess, "Popen", side_effect=start_after_initial_output), \
+            with patch.object(async_process, "_launch_supervised_process", side_effect=start_after_initial_output), \
                     patch.object(async_process, "_kill_owned_process", side_effect=delayed_kill):
                 with self.assertRaises(async_process.ProcessTimeout) as raised:
                     async_process.run_process(
@@ -157,22 +194,8 @@ class AsyncProcessTests(unittest.TestCase):
     @unittest.skipUnless(os.name == "posix", "process-group cleanup is POSIX-specific")
     def test_timeout_kills_descendant_that_inherits_capture_pipes(self):
         with tempfile.TemporaryDirectory() as directory:
-            started = Path(directory) / "descendant-started"
-            pid_file = Path(directory) / "descendant.pid"
-            gate = Path(directory) / "release-descendant"
-            survived = Path(directory) / "descendant-survived"
-            descendant = (
-                "from pathlib import Path; import os,time; "
-                f"Path({str(pid_file)!r}).write_text(str(os.getpid())); Path({str(started)!r}).write_text('started'); "
-                f"gate=Path({str(gate)!r}); "
-                "exec('while not gate.exists(): time.sleep(.01)'); "
-                f"Path({str(survived)!r}).write_text('alive')"
-            )
-            parent = (
-                "from pathlib import Path; import os,subprocess,sys,time; "
-                f"subprocess.Popen([sys.executable, '-c', {descendant!r}]); "
-                f"started=Path({str(started)!r}); "
-                "exec('while not started.exists(): time.sleep(.01)'); time.sleep(60)"
+            started, pid_file, survived, parent = descendant_pipe_fixture(
+                directory, "time.sleep(60)",
             )
             start_time = time.monotonic()
             with self.assertRaises(async_process.ProcessTimeout):
@@ -183,7 +206,7 @@ class AsyncProcessTests(unittest.TestCase):
             self.assertFalse(survived.exists(), "descendant kept running after parent timeout")
 
     @unittest.skipUnless(os.name == "posix", "process-group cleanup is POSIX-specific")
-    def test_timeout_kills_group_after_leader_exits_without_reaping_its_pid(self):
+    def test_target_completion_kills_group_after_leader_exits_without_reaping_wrapper(self):
         with tempfile.TemporaryDirectory() as directory:
             started = Path(directory) / "leader-exit-descendant-started"
             gate = Path(directory) / "release-leader-exit-descendant"
@@ -200,11 +223,12 @@ class AsyncProcessTests(unittest.TestCase):
                 f"started=Path({str(started)!r}); "
                 "exec('while not started.exists(): time.sleep(.01)')"
             )
-            with self.assertRaises(async_process.ProcessTimeout):
-                async_process.run_process([sys.executable, "-c", leader], timeout=0.3)
+            result = async_process.run_process([sys.executable, "-c", leader], timeout=3)
+            self.assertEqual(result.returncode, 0)
             self.assertTrue(started.exists(), "descendant did not start before leader exit")
-            gate.write_text("release")
-            time.sleep(0.2)
+            deadline = time.monotonic() + 2
+            while not survived.exists() and time.monotonic() < deadline:
+                time.sleep(0.01)
             self.assertFalse(survived.exists(), "same-group descendant survived leader timeout")
 
     @unittest.skipUnless(os.name == "posix", "process-group cleanup is POSIX-specific")
@@ -227,67 +251,345 @@ class AsyncProcessTests(unittest.TestCase):
                 f"subprocess.Popen([sys.executable, '-c', {descendant!r}], "
                 "stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL); "
                 f"started=Path({str(started)!r}); "
-                "exec('while not started.exists(): time.sleep(.005)')"
+                "exec('while not started.exists(): time.sleep(.005)'); time.sleep(60)"
             )
-            process = async_process.subprocess.Popen(
-                [sys.executable, "-c", leader],
-                stdout=async_process.subprocess.PIPE,
-                stderr=async_process.subprocess.PIPE,
-                start_new_session=True,
-                bufsize=0,
-            )
-            selector = async_process.selectors.DefaultSelector()
-            streams = [process.stdout, process.stderr]
-            try:
-                deadline = time.monotonic() + 3
-                while (not started.exists() or not async_process._process_has_exited(process)):
-                    if time.monotonic() >= deadline:
-                        self.fail("leader/descendant fixture did not reach the completion boundary")
-                    time.sleep(0.005)
-                self.assertTrue(pid_file.exists(), "descendant did not publish its PID")
-                state = async_process._OwnedProcessState(
-                    process=process,
-                    command=(sys.executable, "-c", leader),
-                    selector=selector,
-                    opened_streams=streams,
-                    captured={"stdout": bytearray(), "stderr": bytearray()},
-                    input_view=memoryview(b""),
-                    max_output_bytes=1024,
-                    text=False,
-                    timeout=0.1,
-                    deadline=time.monotonic() - 1,
-                    cancel_event=None,
-                )
-                with self.assertRaises(async_process.ProcessTimeout):
-                    async_process._complete_owned_process(state)
-            finally:
-                selector.close()
-                for stream in streams:
-                    stream.close()
+            with self.assertRaises(async_process.ProcessTimeout):
+                async_process.run_process([sys.executable, "-c", leader], timeout=0.3)
             self.assert_process_stopped(pid_file)
-            gate.write_text("release")
             self.assertFalse(survived.exists(), "descendant ran after completion cleanup")
+
+    def test_process_group_kill_observes_owned_leader_before_kill_and_reap(self):
+        class FakeProcess:
+            pid = 12345
+
+            def __init__(self, events):
+                self.events = events
+                self.returncode = None
+
+            def wait(self, timeout=None):
+                self.events.append("reap")
+                self.returncode = -signal.SIGKILL
+                return self.returncode
+
+        events = []
+        process = FakeProcess(events)
+        selector = async_process.selectors.DefaultSelector()
+        status_read, status_write = os.pipe()
+        control_read, control_write = os.pipe()
+        status = os.fdopen(status_read, "rb", buffering=0)
+        os.write(status_write, async_process.struct.pack("!4sBi", b"IVSP", 1, 0))
+        os.close(status_write)
+        state = async_process._OwnedProcessState(
+            process=process,
+            command=("/bin/true",),
+            selector=selector,
+            opened_streams=[status],
+            captured={"stdout": bytearray(), "stderr": bytearray()},
+            input_view=memoryview(b""),
+            max_output_bytes=1024,
+            text=False,
+            timeout=None,
+            deadline=None,
+            cancel_event=None,
+            status_stream=status,
+            control_fd=control_write,
+        )
+        try:
+            with (
+                patch.object(async_process.os, "waitid", side_effect=lambda *_: events.append("observe")),
+                patch.object(async_process.os, "killpg", side_effect=lambda *_: events.append("killpg")),
+            ):
+                async_process._read_owned_process_status(state, status)
+                async_process._complete_owned_process(state)
+            self.assertEqual(events, ["observe", "killpg", "reap"])
+        finally:
+            selector.close()
+            status.close()
+            os.close(control_read)
+            if state.control_fd >= 0:
+                os.close(state.control_fd)
+
+    def test_supervisor_status_frame_rejects_bad_shape_magic_and_version(self):
+        malformed_frames = (
+            b"short",
+            async_process.struct.pack("!4sBi", b"NOPE", 1, 0),
+            async_process.struct.pack("!4sBi", b"IVSP", 2, 0),
+        )
+        for frame in malformed_frames:
+            with self.subTest(frame=frame):
+                with self.assertRaises(async_process.ProcessCleanupError):
+                    async_process._decode_supervisor_status(frame)
+
+    def test_supervisor_status_pipe_eof_fails_closed(self):
+        class FakeProcess:
+            pid = 12345
+
+        selector = async_process.selectors.DefaultSelector()
+        status_read, status_write = os.pipe()
+        status = os.fdopen(status_read, "rb", buffering=0)
+        os.close(status_write)
+        state = async_process._OwnedProcessState(
+            process=FakeProcess(),
+            command=("/bin/true",),
+            selector=selector,
+            opened_streams=[status],
+            captured={"stdout": bytearray(), "stderr": bytearray()},
+            input_view=memoryview(b""),
+            max_output_bytes=1024,
+            text=False,
+            timeout=None,
+            deadline=None,
+            cancel_event=None,
+            status_stream=status,
+        )
+        try:
+            async_process._read_owned_process_status(state, status)
+            self.assertIsInstance(state.failure, async_process.ProcessCleanupError)
+            self.assertIn("without a complete status frame", str(state.failure))
+        finally:
+            selector.close()
+            status.close()
+
+    def test_target_spawn_failure_is_reported_without_waiting_for_caller_timeout(self):
+        started = time.monotonic()
+        with self.assertRaises(FileNotFoundError):
+            async_process.run_process(
+                ["/definitely/not/a/release-helper"], timeout=5,
+            )
+        self.assertLess(time.monotonic() - started, 2)
+
+    def test_supervisor_launch_preserves_cleanup_failure_and_chains_setup_error(self):
+        class Stream:
+            closed = False
+
+            def close(self):
+                self.closed = True
+
+        class FakeProcess:
+            def __init__(self):
+                self.stdin = Stream()
+                self.stdout = Stream()
+                self.stderr = Stream()
+
+        process = FakeProcess()
+        launch_error = OSError("private config write failed")
+        cleanup_error = async_process.ProcessCleanupError("wrapper could not be reaped")
+        with (
+            patch.object(async_process.subprocess, "Popen", return_value=process),
+            patch.object(async_process, "_write_supervisor_config", side_effect=launch_error),
+            patch.object(
+                async_process, "_reap_owned_process_after_error", side_effect=cleanup_error,
+            ),
+            self.assertRaises(async_process.ProcessCleanupError) as raised,
+        ):
+            async_process._launch_supervised_process(
+                (sys.executable, "-c", "pass"), env=None, cwd=None, input_enabled=False,
+            )
+        self.assertIs(raised.exception, cleanup_error)
+        self.assertIs(raised.exception.__cause__, launch_error)
+        self.assertTrue(all(stream.closed for stream in (
+            process.stdin, process.stdout, process.stderr,
+        )))
+
+    @unittest.skipUnless(os.name == "posix", "supervisor process groups are POSIX-specific")
+    def test_repeated_quick_exit_boundary_preserves_target_status(self):
+        for _ in range(12):
+            result = async_process.run_process(
+                [sys.executable, "-c", "raise SystemExit(7)"], timeout=5, check=False,
+            )
+            self.assertEqual(result.returncode, 7)
+
+    def test_target_arguments_are_not_present_in_wrapper_command_line(self):
+        secret_marker = "wrapper-private-argv-marker"
+        with tempfile.TemporaryDirectory() as directory:
+            target = (
+                "import os; print(os.environ['TARGET_SECRET']); print(os.getcwd())"
+            )
+            real_popen = async_process.subprocess.Popen
+            calls = []
+
+            def observe_wrapper_argv(*args, **kwargs):
+                calls.append((args[0], kwargs["env"], kwargs["cwd"]))
+                return real_popen(*args, **kwargs)
+
+            with patch.object(async_process.subprocess, "Popen", side_effect=observe_wrapper_argv):
+                result = async_process.run_process(
+                    [sys.executable, "-c", target],
+                    env={"TARGET_SECRET": secret_marker}, cwd=directory, timeout=5,
+                )
+            self.assertEqual(
+                result.stdout.decode().splitlines(),
+                [secret_marker, os.path.realpath(directory)],
+            )
+            self.assertEqual(len(calls), 1)
+            wrapper_argv, wrapper_env, wrapper_cwd = calls[0]
+            self.assertNotIn(secret_marker, " ".join(wrapper_argv))
+            self.assertNotIn(directory, " ".join(wrapper_argv))
+            self.assertNotIn(secret_marker, repr(wrapper_env))
+            self.assertNotIn(directory, repr(wrapper_env))
+            self.assertEqual(wrapper_cwd, "/")
+
+    @unittest.skipUnless(os.name == "posix", "supervisor process groups are POSIX-specific")
+    def test_supervisor_control_pipe_eof_kills_owned_group(self):
+        with tempfile.TemporaryDirectory() as directory:
+            pid_file = Path(directory) / "control-eof-target.pid"
+            target = (
+                "from pathlib import Path; import os,time; "
+                f"Path({str(pid_file)!r}).write_text(str(os.getpid())); time.sleep(60)"
+            )
+            launch = async_process._launch_supervised_process(
+                (sys.executable, "-c", target),
+                env=None, cwd=None, input_enabled=False,
+            )
+            try:
+                deadline = time.monotonic() + 5
+                while not pid_file.exists() and time.monotonic() < deadline:
+                    if async_process._process_has_exited(launch.process):
+                        break
+                    time.sleep(0.01)
+                self.assertTrue(pid_file.exists(), "control-EOF target never started")
+                os.close(launch.control_fd)
+                launch.control_fd = -1
+                returncode = launch.process.wait(timeout=5)
+                self.assertEqual(returncode, -signal.SIGKILL)
+            finally:
+                if launch.control_fd >= 0:
+                    async_process._close_supervisor_fd(launch.control_fd)
+                async_process._close_supervisor_stream(launch.status_stream)
+                for stream in (launch.process.stdin, launch.process.stdout, launch.process.stderr):
+                    async_process._close_supervisor_stream(stream)
+            self.assert_process_stopped(pid_file)
+
+    def test_process_group_kill_fails_closed_if_leader_was_reaped_elsewhere(self):
+        class FakeProcess:
+            pid = 12345
+
+        process = FakeProcess()
+        kill_group = unittest.mock.Mock()
+        with (
+            patch.object(async_process.os, "waitid", side_effect=ChildProcessError),
+            patch.object(async_process.os, "killpg", kill_group),
+        ):
+            with self.assertRaises(async_process.ProcessCleanupError):
+                async_process._kill_owned_process(process)
+        kill_group.assert_not_called()
+
+    def test_non_permission_group_oserror_falls_back_only_to_owned_live_leader(self):
+        events = []
+
+        class FakeProcess:
+            pid = 12345
+
+            def kill(self):
+                events.append("leader-kill")
+                raise OSError("leader signal denied")
+
+        def observe(*_args):
+            events.append("observe")
+            return None
+
+        def fail_group_signal(*_args):
+            events.append("killpg")
+            raise OSError("group signal I/O failure")
+
+        with (
+            patch.object(async_process.os, "waitid", side_effect=observe),
+            patch.object(async_process.os, "killpg", side_effect=fail_group_signal),
+        ):
+            group_error = async_process._kill_owned_process(FakeProcess())
+
+        self.assertEqual(events, ["observe", "killpg", "observe", "leader-kill"])
+        self.assertIsInstance(group_error, OSError)
+
+    @unittest.skipUnless(os.name == "posix", "process-group cleanup is POSIX-specific")
+    def test_group_signal_error_reports_escaped_descendant_after_wrapper_reap(self):
+        for signal_error in (
+            PermissionError("group signal denied"),
+            OSError("unexpected group signal failure"),
+        ):
+            with self.subTest(error=type(signal_error).__name__), tempfile.TemporaryDirectory() as directory:
+                started = Path(directory) / "closed-pipe-descendant-started"
+                pid_file = Path(directory) / "closed-pipe-descendant.pid"
+                descendant = (
+                    "from pathlib import Path; import time; "
+                    f"Path({str(started)!r}).write_text('started'); time.sleep(60)"
+                )
+                parent = (
+                    "from pathlib import Path; import subprocess,sys,time; "
+                    f"child=subprocess.Popen([sys.executable, '-c', {descendant!r}], "
+                    "stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, "
+                    "preexec_fn=__import__('os').setpgrp); "
+                    f"Path({str(pid_file)!r}).write_text(str(child.pid)); "
+                    f"started=Path({str(started)!r}); "
+                    "deadline=time.monotonic()+3; "
+                    "exec('while not started.exists() and time.monotonic()<deadline: time.sleep(.005)'); "
+                    "assert started.exists()"
+                )
+                processes = []
+                real_popen = async_process.subprocess.Popen
+                events = []
+
+                def record_owned_process(*args, **kwargs):
+                    process = real_popen(*args, **kwargs)
+                    processes.append(process)
+                    wait = process.wait
+
+                    def record_wait(*wait_args, **wait_kwargs):
+                        events.append("reap")
+                        return wait(*wait_args, **wait_kwargs)
+
+                    def record_wrapper_kill():
+                        events.append("wrapper-kill")
+                        return original_kill()
+
+                    process.wait = record_wait
+                    original_kill = process.kill
+                    process.kill = record_wrapper_kill
+                    return process
+
+                def fail_group_signal(*_args):
+                    events.append("killpg-error")
+                    raise signal_error
+
+                def observe_live_leader(*_args):
+                    events.append("observe")
+                    return None
+
+                try:
+                    with (
+                        patch.object(async_process.subprocess, "Popen", side_effect=record_owned_process),
+                        patch.object(async_process.os, "waitid", side_effect=observe_live_leader),
+                        patch.object(async_process.os, "killpg", side_effect=fail_group_signal),
+                    ):
+                        with self.assertRaises(async_process.ProcessCleanupError) as raised:
+                            async_process.run_process(
+                                [sys.executable, "-c", parent], timeout=5,
+                            )
+                    self.assertIs(raised.exception.__cause__, signal_error)
+                    self.assertTrue(started.exists(), "closed-pipe descendant did not start")
+                    self.assertEqual(
+                        events,
+                        ["observe", "killpg-error", "observe", "wrapper-kill", "reap"],
+                    )
+                    self.assertEqual(len(processes), 1)
+                    self.assertIsNotNone(processes[0].returncode, "leader was not reaped")
+                    descendant_pid = int(pid_file.read_text())
+                    self.assertEqual(os.getsid(descendant_pid), processes[0].pid)
+                    self.assertNotEqual(os.getpgid(descendant_pid), processes[0].pid)
+                    os.kill(descendant_pid, 0)
+                finally:
+                    if pid_file.exists():
+                        try:
+                            os.kill(int(pid_file.read_text()), signal.SIGKILL)
+                        except ProcessLookupError:
+                            pass
 
     @unittest.skipUnless(os.name == "posix", "process-group cleanup is POSIX-specific")
     def test_output_limit_kills_descendant_that_holds_capture_pipe_open(self):
         with tempfile.TemporaryDirectory() as directory:
-            started = Path(directory) / "descendant-started"
-            pid_file = Path(directory) / "descendant.pid"
-            gate = Path(directory) / "release-descendant"
-            survived = Path(directory) / "descendant-survived"
-            descendant = (
-                "from pathlib import Path; import os,time; "
-                f"Path({str(pid_file)!r}).write_text(str(os.getpid())); Path({str(started)!r}).write_text('started'); "
-                f"gate=Path({str(gate)!r}); "
-                "exec('while not gate.exists(): time.sleep(.01)'); "
-                f"Path({str(survived)!r}).write_text('alive')"
-            )
-            parent = (
-                "from pathlib import Path; import os,subprocess,sys,time; "
-                f"subprocess.Popen([sys.executable, '-c', {descendant!r}]); "
-                f"started=Path({str(started)!r}); "
-                "exec('while not started.exists(): time.sleep(.01)'); "
-                "sys.stdout.buffer.write(b'x' * 4096); sys.stdout.flush(); time.sleep(60)"
+            started, pid_file, survived, parent = descendant_pipe_fixture(
+                directory,
+                "sys.stdout.buffer.write(b'x' * 4096); sys.stdout.flush(); time.sleep(60)",
             )
             start_time = time.monotonic()
             with self.assertRaises(async_process.ProcessOutputLimit):
@@ -367,16 +669,25 @@ class AsyncProcessTests(unittest.TestCase):
     @unittest.skipUnless(os.name == "posix", "process-group cleanup is POSIX-specific")
     def test_selector_creation_failure_reaps_owned_process(self):
         real_popen = async_process.subprocess.Popen
+        real_selector = async_process.selectors.DefaultSelector
         processes = []
+        selector_calls = 0
 
         def tracked_popen(*args, **kwargs):
             process = real_popen(*args, **kwargs)
             processes.append(process)
             return process
 
+        def fail_runtime_selector():
+            nonlocal selector_calls
+            selector_calls += 1
+            if selector_calls == 1:
+                return real_selector()  # private config writer
+            raise OSError("no selector")
+
         with (
             patch.object(async_process.subprocess, "Popen", side_effect=tracked_popen),
-            patch.object(async_process.selectors, "DefaultSelector", side_effect=OSError("no selector")),
+            patch.object(async_process.selectors, "DefaultSelector", side_effect=fail_runtime_selector),
         ):
             with self.assertRaisesRegex(OSError, "no selector"):
                 async_process.run_process(
@@ -392,16 +703,25 @@ class AsyncProcessTests(unittest.TestCase):
     @unittest.skipUnless(os.name == "posix", "process-group cleanup is POSIX-specific")
     def test_nonblocking_setup_failure_closes_all_owned_pipes(self):
         real_popen = async_process.subprocess.Popen
+        real_set_blocking = async_process.os.set_blocking
         processes = []
+        blocking_calls = 0
 
         def tracked_popen(*args, **kwargs):
             process = real_popen(*args, **kwargs)
             processes.append(process)
             return process
 
+        def fail_runtime_set_blocking(fd, blocking):
+            nonlocal blocking_calls
+            blocking_calls += 1
+            if blocking_calls == 1:
+                return real_set_blocking(fd, blocking)  # private config writer
+            raise OSError("fd setup failed")
+
         with (
             patch.object(async_process.subprocess, "Popen", side_effect=tracked_popen),
-            patch.object(async_process.os, "set_blocking", side_effect=OSError("fd setup failed")),
+            patch.object(async_process.os, "set_blocking", side_effect=fail_runtime_set_blocking),
         ):
             with self.assertRaisesRegex(OSError, "fd setup failed"):
                 async_process.run_process(
@@ -680,11 +1000,55 @@ class AsyncCancellationTests(unittest.IsolatedAsyncioTestCase):
                         await asyncio.wait_for(task, timeout=8)
                     except (asyncio.CancelledError, async_process.ProcessCleanupError):
                         pass
+
+    async def test_cancellation_reaps_wrapper_and_stops_owned_target(self):
+        with tempfile.TemporaryDirectory() as directory:
+            pid_file = Path(directory) / "cancel-target.pid"
+            started = Path(directory) / "cancel-target.started"
+            script = (
+                "from pathlib import Path; import os,time; "
+                f"Path({str(pid_file)!r}).write_text(str(os.getpid())); "
+                f"Path({str(started)!r}).write_text('ready'); time.sleep(60)"
+            )
+            real_popen = async_process.subprocess.Popen
+            wrappers = []
+
+            def capture_wrapper(*args, **kwargs):
+                process = real_popen(*args, **kwargs)
+                wrappers.append(process)
+                return process
+
+            with patch.object(async_process.subprocess, "Popen", side_effect=capture_wrapper):
+                task = asyncio.create_task(async_process.run_process_async(
+                    [sys.executable, "-c", script],
+                ))
+                try:
+                    deadline = asyncio.get_running_loop().time() + 5
+                    while not started.exists() and asyncio.get_running_loop().time() < deadline:
+                        await asyncio.sleep(0.01)
+                    self.assertTrue(started.exists(), "cancel target did not start")
+                    start = time.monotonic()
+                    task.cancel()
+                    with self.assertRaises(asyncio.CancelledError):
+                        await asyncio.wait_for(task, timeout=8)
+                    self.assertLess(time.monotonic() - start, 8)
+                    self.assertEqual(len(wrappers), 1)
+                    self.assertIsNotNone(wrappers[0].returncode, "supervisor wrapper was not reaped")
+                    self.assertTrue(wrappers[0].stdout.closed)
+                    self.assertTrue(wrappers[0].stderr.closed)
+                finally:
+                    if not task.done():
+                        task.cancel()
+                        try:
+                            await asyncio.wait_for(task, timeout=8)
+                        except (asyncio.CancelledError, async_process.ProcessCleanupError):
+                            pass
                 if pid_file.exists():
                     try:
                         os.kill(int(pid_file.read_text()), signal.SIGKILL)
                     except ProcessLookupError:
                         pass
+            AsyncProcessTests.assert_process_stopped(self, pid_file)
 
     async def test_unsupported_platform_fails_before_spawning(self):
         with patch.object(async_process, "POSIX_PROCESS_RUNNER", False), \
@@ -704,32 +1068,23 @@ class AsyncCancellationTests(unittest.IsolatedAsyncioTestCase):
         popen.assert_not_called()
 
     @unittest.skipUnless(os.name == "posix", "process-group cleanup is POSIX-specific")
-    def test_missing_process_group_falls_back_to_killing_owned_leader(self):
-        real_popen = async_process.subprocess.Popen
-        processes = []
-        direct_kills = []
+    def test_missing_process_group_falls_back_only_to_observed_live_leader(self):
+        class FakeProcess:
+            pid = 12345
 
-        def tracked_popen(*args, **kwargs):
-            process = real_popen(*args, **kwargs)
-            original_kill = process.kill
+            def __init__(self):
+                self.killed = False
 
-            def tracked_kill():
-                direct_kills.append(process.pid)
-                return original_kill()
+            def kill(self):
+                self.killed = True
 
-            process.kill = tracked_kill
-            processes.append(process)
-            return process
-
-        with patch.object(async_process.subprocess, "Popen", side_effect=tracked_popen), \
-                patch.object(async_process.os, "killpg", side_effect=ProcessLookupError):
-            with self.assertRaises(async_process.ProcessTimeout):
-                async_process.run_process(
-                    [sys.executable, "-c", "import time; time.sleep(60)"], timeout=0.1,
-                )
-        self.assertEqual(len(processes), 1)
-        self.assertEqual(direct_kills, [processes[0].pid])
-        self.assertIsNotNone(processes[0].returncode, "owned leader was not reaped")
+        process = FakeProcess()
+        with (
+            patch.object(async_process.os, "waitid", return_value=None),
+            patch.object(async_process.os, "killpg", side_effect=ProcessLookupError),
+        ):
+            self.assertIsNone(async_process._kill_owned_process(process))
+        self.assertTrue(process.killed)
 
 
 class AsyncRunnerShutdownTests(unittest.TestCase):
