@@ -760,12 +760,14 @@ class AssetStreamCleanupTests(unittest.TestCase):
                 return 0
 
         process = Process()
+        output = Output()
+        command = ["gh"]
         with (
             patch.object(rc, "_process_has_exited", return_value=True) as observe,
             patch.object(rc.time, "monotonic", side_effect=(0, 2)),
         ):
             with self.assertRaises(subprocess.TimeoutExpired):
-                rc._wait_for_asset_process(process, Output(), ["gh"], deadline=1)
+                rc._wait_for_asset_process(process, output, command, deadline=1)
         observe.assert_called_once_with(process)
         self.assertFalse(process.wait_called, "deadline-crossing decision reaped the leader")
 
@@ -3090,11 +3092,11 @@ class TransportTests(unittest.TestCase):
             gh = rc.GitHub(REPO)
             with (
                 patch.object(rc, "download_asset", side_effect=mutate_during_download),
-                self.assertRaisesRegex(rc.ReleaseError, "changed during upload readback"),
             ):
-                rc.verify_uploaded_asset(
-                    gh, item, asset, budget=rc.DownloadBudget(21), expected=expected,
-                )
+                with self.assertRaisesRegex(rc.ReleaseError, "changed during upload readback"):
+                    rc.verify_uploaded_asset(
+                        gh, item, asset, budget=rc.DownloadBudget(21), expected=expected,
+                    )
 
     def test_reconciliation_local_io_error_is_redacted_and_never_retries(self):
         with tempfile.TemporaryDirectory(prefix="release-versioned-") as temp:
@@ -3639,9 +3641,9 @@ class ExecutingRunStatusTests(unittest.TestCase):
             with (
                 self.subTest(snapshot=snapshot),
                 patch.object(self.gh, "pages", return_value=snapshot),
-                self.assertRaises(rc.ReleaseError),
             ):
-                rc.validate_run(self.gh, run(), self.gh.info, SHA, 1, completed=True)
+                with self.assertRaises(rc.ReleaseError):
+                    rc.validate_run(self.gh, run(), self.gh.info, SHA, 1, completed=True)
         self.sleep.assert_not_called()
 
     def test_duplicate_gate_on_later_page_is_not_a_propagation_delay(self):

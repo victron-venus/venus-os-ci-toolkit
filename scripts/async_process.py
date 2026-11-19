@@ -30,6 +30,7 @@ POSIX_ONLY_MESSAGE = (
     "Release process runner supports Linux Python 3.12+ and macOS Python 3.13+ only"
 )
 SUPERVISOR_STATUS_SIZE = 9
+SUPERVISOR_MALFORMED_STATUS_MESSAGE = "Release helper supervisor status frame was malformed"
 SUPERVISOR_CONFIG_LIMIT = 1024 * 1024
 
 _SUPERVISOR_SOURCE = r'''import json, os, select, signal, struct, subprocess, sys
@@ -262,16 +263,49 @@ def _write_supervisor_config(
 def _decode_supervisor_status(frame: bytes) -> tuple[str, int]:
     """Validate one private fixed-width target completion or spawn-error frame."""
     if len(frame) != SUPERVISOR_STATUS_SIZE:
-        raise ProcessCleanupError("Release helper supervisor status frame was malformed")
+        raise ProcessCleanupError(SUPERVISOR_MALFORMED_STATUS_MESSAGE)
     try:
         magic, version, value = struct.unpack("!4sBi", frame)
     except struct.error as error:
-        raise ProcessCleanupError("Release helper supervisor status frame was malformed") from error
+        raise ProcessCleanupError(SUPERVISOR_MALFORMED_STATUS_MESSAGE) from error
     if version != 1 or magic not in {b"IVSP", b"IVSE"}:
-        raise ProcessCleanupError("Release helper supervisor status frame was malformed")
+        raise ProcessCleanupError(SUPERVISOR_MALFORMED_STATUS_MESSAGE)
     if magic == b"IVSE":
         return "error", value if value > 0 else 5
     return "exit", value
+
+
+def _close_supervisor_fd(descriptor: int) -> None:
+    if descriptor >= 0:
+        with suppress(OSError):
+            os.close(descriptor)
+
+
+def _close_supervisor_stream(stream: object | None) -> None:
+    if stream is not None:
+        with suppress(OSError):
+            stream.close()  # type: ignore[attr-defined]
+
+
+def _cleanup_failed_supervisor_launch(
+    process: subprocess.Popen[bytes] | None,
+    status_stream: BinaryIO | None,
+    descriptors: Sequence[int],
+) -> Exception | None:
+    """Close partial launch state and reap a wrapper if Popen succeeded."""
+    _close_supervisor_stream(status_stream)
+    for descriptor in descriptors:
+        _close_supervisor_fd(descriptor)
+    if process is None:
+        return None
+    cleanup_error = None
+    try:
+        _reap_owned_process_after_error(process, control_fd=-1)
+    except Exception as error:
+        cleanup_error = error
+    for stream in (process.stdin, process.stdout, process.stderr):
+        _close_supervisor_stream(stream)
+    return cleanup_error
 
 
 def _launch_supervised_process(
@@ -325,62 +359,42 @@ def _launch_supervised_process(
         config_write = -1
         return _SupervisorLaunch(process, status_stream, control_write)
     except BaseException as launch_error:
-        if status_stream is not None:
-            status_stream.close()
-        for descriptor in (config_read, config_write, status_read, status_write, control_read, control_write):
-            if descriptor >= 0:
-                with suppress(OSError):
-                    os.close(descriptor)
-        cleanup_error: BaseException | None = None
-        if process is not None:
-            try:
-                _reap_owned_process_after_error(process, control_fd=-1)
-            except BaseException as error:
-                cleanup_error = error
-            for stream in (process.stdin, process.stdout, process.stderr):
-                if stream is not None:
-                    with suppress(OSError):
-                        stream.close()
+        cleanup_error = _cleanup_failed_supervisor_launch(
+            process, status_stream,
+            (config_read, config_write, status_read, status_write, control_read, control_write),
+        )
         if cleanup_error is not None:
             raise cleanup_error from launch_error
         raise
 
 
+def _kill_live_owned_leader(
+    process: subprocess.Popen[bytes], leader_exited: bool,
+) -> None:
+    """Best-effort direct signal only while WNOWAIT still proves ownership."""
+    if leader_exited or _process_has_exited(process):
+        return
+    try:
+        process.kill()
+    except (ProcessLookupError, OSError):
+        # The caller still performs bounded reap and reports any group failure.
+        pass
+
+
 def _kill_owned_process(process: subprocess.Popen[bytes]) -> OSError | None:
-    # Validate ownership without reaping before using the leader PID as a PGID.
-    # WNOWAIT keeps an exited leader's PID reserved until the process group is
-    # gone; if another reaper consumed it, fail before signaling a reused PGID.
+    """Signal an owned group without using a possibly recycled leader PID."""
+    # WNOWAIT keeps an exited leader's PID reserved until the process group is gone.
     leader_exited = _process_has_exited(process)
     try:
         os.killpg(process.pid, signal.SIGKILL)
     except ProcessLookupError:
-        # The group may exit after WNOWAIT observation; recheck before signaling its PID.
-        if not leader_exited and not _process_has_exited(process):
-            try:
-                process.kill()
-            except ProcessLookupError:
-                # The owned leader exited between the non-reaping check and kill().
-                pass
-            except OSError:
-                # Preserve the caller's original failure; bounded reap follows.
-                pass
+        # An absent group is complete; direct fallback is safe only for a live leader.
+        _kill_live_owned_leader(process, leader_exited)
         return None
     except OSError as error:
-        # Darwin may report EPERM for a zombie-only group, but its public process
-        # inventory does not expose session membership reliably. A PGID-only
-        # listing can miss a live same-session descendant in a different group,
-        # so treat every unverified group-signal failure as cleanup failure.
-        # A failed group signal does not release ownership of the unreaped PID.
-        # Try the leader only after the non-reaping observation still says live.
-        if not leader_exited and not _process_has_exited(process):
-            try:
-                process.kill()
-            except ProcessLookupError:
-                # The owned leader exited between the non-reaping check and kill().
-                pass
-            except OSError:
-                # Preserve the caller's original failure; bounded reap follows.
-                pass
+        # Failed group signaling is unverified; a PGID-only listing cannot prove
+        # that same-session descendants are absent.
+        _kill_live_owned_leader(process, leader_exited)
         return error
     return None
 
@@ -491,36 +505,45 @@ def _register_owned_process_streams(
             _close_registered_stream(selector, stdin_stream)
 
 
-def _advance_owned_process_failure(state: _OwnedProcessState, now: float) -> None:
-    """Record cancellation/deadline and begin bounded process-group cleanup."""
-    if state.failure is None and state.cancel_event is not None and state.cancel_event.is_set():
+def _record_owned_process_failure(state: _OwnedProcessState, now: float) -> None:
+    if state.failure is not None:
+        return
+    if state.cancel_event is not None and state.cancel_event.is_set():
         state.failure = _ProcessCancelled()
-    if state.failure is None and state.deadline is not None and now >= state.deadline:
+    elif state.deadline is not None and now >= state.deadline:
         state.failure = ProcessTimeout(
             state.timeout or 0,
             _format_output(bytes(state.captured["stdout"]), state.text),
             _format_output(bytes(state.captured["stderr"]), state.text),
         )
-    if state.failure is not None and not state.killed:
-        group_error = _kill_owned_process(state.process)
-        if group_error is not None:
-            _close_supervisor_control(state)
-            _reap_after_group_signal_error(state.process, group_error)
+
+
+def _start_owned_process_cleanup(state: _OwnedProcessState, now: float) -> None:
+    group_error = _kill_owned_process(state.process)
+    if group_error is not None:
         _close_supervisor_control(state)
-        state.killed = True
-        state.cleanup_deadline = now + CLEANUP_TIMEOUT_SECONDS
+        _reap_after_group_signal_error(state.process, group_error)
+    _close_supervisor_control(state)
+    state.killed = True
+    state.cleanup_deadline = now + CLEANUP_TIMEOUT_SECONDS
+
+
+def _expire_owned_process_cleanup(state: _OwnedProcessState) -> None:
+    if not state.killed:
+        _start_owned_process_cleanup(state, time.monotonic())
+    for stream in state.opened_streams:
+        _close_registered_stream(state.selector, stream)
+    _wait_owned_process(state.process)
+    raise ProcessCleanupError("Release helper output pipes did not reach EOF")
+
+
+def _advance_owned_process_failure(state: _OwnedProcessState, now: float) -> None:
+    """Record cancellation/deadline and begin bounded process-group cleanup."""
+    _record_owned_process_failure(state, now)
+    if state.failure is not None and not state.killed:
+        _start_owned_process_cleanup(state, now)
     if state.cleanup_deadline is not None and now >= state.cleanup_deadline:
-        if not state.killed:
-            group_error = _kill_owned_process(state.process)
-            if group_error is not None:
-                _close_supervisor_control(state)
-                _reap_after_group_signal_error(state.process, group_error)
-            _close_supervisor_control(state)
-            state.killed = True
-        for stream in state.opened_streams:
-            _close_registered_stream(state.selector, stream)
-        _wait_owned_process(state.process)
-        raise ProcessCleanupError("Release helper output pipes did not reach EOF")
+        _expire_owned_process_cleanup(state)
 
 
 def _owned_process_wait_time(state: _OwnedProcessState, now: float) -> float:
@@ -570,6 +593,32 @@ def _close_supervisor_control(state: _OwnedProcessState) -> None:
         state.control_fd = -1
 
 
+def _accept_owned_process_status(state: _OwnedProcessState, stream: BinaryIO) -> None:
+    try:
+        status, value = _decode_supervisor_status(bytes(state.status_buffer))
+    except ProcessCleanupError as error:
+        if state.failure is None:
+            state.failure = error
+        _close_registered_stream(state.selector, stream)
+        return
+    if status == "error":
+        if state.failure is None:
+            state.failure = OSError(value, "Release helper target could not be started")
+    else:
+        state.target_returncode = value
+        # Status is the cleanup boundary: kill the live wrapper group before
+        # draining output, since descendants may keep the capture pipes open.
+        group_error = _kill_owned_process(state.process)
+        if group_error is not None:
+            _close_supervisor_control(state)
+            _reap_after_group_signal_error(state.process, group_error)
+        _close_supervisor_control(state)
+        state.supervisor_signaled = True
+        state.killed = True
+        state.cleanup_deadline = time.monotonic() + CLEANUP_TIMEOUT_SECONDS
+    _close_registered_stream(state.selector, stream)
+
+
 def _read_owned_process_status(state: _OwnedProcessState, stream: BinaryIO) -> None:
     try:
         chunk = os.read(stream.fileno(), SUPERVISOR_STATUS_SIZE + 1)
@@ -589,34 +638,7 @@ def _read_owned_process_status(state: _OwnedProcessState, stream: BinaryIO) -> N
         return
     if len(state.status_buffer) < SUPERVISOR_STATUS_SIZE:
         return
-    try:
-        magic, version, value = struct.unpack("!4sBi", state.status_buffer)
-    except struct.error as error:
-        if state.failure is None:
-            state.failure = ProcessCleanupError("Release helper supervisor status frame was malformed")
-            state.failure.__cause__ = error
-        _close_registered_stream(state.selector, stream)
-        return
-    if version != 1 or magic not in {b"IVSP", b"IVSE"}:
-        if state.failure is None:
-            state.failure = ProcessCleanupError("Release helper supervisor status frame was malformed")
-    elif magic == b"IVSE":
-        error_number = value if value > 0 else 5
-        if state.failure is None:
-            state.failure = OSError(error_number, "Release helper target could not be started")
-    else:
-        state.target_returncode = value
-        # Status is the cleanup boundary: kill the live wrapper group before
-        # draining output, since descendants may keep the capture pipes open.
-        group_error = _kill_owned_process(state.process)
-        if group_error is not None:
-            _close_supervisor_control(state)
-            _reap_after_group_signal_error(state.process, group_error)
-        _close_supervisor_control(state)
-        state.supervisor_signaled = True
-        state.killed = True
-        state.cleanup_deadline = time.monotonic() + CLEANUP_TIMEOUT_SECONDS
-    _close_registered_stream(state.selector, stream)
+    _accept_owned_process_status(state, stream)
 
 
 def _handle_owned_process_events(
@@ -728,32 +750,47 @@ def _reap_owned_process_after_error(
         raise ProcessCleanupError("Release helper process could not be reaped") from cleanup_error
 
 
-def _run_owned_process(
+def _abort_owned_process_run(
+    process: subprocess.Popen[bytes],
+    state: _OwnedProcessState | None,
+    control_fd: int,
+) -> None:
+    if process.returncode is not None:
+        return
+    if state is None:
+        _reap_owned_process_after_error(process, control_fd=control_fd)
+        return
+    _close_supervisor_control(state)
+    _reap_owned_process_after_error(process, control_fd=-1)
+
+
+def _close_owned_process_run(
+    selector: selectors.BaseSelector | None,
+    opened_streams: Sequence[BinaryIO],
+    state: _OwnedProcessState | None,
+) -> None:
+    if selector is not None:
+        selector.close()
+    for stream in opened_streams:
+        _close_supervisor_stream(stream)
+    if state is not None:
+        _close_supervisor_control(state)
+
+
+def _execute_owned_process_launch(
+    launch: _SupervisorLaunch,
     command: tuple[str, ...],
     *,
-    env: Mapping[str, str] | None,
-    cwd: str | Path | None,
     input_bytes: bytes | None,
     max_output_bytes: int,
     text: bool,
     timeout: float | None,
-    cancel_event: threading.Event | None = None,
+    cancel_event: threading.Event | None,
 ) -> ProcessResult:
-    """Run a POSIX child whose PID is owned before any timeout can arrive."""
-    _require_supported_runtime()
-    if cancel_event is not None and cancel_event.is_set():
-        raise _ProcessCancelled()
-    launch = _launch_supervised_process(
-        command, env=env, cwd=cwd, input_enabled=input_bytes is not None,
-    )
     process = launch.process
-    # Own every pipe immediately after Popen, before selector or fd setup can
-    # fail. Cleanup must close even streams that were never registered.
-    opened_streams = [
-        stream for stream in (process.stdin, process.stdout, process.stderr)
-        if stream is not None
-    ]
-    opened_streams.append(launch.status_stream)
+    opened_streams = [stream for stream in (
+        process.stdin, process.stdout, process.stderr, launch.status_stream,
+    ) if stream is not None]
     selector: selectors.BaseSelector | None = None
     state: _OwnedProcessState | None = None
     try:
@@ -776,29 +813,39 @@ def _run_owned_process(
             status_buffer=bytearray(),
         )
         return _drive_owned_process(state)
-    except (ProcessTimeout, ProcessOutputLimit, _ProcessCancelled):
-        raise
-    except ProcessCleanupError:
+    except (ProcessTimeout, ProcessOutputLimit, _ProcessCancelled, ProcessCleanupError):
         raise
     except BaseException:
-        if process.returncode is None:
-            if state is not None:
-                _close_supervisor_control(state)
-                _reap_owned_process_after_error(process, control_fd=-1)
-            else:
-                _reap_owned_process_after_error(process, control_fd=launch.control_fd)
+        _abort_owned_process_run(process, state, launch.control_fd)
         raise
     finally:
-        if selector is not None:
-            selector.close()
-        for stream in opened_streams:
-            try:
-                stream.close()
-            except OSError:
-                # Preserve the primary failure when a cleanup path already closed it.
-                pass
-        if state is not None:
-            _close_supervisor_control(state)
+        _close_owned_process_run(selector, opened_streams, state)
+
+
+def _run_owned_process(
+    command: tuple[str, ...],
+    *,
+    env: Mapping[str, str] | None,
+    cwd: str | Path | None,
+    input_bytes: bytes | None,
+    max_output_bytes: int,
+    text: bool,
+    timeout: float | None,
+    cancel_event: threading.Event | None = None,
+) -> ProcessResult:
+    """Run a POSIX child whose PID is owned before any timeout can arrive."""
+    _require_supported_runtime()
+    if cancel_event is not None and cancel_event.is_set():
+        raise _ProcessCancelled()
+    launch = _launch_supervised_process(
+        command, env=env, cwd=cwd, input_enabled=input_bytes is not None,
+    )
+    # Own every pipe before selector setup, then cleanup always sees even streams
+    # that registration never reached.
+    return _execute_owned_process_launch(
+        launch, command, input_bytes=input_bytes, max_output_bytes=max_output_bytes,
+        text=text, timeout=timeout, cancel_event=cancel_event,
+    )
 
 
 async def run_process_async(

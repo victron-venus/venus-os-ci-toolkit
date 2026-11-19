@@ -453,6 +453,40 @@
             }
           ],
           "canonical_source_sha256": "3b828d5528e4e4b6777af8dd581e8c3713a002956ae864e2a52a4076c89f5038"
+        },
+        {
+          "before_sha256": "26b689a6a20da68578c45294fb6ad77c7c723eedccc71c276d2ac3d8fb86b105",
+          "after_sha256": "9e0818bf3ba1d7ede28a91ef76da2411712497321efbcfcbd1b703cc498c8bc6",
+          "canonical_source_sha256": "5eb98a75935ee93abeb8d1259738be985a7d84c3087c4e16a5f2973c76d3c744",
+          "hunks": [
+            {
+              "before": "from datetime import datetime, timezone\nfrom pathlib import Path\nfrom typing import BinaryIO, NamedTuple, TypedDict, cast\nfrom urllib.parse import parse_qs, quote, unquote, urlsplit\n\n",
+              "after": "from datetime import datetime, timezone\nfrom pathlib import Path\nfrom typing import BinaryIO, NamedTuple, NoReturn, TypedDict, cast\nfrom urllib.parse import parse_qs, quote, unquote, urlsplit\n\n"
+            },
+            {
+              "before": "\n\ndef _drain_asset_stream(\n    events: queue.Queue[AssetStreamEvent], output: _AssetWriter,\n",
+              "after": "\n\ndef _accept_asset_status(\n    chunk: bytes,\n    status_buffer: bytearray,\n    target_returncode: int | None,\n    launch,\n) -> int | None:\n    if target_returncode is not None:\n        raise GitHubError(\"Asset supervisor sent duplicate status\")\n    status_buffer.extend(chunk)\n    if len(status_buffer) > 9:\n        raise GitHubError(\"Asset supervisor sent an oversized status frame\")\n    if len(status_buffer) < 9:\n        return None\n    status, status_value = _decode_supervisor_status(bytes(status_buffer))\n    status_buffer.clear()\n    if status == \"error\":\n        raise OSError(status_value, \"Asset helper could not be started\")\n    group_error = _kill_owned_process(launch.process)\n    if group_error is not None:\n        _close_asset_supervisor_control(launch)\n        raise ProcessCleanupError(\n            \"Asset supervisor process-group termination failed\"\n        ) from group_error\n    _close_asset_supervisor_control(launch)\n    return status_value\n\n\ndef _handle_asset_stream_event(\n    kind: str,\n    value: bytes | BaseException | None,\n    ended: set[str],\n    output: _AssetWriter,\n    stderr: bytearray,\n    status_buffer: bytearray,\n    target_returncode: int | None,\n    launch,\n) -> int | None:\n    if value is None:\n        if kind == \"status\" and (target_returncode is None or status_buffer):\n            raise GitHubError(\"Asset supervisor exited without a complete status frame\")\n        ended.add(kind)\n    elif isinstance(value, BaseException):\n        raise value\n    elif kind == \"status\":\n        return _accept_asset_status(value, status_buffer, target_returncode, launch)\n    elif kind == \"stdout\":\n        output.write(value)\n    else:\n        stderr.extend(value[:max(0, 65536 - len(stderr))])\n    return target_returncode\n\n\ndef _drain_asset_stream(\n    events: queue.Queue[AssetStreamEvent], output: _AssetWriter,\n"
+            },
+            {
+              "before": "        except queue.Empty:\n            continue\n        if value is None:\n            if kind == \"status\" and (target_returncode is None or status_buffer):\n                raise GitHubError(\"Asset supervisor exited without a complete status frame\")\n            ended.add(kind)\n        elif isinstance(value, BaseException):\n            raise value\n        elif kind == \"status\":\n            if target_returncode is not None:\n                raise GitHubError(\"Asset supervisor sent duplicate status\")\n            status_buffer.extend(value)\n            if len(status_buffer) > 9:\n                raise GitHubError(\"Asset supervisor sent an oversized status frame\")\n            if len(status_buffer) < 9:\n                continue\n            status, status_value = _decode_supervisor_status(bytes(status_buffer))\n            status_buffer.clear()\n            if status == \"error\":\n                raise OSError(status_value, \"Asset helper could not be started\")\n            group_error = _kill_owned_process(launch.process)\n            if group_error is not None:\n                _close_asset_supervisor_control(launch)\n                raise ProcessCleanupError(\n                    \"Asset supervisor process-group termination failed\"\n                ) from group_error\n            _close_asset_supervisor_control(launch)\n            target_returncode = status_value\n        elif kind == \"stdout\":\n            output.write(value)\n        else:\n            stderr.extend(value[:max(0, 65536 - len(stderr))])\n    if target_returncode is None:\n        raise GitHubError(\"Asset supervisor did not confirm target completion\")\n",
+              "after": "        except queue.Empty:\n            continue\n        target_returncode = _handle_asset_stream_event(\n            kind, value, ended, output, stderr, status_buffer,\n            target_returncode, launch,\n        )\n    if target_returncode is None:\n        raise GitHubError(\"Asset supervisor did not confirm target completion\")\n"
+            },
+            {
+              "before": "\n\ndef _stream_asset(command: list[str], output: _AssetWriter, *,\n                  deadline: float | None = None) -> subprocess.CompletedProcess[bytes]:\n",
+              "after": "\n\ndef _raise_asset_group_failure(error: OSError, message: str) -> NoReturn:\n    \"\"\"Raise after bounded reap when group signaling was not confirmed.\"\"\"\n    raise GitHubError(message) from error\n\n\ndef _stream_asset(command: list[str], output: _AssetWriter, *,\n                  deadline: float | None = None) -> subprocess.CompletedProcess[bytes]:\n"
+            },
+            {
+              "before": "            except subprocess.TimeoutExpired as error:\n                if group_signal_error is not None:\n                    raise GitHubError(\n                        \"Asset supervisor termination failed and leader could not be reaped\"\n                    ) from group_signal_error\n                raise GitHubError(\"Asset transfer process could not be reaped within five seconds\") from error\n            if complete and process_status != -signal.SIGKILL:\n",
+              "after": "            except subprocess.TimeoutExpired as error:\n                if group_signal_error is not None:\n                    _raise_asset_group_failure(\n                        group_signal_error,\n                        \"Asset supervisor termination failed and leader could not be reaped\",\n                    )\n                raise GitHubError(\"Asset transfer process could not be reaped within five seconds\") from error\n            if complete and process_status != -signal.SIGKILL:\n"
+            },
+            {
+              "before": "            launch.status_stream.close()\n        if group_signal_error is not None:\n            raise GitHubError(\n                \"Asset supervisor process-group termination failed; descendants may still be running\"\n            ) from group_signal_error\n\ndef json_bytes(value: object) -> bytes:\n",
+              "after": "            launch.status_stream.close()\n        if group_signal_error is not None:\n            _raise_asset_group_failure(\n                group_signal_error,\n                \"Asset supervisor process-group termination failed; descendants may still be running\",\n            )\n\ndef json_bytes(value: object) -> bytes:\n"
+            }
+          ],
+          "canonical_fragments": [
+            "def _handle_asset_stream_event("
+          ]
         }
       ]
     },
@@ -665,6 +699,20 @@
             }
           ],
           "canonical_source_sha256": "77b551f0de5ec378edcf5f0a25f731f77e65ee08986d1ba824ed078e83439d24"
+        },
+        {
+          "before_sha256": "390de17f460930aaeab51c2358e48ac6207f4b44d35eae14d545e7805ad3efcf",
+          "after_sha256": "084d5e37a2a33b050e7d88d04ac16a5ebd7000c9fea8408fcee46711fcdbbaf5",
+          "canonical_source_sha256": "7ce99af939a8c0f7c61ebf681295f780154976321284bb4df7a08aa7b69dbedd",
+          "hunks": [
+            {
+              "before": "            # The release-control caller invokes it immediately after the last\n            # tag GET and before its protected public PATCH.\n            # This callback is deliberately distinct from the full pre-tag\n            # publisher validation above; it closes only the last attempt race.\n            current = gh.api(\n                f\"actions/runs/{run['id']}/attempts/{run['run_attempt']}\"\n",
+              "after": "            # The release-control caller invokes it immediately after the last\n            # tag GET and before its protected public PATCH.\n            # The shared confirm_publish contract separates this last-attempt\n            # recheck from the full pre-tag provenance callback above.\n            current = gh.api(\n                f\"actions/runs/{run['id']}/attempts/{run['run_attempt']}\"\n"
+            }
+          ],
+          "canonical_fragments": [
+            "The shared confirm_publish contract"
+          ]
         }
       ]
     },
@@ -1005,6 +1053,40 @@
             }
           ],
           "canonical_source_sha256": "d0f4f09cb271da5bdc89067626a374266a262e4dc4704938b443c492a74fdbb2"
+        },
+        {
+          "before_sha256": "a55b77e90b202c87a18761f6640d8bddc278391ca36e9e44bb98928d096ce199",
+          "after_sha256": "3b7b35d9597c93ee5c01181412af9aa27a33131a91f74c909001470243298fbe",
+          "canonical_source_sha256": "abe4dd040e6caf2e89cab711673104d0e2dc4b0c2894484a248f27a8980da0c2",
+          "hunks": [
+            {
+              "before": "            ):\n                self.assertEqual(gh.api(\"releases/7\"), {\"id\": 7})\n            self.assertEqual([call.kwargs[\"timeout\"] for call in run.call_args_list], [4, 4])\n        finally:\n            rc._API_READ_DEADLINE.reset(token)\n",
+              "after": "            ):\n                self.assertEqual(gh.api(\"releases/7\"), {\"id\": 7})\n            timeouts = [call.kwargs[\"timeout\"] for call in run.call_args_list]\n            self.assertEqual(len(timeouts), 2)\n            for timeout in timeouts:\n                self.assertAlmostEqual(timeout, 4)\n        finally:\n            rc._API_READ_DEADLINE.reset(token)\n"
+            },
+            {
+              "before": "            ):\n                self.assertEqual(gh.api(\"releases/7\"), {\"id\": 7})\n            self.assertEqual([call.kwargs[\"timeout\"] for call in run.call_args_list], [1.5, 1.5])\n            sleep.assert_called_once_with(1.5)\n        finally:\n            rc._API_READ_DEADLINE.reset(token)\n",
+              "after": "            ):\n                self.assertEqual(gh.api(\"releases/7\"), {\"id\": 7})\n            timeouts = [call.kwargs[\"timeout\"] for call in run.call_args_list]\n            self.assertEqual(len(timeouts), 2)\n            for timeout in timeouts:\n                self.assertAlmostEqual(timeout, 1.5)\n            sleep.assert_called_once()\n            self.assertAlmostEqual(sleep.call_args.args[0], 1.5)\n        finally:\n            rc._API_READ_DEADLINE.reset(token)\n"
+            },
+            {
+              "before": "\n        process = Process()\n        with (\n            patch.object(rc, \"_process_has_exited\", return_value=True) as observe,\n",
+              "after": "\n        process = Process()\n        output = Output()\n        command = [\"gh\"]\n        with (\n            patch.object(rc, \"_process_has_exited\", return_value=True) as observe,\n"
+            },
+            {
+              "before": "        ):\n            with self.assertRaises(subprocess.TimeoutExpired):\n                rc._wait_for_asset_process(process, Output(), [\"gh\"], deadline=1)\n        observe.assert_called_once_with(process)\n        self.assertFalse(process.wait_called, \"deadline-crossing decision reaped the leader\")\n",
+              "after": "        ):\n            with self.assertRaises(subprocess.TimeoutExpired):\n                rc._wait_for_asset_process(process, output, command, deadline=1)\n        observe.assert_called_once_with(process)\n        self.assertFalse(process.wait_called, \"deadline-crossing decision reaped the leader\")\n"
+            },
+            {
+              "before": "            with (\n                patch.object(rc, \"download_asset\", side_effect=mutate_during_download),\n                self.assertRaisesRegex(rc.ReleaseError, \"changed during upload readback\"),\n            ):\n                rc.verify_uploaded_asset(\n                    gh, item, asset, budget=rc.DownloadBudget(21), expected=expected,\n                )\n\n    def test_reconciliation_local_io_error_is_redacted_and_never_retries(self):\n",
+              "after": "            with (\n                patch.object(rc, \"download_asset\", side_effect=mutate_during_download),\n            ):\n                with self.assertRaisesRegex(rc.ReleaseError, \"changed during upload readback\"):\n                    rc.verify_uploaded_asset(\n                        gh, item, asset, budget=rc.DownloadBudget(21), expected=expected,\n                    )\n\n    def test_reconciliation_local_io_error_is_redacted_and_never_retries(self):\n"
+            },
+            {
+              "before": "                self.subTest(snapshot=snapshot),\n                patch.object(self.gh, \"pages\", return_value=snapshot),\n                self.assertRaises(rc.ReleaseError),\n            ):\n                rc.validate_run(self.gh, run(), self.gh.info, SHA, 1, completed=True)\n        self.sleep.assert_not_called()\n\n",
+              "after": "                self.subTest(snapshot=snapshot),\n                patch.object(self.gh, \"pages\", return_value=snapshot),\n            ):\n                with self.assertRaises(rc.ReleaseError):\n                    rc.validate_run(self.gh, run(), self.gh.info, SHA, 1, completed=True)\n        self.sleep.assert_not_called()\n\n"
+            }
+          ],
+          "canonical_fragments": [
+            "command = [\"gh\"]"
+          ]
         }
       ],
       "test_only_successor_layers": [
@@ -1234,6 +1316,24 @@
             }
           ],
           "canonical_source_sha256": "a367706d05aad0122f7642b8a8d720fa0f61aad098741348befe86e42408f2bf"
+        },
+        {
+          "before_sha256": "e9a095866b2583defbc6c25634b3ced18f3b98edc7cd9baa0dfeb78b4d814d46",
+          "after_sha256": "5cc197a1c5df9cd24c4677fd98f8dc3cc3af8d32a08c1f148edbd72f65afe933",
+          "canonical_source_sha256": "45b1257929e6e0b51adbed81b428726f6983f02f09dfa049b65bed0b661123ef",
+          "hunks": [
+            {
+              "before": "        def terminate_during_final_tag_read(path, method=\"GET\", body=None):\n            nonlocal final_tag_reads\n            if final_boundary_events and path in {\n                \"actions/runs/99\", \"actions/runs/99/jobs\",\n            }:\n                final_boundary_events.append(\"aggregate\")\n            result = api(path, method, body)\n            draft = next((release for release in self.gh.releases.values()\n                          if release[\"tag_name\"] == plan[\"tag\"]), None)\n            if path == tag_path and draft and self.gh.assets[draft[\"id\"]]:\n                final_tag_reads += 1\n",
+              "after": "        def terminate_during_final_tag_read(path, method=\"GET\", body=None):\n            nonlocal final_tag_reads\n            draft = next((release for release in self.gh.releases.values()\n                          if release[\"tag_name\"] == plan[\"tag\"]), None)\n            if path == \"actions/runs/99/jobs\" and draft and self.gh.assets[draft[\"id\"]]:\n                final_boundary_events.append(\"full-publisher-validation\")\n            if \"tag\" in final_boundary_events and path in {\n                \"actions/runs/99\", \"actions/runs/99/jobs\",\n            }:\n                final_boundary_events.append(\"aggregate\")\n            result = api(path, method, body)\n            if path == tag_path and draft and self.gh.assets[draft[\"id\"]]:\n                final_tag_reads += 1\n"
+            },
+            {
+              "before": "            return result\n\n        with patch.object(self.gh, \"api\", side_effect=terminate_during_final_tag_read):\n            with self.assertRaisesRegex(rc.ReleaseError, \"not active\"):\n                lifecycle.publish_versioned(self.args)\n\n        self.assertEqual(final_tag_reads, 1)\n        self.assertEqual(final_boundary_events, [\"tag\", \"attempt\"])\n        self.assertNotIn(\"aggregate\", final_boundary_events,\n                         \"the post-tag publisher check must remain a single exact-attempt read\")\n",
+              "after": "            return result\n\n        pages = self.gh.pages\n\n        def record_full_publisher_validation(path, field=None):\n            draft = next((release for release in self.gh.releases.values()\n                          if release[\"tag_name\"] == plan[\"tag\"]), None)\n            if (path == \"actions/runs/99/attempts/1/jobs\" and draft\n                    and self.gh.assets[draft[\"id\"]]):\n                final_boundary_events.append(\"full-publisher-validation\")\n            return pages(path, field)\n\n        with (\n            patch.object(self.gh, \"api\", side_effect=terminate_during_final_tag_read),\n            patch.object(self.gh, \"pages\", side_effect=record_full_publisher_validation),\n        ):\n            with self.assertRaisesRegex(rc.ReleaseError, \"not active\"):\n                lifecycle.publish_versioned(self.args)\n\n        self.assertEqual(final_tag_reads, 1)\n        self.assertEqual(\n            final_boundary_events,\n            [\"full-publisher-validation\", \"tag\", \"attempt\"],\n        )\n        self.assertNotIn(\"aggregate\", final_boundary_events,\n                         \"the post-tag publisher check must remain a single exact-attempt read\")\n"
+            }
+          ],
+          "canonical_fragments": [
+            "test_publisher_termination_during_final_tag_read_stops_before_public_release"
+          ]
         }
       ]
     },
@@ -1331,13 +1431,85 @@
       "before_sha256": null,
       "after_sha256": "29d9dd778cfc2bc492c25231b2c5b24b03e3eb7428d37d18274971c635f0e30e",
       "source": "scripts/async_process.py",
-      "source_sha256": "698362252c09ffe2afb173a16ea4d4d74ec3880e6fa2ef0cd45e6f9d2374c0d0"
+      "source_sha256": "698362252c09ffe2afb173a16ea4d4d74ec3880e6fa2ef0cd45e6f9d2374c0d0",
+      "copy_successor_layers": [
+        {
+          "before_sha256": "29d9dd778cfc2bc492c25231b2c5b24b03e3eb7428d37d18274971c635f0e30e",
+          "after_sha256": "774241476967fc972ce946b43c4bfa0deb7e6d82cdb6419b5cff85a87701e9dc",
+          "canonical_source_before_sha256": "698362252c09ffe2afb173a16ea4d4d74ec3880e6fa2ef0cd45e6f9d2374c0d0",
+          "canonical_source_sha256": "092b0a3b8466d1631445deeaf992feb676d24aba34c6df74e2859e1fafc66700",
+          "source_hunks": [
+            {
+              "before": ")\nSUPERVISOR_STATUS_SIZE = 9\nSUPERVISOR_CONFIG_LIMIT = 1024 * 1024\n\n",
+              "after": ")\nSUPERVISOR_STATUS_SIZE = 9\nSUPERVISOR_MALFORMED_STATUS_MESSAGE = \"Release helper supervisor status frame was malformed\"\nSUPERVISOR_CONFIG_LIMIT = 1024 * 1024\n\n"
+            },
+            {
+              "before": "    \"\"\"Validate one private fixed-width target completion or spawn-error frame.\"\"\"\n    if len(frame) != SUPERVISOR_STATUS_SIZE:\n        raise ProcessCleanupError(\"Release helper supervisor status frame was malformed\")\n    try:\n        magic, version, value = struct.unpack(\"!4sBi\", frame)\n    except struct.error as error:\n        raise ProcessCleanupError(\"Release helper supervisor status frame was malformed\") from error\n    if version != 1 or magic not in {b\"IVSP\", b\"IVSE\"}:\n        raise ProcessCleanupError(\"Release helper supervisor status frame was malformed\")\n    if magic == b\"IVSE\":\n        return \"error\", value if value > 0 else 5\n    return \"exit\", value\n\n\n",
+              "after": "    \"\"\"Validate one private fixed-width target completion or spawn-error frame.\"\"\"\n    if len(frame) != SUPERVISOR_STATUS_SIZE:\n        raise ProcessCleanupError(SUPERVISOR_MALFORMED_STATUS_MESSAGE)\n    try:\n        magic, version, value = struct.unpack(\"!4sBi\", frame)\n    except struct.error as error:\n        raise ProcessCleanupError(SUPERVISOR_MALFORMED_STATUS_MESSAGE) from error\n    if version != 1 or magic not in {b\"IVSP\", b\"IVSE\"}:\n        raise ProcessCleanupError(SUPERVISOR_MALFORMED_STATUS_MESSAGE)\n    if magic == b\"IVSE\":\n        return \"error\", value if value > 0 else 5\n    return \"exit\", value\n\n\ndef _close_supervisor_fd(descriptor: int) -> None:\n    if descriptor >= 0:\n        with suppress(OSError):\n            os.close(descriptor)\n\n\ndef _close_supervisor_stream(stream: object | None) -> None:\n    if stream is not None:\n        with suppress(OSError):\n            stream.close()  # type: ignore[attr-defined]\n\n\ndef _cleanup_failed_supervisor_launch(\n    process: subprocess.Popen[bytes] | None,\n    status_stream: BinaryIO | None,\n    descriptors: Sequence[int],\n) -> Exception | None:\n    \"\"\"Close partial launch state and reap a wrapper if Popen succeeded.\"\"\"\n    _close_supervisor_stream(status_stream)\n    for descriptor in descriptors:\n        _close_supervisor_fd(descriptor)\n    if process is None:\n        return None\n    cleanup_error = None\n    try:\n        _reap_owned_process_after_error(process, control_fd=-1)\n    except Exception as error:\n        cleanup_error = error\n    for stream in (process.stdin, process.stdout, process.stderr):\n        _close_supervisor_stream(stream)\n    return cleanup_error\n\n\n"
+            },
+            {
+              "before": "        return _SupervisorLaunch(process, status_stream, control_write)\n    except BaseException as launch_error:\n        if status_stream is not None:\n            status_stream.close()\n        for descriptor in (config_read, config_write, status_read, status_write, control_read, control_write):\n            if descriptor >= 0:\n                with suppress(OSError):\n                    os.close(descriptor)\n        cleanup_error: BaseException | None = None\n        if process is not None:\n            try:\n                _reap_owned_process_after_error(process, control_fd=-1)\n            except BaseException as error:\n                cleanup_error = error\n            for stream in (process.stdin, process.stdout, process.stderr):\n                if stream is not None:\n                    with suppress(OSError):\n                        stream.close()\n        if cleanup_error is not None:\n            raise cleanup_error from launch_error\n",
+              "after": "        return _SupervisorLaunch(process, status_stream, control_write)\n    except BaseException as launch_error:\n        cleanup_error = _cleanup_failed_supervisor_launch(\n            process, status_stream,\n            (config_read, config_write, status_read, status_write, control_read, control_write),\n        )\n        if cleanup_error is not None:\n            raise cleanup_error from launch_error\n"
+            },
+            {
+              "before": "\n\ndef _kill_owned_process(process: subprocess.Popen[bytes]) -> OSError | None:\n    # Validate ownership without reaping before using the leader PID as a PGID.\n    # WNOWAIT keeps an exited leader's PID reserved until the process group is\n    # gone; if another reaper consumed it, fail before signaling a reused PGID.\n    leader_exited = _process_has_exited(process)\n    try:\n        os.killpg(process.pid, signal.SIGKILL)\n    except ProcessLookupError:\n        # The group may exit after WNOWAIT observation; recheck before signaling its PID.\n        if not leader_exited and not _process_has_exited(process):\n            try:\n                process.kill()\n            except ProcessLookupError:\n                # The owned leader exited between the non-reaping check and kill().\n                pass\n            except OSError:\n                # Preserve the caller's original failure; bounded reap follows.\n                pass\n        return None\n    except OSError as error:\n        # Darwin may report EPERM for a zombie-only group, but its public process\n        # inventory does not expose session membership reliably. A PGID-only\n        # listing can miss a live same-session descendant in a different group,\n        # so treat every unverified group-signal failure as cleanup failure.\n        # A failed group signal does not release ownership of the unreaped PID.\n        # Try the leader only after the non-reaping observation still says live.\n        if not leader_exited and not _process_has_exited(process):\n            try:\n                process.kill()\n            except ProcessLookupError:\n                # The owned leader exited between the non-reaping check and kill().\n                pass\n            except OSError:\n                # Preserve the caller's original failure; bounded reap follows.\n                pass\n        return error\n    return None\n",
+              "after": "\n\ndef _kill_live_owned_leader(\n    process: subprocess.Popen[bytes], leader_exited: bool,\n) -> None:\n    \"\"\"Best-effort direct signal only while WNOWAIT still proves ownership.\"\"\"\n    if leader_exited or _process_has_exited(process):\n        return\n    try:\n        process.kill()\n    except (ProcessLookupError, OSError):\n        # The caller still performs bounded reap and reports any group failure.\n        pass\n\n\ndef _kill_owned_process(process: subprocess.Popen[bytes]) -> OSError | None:\n    \"\"\"Signal an owned group without using a possibly recycled leader PID.\"\"\"\n    # WNOWAIT keeps an exited leader's PID reserved until the process group is gone.\n    leader_exited = _process_has_exited(process)\n    try:\n        os.killpg(process.pid, signal.SIGKILL)\n    except ProcessLookupError:\n        # An absent group is complete; direct fallback is safe only for a live leader.\n        _kill_live_owned_leader(process, leader_exited)\n        return None\n    except OSError as error:\n        # Failed group signaling is unverified; a PGID-only listing cannot prove\n        # that same-session descendants are absent.\n        _kill_live_owned_leader(process, leader_exited)\n        return error\n    return None\n"
+            },
+            {
+              "before": "\n\ndef _advance_owned_process_failure(state: _OwnedProcessState, now: float) -> None:\n    \"\"\"Record cancellation/deadline and begin bounded process-group cleanup.\"\"\"\n    if state.failure is None and state.cancel_event is not None and state.cancel_event.is_set():\n        state.failure = _ProcessCancelled()\n    if state.failure is None and state.deadline is not None and now >= state.deadline:\n        state.failure = ProcessTimeout(\n            state.timeout or 0,\n",
+              "after": "\n\ndef _record_owned_process_failure(state: _OwnedProcessState, now: float) -> None:\n    if state.failure is not None:\n        return\n    if state.cancel_event is not None and state.cancel_event.is_set():\n        state.failure = _ProcessCancelled()\n    elif state.deadline is not None and now >= state.deadline:\n        state.failure = ProcessTimeout(\n            state.timeout or 0,\n"
+            },
+            {
+              "before": "            _format_output(bytes(state.captured[\"stderr\"]), state.text),\n        )\n    if state.failure is not None and not state.killed:\n        group_error = _kill_owned_process(state.process)\n        if group_error is not None:\n            _close_supervisor_control(state)\n            _reap_after_group_signal_error(state.process, group_error)\n        _close_supervisor_control(state)\n        state.killed = True\n        state.cleanup_deadline = now + CLEANUP_TIMEOUT_SECONDS\n    if state.cleanup_deadline is not None and now >= state.cleanup_deadline:\n        if not state.killed:\n            group_error = _kill_owned_process(state.process)\n            if group_error is not None:\n                _close_supervisor_control(state)\n                _reap_after_group_signal_error(state.process, group_error)\n            _close_supervisor_control(state)\n            state.killed = True\n        for stream in state.opened_streams:\n            _close_registered_stream(state.selector, stream)\n        _wait_owned_process(state.process)\n        raise ProcessCleanupError(\"Release helper output pipes did not reach EOF\")\n\n\n",
+              "after": "            _format_output(bytes(state.captured[\"stderr\"]), state.text),\n        )\n\n\ndef _start_owned_process_cleanup(state: _OwnedProcessState, now: float) -> None:\n    group_error = _kill_owned_process(state.process)\n    if group_error is not None:\n        _close_supervisor_control(state)\n        _reap_after_group_signal_error(state.process, group_error)\n    _close_supervisor_control(state)\n    state.killed = True\n    state.cleanup_deadline = now + CLEANUP_TIMEOUT_SECONDS\n\n\ndef _expire_owned_process_cleanup(state: _OwnedProcessState) -> None:\n    if not state.killed:\n        _start_owned_process_cleanup(state, time.monotonic())\n    for stream in state.opened_streams:\n        _close_registered_stream(state.selector, stream)\n    _wait_owned_process(state.process)\n    raise ProcessCleanupError(\"Release helper output pipes did not reach EOF\")\n\n\ndef _advance_owned_process_failure(state: _OwnedProcessState, now: float) -> None:\n    \"\"\"Record cancellation/deadline and begin bounded process-group cleanup.\"\"\"\n    _record_owned_process_failure(state, now)\n    if state.failure is not None and not state.killed:\n        _start_owned_process_cleanup(state, now)\n    if state.cleanup_deadline is not None and now >= state.cleanup_deadline:\n        _expire_owned_process_cleanup(state)\n\n\n"
+            },
+            {
+              "before": "\n\ndef _read_owned_process_status(state: _OwnedProcessState, stream: BinaryIO) -> None:\n    try:\n",
+              "after": "\n\ndef _accept_owned_process_status(state: _OwnedProcessState, stream: BinaryIO) -> None:\n    try:\n        status, value = _decode_supervisor_status(bytes(state.status_buffer))\n    except ProcessCleanupError as error:\n        if state.failure is None:\n            state.failure = error\n        _close_registered_stream(state.selector, stream)\n        return\n    if status == \"error\":\n        if state.failure is None:\n            state.failure = OSError(value, \"Release helper target could not be started\")\n    else:\n        state.target_returncode = value\n        # Status is the cleanup boundary: kill the live wrapper group before\n        # draining output, since descendants may keep the capture pipes open.\n        group_error = _kill_owned_process(state.process)\n        if group_error is not None:\n            _close_supervisor_control(state)\n            _reap_after_group_signal_error(state.process, group_error)\n        _close_supervisor_control(state)\n        state.supervisor_signaled = True\n        state.killed = True\n        state.cleanup_deadline = time.monotonic() + CLEANUP_TIMEOUT_SECONDS\n    _close_registered_stream(state.selector, stream)\n\n\ndef _read_owned_process_status(state: _OwnedProcessState, stream: BinaryIO) -> None:\n    try:\n"
+            },
+            {
+              "before": "    if len(state.status_buffer) < SUPERVISOR_STATUS_SIZE:\n        return\n    try:\n        magic, version, value = struct.unpack(\"!4sBi\", state.status_buffer)\n    except struct.error as error:\n        if state.failure is None:\n            state.failure = ProcessCleanupError(\"Release helper supervisor status frame was malformed\")\n            state.failure.__cause__ = error\n        _close_registered_stream(state.selector, stream)\n        return\n    if version != 1 or magic not in {b\"IVSP\", b\"IVSE\"}:\n        if state.failure is None:\n            state.failure = ProcessCleanupError(\"Release helper supervisor status frame was malformed\")\n    elif magic == b\"IVSE\":\n        error_number = value if value > 0 else 5\n        if state.failure is None:\n            state.failure = OSError(error_number, \"Release helper target could not be started\")\n    else:\n        state.target_returncode = value\n        # Status is the cleanup boundary: kill the live wrapper group before\n        # draining output, since descendants may keep the capture pipes open.\n        group_error = _kill_owned_process(state.process)\n        if group_error is not None:\n            _close_supervisor_control(state)\n            _reap_after_group_signal_error(state.process, group_error)\n        _close_supervisor_control(state)\n        state.supervisor_signaled = True\n        state.killed = True\n        state.cleanup_deadline = time.monotonic() + CLEANUP_TIMEOUT_SECONDS\n    _close_registered_stream(state.selector, stream)\n\n\n",
+              "after": "    if len(state.status_buffer) < SUPERVISOR_STATUS_SIZE:\n        return\n    _accept_owned_process_status(state, stream)\n\n\n"
+            },
+            {
+              "before": "\n\ndef _run_owned_process(\n    command: tuple[str, ...],\n    *,\n    env: Mapping[str, str] | None,\n    cwd: str | Path | None,\n    input_bytes: bytes | None,\n    max_output_bytes: int,\n    text: bool,\n    timeout: float | None,\n    cancel_event: threading.Event | None = None,\n) -> ProcessResult:\n    \"\"\"Run a POSIX child whose PID is owned before any timeout can arrive.\"\"\"\n    _require_supported_runtime()\n    if cancel_event is not None and cancel_event.is_set():\n        raise _ProcessCancelled()\n    launch = _launch_supervised_process(\n        command, env=env, cwd=cwd, input_enabled=input_bytes is not None,\n    )\n    process = launch.process\n    # Own every pipe immediately after Popen, before selector or fd setup can\n    # fail. Cleanup must close even streams that were never registered.\n    opened_streams = [\n        stream for stream in (process.stdin, process.stdout, process.stderr)\n        if stream is not None\n    ]\n    opened_streams.append(launch.status_stream)\n    selector: selectors.BaseSelector | None = None\n    state: _OwnedProcessState | None = None\n",
+              "after": "\n\ndef _abort_owned_process_run(\n    process: subprocess.Popen[bytes],\n    state: _OwnedProcessState | None,\n    control_fd: int,\n) -> None:\n    if process.returncode is not None:\n        return\n    if state is None:\n        _reap_owned_process_after_error(process, control_fd=control_fd)\n        return\n    _close_supervisor_control(state)\n    _reap_owned_process_after_error(process, control_fd=-1)\n\n\ndef _close_owned_process_run(\n    selector: selectors.BaseSelector | None,\n    opened_streams: Sequence[BinaryIO],\n    state: _OwnedProcessState | None,\n) -> None:\n    if selector is not None:\n        selector.close()\n    for stream in opened_streams:\n        _close_supervisor_stream(stream)\n    if state is not None:\n        _close_supervisor_control(state)\n\n\ndef _execute_owned_process_launch(\n    launch: _SupervisorLaunch,\n    command: tuple[str, ...],\n    *,\n    input_bytes: bytes | None,\n    max_output_bytes: int,\n    text: bool,\n    timeout: float | None,\n    cancel_event: threading.Event | None,\n) -> ProcessResult:\n    process = launch.process\n    opened_streams = [stream for stream in (\n        process.stdin, process.stdout, process.stderr, launch.status_stream,\n    ) if stream is not None]\n    selector: selectors.BaseSelector | None = None\n    state: _OwnedProcessState | None = None\n"
+            },
+            {
+              "before": "        )\n        return _drive_owned_process(state)\n    except (ProcessTimeout, ProcessOutputLimit, _ProcessCancelled):\n        raise\n    except ProcessCleanupError:\n        raise\n    except BaseException:\n        if process.returncode is None:\n            if state is not None:\n                _close_supervisor_control(state)\n                _reap_owned_process_after_error(process, control_fd=-1)\n            else:\n                _reap_owned_process_after_error(process, control_fd=launch.control_fd)\n        raise\n    finally:\n        if selector is not None:\n            selector.close()\n        for stream in opened_streams:\n            try:\n                stream.close()\n            except OSError:\n                # Preserve the primary failure when a cleanup path already closed it.\n                pass\n        if state is not None:\n            _close_supervisor_control(state)\n\n\n",
+              "after": "        )\n        return _drive_owned_process(state)\n    except (ProcessTimeout, ProcessOutputLimit, _ProcessCancelled, ProcessCleanupError):\n        raise\n    except BaseException:\n        _abort_owned_process_run(process, state, launch.control_fd)\n        raise\n    finally:\n        _close_owned_process_run(selector, opened_streams, state)\n\n\ndef _run_owned_process(\n    command: tuple[str, ...],\n    *,\n    env: Mapping[str, str] | None,\n    cwd: str | Path | None,\n    input_bytes: bytes | None,\n    max_output_bytes: int,\n    text: bool,\n    timeout: float | None,\n    cancel_event: threading.Event | None = None,\n) -> ProcessResult:\n    \"\"\"Run a POSIX child whose PID is owned before any timeout can arrive.\"\"\"\n    _require_supported_runtime()\n    if cancel_event is not None and cancel_event.is_set():\n        raise _ProcessCancelled()\n    launch = _launch_supervised_process(\n        command, env=env, cwd=cwd, input_enabled=input_bytes is not None,\n    )\n    # Own every pipe before selector setup, then cleanup always sees even streams\n    # that registration never reached.\n    return _execute_owned_process_launch(\n        launch, command, input_bytes=input_bytes, max_output_bytes=max_output_bytes,\n        text=text, timeout=timeout, cancel_event=cancel_event,\n    )\n\n\n"
+            }
+          ]
+        }
+      ]
     },
     ".github/release-tests/test_async_process.py": {
       "before_sha256": null,
       "after_sha256": "0b7392ed41ca6e16aa49b6df76f2326ae8cb1f9e8a8b0428245823a23bce9a9f",
       "source": "tests/test_async_process.py",
-      "source_sha256": "6aae273efd3de009e58ed8ed3831a17f45ba3bf45b4833ca34335ccd18e3f770"
+      "source_sha256": "6aae273efd3de009e58ed8ed3831a17f45ba3bf45b4833ca34335ccd18e3f770",
+      "copy_successor_layers": [
+        {
+          "before_sha256": "0b7392ed41ca6e16aa49b6df76f2326ae8cb1f9e8a8b0428245823a23bce9a9f",
+          "after_sha256": "4f8b7d7574672474831800420ef447f671d2ae73e8fe70d3b59f9af1ed16713c",
+          "canonical_source_before_sha256": "6aae273efd3de009e58ed8ed3831a17f45ba3bf45b4833ca34335ccd18e3f770",
+          "canonical_source_sha256": "6ac53d0a6757eec6b756f30e9be0e1db2b0477593530169b955499c79a006979",
+          "source_hunks": [
+            {
+              "before": "            pid = 12345\n\n        kill_group = unittest.mock.Mock()\n        with (\n",
+              "after": "            pid = 12345\n\n        process = FakeProcess()\n        kill_group = unittest.mock.Mock()\n        with (\n"
+            },
+            {
+              "before": "        ):\n            with self.assertRaises(async_process.ProcessCleanupError):\n                async_process._kill_owned_process(FakeProcess())\n        kill_group.assert_not_called()\n\n",
+              "after": "        ):\n            with self.assertRaises(async_process.ProcessCleanupError):\n                async_process._kill_owned_process(process)\n        kill_group.assert_not_called()\n\n"
+            },
+            {
+              "before": "                    self.assertEqual(os.getsid(descendant_pid), processes[0].pid)\n                    self.assertNotEqual(os.getpgid(descendant_pid), processes[0].pid)\n                    try:\n                        os.kill(descendant_pid, 0)\n                    except ProcessLookupError:\n                        self.fail(\"fixture descendant exited before failed group cleanup was observed\")\n                finally:\n                    if pid_file.exists():\n",
+              "after": "                    self.assertEqual(os.getsid(descendant_pid), processes[0].pid)\n                    self.assertNotEqual(os.getpgid(descendant_pid), processes[0].pid)\n                    os.kill(descendant_pid, 0)\n                finally:\n                    if pid_file.exists():\n"
+            }
+          ]
+        }
+      ]
     }
   }
 }

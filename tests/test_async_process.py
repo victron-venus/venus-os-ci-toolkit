@@ -427,13 +427,14 @@ class AsyncProcessTests(unittest.TestCase):
         class FakeProcess:
             pid = 12345
 
+        process = FakeProcess()
         kill_group = unittest.mock.Mock()
         with (
             patch.object(async_process.os, "waitid", side_effect=ChildProcessError),
             patch.object(async_process.os, "killpg", kill_group),
         ):
             with self.assertRaises(async_process.ProcessCleanupError):
-                async_process._kill_owned_process(FakeProcess())
+                async_process._kill_owned_process(process)
         kill_group.assert_not_called()
 
     def test_non_permission_group_oserror_falls_back_only_to_owned_live_leader(self):
@@ -538,10 +539,7 @@ class AsyncProcessTests(unittest.TestCase):
                     descendant_pid = int(pid_file.read_text())
                     self.assertEqual(os.getsid(descendant_pid), processes[0].pid)
                     self.assertNotEqual(os.getpgid(descendant_pid), processes[0].pid)
-                    try:
-                        os.kill(descendant_pid, 0)
-                    except ProcessLookupError:
-                        self.fail("fixture descendant exited before failed group cleanup was observed")
+                    os.kill(descendant_pid, 0)
                 finally:
                     if pid_file.exists():
                         try:

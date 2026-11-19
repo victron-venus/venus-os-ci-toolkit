@@ -80,7 +80,9 @@ def canonical_copy(specification: dict) -> bytes:
         raise ValueError("Unsupported compact source inventory")
     data = read_optional(ROOT, name)
     layers = specification.get("successor_layers", [])
+    copy_layers = specification.get("copy_successor_layers", [])
     expected_source = (layers[-1].get("canonical_source_sha256") if layers
+                       else copy_layers[-1].get("canonical_source_sha256") if copy_layers
                        else specification["source_sha256"])
     if data is None or digest(data) != expected_source:
         raise ValueError("Compact source changed; review migration inventory: " + name)
@@ -135,17 +137,43 @@ def render(directory: Path) -> dict[str, str]:
             continue
         identity = digest(before) if before is not None else None
         if entry.get("addition") is True:
-            if entry.get("before_sha256") is not None or entry.get("hunks"):
+            copy_layers = entry.get("copy_successor_layers", [])
+            if (entry.get("before_sha256") is not None or entry.get("hunks") or
+                    not isinstance(copy_layers, list)):
                 raise ValueError("Invalid compact migration addition: " + name)
-            if identity == entry["after_sha256"]:
-                additions.append(True)
+            previous = entry["after_sha256"]
+            accepted = [previous]
+            for layer in copy_layers:
+                if (not isinstance(layer, dict) or layer.get("before_sha256") != previous or
+                        not isinstance(layer.get("after_sha256"), str) or
+                        len(layer["after_sha256"]) != 64 or
+                        any(char not in "0123456789abcdef" for char in layer["after_sha256"]) or
+                        not isinstance(layer.get("canonical_source_before_sha256"), str) or
+                        len(layer["canonical_source_before_sha256"]) != 64 or
+                        not isinstance(layer.get("canonical_source_sha256"), str) or
+                        len(layer["canonical_source_sha256"]) != 64 or
+                        not isinstance(layer.get("source_hunks"), list) or not layer["source_hunks"]):
+                    raise ValueError("Invalid compact copied-source successor chain: " + name)
+                previous = layer["after_sha256"]
+                accepted.append(previous)
+            if identity is None:
+                additions.append(False)
+                source_bytes = canonical_copy(entry)
+                if digest(source_bytes) != accepted[-1]:
+                    raise ValueError("Compact migration postimage changed: " + name)
+                if name.endswith(".py"):
+                    ast.parse(source_bytes, filename=name)
+                changes[name] = source_bytes.decode("utf-8")
                 continue
-            if identity is not None:
+            if identity not in accepted:
                 raise ValueError("Unknown compact migration preimage: " + name)
-            additions.append(False)
+            generation = accepted.index(identity)
+            additions.append(generation == len(copy_layers))
+            if generation == len(copy_layers):
+                continue
             after = canonical_copy(entry)
-            if digest(after) != entry["after_sha256"]:
-                raise ValueError("Compact migration postimage changed: " + name)
+            if digest(after) != accepted[-1]:
+                raise ValueError("Compact migration copied-source postimage changed: " + name)
             if name.endswith(".py"):
                 ast.parse(after, filename=name)
             changes[name] = after.decode("utf-8")
@@ -231,37 +259,59 @@ def render(directory: Path) -> dict[str, str]:
         if entry["before_sha256"] is None:
             if test_layers or test_overlays:
                 raise ValueError("Independent test successors cannot extend additions: " + name)
+            copy_layers = entry.get("copy_successor_layers", [])
+            addition_layers = entry.get("successor_layers", [])
+            previous = entry["after_sha256"]
+            accepted = [previous]
+            for layer in addition_layers:
+                if (not isinstance(layer, dict) or layer.get("before_sha256") != previous or
+                        not isinstance(layer.get("after_sha256"), str) or
+                        len(layer["after_sha256"]) != 64 or
+                        any(char not in "0123456789abcdef" for char in layer["after_sha256"]) or
+                        not isinstance(layer.get("hunks"), list) or not layer["hunks"]):
+                    raise ValueError("Invalid compact copied-source successor chain: " + name)
+                previous = layer["after_sha256"]
+                accepted.append(previous)
+            for layer in copy_layers:
+                if (not isinstance(layer, dict) or layer.get("before_sha256") != previous or
+                        not isinstance(layer.get("after_sha256"), str) or
+                        len(layer["after_sha256"]) != 64 or
+                        any(char not in "0123456789abcdef" for char in layer["after_sha256"]) or
+                        not isinstance(layer.get("canonical_source_before_sha256"), str) or
+                        len(layer["canonical_source_before_sha256"]) != 64 or
+                        not isinstance(layer.get("canonical_source_sha256"), str) or
+                        len(layer["canonical_source_sha256"]) != 64 or
+                        not isinstance(layer.get("source_hunks"), list) or not layer["source_hunks"]):
+                    raise ValueError("Invalid compact copied-source successor chain: " + name)
+                previous = layer["after_sha256"]
+                accepted.append(previous)
             if identity is None:
                 states.add("original")
                 source_bytes = canonical_copy(entry)
-                latest = layers[-1]["after_sha256"] if layers else entry["after_sha256"]
+                latest = accepted[-1]
                 if digest(source_bytes) != latest:
                     raise ValueError("Compact migration postimage changed: " + name)
                 if name.endswith(".py"):
                     ast.parse(source_bytes, filename=name)
                 changes[name] = source_bytes.decode("utf-8")
                 continue
-            prior = entry["after_sha256"]
-            generation = 0 if identity == prior else None
-            for index, layer in enumerate(layers, 1):
-                prior = layer["after_sha256"]
-                if identity == prior:
-                    generation = index
-            if generation is None:
+            if identity not in accepted:
                 raise ValueError("Unknown compact migration preimage: " + name)
+            generation = accepted.index(identity)
             states.add("current")
-            if layers:
-                successor_states.add(generation == len(layers))
-            if generation == len(layers):
-                latest_production = layers[-1]["after_sha256"] if layers else entry["after_sha256"]
-                matching_overlay = [i for i, group in enumerate(overlay_groups)
-                                    if group["base_sha256"] == latest_production]
-                if not matching_overlay or (applied_overlay and
-                        applied_overlay[0] == matching_overlay[0] and
-                        applied_overlay[1] == len(overlay_groups[matching_overlay[0]]["layers"])):
-                    continue
-            source = before.decode("utf-8")
-            start_layer = generation
+            if copy_layers:
+                successor_states.add(generation == len(accepted) - 1)
+            elif addition_layers:
+                successor_states.add(generation == len(accepted) - 1)
+            if generation == len(accepted) - 1:
+                continue
+            source_bytes = canonical_copy(entry)
+            if digest(source_bytes) != accepted[-1]:
+                raise ValueError("Compact migration copied-source postimage changed: " + name)
+            if name.endswith(".py"):
+                ast.parse(source_bytes, filename=name)
+            changes[name] = source_bytes.decode("utf-8")
+            continue
         elif identity == entry["before_sha256"]:
             states.add("original")
             source = before.decode("utf-8")

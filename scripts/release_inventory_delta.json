@@ -131,6 +131,16 @@
               "after": "            # The release-control caller invokes it immediately after the last\n            # tag GET and before its protected public PATCH.\n            # This callback is deliberately distinct from the full pre-tag\n            # publisher validation above; it closes only the last attempt race.\n"
             }
           ]
+        },
+        {
+          "before_sha256": "77b551f0de5ec378edcf5f0a25f731f77e65ee08986d1ba824ed078e83439d24",
+          "after_sha256": "7ce99af939a8c0f7c61ebf681295f780154976321284bb4df7a08aa7b69dbedd",
+          "hunks": [
+            {
+              "before": "            # This callback is deliberately distinct from the full pre-tag\n            # publisher validation above; it closes only the last attempt race.\n",
+              "after": "            # The shared confirm_publish contract separates this last-attempt\n            # recheck from the full pre-tag provenance callback above.\n"
+            }
+          ]
         }
       ]
     }

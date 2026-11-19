@@ -1887,13 +1887,15 @@ class LifecycleTests(unittest.TestCase):  # pylint: disable=too-many-public-meth
 
         def terminate_during_final_tag_read(path, method="GET", body=None):
             nonlocal final_tag_reads
-            if final_boundary_events and path in {
+            draft = next((release for release in self.gh.releases.values()
+                          if release["tag_name"] == plan["tag"]), None)
+            if path == "actions/runs/99/jobs" and draft and self.gh.assets[draft["id"]]:
+                final_boundary_events.append("full-publisher-validation")
+            if "tag" in final_boundary_events and path in {
                 "actions/runs/99", "actions/runs/99/jobs",
             }:
                 final_boundary_events.append("aggregate")
             result = api(path, method, body)
-            draft = next((release for release in self.gh.releases.values()
-                          if release["tag_name"] == plan["tag"]), None)
             if path == tag_path and draft and self.gh.assets[draft["id"]]:
                 final_tag_reads += 1
                 if final_tag_reads == 1:
@@ -1905,12 +1907,28 @@ class LifecycleTests(unittest.TestCase):  # pylint: disable=too-many-public-meth
                 final_boundary_events.append("attempt")
             return result
 
-        with patch.object(self.gh, "api", side_effect=terminate_during_final_tag_read):
+        pages = self.gh.pages
+
+        def record_full_publisher_validation(path, field=None):
+            draft = next((release for release in self.gh.releases.values()
+                          if release["tag_name"] == plan["tag"]), None)
+            if (path == "actions/runs/99/attempts/1/jobs" and draft
+                    and self.gh.assets[draft["id"]]):
+                final_boundary_events.append("full-publisher-validation")
+            return pages(path, field)
+
+        with (
+            patch.object(self.gh, "api", side_effect=terminate_during_final_tag_read),
+            patch.object(self.gh, "pages", side_effect=record_full_publisher_validation),
+        ):
             with self.assertRaisesRegex(rc.ReleaseError, "not active"):
                 lifecycle.publish_versioned(self.args)
 
         self.assertEqual(final_tag_reads, 1)
-        self.assertEqual(final_boundary_events, ["tag", "attempt"])
+        self.assertEqual(
+            final_boundary_events,
+            ["full-publisher-validation", "tag", "attempt"],
+        )
         self.assertNotIn("aggregate", final_boundary_events,
                          "the post-tag publisher check must remain a single exact-attempt read")
         draft = next(release for release in self.gh.releases.values()

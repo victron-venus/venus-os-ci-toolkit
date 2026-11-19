@@ -32,7 +32,7 @@ import zipfile
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import BinaryIO, NamedTuple, TypedDict, cast
+from typing import BinaryIO, NamedTuple, NoReturn, TypedDict, cast
 from urllib.parse import parse_qs, quote, unquote, urlsplit
 
 if __package__:
@@ -499,6 +499,58 @@ def _read_asset_pipe(
         _send_asset_stream_event(events, stopped, kind, error)
 
 
+def _accept_asset_status(
+    chunk: bytes,
+    status_buffer: bytearray,
+    target_returncode: int | None,
+    launch,
+) -> int | None:
+    if target_returncode is not None:
+        raise GitHubError("Asset supervisor sent duplicate status")
+    status_buffer.extend(chunk)
+    if len(status_buffer) > 9:
+        raise GitHubError("Asset supervisor sent an oversized status frame")
+    if len(status_buffer) < 9:
+        return None
+    status, status_value = _decode_supervisor_status(bytes(status_buffer))
+    status_buffer.clear()
+    if status == "error":
+        raise OSError(status_value, "Asset helper could not be started")
+    group_error = _kill_owned_process(launch.process)
+    if group_error is not None:
+        _close_asset_supervisor_control(launch)
+        raise ProcessCleanupError(
+            "Asset supervisor process-group termination failed"
+        ) from group_error
+    _close_asset_supervisor_control(launch)
+    return status_value
+
+
+def _handle_asset_stream_event(
+    kind: str,
+    value: bytes | BaseException | None,
+    ended: set[str],
+    output: _AssetWriter,
+    stderr: bytearray,
+    status_buffer: bytearray,
+    target_returncode: int | None,
+    launch,
+) -> int | None:
+    if value is None:
+        if kind == "status" and (target_returncode is None or status_buffer):
+            raise GitHubError("Asset supervisor exited without a complete status frame")
+        ended.add(kind)
+    elif isinstance(value, BaseException):
+        raise value
+    elif kind == "status":
+        return _accept_asset_status(value, status_buffer, target_returncode, launch)
+    elif kind == "stdout":
+        output.write(value)
+    else:
+        stderr.extend(value[:max(0, 65536 - len(stderr))])
+    return target_returncode
+
+
 def _drain_asset_stream(
     events: queue.Queue[AssetStreamEvent], output: _AssetWriter,
     command: list[str], deadline: float, launch,
@@ -517,36 +569,10 @@ def _drain_asset_stream(
             kind, value = events.get(timeout=min(0.2, remaining))
         except queue.Empty:
             continue
-        if value is None:
-            if kind == "status" and (target_returncode is None or status_buffer):
-                raise GitHubError("Asset supervisor exited without a complete status frame")
-            ended.add(kind)
-        elif isinstance(value, BaseException):
-            raise value
-        elif kind == "status":
-            if target_returncode is not None:
-                raise GitHubError("Asset supervisor sent duplicate status")
-            status_buffer.extend(value)
-            if len(status_buffer) > 9:
-                raise GitHubError("Asset supervisor sent an oversized status frame")
-            if len(status_buffer) < 9:
-                continue
-            status, status_value = _decode_supervisor_status(bytes(status_buffer))
-            status_buffer.clear()
-            if status == "error":
-                raise OSError(status_value, "Asset helper could not be started")
-            group_error = _kill_owned_process(launch.process)
-            if group_error is not None:
-                _close_asset_supervisor_control(launch)
-                raise ProcessCleanupError(
-                    "Asset supervisor process-group termination failed"
-                ) from group_error
-            _close_asset_supervisor_control(launch)
-            target_returncode = status_value
-        elif kind == "stdout":
-            output.write(value)
-        else:
-            stderr.extend(value[:max(0, 65536 - len(stderr))])
+        target_returncode = _handle_asset_stream_event(
+            kind, value, ended, output, stderr, status_buffer,
+            target_returncode, launch,
+        )
     if target_returncode is None:
         raise GitHubError("Asset supervisor did not confirm target completion")
     return bytes(stderr), target_returncode
@@ -604,6 +630,11 @@ def _terminate_asset_process_group(
     return None
 
 
+def _raise_asset_group_failure(error: OSError, message: str) -> NoReturn:
+    """Raise after bounded reap when group signaling was not confirmed."""
+    raise GitHubError(message) from error
+
+
 def _stream_asset(command: list[str], output: _AssetWriter, *,
                   deadline: float | None = None) -> subprocess.CompletedProcess[bytes]:
     """Pump bounded chunks portably, including silent/stderr-heavy transfers."""
@@ -647,9 +678,10 @@ def _stream_asset(command: list[str], output: _AssetWriter, *,
                 process_status = process.wait(timeout=CLEANUP_TIMEOUT_SECONDS)
             except subprocess.TimeoutExpired as error:
                 if group_signal_error is not None:
-                    raise GitHubError(
-                        "Asset supervisor termination failed and leader could not be reaped"
-                    ) from group_signal_error
+                    _raise_asset_group_failure(
+                        group_signal_error,
+                        "Asset supervisor termination failed and leader could not be reaped",
+                    )
                 raise GitHubError("Asset transfer process could not be reaped within five seconds") from error
             if complete and process_status != -signal.SIGKILL:
                 raise GitHubError(
@@ -663,9 +695,10 @@ def _stream_asset(command: list[str], output: _AssetWriter, *,
             process.stderr.close()
             launch.status_stream.close()
         if group_signal_error is not None:
-            raise GitHubError(
-                "Asset supervisor process-group termination failed; descendants may still be running"
-            ) from group_signal_error
+            _raise_asset_group_failure(
+                group_signal_error,
+                "Asset supervisor process-group termination failed; descendants may still be running",
+            )
 
 def json_bytes(value: object) -> bytes:
     """Encode deterministic UTF-8 JSON for manifests and request bodies."""

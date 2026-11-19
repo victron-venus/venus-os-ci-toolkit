@@ -1123,8 +1123,8 @@ def publish_versioned(args: argparse.Namespace) -> dict[str, object]:
             # keep this to one exact attempt read without aggregate/jobs calls.
             # The release-control caller invokes it immediately after the last
             # tag GET and before its protected public PATCH.
-            # This callback is deliberately distinct from the full pre-tag
-            # publisher validation above; it closes only the last attempt race.
+            # The shared confirm_publish contract separates this last-attempt
+            # recheck from the full pre-tag provenance callback above.
             current = gh.api(
                 f"actions/runs/{run['id']}/attempts/{run['run_attempt']}"
             )
