@@ -1084,6 +1084,10 @@ PY
             "steps": steps_checkout
             + [
                 {
+                    "uses": ACTION_REFS["actions/setup-python"],
+                    "with": {"python-version": "3.13"},
+                },
+                {
                     "name": "Promote RC bytes after approval",
                     "env": {
                         **publication_env,

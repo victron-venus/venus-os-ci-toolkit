@@ -793,6 +793,33 @@
           "canonical_fragments": [
             "Its ProcessCleanupError stays fatal; retrying could mask live work."
           ]
+        },
+        {
+          "before_sha256": "ec7c6a9508ea954aa114b4ef53e692a366e5f8459b0b23be3804d53576cc51e8",
+          "after_sha256": "a233edf44c6adc6b83d1b4317afec291e33435e9acacd85471c2925fa181c910",
+          "canonical_source_before_sha256": "479ca7320f453dad0382c9f6b7292f41d9384e2c6db0f992f556ba858ae3d8c6",
+          "canonical_source_sha256": "9347ff07d4cd866529571166d3c16b6a413211e26c9b0d1aa3f2d905db754395",
+          "hunks": [
+            {
+              "before": "    return raw, manifest_asset_id, manifest_size\n\n\n# Keep all evidence comparisons together at this read-only reuse boundary.\n# pylint: disable-next=too-many-locals,too-many-arguments,too-many-positional-arguments\ndef verify_scheduled_reuse(\n",
+              "after": "    return raw, manifest_asset_id, manifest_size\n\n\ndef _validate_scheduled_reuse_run(\n    gh: rc.GitHub,\n    info: dict[str, object],\n    snapshot: dict[str, object],\n    plan: dict[str, object],\n    source_run_id: int,\n    attempt: int,\n) -> None:\n    \"\"\"Bind retained bytes to the exact completed source run and successful gates.\"\"\"\n    source_run = cast(dict[str, object], gh.api(f\"actions/runs/{source_run_id}\"))\n    rc.validate_validation_run(\n        gh, source_run, cast(dict[str, object], snapshot[\"data\"]), cast(str, plan[\"channel\"])\n    )\n    rc.require(source_run.get(\"id\") == source_run_id, \"Qualified run ID mismatch\")\n    rc.validate_run(\n        gh, source_run, info, cast(str, plan[\"source_sha\"]), attempt,\n        completed=True, gate=False,\n    )\n    jobs = gh.pages(f\"actions/runs/{source_run_id}/attempts/{attempt}/jobs\", \"jobs\")\n    for names in ((\"Release gate\",), (\"CI gate\", \"checks / CI gate\")):\n        gates = [job for job in jobs if job.get(\"name\") in names]\n        rc.require(\n            len(gates) == 1\n            and gates[0].get(\"status\") == \"completed\"\n            and gates[0].get(\"conclusion\") == \"success\"\n            and gates[0].get(\"head_sha\") == cast(str, plan[\"source_sha\"]),\n            \"Qualified run has no successful CI and Release gates\",\n        )\n\n\n# Keep all evidence comparisons together at this read-only reuse boundary.\n# pylint: disable-next=too-many-locals,too-many-arguments,too-many-positional-arguments\ndef verify_scheduled_reuse(\n"
+            },
+            {
+              "before": "        rc.require(candidate[\"version_plan\"] == plan and candidate[\"source_policy\"] == snapshot\n                   and candidate[\"run_id\"] == source_run_id,\n                   \"Compact stable differs from its qualified RC plan\")\n        return\n    rc.require(\n        isinstance(manifest, dict)\n",
+              "after": "        rc.require(candidate[\"version_plan\"] == plan and candidate[\"source_policy\"] == snapshot\n                   and candidate[\"run_id\"] == source_run_id,\n                   \"Compact stable differs from its qualified RC plan\")\n        _validate_scheduled_reuse_run(\n            gh, info, snapshot, plan, source_run_id,\n            rc.positive(candidate.get(\"run_attempt\"), \"qualified run attempt\"),\n        )\n        return\n    rc.require(\n        isinstance(manifest, dict)\n"
+            },
+            {
+              "before": "        ),\n        \"Qualified asset metadata mismatch\",\n    )\n    source_run = cast(dict[str, object], gh.api(f\"actions/runs/{source_run_id}\"))\n    rc.validate_validation_run(gh, source_run, cast(dict[str, object], snapshot[\"data\"]), cast(str, plan[\"channel\"]))\n    rc.require(source_run.get(\"id\") == source_run_id, \"Qualified run ID mismatch\")\n    attempt = rc.positive(manifest.get(\"run_attempt\"), \"qualified run attempt\")\n    rc.validate_run(\n        gh,\n        source_run,\n        info,\n        cast(str, plan[\"source_sha\"]),\n        attempt,\n        completed=True,\n        gate=False,\n    )\n    jobs = gh.pages(f\"actions/runs/{source_run_id}/attempts/{attempt}/jobs\", \"jobs\")\n    for names in ((\"Release gate\",), (\"CI gate\", \"checks / CI gate\")):\n        gates = [job for job in jobs if job.get(\"name\") in names]\n        rc.require(\n            len(gates) == 1\n            and gates[0].get(\"status\") == \"completed\"\n            and gates[0].get(\"conclusion\") == \"success\"\n            and gates[0].get(\"head_sha\") == cast(str, plan[\"source_sha\"]),\n            \"Qualified run has no successful CI and Release gates\",\n        )\n    rc.verify_evidence(gh, manifest, raw)\n    undigested_payloads = [\n        (name, entry) for name, entry in declarations.items()\n",
+              "after": "        ),\n        \"Qualified asset metadata mismatch\",\n    )\n    attempt = rc.positive(manifest.get(\"run_attempt\"), \"qualified run attempt\")\n    _validate_scheduled_reuse_run(gh, info, snapshot, plan, source_run_id, attempt)\n    rc.verify_evidence(gh, manifest, raw)\n    undigested_payloads = [\n        (name, entry) for name, entry in declarations.items()\n"
+            },
+            {
+              "before": "                )\n                rc.require(downloaded_identity == {key: entry[key] for key in (\"size\", \"sha256\")},\n                           \"Undigested qualified payload differs from its manifest\")\n    current = published_plan_snapshot(\n        gh, tag, cast(str, plan[\"source_sha\"]), tag != f\"v{plan['base_version']}\"\n    )\n",
+              "after": "                )\n                rc.require(downloaded_identity == {key: entry[key] for key in (\"size\", \"sha256\")},\n                           \"Undigested qualified payload differs from its manifest\")\n    # Evidence and payload reads can take long enough for a new workflow attempt\n    # to start. Recheck regardless of asset digest metadata before accepting reuse.\n    _validate_scheduled_reuse_run(gh, info, snapshot, plan, source_run_id, attempt)\n    current = published_plan_snapshot(\n        gh, tag, cast(str, plan[\"source_sha\"]), tag != f\"v{plan['base_version']}\"\n    )\n"
+            }
+          ],
+          "canonical_fragments": [
+            "Recheck regardless of asset digest metadata before accepting reuse."
+          ]
         }
       ]
     },
@@ -1486,6 +1513,27 @@
           "canonical_fragments": [
             "def test_candidate_supervisor_failure_aborts_verification_before_writes"
           ]
+        },
+        {
+          "before_sha256": "916df5e613fa02a7dcedcec59a237c063f97280889806a4d82d969178f0f2d15",
+          "after_sha256": "76be56940c3f180c9debfd823e239c7644f602b8b7d2cd6b25eca4a7a0816e9e",
+          "canonical_source_before_sha256": "9358b0054c4f1de007f671fb153a8ee9c7ea2db978c58f6bd160edf6bc0a11e9",
+          "canonical_source_sha256": "68bc80cf52047134afa0427f668d65a76ac28765ff1edb46976374570ce6fb3c",
+          "hunks": [
+            {
+              "before": "        self.assertEqual(self.gh.writes, [])\n        self.assertEqual(self.gh.ledger_writes, [])\n\n    def test_same_size_manifest_replacement_after_first_read_is_rejected(self):\n        asset_id = self.asset[\"id\"]\n        original = self.gh.files[asset_id]\n",
+              "after": "        self.assertEqual(self.gh.writes, [])\n        self.assertEqual(self.gh.ledger_writes, [])\n\n    def test_digestless_payload_reuse_rechecks_source_attempt_after_download(self):\n        release_assets = self.gh.assets[\n            next(key for key, value in self.gh.releases.items()\n                 if value[\"tag_name\"] == self.result[\"tag\"])\n        ]\n        payload = next(item for item in release_assets if item[\"name\"] != rc.MANIFEST)\n        payload.pop(\"digest\", None)\n        download = self.gh.download_asset\n\n        def rerun_after_payload_read(path, output):\n            download(path, output)\n            if path == f\"releases/assets/{payload['id']}\":\n                self.gh.runs[100][\"run_attempt\"] = 2\n\n        with patch.object(self.gh, \"download_asset\", side_effect=rerun_after_payload_read), \\\n                self.assertRaisesRegex(\n                    (ValueError, rc.ReleaseError),\n                    \"Source run was rerun; evidence is not from its latest attempt\",\n                ):\n            self.verify()\n        self.assertEqual(self.gh.writes, [])\n        self.assertEqual(self.gh.ledger_writes, [])\n\n    def test_digest_present_reuse_rechecks_source_attempt_after_evidence_read(self):\n        artifact_id = self.gh.evidence_by_run[100][0][\"id\"]\n        binary = self.gh.binary\n\n        def rerun_after_evidence_read(path):\n            data = binary(path)\n            if path == f\"actions/artifacts/{artifact_id}/zip\":\n                self.gh.runs[100][\"run_attempt\"] = 2\n            return data\n\n        with patch.object(self.gh, \"binary\", side_effect=rerun_after_evidence_read), \\\n                self.assertRaisesRegex(\n                    (ValueError, rc.ReleaseError),\n                    \"Source run was rerun; evidence is not from its latest attempt\",\n                ):\n            self.verify()\n        self.assertEqual(self.gh.writes, [])\n        self.assertEqual(self.gh.ledger_writes, [])\n\n    def test_same_size_manifest_replacement_after_first_read_is_rejected(self):\n        asset_id = self.asset[\"id\"]\n        original = self.gh.files[asset_id]\n"
+            },
+            {
+              "before": "\n    def verify(self, stage=None):\n        return lifecycle.read_verified_distribution(self.gh, self.compact[\"tag\"], rc.json_bytes(self.compact), stage=stage)\n\n    def test_legacy_wrapper_streams_preproducer_receipt_but_strict_paths_reject_it(self):\n        rewrite_retained_receipt(self.fixture, self.manifest, lambda value: value.pop(\"producer\"))\n",
+              "after": "\n    def verify(self, stage=None):\n        return lifecycle.read_verified_distribution(self.gh, self.compact[\"tag\"], rc.json_bytes(self.compact), stage=stage)\n\n    def test_compact_reuse_rechecks_source_attempt_after_nested_distribution_read(self):\n        original = lifecycle.read_verified_distribution\n\n        def rerun_after_nested_read(*args, **kwargs):\n            result = original(*args, **kwargs)\n            self.gh.runs[100][\"run_attempt\"] = 2\n            return result\n\n        with patch.object(lifecycle, \"read_verified_distribution\", side_effect=rerun_after_nested_read), \\\n                self.assertRaisesRegex(\n                    (ValueError, rc.ReleaseError),\n                    \"Source run was rerun; evidence is not from its latest attempt\",\n                ):\n            lifecycle.verify_scheduled_reuse(\n                self.gh, self.gh.info, self.manifest[\"source_policy\"],\n                self.manifest[\"version_plan\"], 100, self.compact[\"tag\"],\n            )\n        self.assertEqual(self.gh.writes, [])\n        self.assertEqual(self.gh.ledger_writes, [])\n\n    def test_legacy_wrapper_streams_preproducer_receipt_but_strict_paths_reject_it(self):\n        rewrite_retained_receipt(self.fixture, self.manifest, lambda value: value.pop(\"producer\"))\n"
+            }
+          ],
+          "canonical_fragments": [
+            "def test_digestless_payload_reuse_rechecks_source_attempt_after_download",
+            "def test_digest_present_reuse_rechecks_source_attempt_after_evidence_read",
+            "def test_compact_reuse_rechecks_source_attempt_after_nested_distribution_read"
+          ]
         }
       ]
     },
@@ -1714,6 +1762,22 @@
             {
               "before": "    @unittest.skipUnless(os.name == \"posix\", \"process-group cleanup is POSIX-specific\")\n    def test_output_limit_kills_descendant_that_holds_capture_pipe_open(self):\n        with tempfile.TemporaryDirectory() as directory:\n            started = Path(directory) / \"descendant-started\"\n            pid_file = Path(directory) / \"descendant.pid\"\n            gate = Path(directory) / \"release-descendant\"\n            survived = Path(directory) / \"descendant-survived\"\n            descendant = (\n                \"from pathlib import Path; import os,time; \"\n                f\"Path({str(pid_file)!r}).write_text(str(os.getpid())); Path({str(started)!r}).write_text('started'); \"\n                f\"gate=Path({str(gate)!r}); \"\n                \"exec('while not gate.exists(): time.sleep(.01)'); \"\n                f\"Path({str(survived)!r}).write_text('alive')\"\n            )\n            parent = (\n                \"from pathlib import Path; import os,subprocess,sys,time; \"\n                f\"subprocess.Popen([sys.executable, '-c', {descendant!r}]); \"\n                f\"started=Path({str(started)!r}); \"\n                \"exec('while not started.exists(): time.sleep(.01)'); \"\n                \"sys.stdout.buffer.write(b'x' * 4096); sys.stdout.flush(); time.sleep(60)\"\n            )\n            start_time = time.monotonic()\n            with self.assertRaises(async_process.ProcessOutputLimit):\n",
               "after": "    @unittest.skipUnless(os.name == \"posix\", \"process-group cleanup is POSIX-specific\")\n    def test_output_limit_kills_descendant_that_holds_capture_pipe_open(self):\n        with tempfile.TemporaryDirectory() as directory:\n            started, pid_file, survived, parent = descendant_pipe_fixture(\n                directory,\n                \"sys.stdout.buffer.write(b'x' * 4096); sys.stdout.flush(); time.sleep(60)\",\n            )\n            start_time = time.monotonic()\n            with self.assertRaises(async_process.ProcessOutputLimit):\n"
+            }
+          ]
+        },
+        {
+          "before_sha256": "248215fecaca8d05aa9307f0ddce4e352e377893f3a8fa0ebec00d23fd7175cd",
+          "after_sha256": "3280b054bfced331356fd0c79a04f537344e47415c03815be74502b60addcb2a",
+          "canonical_source_before_sha256": "c820240cf690d482f34c2a782bb56903660f737257ac1c97e5026b5bcd6c4731",
+          "canonical_source_sha256": "6a8c92112107688c77c2f4b1db24c70616e5526abb8c9916f5c372e629779bce",
+          "source_hunks": [
+            {
+              "before": "            self.assertEqual(result.returncode, 7)\n\n    def test_target_arguments_are_not_present_in_wrapper_command_line(self):\n        secret_marker = \"wrapper-private-argv-marker\"\n        with tempfile.TemporaryDirectory() as directory:\n            target = (\n                \"import os; print(os.environ['TARGET_SECRET']); print(os.getcwd())\"\n",
+              "after": "            self.assertEqual(result.returncode, 7)\n\n    def test_target_arguments_are_not_present_in_wrapper_command_line(self):\n        argument_marker = \"wrapper-argument-sentinel\"\n        with tempfile.TemporaryDirectory() as directory:\n            target = (\n                \"import os; print(os.environ['TARGET_SECRET']); print(os.getcwd())\"\n"
+            },
+            {
+              "before": "            with patch.object(async_process.subprocess, \"Popen\", side_effect=observe_wrapper_argv):\n                result = async_process.run_process(\n                    [sys.executable, \"-c\", target],\n                    env={\"TARGET_SECRET\": secret_marker}, cwd=directory, timeout=5,\n                )\n            self.assertEqual(\n                result.stdout.decode().splitlines(),\n                [secret_marker, os.path.realpath(directory)],\n            )\n            self.assertEqual(len(calls), 1)\n            wrapper_argv, wrapper_env, wrapper_cwd = calls[0]\n            self.assertNotIn(secret_marker, \" \".join(wrapper_argv))\n            self.assertNotIn(directory, \" \".join(wrapper_argv))\n            self.assertNotIn(secret_marker, repr(wrapper_env))\n            self.assertNotIn(directory, repr(wrapper_env))\n            self.assertEqual(wrapper_cwd, \"/\")\n\n",
+              "after": "            with patch.object(async_process.subprocess, \"Popen\", side_effect=observe_wrapper_argv):\n                result = async_process.run_process(\n                    [sys.executable, \"-c\", target],\n                    env={\"TARGET_SECRET\": argument_marker}, cwd=directory, timeout=5,\n                )\n            self.assertEqual(\n                result.stdout.decode().splitlines(),\n                [argument_marker, os.path.realpath(directory)],\n            )\n            self.assertEqual(len(calls), 1)\n            wrapper_argv, wrapper_env, wrapper_cwd = calls[0]\n            self.assertNotIn(argument_marker, \" \".join(wrapper_argv))\n            self.assertNotIn(directory, \" \".join(wrapper_argv))\n            self.assertNotIn(argument_marker, repr(wrapper_env))\n            self.assertNotIn(directory, repr(wrapper_env))\n            self.assertEqual(wrapper_cwd, \"/\")\n\n"
             }
           ]
         }

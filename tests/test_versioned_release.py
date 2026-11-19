@@ -2644,6 +2644,48 @@ class LegacyScheduledReuseTests(unittest.TestCase):
         self.assertEqual(self.gh.writes, [])
         self.assertEqual(self.gh.ledger_writes, [])
 
+    def test_digestless_payload_reuse_rechecks_source_attempt_after_download(self):
+        release_assets = self.gh.assets[
+            next(key for key, value in self.gh.releases.items()
+                 if value["tag_name"] == self.result["tag"])
+        ]
+        payload = next(item for item in release_assets if item["name"] != rc.MANIFEST)
+        payload.pop("digest", None)
+        download = self.gh.download_asset
+
+        def rerun_after_payload_read(path, output):
+            download(path, output)
+            if path == f"releases/assets/{payload['id']}":
+                self.gh.runs[100]["run_attempt"] = 2
+
+        with patch.object(self.gh, "download_asset", side_effect=rerun_after_payload_read), \
+                self.assertRaisesRegex(
+                    (ValueError, rc.ReleaseError),
+                    "Source run was rerun; evidence is not from its latest attempt",
+                ):
+            self.verify()
+        self.assertEqual(self.gh.writes, [])
+        self.assertEqual(self.gh.ledger_writes, [])
+
+    def test_digest_present_reuse_rechecks_source_attempt_after_evidence_read(self):
+        artifact_id = self.gh.evidence_by_run[100][0]["id"]
+        binary = self.gh.binary
+
+        def rerun_after_evidence_read(path):
+            data = binary(path)
+            if path == f"actions/artifacts/{artifact_id}/zip":
+                self.gh.runs[100]["run_attempt"] = 2
+            return data
+
+        with patch.object(self.gh, "binary", side_effect=rerun_after_evidence_read), \
+                self.assertRaisesRegex(
+                    (ValueError, rc.ReleaseError),
+                    "Source run was rerun; evidence is not from its latest attempt",
+                ):
+            self.verify()
+        self.assertEqual(self.gh.writes, [])
+        self.assertEqual(self.gh.ledger_writes, [])
+
     def test_same_size_manifest_replacement_after_first_read_is_rejected(self):
         asset_id = self.asset["id"]
         original = self.gh.files[asset_id]
@@ -2685,6 +2727,26 @@ class CompactConsumerTests(unittest.TestCase):
 
     def verify(self, stage=None):
         return lifecycle.read_verified_distribution(self.gh, self.compact["tag"], rc.json_bytes(self.compact), stage=stage)
+
+    def test_compact_reuse_rechecks_source_attempt_after_nested_distribution_read(self):
+        original = lifecycle.read_verified_distribution
+
+        def rerun_after_nested_read(*args, **kwargs):
+            result = original(*args, **kwargs)
+            self.gh.runs[100]["run_attempt"] = 2
+            return result
+
+        with patch.object(lifecycle, "read_verified_distribution", side_effect=rerun_after_nested_read), \
+                self.assertRaisesRegex(
+                    (ValueError, rc.ReleaseError),
+                    "Source run was rerun; evidence is not from its latest attempt",
+                ):
+            lifecycle.verify_scheduled_reuse(
+                self.gh, self.gh.info, self.manifest["source_policy"],
+                self.manifest["version_plan"], 100, self.compact["tag"],
+            )
+        self.assertEqual(self.gh.writes, [])
+        self.assertEqual(self.gh.ledger_writes, [])
 
     def test_legacy_wrapper_streams_preproducer_receipt_but_strict_paths_reject_it(self):
         rewrite_retained_receipt(self.fixture, self.manifest, lambda value: value.pop("producer"))

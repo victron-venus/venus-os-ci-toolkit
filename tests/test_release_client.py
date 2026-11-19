@@ -742,6 +742,11 @@ jobs:
         self.assertEqual(jobs["final"]["environment"], "release")
         self.assertIn("build == 'true'", jobs["final"]["if"])
         self.assertIn("build == 'false'", jobs["stable"]["if"])
+        setup_python = next(
+            step for step in jobs["stable"]["steps"]
+            if step.get("uses", "").startswith("actions/setup-python@")
+        )
+        self.assertEqual(setup_python["with"]["python-version"], "3.13")
         self.assertNotIn("environment", jobs["candidate"])
         self.assertTrue(
             any(
@@ -762,6 +767,11 @@ jobs:
                 for step in workflow["jobs"]["stable"]["steps"]
             )
         )
+        setup_python = next(
+            step for step in workflow["jobs"]["stable"]["steps"]
+            if step.get("uses", "").startswith("actions/setup-python@")
+        )
+        self.assertEqual(setup_python["with"]["python-version"], "3.13")
         self.assertFalse(
             any(
                 "version_plan" in step.get("run", "")
