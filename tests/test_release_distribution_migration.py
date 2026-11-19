@@ -8,7 +8,6 @@ import os
 from pathlib import Path
 import shutil
 import sys
-import subprocess
 import tarfile
 import tempfile
 import unittest
@@ -283,15 +282,35 @@ class ShippedDistributionDeltaTests(unittest.TestCase):
         historical["files"].pop("scripts/release_state.py")
 
         # These two compact files were original copies before this successor.
-        # Recreate their exact pinned canonical inputs from HEAD so this test
-        # exercises the historical source bytes, not today's reviewed updates.
+        # Reverse their exact vendored successor hunks to reconstruct the
+        # original canonical bytes pinned by the prior migration.
         canonical = Path(temporary) / "historical-canonical"
         for name in ("scripts", "tests", "docs"):
             shutil.copytree(ROOT / name, canonical / name, dirs_exist_ok=True)
-        for name in ("scripts/release_distribution.py", "tests/test_release_distribution.py"):
-            target = canonical / name
+        for name in ("scripts/release_distribution.py", ".github/release-tests/test_release_distribution.py"):
+            entry = specification["files"][name]
+            source = entry["source"]
+            raw = (ROOT / source).read_text(encoding="utf-8")
+            self.assertEqual(migration.digest(raw.encode()),
+                             entry["successor_layers"][-1]["canonical_source_sha256"])
+            if source.startswith("tests/"):
+                raw = raw.replace("Path(__file__).parents[1]", "Path(__file__).parents[2]")
+                raw = raw.replace("Path(__file__).resolve().parents[1]", "Path(__file__).resolve().parents[2]")
+            vendored = installer.consumer_python(raw)
+            for layer in reversed(entry["successor_layers"]):
+                for hunk in reversed(layer["hunks"]):
+                    self.assertTrue(hunk["after"])
+                    self.assertEqual(vendored.count(hunk["after"]), 1, name)
+                    vendored = vendored.replace(hunk["after"], hunk["before"], 1)
+            self.assertTrue(vendored.startswith(migration.HEADER))
+            raw = vendored[len(migration.HEADER):]
+            if source.startswith("tests/"):
+                raw = raw.replace("Path(__file__).resolve().parents[2]", "Path(__file__).resolve().parents[1]")
+                raw = raw.replace("Path(__file__).parents[2]", "Path(__file__).parents[1]")
+            self.assertEqual(migration.digest(raw.encode()), entry["source_sha256"], name)
+            target = canonical / source
             target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_bytes(subprocess.check_output(["git", "show", f"HEAD:{name}"], cwd=ROOT))
+            target.write_text(raw, encoding="utf-8")
 
         consumer = Path(temporary) / "consumer"
         consumer.mkdir()
