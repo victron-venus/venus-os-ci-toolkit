@@ -258,8 +258,8 @@ def prepare_locks(stage, arch, manifest):
 def install_native(stage, arch, manifest):
     """Install an explicit closure of hash-pinned Ubuntu packages; no apt fetch."""
     spec = json.loads((INPUTS / f"native-{arch}.json").read_text())
-    _, binding, files = header_review.load_policy(INPUTS, manifest["header_disposition_sha256"],
-                                                  arch, spec["packages"])
+    _, binding, files, _ = header_review.load_policy(INPUTS, manifest["header_disposition_sha256"],
+                                                     arch, spec["packages"])
     require(spec["architecture"] == arch, "Wrong native package architecture")
     os_release = Path("/etc/os-release").read_text()
     require('ID=ubuntu' in os_release and 'VERSION_ID="24.04"' in os_release,
@@ -562,11 +562,12 @@ def scan(stage, arch, manifest):
                         if label == "native" else None)
             raw_failures = trivy_failures(data, label, expected)
             if label == "native":
-                policy, binding, _ = header_review.load_policy(
+                policy, binding, _, reviewed_severities = header_review.load_policy(
                     INPUTS, manifest["header_disposition_sha256"], arch, expected)
                 receipt = json.loads((stage / "output/evidence/installed-header-verification.json").read_text())
                 not_affected = header_review.classify(data, policy, binding, receipt,
-                                                      manifest["header_disposition_sha256"])
+                                                      manifest["header_disposition_sha256"],
+                                                      reviewed_severities)
                 write_json(evidence / "header-applicability.json", {
                     "reviewed": policy["reviewed"], "raw_blocking_count": len(raw_failures),
                     "not_affected": not_affected, "policy_sha256": manifest["header_disposition_sha256"],
@@ -614,7 +615,8 @@ def main():
     elif args.action == "harden":
         require(os.geteuid() == 0, "Hosted metadata hardening requires root")
         packages = json.loads((INPUTS / f"native-{arch}.json").read_text())["packages"]
-        _, binding, files = header_review.load_policy(INPUTS, manifest["header_disposition_sha256"], arch, packages)
+        _, binding, files, _ = header_review.load_policy(
+            INPUTS, manifest["header_disposition_sha256"], arch, packages)
         archive = json.loads((INPUTS / f"linux-libc-dev-archive-{arch}.json").read_text())
         actions = []
         try:

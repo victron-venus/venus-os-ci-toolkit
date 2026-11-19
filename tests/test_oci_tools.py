@@ -896,7 +896,7 @@ class HeaderApplicabilityTests(unittest.TestCase):
         self.root = Path(temporary.name)
         self.manifest = json.loads(build.MANIFEST.read_text())
         self.packages = json.loads((build.INPUTS / "native-amd64.json").read_text())["packages"]
-        self.policy, self.binding, _ = headers.load_policy(
+        self.policy, self.binding, _, self.reviewed_severities = headers.load_policy(
             build.INPUTS, self.manifest["header_disposition_sha256"], "amd64", self.packages)
 
     def installed_fixture(self):
@@ -936,7 +936,7 @@ class HeaderApplicabilityTests(unittest.TestCase):
 
     def classify(self, policy, data, receipt):
         return headers.classify(data, policy, self.binding, receipt,
-                                self.manifest["header_disposition_sha256"])
+                                self.manifest["header_disposition_sha256"], self.reviewed_severities)
 
     def test_pending_review_never_exempts_a_finding(self):
         _, data, receipt = self.disposition_fixture()
@@ -952,6 +952,40 @@ class HeaderApplicabilityTests(unittest.TestCase):
         view = headers.remaining_findings(data, findings)
         self.assertEqual(view["Results"][0]["Vulnerabilities"], [])
         self.assertEqual(data, original)
+
+    def test_changed_scanner_severity_stays_blocking(self):
+        policy, data, receipt = self.disposition_fixture()
+        finding = data["Results"][0]["Vulnerabilities"][0]
+        finding["Severity"] = "CRITICAL"
+        original = copy.deepcopy(data)
+        dispositions = self.classify(policy, data, receipt)
+        self.assertEqual(dispositions, [])
+        self.assertEqual(headers.remaining_findings(data, dispositions)["Results"][0]["Vulnerabilities"],
+                         [finding])
+        self.assertEqual(data, original)
+
+    def test_changed_scanner_severity_in_either_direction_stays_blocking(self):
+        policy, data, receipt = self.disposition_fixture()
+        critical_id = next(cve for cve, severity in self.reviewed_severities.items()
+                           if severity == "CRITICAL")
+        finding = data["Results"][0]["Vulnerabilities"][0]
+        finding["VulnerabilityID"] = critical_id
+        finding["Severity"] = "HIGH"
+        dispositions = self.classify(policy, data, receipt)
+        self.assertEqual(dispositions, [])
+        self.assertEqual(headers.remaining_findings(data, dispositions)["Results"][0]["Vulnerabilities"],
+                         [finding])
+
+    def test_matching_reviewed_critical_severity_can_be_dispositioned(self):
+        policy, data, receipt = self.disposition_fixture()
+        critical_id = next(cve for cve, severity in self.reviewed_severities.items()
+                           if severity == "CRITICAL")
+        finding = data["Results"][0]["Vulnerabilities"][0]
+        finding["VulnerabilityID"] = critical_id
+        finding["Severity"] = "CRITICAL"
+        dispositions = self.classify(policy, data, receipt)
+        self.assertEqual(len(dispositions), 1)
+        self.assertEqual(dispositions[0]["severity"], "CRITICAL")
 
     def test_scanner_finding_requires_its_own_package_inventory(self):
         policy, data, receipt = self.disposition_fixture()
@@ -1034,6 +1068,20 @@ class HeaderApplicabilityTests(unittest.TestCase):
             with self.subTest(key=key), self.assertRaises(ValueError):
                 headers.load_policy(target, self.manifest["header_disposition_sha256"], "amd64", packages)
 
+    def test_per_id_evidence_rejects_unreviewed_severity_values(self):
+        target = self.root / "invalid-severity-inputs"
+        shutil.copytree(build.INPUTS, target)
+        review_path = target / "header-cve-evidence.json"
+        review = json.loads(review_path.read_text())
+        next(iter(review["records"].values()))["severity"] = "MEDIUM"
+        review_path.write_text(json.dumps(review, indent=2, sort_keys=True) + "\n")
+        policy_path = target / "header-disposition.json"
+        policy = json.loads(policy_path.read_text())
+        policy["review_evidence"] = headers.sha256(review_path)
+        policy_path.write_text(json.dumps(policy, indent=2, sort_keys=True) + "\n")
+        with self.assertRaisesRegex(ValueError, "unsupported reviewed severity"):
+            headers.load_policy(target, headers.sha256(policy_path), "amd64", self.packages)
+
     def test_new_cna_batch_is_exact_and_absent_from_both_arch_header_inventories(self):
         review = json.loads((build.INPUTS / "header-cve-evidence.json").read_text())
         inventories = {
@@ -1043,7 +1091,7 @@ class HeaderApplicabilityTests(unittest.TestCase):
         }
         for arch in ("amd64", "arm64"):
             packages = json.loads((build.INPUTS / f"native-{arch}.json").read_text())["packages"]
-            policy, _, _ = headers.load_policy(
+            policy, _, _, _ = headers.load_policy(
                 build.INPUTS, self.manifest["header_disposition_sha256"], arch, packages)
             self.assertEqual(policy, self.policy)
             validate_new_header_review(review, policy, inventories)

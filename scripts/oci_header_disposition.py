@@ -177,8 +177,15 @@ def load_policy(inputs, expected_sha, arch, packages):
     review_path = inputs / "header-cve-evidence.json"
     need(sha256(review_path) == policy["review_evidence"], "Per-CVE evidence changed")
     review = json.loads(review_path.read_text())
-    need(sorted(review["records"]) == ids, "Per-CVE evidence does not cover exact finding set")
-    return policy, binding, files
+    records = review.get("records")
+    need(isinstance(records, dict) and sorted(records) == ids,
+         "Per-CVE evidence does not cover exact finding set")
+    severities = {}
+    for cve, record in records.items():
+        need(isinstance(record, dict) and record.get("severity") in ("HIGH", "CRITICAL"),
+             "Per-CVE evidence contains an unsupported reviewed severity")
+        severities[cve] = record["severity"]
+    return policy, binding, files, severities
 
 
 def open_beneath(root, relative):
@@ -317,7 +324,7 @@ def matches_header_package(package, binding):
             and package.get("SrcName") == "linux")
 
 
-def classify(data, policy, binding, receipt, policy_sha):
+def classify(data, policy, binding, receipt, policy_sha, reviewed_severities):
     """Return exact reviewed findings only; every other finding stays blocking."""
     if not policy["reviewed"]:
         return []
@@ -349,7 +356,7 @@ def classify(data, policy, binding, receipt, policy_sha):
                     and finding.get("InstalledVersion") == binding["version"]
                     and finding.get("DataSource", {}).get("ID") == "ubuntu"
                     and finding.get("VulnerabilityID") in policy["cve_ids"]
-                    and finding.get("Severity") in ("HIGH", "CRITICAL")):
+                    and finding.get("Severity") == reviewed_severities.get(finding["VulnerabilityID"])):
                 allowed.append({"id": finding["VulnerabilityID"], "package": binding["name"],
                                 "version": binding["version"], "architecture": binding["architecture"],
                                 "severity": finding["Severity"], "status": "not_affected",
