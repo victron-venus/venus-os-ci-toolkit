@@ -2659,7 +2659,7 @@ class TransportTests(unittest.TestCase):
                 f"#!{sys.executable}\n"
                 "import json,pathlib,sys\n"
                 f"pathlib.Path({str(argv_path)!r}).write_text(json.dumps(sys.argv[1:]))\n"
-                f"sys.stdout.buffer.write({payload!r})\n"
+                f"sys.stdout.buffer.write(b'HTTP/2 200 OK\\r\\nContent-Type: application/octet-stream\\r\\n\\r\\n' + {payload!r})\n"
             )
             gh_path.chmod(0o755)
             destination = root / "asset.bin"
@@ -2682,7 +2682,7 @@ class TransportTests(unittest.TestCase):
             self.assertEqual(
                 json.loads(argv_path.read_text()),
                 [
-                    "api", "--hostname", rc.GITHUB_HOSTNAME, "--method", "GET",
+                    "api", "--hostname", rc.GITHUB_HOSTNAME, "--include", "--method", "GET",
                     "-H", "Accept: application/octet-stream", "--",
                     f"repos/{REPO}/releases/assets/42",
                 ],

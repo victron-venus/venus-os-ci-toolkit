@@ -63,11 +63,19 @@ class ReleaseDownloadTests(unittest.TestCase):
             f"counter=pathlib.Path({str(call_index)!r})\n"
             "index=int(counter.read_text()) if counter.exists() else 0\n"
             "counter.write_text(str(index+1))\n"
-            "expected=['api','--hostname','github.com','--method','GET','-H',"
+            "expected=['api','--hostname','github.com','--include','--method','GET','-H',"
             "'Accept: application/octet-stream','--','repos/test/repo/releases/assets/1']\n"
             "if sys.argv[1:] != expected: sys.stderr.write(repr(sys.argv[1:])); raise SystemExit(97)\n"
             "if index >= len(programs): sys.stderr.write('unexpected call'); raise SystemExit(98)\n"
-            "os.execv(sys.executable,[sys.executable,'-c',programs[index]])\n"
+            "original_write=os.write\n"
+            "response_started=[False]\n"
+            "def framed_write(fd,data):\n"
+            " if fd==1 and not response_started[0]:\n"
+            "  original_write(1,b'HTTP/2 200 OK\\r\\nContent-Type: application/octet-stream\\r\\n\\r\\n')\n"
+            "  response_started[0]=True\n"
+            " return original_write(fd,data)\n"
+            "os.write=framed_write\n"
+            "exec(compile(programs[index],'<offline-gh-fixture>','exec'),globals())\n"
         )
         executable.write_text(f"#!{sys.executable}\n" + code)
         executable.chmod(0o755)
@@ -77,7 +85,7 @@ class ReleaseDownloadTests(unittest.TestCase):
             self.assertEqual(Path(command[0]), executable.resolve())
             self.assertTrue(Path(command[0]).is_absolute())
             self.assertEqual(command[1:], (
-                "api", "--hostname", "github.com", "--method", "GET", "-H",
+                "api", "--hostname", "github.com", "--include", "--method", "GET", "-H",
                 "Accept: application/octet-stream", "--", "repos/test/repo/releases/assets/1",
             ))
             self.assertTrue(all(child.poll() is not None for child in self.children))
@@ -561,7 +569,7 @@ class ReleaseDownloadTests(unittest.TestCase):
         clock = [100.0]
         deadlines = []
 
-        def stream(_command, sink, *, deadline=None):
+        def stream(_command, sink, *, deadline=None, frame_http=False):
             deadlines.append(deadline)
             clock[0] += 2
             if len(deadlines) == 1:
@@ -589,7 +597,7 @@ class ReleaseDownloadTests(unittest.TestCase):
         for timeout in (False, True):
             clock = [100.0]
 
-            def fail(command, sink, *, deadline=None):
+            def fail(command, sink, *, deadline=None, frame_http=False):
                 self.assertEqual(deadline, 110.0)
                 sink.write(b"p")
                 if timeout:
