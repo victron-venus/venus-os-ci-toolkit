@@ -554,6 +554,31 @@ def published_plan_snapshot(
     return ref, release, assets
 
 
+def _read_scheduled_manifest_before_snapshot(
+    gh: rc.GitHub, tag: str,
+) -> tuple[bytes, int, int]:
+    """Read the digestless manifest by its inventoried immutable asset ID."""
+    # A digestless manifest has to be read on both sides of the checked asset
+    # inventory. Discover its immutable asset ID first, then capture the
+    # authoritative tag/source/asset snapshot after the first body read.
+    release_before = cast(dict[str, object], gh.api(f"releases/tags/{tag}"))
+    release_id_before = rc.positive(release_before.get("id"), "release ID")
+    assets_before = gh.pages(f"releases/{release_id_before}/assets")
+    manifests_before = [asset for asset in assets_before if asset.get("name") == rc.MANIFEST]
+    rc.require(
+        len(manifests_before) == 1
+        and manifests_before[0].get("state") == "uploaded"
+        and type(manifests_before[0].get("size")) is int
+        and 0 < cast(int, manifests_before[0]["size"]) <= 2_000_000,
+        "Qualified manifest inventory is invalid",
+    )
+    manifest_asset_id = rc.positive(manifests_before[0].get("id"), "manifest ID")
+    manifest_size = cast(int, manifests_before[0]["size"])
+    raw = gh.binary(f"releases/assets/{manifest_asset_id}")
+    rc.require(len(raw) == manifest_size, "Qualified manifest size changed during read")
+    return raw, manifest_asset_id, manifest_size
+
+
 # Keep all evidence comparisons together at this read-only reuse boundary.
 # pylint: disable-next=too-many-locals,too-many-arguments,too-many-positional-arguments
 def verify_scheduled_reuse(
@@ -565,6 +590,8 @@ def verify_scheduled_reuse(
     tag: str,
 ) -> None:
     """Require retained immutable evidence and matching published asset metadata."""
+    raw, manifest_asset_id, manifest_size = _read_scheduled_manifest_before_snapshot(gh, tag)
+
     initial = published_plan_snapshot(
         gh, tag, cast(str, plan["source_sha"]), tag != f"v{plan['base_version']}"
     )
@@ -572,7 +599,23 @@ def verify_scheduled_reuse(
     inventory = {asset["name"]: asset for asset in initial[2]}
     asset = inventory[rc.MANIFEST]
     rc.require(cast(int, asset["size"]) <= 2_000_000, "Qualified manifest is too large")
-    raw = gh.binary(f"releases/assets/{rc.positive(asset['id'], 'manifest ID')}")
+    rc.require(
+        rc.positive(asset["id"], "manifest ID") == manifest_asset_id
+        and asset["size"] == manifest_size,
+        "Qualified manifest asset changed during inventory read",
+    )
+    manifest_identity: rc.AssetIdentity = {"size": len(raw), "sha256": rc.digest(raw)}
+    with tempfile.TemporaryDirectory(prefix="scheduled-manifest-readback-") as temporary:
+        manifest_path = Path(temporary) / rc.MANIFEST
+        observed_manifest = rc.download_asset(
+            gh, manifest_asset_id, manifest_path,
+            expected=manifest_identity,
+            budget=rc.DownloadBudget(manifest_identity["size"]),
+        )
+        rc.require(
+            observed_manifest == manifest_identity and manifest_path.read_bytes() == raw,
+            "Qualified manifest changed from its pre-snapshot bytes",
+        )
     manifest = rc.parse_json(raw, "qualified manifest")
     if isinstance(manifest, dict) and type(manifest.get("schema")) is int and manifest["schema"] == 2:
         candidate, _, _ = read_verified_distribution(gh, tag, raw, info)
@@ -1066,9 +1109,19 @@ def publish_versioned(args: argparse.Namespace) -> dict[str, object]:
             ), "Release gate is no longer ready before publication")
 
         def confirm_before_publish() -> None:
+            # This full validation runs before _publish_prepared's final tag
+            # read; it may inspect publisher jobs and automatic source state.
             confirm_publisher_execution()
             if automatic:
                 confirm_automatic_source()
+
+        def confirm_final_publisher_attempt() -> None:
+            # The final boundary shares a short deadline with the tag GET, so
+            # keep this to one exact attempt read without aggregate/jobs calls.
+            current = gh.api(
+                f"actions/runs/{run['id']}/attempts/{run['run_attempt']}"
+            )
+            rc.require_active_attempt(current, run)
 
         # Execution admission may be minutes old after downloads and signatures.
         # Recheck immediately before the first persistent ledger mutation.
@@ -1086,6 +1139,7 @@ def publish_versioned(args: argparse.Namespace) -> dict[str, object]:
             body,
             confirm_create=confirm_create,
             confirm_publish=confirm_before_publish,
+            confirm_final_publish=confirm_final_publisher_attempt,
         )
     return {
         "status": "published",

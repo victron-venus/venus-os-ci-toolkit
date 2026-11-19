@@ -79,7 +79,10 @@ def canonical_copy(specification: dict) -> bytes:
     if not name.startswith(("scripts/", "tests/", "docs/")):
         raise ValueError("Unsupported compact source inventory")
     data = read_optional(ROOT, name)
-    if data is None or digest(data) != specification["source_sha256"]:
+    layers = specification.get("successor_layers", [])
+    expected_source = (layers[-1].get("canonical_source_sha256") if layers
+                       else specification["source_sha256"])
+    if data is None or digest(data) != expected_source:
         raise ValueError("Compact source changed; review migration inventory: " + name)
     source = data.decode("utf-8")
     if name.startswith("tests/"):
@@ -132,7 +135,7 @@ def render(directory: Path) -> dict[str, str]:
             continue
         identity = digest(before) if before is not None else None
         if entry.get("addition") is True:
-            if entry.get("before_sha256") is not None or entry.get("hunks") or entry.get("successor_layers"):
+            if entry.get("before_sha256") is not None or entry.get("hunks"):
                 raise ValueError("Invalid compact migration addition: " + name)
             if identity == entry["after_sha256"]:
                 additions.append(True)
@@ -162,16 +165,31 @@ def render(directory: Path) -> dict[str, str]:
             prior_layer_digest = layer["after_sha256"]
         start_layer = 0
         if entry["before_sha256"] is None:
-            if identity == entry["after_sha256"]:
-                states.add("current")
+            if identity is None:
+                states.add("original")
+                source_bytes = canonical_copy(entry)
+                latest = layers[-1]["after_sha256"] if layers else entry["after_sha256"]
+                if digest(source_bytes) != latest:
+                    raise ValueError("Compact migration postimage changed: " + name)
+                if name.endswith(".py"):
+                    ast.parse(source_bytes, filename=name)
+                changes[name] = source_bytes.decode("utf-8")
                 continue
-            if identity is not None:
+            prior = entry["after_sha256"]
+            generation = 0 if identity == prior else None
+            for index, layer in enumerate(layers, 1):
+                prior = layer["after_sha256"]
+                if identity == prior:
+                    generation = index
+            if generation is None:
                 raise ValueError("Unknown compact migration preimage: " + name)
-            states.add("original")
-            source_bytes = canonical_copy(entry)
-            if digest(source_bytes) != entry["after_sha256"]:
-                raise ValueError("Compact migration postimage changed: " + name)
-            source = source_bytes.decode("utf-8")
+            states.add("current")
+            if layers:
+                successor_states.add(generation == len(layers))
+            if generation == len(layers):
+                continue
+            source = before.decode("utf-8")
+            start_layer = generation
         elif identity == entry["before_sha256"]:
             states.add("original")
             source = before.decode("utf-8")
@@ -181,7 +199,8 @@ def render(directory: Path) -> dict[str, str]:
                 source = source.replace(hunk["before"], hunk["after"], 1)
             if digest(source.encode("utf-8")) != entry["after_sha256"]:
                 raise ValueError("Compact migration postimage changed: " + name)
-            successor_states.add(0)
+            if layers:
+                successor_states.add(False)
         else:
             # A consumer already on an accepted postimage may advance through
             # successors, but every selected file must be on the same layer.
@@ -198,7 +217,7 @@ def render(directory: Path) -> dict[str, str]:
                 raise ValueError("Unknown compact migration preimage: " + name)
             states.add("current")
             if layers:
-                successor_states.add(generation)
+                successor_states.add(generation == len(layers))
             if generation == len(layers):
                 continue
             source = before.decode("utf-8")
@@ -206,19 +225,13 @@ def render(directory: Path) -> dict[str, str]:
             if digest(before) != (entry["after_sha256"] if generation == 0 else layers[generation - 1]["after_sha256"]):
                 raise ValueError("Compact migration successor preimage changed: " + name)
 
-        if entry["before_sha256"] is None:
-            # New copied files have no predecessor; they cannot declare a
-            # successor because there is no consumer-local hunk preimage.
-            if layers:
-                raise ValueError("Copied compact source cannot declare successors: " + name)
-        else:
-            for layer in layers[start_layer:]:
-                for hunk in layer["hunks"]:
-                    if not hunk.get("before") or source.count(hunk["before"]) != 1:
-                        raise ValueError("Compact migration successor context changed: " + name)
-                    source = source.replace(hunk["before"], hunk["after"], 1)
-                if digest(source.encode("utf-8")) != layer["after_sha256"]:
-                    raise ValueError("Compact migration successor postimage changed: " + name)
+        for layer in layers[start_layer:]:
+            for hunk in layer["hunks"]:
+                if not hunk.get("before") or source.count(hunk["before"]) != 1:
+                    raise ValueError("Compact migration successor context changed: " + name)
+                source = source.replace(hunk["before"], hunk["after"], 1)
+            if digest(source.encode("utf-8")) != layer["after_sha256"]:
+                raise ValueError("Compact migration successor postimage changed: " + name)
         after = source.encode("utf-8")
         if name.endswith(".py"):
             ast.parse(after, filename=name)
@@ -228,14 +241,10 @@ def render(directory: Path) -> dict[str, str]:
     if additions and any(additions) != all(additions):
         raise ValueError("Partially migrated compact bundle requires explicit review")
     if additions and additions[0]:
-        latest = max((len(entry.get("successor_layers", []))
-                      for entry in specification["files"].values()), default=0)
-        if states != {"current"} or successor_states != {latest}:
+        if states != {"current"} or successor_states != {True}:
             raise ValueError("Partially migrated compact bundle requires explicit review")
     elif additions and states == {"current"}:
-        latest = max((len(entry.get("successor_layers", []))
-                      for entry in specification["files"].values()), default=0)
-        if successor_states == {latest}:
+        if successor_states == {True}:
             raise ValueError("Partially migrated compact bundle requires explicit review")
     return changes
 

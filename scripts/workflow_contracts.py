@@ -438,9 +438,17 @@ def validate_automatic_push_admission(policy, workflows):
     """Keep this release-only exception explicit and reject regeneration drift."""
     selected = policy.get("change_scope", {}).get("automatic_release_test_paths")
     for name, workflow in workflows.items():
-        scoped = workflow.get("jobs", {}).get("prepare", {})
-        present = any(step.get("name") == "Retain test-only push admission" for step in scoped.get("steps", []))
-        if present and (name != RELEASE_PIPELINE or selected is None):
+        markers = [
+            job_name
+            for job_name, job in workflow.get("jobs", {}).items()
+            for step in job.get("steps", [])
+            if step.get("name") == "Retain test-only push admission"
+        ]
+        if markers and (
+            name != RELEASE_PIPELINE
+            or selected is None
+            or markers != ["prepare"]
+        ):
             raise ValueError("Unconfigured automatic push admission")
     if selected is not None:
         if __package__:

@@ -201,8 +201,10 @@ class PreparationTest(unittest.TestCase):  # pylint: disable=too-many-instance-a
         self.git("config", "commit.gpgSign", "true")
         before_refs = self.git("show-ref")
         before_worktrees = self.git("worktree", "list", "--porcelain")
-        with self.assertRaises(subprocess.CalledProcessError):
+        with self.assertRaises(subprocess.CalledProcessError) as error:
             preparation.prepare(self.root, pull_request=True)
+        self.assertIn("commit-tree", error.exception.cmd)
+        self.assertNotEqual(error.exception.returncode, 0)
         self.assertEqual(self.git("show-ref"), before_refs)
         self.assertEqual(self.git("worktree", "list", "--porcelain"), before_worktrees)
         self.assertEqual(self.pushes, [])

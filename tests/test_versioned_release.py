@@ -1014,7 +1014,16 @@ class LifecycleTests(unittest.TestCase):  # pylint: disable=too-many-public-meth
         self.assertEqual(self.gh.writes, release_writes)
         state.verify_promotion_order(self.gh, accepted)
         self.assertFalse(rc.EVIDENCE.exists())
-        download.assert_not_called()
+        release_id = next(
+            key for key, value in self.gh.releases.items()
+            if value["tag_name"] == published["tag"]
+        )
+        manifest_id = next(
+            item["id"] for item in self.gh.assets[release_id]
+            if item["name"] == rc.MANIFEST
+        )
+        download.assert_called_once()
+        self.assertEqual(download.call_args.args[0], f"releases/assets/{manifest_id}")
 
     def test_scheduled_beta_reuses_retained_qualified_package(self):
         published, _ = self.qualify_schedule_fixture("beta")
@@ -1067,13 +1076,14 @@ class LifecycleTests(unittest.TestCase):  # pylint: disable=too-many-public-meth
             for value in self.gh.releases.values()
             if value["tag_name"] == published["tag"]
         )
-        original = self.gh.binary
+        original = self.gh.download_asset
 
-        def changed(path):
+        def changed(path, *args, **kwargs):
+            result = original(path, *args, **kwargs)
             release["updated_at"] = "2026-10-02T11:59:00Z"
-            return original(path)
+            return result
 
-        with patch.object(self.gh, "binary", side_effect=changed):
+        with patch.object(self.gh, "download_asset", side_effect=changed):
             result = lifecycle.publish_versioned(self.args)
         self.assertEqual(result["status"], "published")
 
@@ -1840,6 +1850,37 @@ class LifecycleTests(unittest.TestCase):  # pylint: disable=too-many-public-meth
         self.assertTrue(self.gh.assets[draft["id"]])
         self.assertFalse(any(method == "PATCH" for _, method, _ in self.gh.writes))
 
+    def test_publisher_termination_during_final_tag_read_stops_before_public_release(self):
+        """The exact-attempt callback catches termination after the final tag read."""
+        plan = self.automatic_build()
+        api = self.gh.api
+        final_tag_reads = 0
+        tag_path = f"git/ref/tags/{plan['tag']}"
+
+        def terminate_during_final_tag_read(path, method="GET", body=None):
+            nonlocal final_tag_reads
+            result = api(path, method, body)
+            draft = next((release for release in self.gh.releases.values()
+                          if release["tag_name"] == plan["tag"]), None)
+            if path == tag_path and draft and self.gh.assets[draft["id"]]:
+                final_tag_reads += 1
+                if final_tag_reads == 1:
+                    # The tag GET succeeds, but the publisher ends before the
+                    # exact-attempt GET which immediately precedes the PATCH.
+                    self.gh.runs[99].update(status="completed", conclusion="cancelled")
+            return result
+
+        with patch.object(self.gh, "api", side_effect=terminate_during_final_tag_read):
+            with self.assertRaisesRegex(rc.ReleaseError, "not active"):
+                lifecycle.publish_versioned(self.args)
+
+        self.assertEqual(final_tag_reads, 1)
+        draft = next(release for release in self.gh.releases.values()
+                     if release["tag_name"] == plan["tag"])
+        self.assertTrue(draft["draft"])
+        self.assertTrue(self.gh.assets[draft["id"]])
+        self.assertFalse(any(method == "PATCH" for _, method, _ in self.gh.writes))
+
     def reject_workflow_drift_without_publication(self, publish):
         """Keep an allocated plan reusable when a known permission failure is found."""
         self.gh.default_head = "b" * 40
@@ -2504,6 +2545,69 @@ def compact_published_fixture(fixture, rc_tag=None):
         gh.assets[stable_id].append({"id": asset_id, "name": name, "size": len(raw), "state": "uploaded",
                                    "digest": "sha256:" + rc.digest(raw)})
     return candidate, candidate_raw, compact, stable_id
+
+
+class LegacyScheduledReuseTests(unittest.TestCase):
+    """Keep schema-1 full-inventory reuse bound to exact manifest bytes."""
+
+    def setUp(self):
+        self.fixture = LifecycleTests()
+        self.fixture.setUp()
+        self.addCleanup(self.fixture.doCleanups)
+        self.result, self.plan, self.manifest = self.fixture.release_run("rc", 100)
+        self.gh = self.fixture.gh
+        self.gh.writes.clear()
+        self.gh.ledger_writes.clear()
+        self.gh.jobs_by_run[100] = [
+            copy.deepcopy(self.gh.jobs[0]),
+            {**self.gh.jobs[0], "name": "checks / CI gate"},
+        ]
+        for assets in self.gh.assets.values():
+            for asset in assets:
+                asset["digest"] = "sha256:" + rc.digest(self.gh.files[asset["id"]])
+        self.asset = next(
+            item for item in self.gh.assets[
+                next(key for key, value in self.gh.releases.items()
+                     if value["tag_name"] == self.result["tag"])
+            ]
+            if item["name"] == rc.MANIFEST
+        )
+        self.asset.pop("digest", None)
+
+    def verify(self):
+        lifecycle.verify_scheduled_reuse(
+            self.gh, self.gh.info, self.manifest["source_policy"], self.plan,
+            100, self.result["tag"],
+        )
+
+    def test_digestless_schema_one_manifest_reuse_is_accepted(self):
+        self.verify()
+        self.assertEqual(self.gh.writes, [])
+        self.assertEqual(self.gh.ledger_writes, [])
+
+    def test_same_size_manifest_replacement_after_first_read_is_rejected(self):
+        asset_id = self.asset["id"]
+        original = self.gh.files[asset_id]
+        self.assertIn(b'"run_id": 100', original)
+        replacement = original.replace(b'"run_id": 100', b'"run_id": 101', 1)
+        self.assertEqual(len(replacement), len(original))
+        read = self.gh.binary
+        changed = False
+
+        def replace_after_initial_body(path):
+            nonlocal changed
+            data = read(path)
+            if path == f"releases/assets/{asset_id}" and not changed:
+                self.gh.files[asset_id] = replacement
+                changed = True
+            return data
+
+        with patch.object(self.gh, "binary", side_effect=replace_after_initial_body), \
+                self.assertRaisesRegex((ValueError, rc.ReleaseError), "size or checksum mismatch"):
+            self.verify()
+        self.assertTrue(changed)
+        self.assertEqual(self.gh.writes, [])
+        self.assertEqual(self.gh.ledger_writes, [])
 
 
 class CompactConsumerTests(unittest.TestCase):

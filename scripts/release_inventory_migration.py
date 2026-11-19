@@ -160,6 +160,91 @@ COMPACT_MANIFEST_RECHECK = {
 }
 
 
+# Preserve the scheduled-reuse manifest identity readback as a separate exact
+# layer above the compact reader's manifest-byte verification.
+SCHEDULED_REUSE_READBACK = {
+    "hunks": [
+        {
+            "before": "    \"\"\"Require retained immutable evidence and matching published asset metadata.\"\"\"\n    initial = published_plan_snapshot(\n        gh, tag, cast(str, plan[\"source_sha\"]), tag != f\"v{plan['base_version']}\"\n    )\n",
+            "after": "    \"\"\"Require retained immutable evidence and matching published asset metadata.\"\"\"\n    # A digestless manifest has to be read on both sides of the checked asset\n    # inventory. Discover its immutable asset ID first, then capture the\n    # authoritative tag/source/asset snapshot after the first body read.\n    release_before = cast(dict[str, object], gh.api(f\"releases/tags/{tag}\"))\n    release_id_before = rc.positive(release_before.get(\"id\"), \"release ID\")\n    assets_before = gh.pages(f\"releases/{release_id_before}/assets\")\n    manifests_before = [asset for asset in assets_before if asset.get(\"name\") == rc.MANIFEST]\n    rc.require(\n        len(manifests_before) == 1\n        and manifests_before[0].get(\"state\") == \"uploaded\"\n        and type(manifests_before[0].get(\"size\")) is int\n        and 0 < cast(int, manifests_before[0][\"size\"]) <= 2_000_000,\n        \"Qualified manifest inventory is invalid\",\n    )\n    manifest_asset_id = rc.positive(manifests_before[0].get(\"id\"), \"manifest ID\")\n    manifest_size = cast(int, manifests_before[0][\"size\"])\n    raw = gh.binary(f\"releases/assets/{manifest_asset_id}\")\n    rc.require(len(raw) == manifest_size, \"Qualified manifest size changed during read\")\n\n    initial = published_plan_snapshot(\n        gh, tag, cast(str, plan[\"source_sha\"]), tag != f\"v{plan['base_version']}\"\n    )\n"
+        },
+        {
+            "before": "    rc.require(cast(int, asset[\"size\"]) <= 2_000_000, \"Qualified manifest is too large\")\n    raw = gh.binary(f\"releases/assets/{rc.positive(asset['id'], 'manifest ID')}\")\n    manifest = rc.parse_json(raw, \"qualified manifest\")\n",
+            "after": "    rc.require(cast(int, asset[\"size\"]) <= 2_000_000, \"Qualified manifest is too large\")\n    rc.require(\n        rc.positive(asset[\"id\"], \"manifest ID\") == manifest_asset_id\n        and asset[\"size\"] == manifest_size,\n        \"Qualified manifest asset changed during inventory read\",\n    )\n    manifest_identity: rc.AssetIdentity = {\"size\": len(raw), \"sha256\": rc.digest(raw)}\n    with tempfile.TemporaryDirectory(prefix=\"scheduled-manifest-readback-\") as temporary:\n        manifest_path = Path(temporary) / rc.MANIFEST\n        observed_manifest = rc.download_asset(\n            gh, manifest_asset_id, manifest_path,\n            expected=manifest_identity,\n            budget=rc.DownloadBudget(manifest_identity[\"size\"]),\n        )\n        rc.require(\n            observed_manifest == manifest_identity and manifest_path.read_bytes() == raw,\n            \"Qualified manifest changed from its pre-snapshot bytes\",\n        )\n    manifest = rc.parse_json(raw, \"qualified manifest\")\n"
+        }
+    ],
+    "original_to_current": {
+        "c5f203a3bc5fb4adb8ed9cb6c7de4dba66488c648f729f8f50f7b25e596c9c94":
+        "8596c2464781f9cedabc8cf797e2c7584aa9af60f00069d5b9f4fa04df6bd722"
+    },
+    "current": [
+        "8596c2464781f9cedabc8cf797e2c7584aa9af60f00069d5b9f4fa04df6bd722"
+    ],
+}
+
+
+# Preserve the extracted scheduled-manifest readback as a reversible layer above
+# the accepted inline readback postimage.
+SCHEDULED_REUSE_READBACK_HELPER = {'hunks': [{'before': '\n'
+                      '\n'
+                      '# Keep all evidence comparisons together at this read-only reuse boundary.\n'
+                      '# pylint: '
+                      'disable-next=too-many-locals,too-many-arguments,too-many-positional-arguments\n'
+                      'def verify_scheduled_reuse(\n'
+                      '    gh: rc.GitHub,\n'
+                      '    info: dict[str, object],\n'
+                      '    snapshot: dict[str, object],\n'
+                      '    plan: dict[str, object],\n'
+                      '    source_run_id: int,\n'
+                      '    tag: str,\n'
+                      ') -> None:\n'
+                      '    """Require retained immutable evidence and matching published asset '
+                      'metadata."""\n'
+                      '    # A digestless manifest has to be read on both sides of the checked '
+                      'asset\n'
+                      '    # inventory. Discover its immutable asset ID first, then capture the\n',
+            'after': '\n'
+                     '\n'
+                     'def _read_scheduled_manifest_before_snapshot(\n'
+                     '    gh: rc.GitHub, tag: str,\n'
+                     ') -> tuple[bytes, int, int]:\n'
+                     '    """Read the digestless manifest by its inventoried immutable asset '
+                     'ID."""\n'
+                     '    # A digestless manifest has to be read on both sides of the checked '
+                     'asset\n'
+                     '    # inventory. Discover its immutable asset ID first, then capture the\n'},
+           {'before': '    raw = gh.binary(f"releases/assets/{manifest_asset_id}")\n'
+                      '    rc.require(len(raw) == manifest_size, "Qualified manifest size changed '
+                      'during read")\n'
+                      '\n'
+                      '    initial = published_plan_snapshot(\n',
+            'after': '    raw = gh.binary(f"releases/assets/{manifest_asset_id}")\n'
+                     '    rc.require(len(raw) == manifest_size, "Qualified manifest size changed '
+                     'during read")\n'
+                     '    return raw, manifest_asset_id, manifest_size\n'
+                     '\n'
+                     '\n'
+                     '# Keep all evidence comparisons together at this read-only reuse boundary.\n'
+                     '# pylint: '
+                     'disable-next=too-many-locals,too-many-arguments,too-many-positional-arguments\n'
+                     'def verify_scheduled_reuse(\n'
+                     '    gh: rc.GitHub,\n'
+                     '    info: dict[str, object],\n'
+                     '    snapshot: dict[str, object],\n'
+                     '    plan: dict[str, object],\n'
+                     '    source_run_id: int,\n'
+                     '    tag: str,\n'
+                     ') -> None:\n'
+                     '    """Require retained immutable evidence and matching published asset '
+                     'metadata."""\n'
+                     '    raw, manifest_asset_id, manifest_size = '
+                     '_read_scheduled_manifest_before_snapshot(gh, tag)\n'
+                     '\n'
+                     '    initial = published_plan_snapshot(\n'}],
+ 'original_to_current': {'8596c2464781f9cedabc8cf797e2c7584aa9af60f00069d5b9f4fa04df6bd722': 'c4f02e3089771b4d90e78c6b465deeec3cbf689d558f238d0caa95864c54ec9b'},
+ 'current': ['c4f02e3089771b4d90e78c6b465deeec3cbf689d558f238d0caa95864c54ec9b']}
+
+
 # Recognize response reconciliation without adding it through inventory-only updates.
 CREATE_READBACK = {
     "hunks": [
@@ -363,6 +448,49 @@ def _before_layer(source: str, layer: dict, label: str) -> str:
     return body.replace(SHEBANG, prefix, 1) if vendored else body
 
 
+def _before_publisher_successors(source: str) -> str:
+    """Reverse only exact reviewed publisher-source successors in the inventory oracle."""
+    prefix = SHEBANG + receipts.HEADER
+    vendored = source.startswith(prefix)
+    body = source.replace(receipts.HEADER, "", 1) if vendored else source
+    layers = json.loads(DELTA.read_text(encoding="utf-8"))["files"][receipts.PUBLISHER].get(
+        "successor_layers", []
+    )
+    for layer in reversed(layers):
+        if receipts.digest(body) != layer["after_sha256"]:
+            continue
+        for hunk in reversed(layer["hunks"]):
+            if body.count(hunk["after"]) != 1:
+                raise ValueError("Publisher successor reverse context changed")
+            body = body.replace(hunk["after"], hunk["before"], 1)
+        if receipts.digest(body) != layer["before_sha256"]:
+            raise ValueError("Publisher successor reverse result changed")
+    return body.replace(SHEBANG, prefix, 1) if vendored else body
+
+
+def _apply_publisher_successors(source: str) -> str:
+    """Reapply exact reviewed publisher successors only when the input carried them."""
+    prefix = SHEBANG + receipts.HEADER
+    vendored = source.startswith(prefix)
+    body = source.replace(receipts.HEADER, "", 1) if vendored else source
+    layers = json.loads(DELTA.read_text(encoding="utf-8"))["files"][receipts.PUBLISHER].get(
+        "successor_layers", []
+    )
+    for layer in layers:
+        if receipts.digest(body) == layer["after_sha256"]:
+            continue
+        if receipts.digest(body) != layer["before_sha256"]:
+            # Older consumer source shapes do not carry this later comment layer.
+            continue
+        for hunk in layer["hunks"]:
+            if body.count(hunk["before"]) != 1:
+                raise ValueError("Publisher successor apply context changed")
+            body = body.replace(hunk["before"], hunk["after"], 1)
+        if receipts.digest(body) != layer["after_sha256"]:
+            raise ValueError("Publisher successor apply result changed")
+    return body.replace(SHEBANG, prefix, 1) if vendored else body
+
+
 def _before_digestless_metadata(source: str) -> str:
     """Reverse only the exact absent-digest byte-verification source layer."""
     return _before_layer(
@@ -414,13 +542,27 @@ def _before_notes_provenance(source: str) -> str:
 
 
 def _before_publisher_execution_boundary(source: str) -> str:
-    """Reverse compact manifest and publisher-job revalidation layers when exact."""
+    """Reverse newer readback layers before the publisher-job proof layer."""
     source = _before_compact_manifest_recheck(source)
     return _before_layer(source, PUBLISHER_EXECUTION_BOUNDARY, "Publisher execution boundary")
 
 
+def _before_scheduled_reuse_readback(source: str) -> str:
+    """Reverse extracted helper, then the accepted inline readback layer."""
+    source = _before_scheduled_reuse_readback_helper(source)
+    return _before_layer(source, SCHEDULED_REUSE_READBACK, "Scheduled reuse readback")
+
+
+def _before_scheduled_reuse_readback_helper(source: str) -> str:
+    """Reverse only the exact helper extraction above the inline readback layer."""
+    return _before_layer(
+        source, SCHEDULED_REUSE_READBACK_HELPER, "Scheduled reuse helper extraction",
+    )
+
+
 def _before_compact_manifest_recheck(source: str) -> str:
-    """Reverse only the exact compact stable manifest byte reread layer."""
+    """Reverse scheduled readback before the compact stable manifest layer."""
+    source = _before_scheduled_reuse_readback(source)
     return _before_layer(source, COMPACT_MANIFEST_RECHECK, "Compact manifest reread")
 
 
@@ -475,42 +617,66 @@ def render(directory: Path) -> dict[str, str]:
     states = set()
     for name in FILES:
         source = receipts.read_local(directory, name)
+        source_for_layers = source
         prior = _before_casefold(source) if name == PLAN else source
         if name == receipts.PUBLISHER:
-            prior = _before_notes_provenance(source)
+            source_for_layers = _before_publisher_successors(source)
+            prior = _before_notes_provenance(source_for_layers)
         state, result = receipts.transform(prior, name, specification[name])
         if name == PLAN:
             _, result = receipts.transform(result, name, CASEFOLD)
             _, result = receipts.transform(result, name, NAME_LIMIT)
-        elif name == receipts.PUBLISHER and prior != source:
+        elif name == receipts.PUBLISHER and prior != source_for_layers:
             # Preserve a fix already present; this mode does not install it.
             _, result = receipts.transform(result, name, NOTES_PROVENANCE)
-            if _before_create_readback(source) != source:
+            if _before_create_readback(source_for_layers) != source_for_layers:
                 _, result = receipts.transform(result, name, CREATE_READBACK)
-                if _before_create_identity(source) != source:
+                if _before_create_identity(source_for_layers) != source_for_layers:
                     _, result = receipts.transform(result, name, CREATE_IDENTITY)
-                    if _before_automatic_source(source) != source:
+                    if _before_automatic_source(source_for_layers) != source_for_layers:
                         _, result = receipts.transform(result, name, AUTOMATIC_SOURCE)
-                        if _before_execution_job(source) != source:
+                        if _before_execution_job(source_for_layers) != source_for_layers:
                             _, result = receipts.transform(result, name, EXECUTION_JOB)
-            if _before_automatic_test_push(source) != source:
+            if _before_automatic_test_push(source_for_layers) != source_for_layers:
                 _, result = receipts.transform(result, name, AUTOMATIC_TEST_PUSH)
-            if _before_compact_distribution(source) != source:
+            if _before_compact_distribution(source_for_layers) != source_for_layers:
                 _, result = receipts.transform(result, name, COMPACT_DISTRIBUTION)
-            if _before_legacy_rc_compatibility(source) != source:
+            if _before_legacy_rc_compatibility(source_for_layers) != source_for_layers:
                 _, result = receipts.transform(result, name, LEGACY_RC_COMPATIBILITY)
-            if _before_digestless_metadata(source) != source:
+            if _before_digestless_metadata(source_for_layers) != source_for_layers:
                 _, result = receipts.transform(result, name, DIGESTLESS_METADATA)
-            if _before_publisher_execution_boundary(source) != source:
+            if _before_publisher_execution_boundary(source_for_layers) != source_for_layers:
                 result = _apply_publisher_execution_boundary(result)
-            if _before_compact_manifest_recheck(source) != source:
+            if _before_compact_manifest_recheck(source_for_layers) != source_for_layers:
                 _, result = receipts.transform(result, name, COMPACT_MANIFEST_RECHECK)
+            if _before_scheduled_reuse_readback(source_for_layers) != source_for_layers:
+                _, result = receipts.transform(result, name, SCHEDULED_REUSE_READBACK)
+                _, result = receipts.transform(result, name, SCHEDULED_REUSE_READBACK_HELPER)
         states.add(state)
         if result != source:
             changes[name] = result
     if len(states) != 1:
         raise ValueError("Partially migrated inventory guard requires explicit review")
+    if receipts.PUBLISHER in changes:
+        original = receipts.read_local(directory, receipts.PUBLISHER)
+        result = changes[receipts.PUBLISHER]
+        if source_has_publisher_successor(original):
+            result = _apply_publisher_successors(result)
+        if result == original:
+            changes.pop(receipts.PUBLISHER)
+        else:
+            changes[receipts.PUBLISHER] = result
     return changes
+
+
+def source_has_publisher_successor(source: str) -> bool:
+    """Return whether the exact current source contains any reviewed successor layer."""
+    prefix = SHEBANG + receipts.HEADER
+    body = source.replace(receipts.HEADER, "", 1) if source.startswith(prefix) else source
+    layers = json.loads(DELTA.read_text(encoding="utf-8"))["files"][receipts.PUBLISHER].get(
+        "successor_layers", []
+    )
+    return any(receipts.digest(body) == layer["after_sha256"] for layer in layers)
 
 
 def previous_canonical_source(source: str, name: str) -> str:
@@ -520,7 +686,7 @@ def previous_canonical_source(source: str, name: str) -> str:
     if name == PLAN:
         source = _before_casefold(source)
     elif name == receipts.PUBLISHER:
-        source = _before_notes_provenance(source)
+        source = _before_notes_provenance(_before_publisher_successors(source))
     if name not in FILES:
         raise ValueError("Unknown inventory source")
     specification = json.loads(DELTA.read_text(encoding="utf-8"))["files"][name]

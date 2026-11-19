@@ -88,6 +88,17 @@ class WorkflowContractsTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "outside the required gate"):
             self.validate()
 
+    def test_push_admission_marker_outside_prepare_is_rejected(self):
+        workflow = {
+            "jobs": {
+                "build": {
+                    "steps": [{"name": "Retain test-only push admission"}]
+                }
+            }
+        }
+        with self.assertRaisesRegex(ValueError, "Unconfigured automatic push admission"):
+            contracts.validate_automatic_push_admission({}, {"release-pipeline.yml": workflow})
+
 
 class CoverageProducerIdentityTests(unittest.TestCase):
     def setUp(self):

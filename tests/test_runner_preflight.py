@@ -555,7 +555,7 @@ class BoundedDownloadTests(unittest.TestCase):
         self.assertEqual(len(self.calls), 1)
 
     def test_failed_page_discards_the_partial_result(self):
-        wire = self.http_bytes(b"[1]") + b"\n" + self.http_bytes(b"secret", 502)
+        wire = self.http_bytes(b"[1]", next_page=True) + b"\n" + self.http_bytes(b"secret", 502)
         program = self.program(wire, b"gh: HTTP 404", 1)
         with self.assertRaises(rc.GitHubError) as error:
             self.fetch(program, "releases", "pages")
