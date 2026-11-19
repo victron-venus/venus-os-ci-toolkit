@@ -97,6 +97,7 @@ class GeneratorTests(unittest.TestCase):
                 (ROOT / "scripts/release_push_scope.py").read_text()
             ),
         )
+        self.assertEqual(files[".github/release-tests/release_push_scope.py"], files["scripts/release_push_scope.py"])
         self.assertIn(".github/release-tests/test_release_push_scope.py", files)
         self.assertIn("automatic_release_test_paths", files["docs/release-workflow.md"])
         contracts.validate(self.root)

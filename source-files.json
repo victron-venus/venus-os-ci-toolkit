@@ -453,6 +453,8 @@
   "tests/fixtures/python-type-error/example.py",
   "tests/fixtures/python_action_smoke/calculator.py",
   "tests/fixtures/python_action_smoke/test_calculator.py",
+  "tests/fixtures/release_distribution/ottplay-foss-7677cfb.json",
+  "tests/fixtures/release_distribution/ottplay-foss-7677cfb.tar.gz",
   "tests/fixtures/scorecard-v5.6.0.json",
   "tests/fixtures/signing/README.md",
   "tests/fixtures/signing/ed448-synthetic.asc",

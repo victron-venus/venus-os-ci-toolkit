@@ -1693,9 +1693,7 @@ def release_files(directory: Path, policy: dict) -> dict[str, str]:
         # generated suite self-contained; its runtime path remains opt-in.
         for name in ("change_scope", "release_push_scope"):
             files[f"scripts/{name}.py"] = (ROOT / f"scripts/{name}.py").read_text()
-        files[".github/release-tests/release_push_scope.py"] = consumer_python(
-            (ROOT / "scripts/release_push_scope.py").read_text()
-        )
+        files[".github/release-tests/release_push_scope.py"] = files[RELEASE_PUSH_SCOPE_PATH]
         files[".github/release-tests/test_release_push_scope.py"] = (
             (ROOT / "tests/test_release_push_scope.py").read_text()
             .replace(TEST_ROOT_EXPRESSION, VENDORED_TEST_ROOT_EXPRESSION)
