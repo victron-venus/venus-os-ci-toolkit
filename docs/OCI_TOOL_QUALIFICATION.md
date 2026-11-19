@@ -38,8 +38,9 @@ The two native targets are `ubuntu-24.04`/amd64 and `ubuntu-24.04-arm`/arm64.
 Neither job falls back to shared or household runners. Compilation and unit tests
 run without root. Native package installation and the finite metadata repair
 described below are the only sudo operations in the source job. Packages come
-from the 2026-11-03 Ubuntu snapshot, with individually
-pinned versions, download sizes and SHA-256 digests. The compiler, libc, binutils,
+from the Ubuntu snapshots identified in the [AMD64](../.github/oci-tools/native-amd64.json)
+and [ARM64](../.github/oci-tools/native-arm64.json) locks, with individually pinned
+versions, download sizes and SHA-256 digests. The compiler, libc, binutils,
 Linux headers and libseccomp dependency closure are explicit. Installation permits
 no missing-package download or package removal; a host incompatibility must be
 resolved in the recipe rather than silently accepted.
@@ -179,6 +180,26 @@ signed Ubuntu snapshot and checked by its locked hash. It joins the actual
 installed-package inventory, notices and full native vulnerability scan.
 Keep `--no-remove` and `--no-download`; do not work around a package conflict by
 allowing removals or resolving an unpinned package from a live repository.
+
+### Hosted glibc package compatibility
+
+On hosted AMD64, the earlier glibc lock caused apt to propose removing
+`libc6-i386` and four dependent packages. The installer stopped at `--no-remove`
+before compilation in both
+[run 44526011844](https://github.com/victron-venus/venus-os-ci-toolkit/actions/runs/44526011844)
+and [run 44580320708](https://github.com/victron-venus/venus-os-ci-toolkit/actions/runs/44580320708).
+
+The Ubuntu snapshot `20261118T000000Z` provides `libc6`, `libc6-dev` and
+`libc-dev-bin` at `2.39-0ubuntu8.12` on AMD64 and ARM64. The AMD64 lock also
+includes `libc6-i386` at that version because it requires the exact `libc6`
+version. Canonical's signed package indexes match the sizes and SHA-256 values
+of all 87 other package records. The locks retain `linux-libc-dev 6.8.0-149.149`,
+its byte-level evidence and the finite reviewed header policy.
+[Canonical security notice](https://ubuntu.com/security/notices/USN-9065-1).
+
+Keep `--no-download` and `--no-remove`. Accept the refresh after both hosted
+architectures pass native installation, compilation and security checks on the
+reviewed commit. Runtime and promotion still require their existing gates.
 
 ### Finite Linux header applicability
 
