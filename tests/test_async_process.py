@@ -71,7 +71,8 @@ class AsyncProcessTests(unittest.TestCase):
         try:
             os.kill(pid, signal.SIGKILL)
         except ProcessLookupError:
-            pass
+            # The process exited between the bounded liveness check and kill.
+            return
         self.fail(f"descendant process {pid} remained after bounded cleanup")
 
     def test_captures_both_streams_and_preserves_nonzero_status(self):
@@ -391,6 +392,161 @@ class AsyncProcessTests(unittest.TestCase):
             process.stdin, process.stdout, process.stderr,
         )))
 
+    def test_config_writer_times_out_when_caller_deadline_is_expired(self):
+        read_fd, write_fd = os.pipe()
+        try:
+            with patch.object(async_process.time, "monotonic", return_value=10.0):
+                with self.assertRaises(async_process.ProcessTimeout) as raised:
+                    async_process._write_supervisor_config(
+                        write_fd, (sys.executable, "-c", "pass"), {}, "/",
+                        deadline=9.0, timeout=0.25,
+                    )
+            self.assertEqual(raised.exception.timeout, 0.25)
+        finally:
+            os.close(read_fd)
+            os.close(write_fd)
+
+    def test_config_writer_treats_stalled_handshake_wait_as_caller_timeout(self):
+        class WaitingSelector:
+            def __init__(self):
+                self.registered = None
+                self.timeout = None
+                self.closed = False
+
+            def register(self, fileobj, events):
+                self.registered = (fileobj, events)
+
+            def select(self, timeout):
+                self.timeout = timeout
+                return []
+
+            def close(self):
+                self.closed = True
+
+        selector = WaitingSelector()
+        read_fd, write_fd = os.pipe()
+        try:
+            with (
+                patch.object(async_process.selectors, "DefaultSelector", return_value=selector),
+                patch.object(async_process.time, "monotonic", return_value=10.0),
+                self.assertRaises(async_process.ProcessTimeout) as raised,
+            ):
+                async_process._write_supervisor_config(
+                    write_fd, (sys.executable, "-c", "pass"), {}, "/",
+                    deadline=11.0, timeout=0.25,
+                )
+            self.assertEqual(selector.registered, (write_fd, async_process.selectors.EVENT_WRITE))
+            self.assertEqual(selector.timeout, 1.0)
+            self.assertTrue(selector.closed)
+            self.assertEqual(raised.exception.timeout, 0.25)
+        finally:
+            os.close(read_fd)
+            os.close(write_fd)
+
+    def test_config_writer_keeps_handshake_cap_when_caller_deadline_is_later(self):
+        class WaitingSelector:
+            def register(self, _fileobj, _events):
+                pass
+
+            def select(self, timeout):
+                self.timeout = timeout
+                return []
+
+            def close(self):
+                pass
+
+        selector = WaitingSelector()
+        read_fd, write_fd = os.pipe()
+        try:
+            with (
+                patch.object(async_process.selectors, "DefaultSelector", return_value=selector),
+                patch.object(async_process.time, "monotonic", return_value=10.0),
+                self.assertRaises(async_process.ProcessCleanupError),
+            ):
+                async_process._write_supervisor_config(
+                    write_fd, (sys.executable, "-c", "pass"), {}, "/",
+                    deadline=20.0, timeout=10.0,
+                )
+            self.assertEqual(selector.timeout, async_process.CLEANUP_TIMEOUT_SECONDS)
+        finally:
+            os.close(read_fd)
+            os.close(write_fd)
+
+    def test_expired_launch_handshake_preserves_timeout_after_confirmed_cleanup(self):
+        class Stream:
+            closed = False
+
+            def close(self):
+                self.closed = True
+
+        class FakeProcess:
+            def __init__(self):
+                self.stdin = Stream()
+                self.stdout = Stream()
+                self.stderr = Stream()
+
+        process = FakeProcess()
+        timeout = 0.25
+        observed = {}
+
+        def expire_during_handshake(*_args, **kwargs):
+            observed.update(kwargs)
+            raise async_process.ProcessTimeout(timeout, b"", b"")
+
+        with (
+            patch.object(async_process.subprocess, "Popen", return_value=process),
+            patch.object(async_process, "_write_supervisor_config", side_effect=expire_during_handshake),
+            patch.object(async_process, "_reap_owned_process_after_error") as reap,
+            self.assertRaises(async_process.ProcessTimeout) as raised,
+        ):
+            async_process._launch_supervised_process(
+                (sys.executable, "-c", "pass"), env=None, cwd=None,
+                input_enabled=False, timeout=timeout,
+            )
+
+        self.assertEqual(observed["timeout"], timeout)
+        self.assertIsInstance(observed["deadline"], float)
+        self.assertEqual(raised.exception.timeout, timeout)
+        reap.assert_called_once_with(process, control_fd=-1)
+        self.assertTrue(all(stream.closed for stream in (
+            process.stdin, process.stdout, process.stderr,
+        )))
+
+    def test_expired_launch_handshake_cleanup_failure_remains_fatal(self):
+        class Stream:
+            closed = False
+
+            def close(self):
+                self.closed = True
+
+        class FakeProcess:
+            def __init__(self):
+                self.stdin = Stream()
+                self.stdout = Stream()
+                self.stderr = Stream()
+
+        process = FakeProcess()
+        timeout_error = async_process.ProcessTimeout(0.25, b"", b"")
+        cleanup_error = async_process.ProcessCleanupError("wrapper could not be reaped")
+        with (
+            patch.object(async_process.subprocess, "Popen", return_value=process),
+            patch.object(async_process, "_write_supervisor_config", side_effect=timeout_error),
+            patch.object(
+                async_process, "_reap_owned_process_after_error", side_effect=cleanup_error,
+            ),
+            self.assertRaises(async_process.ProcessCleanupError) as raised,
+        ):
+            async_process._launch_supervised_process(
+                (sys.executable, "-c", "pass"), env=None, cwd=None,
+                input_enabled=False, timeout=0.25,
+            )
+
+        self.assertIs(raised.exception, cleanup_error)
+        self.assertIs(raised.exception.__cause__, timeout_error)
+        self.assertTrue(all(stream.closed for stream in (
+            process.stdin, process.stdout, process.stderr,
+        )))
+
     @unittest.skipUnless(os.name == "posix", "supervisor process groups are POSIX-specific")
     def test_repeated_quick_exit_boundary_preserves_target_status(self):
         for _ in range(12):
@@ -582,6 +738,7 @@ class AsyncProcessTests(unittest.TestCase):
                         try:
                             os.kill(int(pid_file.read_text()), signal.SIGKILL)
                         except ProcessLookupError:
+                            # The child exited after the assertion and before cleanup.
                             pass
 
     @unittest.skipUnless(os.name == "posix", "process-group cleanup is POSIX-specific")
@@ -623,6 +780,7 @@ class AsyncProcessTests(unittest.TestCase):
                     try:
                         os.kill(int(pid_file.read_text()), signal.SIGKILL)
                     except ProcessLookupError:
+                        # The expected escaped child may have exited between checks.
                         pass
 
     def test_requires_absolute_executable_and_positive_bounds(self):
@@ -998,7 +1156,8 @@ class AsyncCancellationTests(unittest.IsolatedAsyncioTestCase):
                     task.cancel()
                     try:
                         await asyncio.wait_for(task, timeout=8)
-                    except (asyncio.CancelledError, async_process.ProcessCleanupError):
+                    except asyncio.CancelledError:
+                        # Cancellation completed its cleanup; other failures propagate.
                         pass
 
     async def test_cancellation_reaps_wrapper_and_stops_owned_target(self):
@@ -1041,12 +1200,14 @@ class AsyncCancellationTests(unittest.IsolatedAsyncioTestCase):
                         task.cancel()
                         try:
                             await asyncio.wait_for(task, timeout=8)
-                        except (asyncio.CancelledError, async_process.ProcessCleanupError):
+                        except asyncio.CancelledError:
+                            # Cancellation completed its cleanup; other failures propagate.
                             pass
                 if pid_file.exists():
                     try:
                         os.kill(int(pid_file.read_text()), signal.SIGKILL)
                     except ProcessLookupError:
+                        # The target exited after the prior assertion and before cleanup.
                         pass
             AsyncProcessTests.assert_process_stopped(self, pid_file)
 

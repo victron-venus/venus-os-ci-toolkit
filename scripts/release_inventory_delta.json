@@ -183,6 +183,16 @@
               "after": "                )\n                rc.require(downloaded_identity == {key: entry[key] for key in (\"size\", \"sha256\")},\n                           \"Undigested qualified payload differs from its manifest\")\n    # Evidence and payload reads can take long enough for a new workflow attempt\n    # to start. Recheck regardless of asset digest metadata before accepting reuse.\n    _validate_scheduled_reuse_run(gh, info, snapshot, plan, source_run_id, attempt)\n    current = published_plan_snapshot(\n        gh, tag, cast(str, plan[\"source_sha\"]), tag != f\"v{plan['base_version']}\"\n    )\n"
             }
           ]
+        },
+        {
+          "before_sha256": "9347ff07d4cd866529571166d3c16b6a413211e26c9b0d1aa3f2d905db754395",
+          "after_sha256": "b59bc005a75bf9fcfde9f334d914864b6391cb1d6ffe3993796c9acf8b20882e",
+          "hunks": [
+            {
+              "before": "\n        def confirm_final_publisher_attempt() -> None:\n            # The final boundary shares a short deadline with the tag GET, so\n            # keep this to one exact attempt read without aggregate/jobs calls.\n            # The release-control caller invokes it immediately after the last\n            # tag GET and before its protected public PATCH.\n            # The shared confirm_publish contract separates this last-attempt\n            # recheck from the full pre-tag provenance callback above.\n            current = gh.api(\n                f\"actions/runs/{run['id']}/attempts/{run['run_attempt']}\"\n            )\n            rc.require_active_attempt(current, run)\n\n        # Execution admission may be minutes old after downloads and signatures.\n",
+              "after": "\n        def confirm_final_publisher_attempt() -> None:\n            # The final boundary shares a short deadline with the tag GET.\n            # Recheck the exact attempt, default branch identity and captured\n            # source ref after the final tag read and before public PATCH. Do\n            # not add aggregate/jobs reads at this boundary.\n            current = gh.api(\n                f\"actions/runs/{run['id']}/attempts/{run['run_attempt']}\"\n            )\n            rc.require_active_attempt(current, run)\n            if automatic:\n                rc.require(\n                    rc.repository_info(gh)[\"default_branch\"] == info[\"default_branch\"],\n                    \"Automatic publication default branch changed; draft left unpublished\",\n                )\n                rc.require(\n                    gh.api(source_path) == source_ref[1],\n                    \"Automatic publication default source changed; draft left unpublished\",\n                )\n\n        # Execution admission may be minutes old after downloads and signatures.\n"
+            }
+          ]
         }
       ]
     }

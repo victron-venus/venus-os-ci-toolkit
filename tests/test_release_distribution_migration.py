@@ -261,7 +261,6 @@ class DistributionGeneratorTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "full-inventory signing"):
                 installer.validate_policy(Path(temporary), policy)
 
-
 class ShippedDistributionDeltaTests(unittest.TestCase):
     """Keep the narrow delta tied to reviewed canonical source sections."""
 
@@ -270,6 +269,34 @@ class ShippedDistributionDeltaTests(unittest.TestCase):
         ".github/release-tests/test_release_control.py",
         ".github/release-tests/test_versioned_release.py",
     )
+
+    def test_dashboard_repositories_are_not_admitted_by_ott_delta(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            consumer = Path(temporary) / "consumer"
+            consumer.mkdir()
+            self._extract_pinned_ott_snapshot(consumer)
+            before = {str(path.relative_to(consumer)): path.read_bytes()
+                      for path in consumer.rglob("*") if path.is_file()}
+            policy_path = consumer / ".release-policy.json"
+            policy_before = policy_path.read_bytes()
+            policy = json.loads(policy_path.read_text(encoding="utf-8"))
+            specification = json.loads(migration.DELTA.read_text(encoding="utf-8"))
+            self.assertEqual(specification["repository"], "open-ott-play/ottplay-foss")
+            self.assertNotIn("consumer_repositories", specification)
+            for repository in (
+                "victron-venus/inverter-dashboard",
+                "victron-venus/inverter-dashboard-go",
+            ):
+                policy["repository"] = repository
+                policy_path.write_text(json.dumps(policy), encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, "reviewed public promote-bytes consumer"):
+                    migration.render(consumer)
+            policy_path.write_bytes(policy_before)
+            self.assertEqual(
+                {str(path.relative_to(consumer)): path.read_bytes()
+                 for path in consumer.rglob("*") if path.is_file()},
+                before,
+            )
 
     @staticmethod
     def _expected_postimage(entry):
@@ -299,6 +326,23 @@ class ShippedDistributionDeltaTests(unittest.TestCase):
         self.assertIn("test_supervisor_control_pipe_eof_kills_owned_group", tests)
         self.assertIn("_launch_supervised_process", publisher)
         self.assertIn("supervisor status frame", helper)
+
+    def test_automatic_push_helper_additions_are_an_atomic_pair(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            consumer = Path(temporary) / "consumer"
+            consumer.mkdir()
+            self._extract_pinned_ott_snapshot(consumer)
+            changes = migration.render(consumer)
+            runtime = "scripts/release_push_scope.py"
+            test_copy = ".github/release-tests/release_push_scope.py"
+            self.assertIn(runtime, changes)
+            self.assertIn(test_copy, changes)
+            (consumer / runtime).write_text(changes[runtime], encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "Partially migrated"):
+                migration.render(consumer)
+            (consumer / runtime).unlink()
+            migration.apply(consumer, changes)
+            self.assertEqual(migration.render(consumer), {})
 
     def test_async_helper_copy_successor_preserves_old_layer_and_rejects_unknown_hash(self):
         specification = json.loads(migration.DELTA.read_bytes())
@@ -338,8 +382,24 @@ class ShippedDistributionDeltaTests(unittest.TestCase):
         """Return the pinned consumer after applying the prior four-file layer."""
         specification = json.loads(migration.DELTA.read_bytes())
         historical = json.loads(json.dumps(specification))
+        if include_old_test_overlay:
+            entry = historical["files"][".github/release-tests/test_release_control.py"]
+            overlay_base = entry["test_only_overlay_successors"][-1]["base_sha256"]
+            production = entry["successor_layers"]
+            base_index = next(
+                (index for index, layer in enumerate(production)
+                 if layer["after_sha256"] == overlay_base),
+                None,
+            )
+            if base_index is None:
+                if entry["after_sha256"] != overlay_base:
+                    raise AssertionError("Historical test overlay base is no longer in production history")
+                rewinds = len(production)
+            else:
+                rewinds = len(production) - base_index - 1
+        else:
+            rewinds = 1
         for name in self.ADVANCED_SUCCESSOR_FILES:
-            rewinds = 4 if include_old_test_overlay else 1
             for _ in range(rewinds):
                 historical["files"][name]["successor_layers"].pop()
         for name, entry in historical["files"].items():
@@ -560,6 +620,8 @@ class ShippedDistributionDeltaTests(unittest.TestCase):
     def test_source_pins_and_target_boundary(self):
         specification = json.loads(migration.DELTA.read_bytes())
         self.assertEqual(specification["consumer_source"], "7677cfbbe1395169403790307d3d9dd0fc25a43b")
+        self.assertEqual(specification["repository"], "open-ott-play/ottplay-foss")
+        self.assertNotIn("consumer_repositories", specification)
         self.assertEqual(set(specification["absent_paths"]), {"scripts/release_closed.py", "scripts/release_promotion.py"})
         names = set(specification["files"])
         self.assertTrue({"scripts/release_distribution.py", ".github/release-tests/test_release_distribution.py", ".github/release-tests/test_versioned_release.py"} <= names)

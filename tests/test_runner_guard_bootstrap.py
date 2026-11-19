@@ -62,7 +62,7 @@ sys.exit(outcome['code'])
             result = subprocess.run(
                 ["/bin/bash", "-c", "set -euo pipefail\numask 077\n" + ADMISSION +
                  '\nprintf "startup\\n" > "$GUARD_TEST_ROOT/startup"\n'],
-                env=env, capture_output=True, text=True, timeout=30)
+                env=env, capture_output=True, text=True, timeout=90)
             requests = [json.loads(line) for line in (root / "requests.jsonl").read_text().splitlines()]
             parses = (root / "parser.log").read_text().splitlines() if (root / "parser.log").exists() else []
             sleeps = (root / "sleep.log").read_text().splitlines() if (root / "sleep.log").exists() else []

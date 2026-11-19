@@ -1688,6 +1688,22 @@ def release_files(directory: Path, policy: dict) -> dict[str, str]:
         # with no OCI artifacts. Fresh consumers need its dependency closure too.
         for name in ("release_provenance", "merge_oci_archives"):
             files.setdefault(f"scripts/{name}.py", (ROOT / f"scripts/{name}.py").read_text())
+        # The versioned regression suite imports this helper even when the
+        # consumer has not opted into test-only push admission. Keep that
+        # generated suite self-contained; its runtime path remains opt-in.
+        for name in ("change_scope", "release_push_scope"):
+            files[f"scripts/{name}.py"] = (ROOT / f"scripts/{name}.py").read_text()
+        files[".github/release-tests/release_push_scope.py"] = consumer_python(
+            (ROOT / "scripts/release_push_scope.py").read_text()
+        )
+        files[".github/release-tests/test_release_push_scope.py"] = (
+            (ROOT / "tests/test_release_push_scope.py").read_text()
+            .replace(TEST_ROOT_EXPRESSION, VENDORED_TEST_ROOT_EXPRESSION)
+            .replace(
+                "Path(__file__).resolve().parents[1]",
+                "Path(__file__).resolve().parents[2]",
+            )
+        )
         files["docs/VERSIONING.md"] = (ROOT / "docs/VERSIONING.md").read_text()
         files["docs/release-distribution.md"] = (ROOT / "docs/release-distribution.md").read_text()
         files["docs/runner-preflight.md"] = (

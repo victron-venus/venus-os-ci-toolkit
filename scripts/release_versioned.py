@@ -1134,16 +1134,23 @@ def publish_versioned(args: argparse.Namespace) -> dict[str, object]:
                 confirm_automatic_source()
 
         def confirm_final_publisher_attempt() -> None:
-            # The final boundary shares a short deadline with the tag GET, so
-            # keep this to one exact attempt read without aggregate/jobs calls.
-            # The release-control caller invokes it immediately after the last
-            # tag GET and before its protected public PATCH.
-            # The shared confirm_publish contract separates this last-attempt
-            # recheck from the full pre-tag provenance callback above.
+            # The final boundary shares a short deadline with the tag GET.
+            # Recheck the exact attempt, default branch identity and captured
+            # source ref after the final tag read and before public PATCH. Do
+            # not add aggregate/jobs reads at this boundary.
             current = gh.api(
                 f"actions/runs/{run['id']}/attempts/{run['run_attempt']}"
             )
             rc.require_active_attempt(current, run)
+            if automatic:
+                rc.require(
+                    rc.repository_info(gh)["default_branch"] == info["default_branch"],
+                    "Automatic publication default branch changed; draft left unpublished",
+                )
+                rc.require(
+                    gh.api(source_path) == source_ref[1],
+                    "Automatic publication default source changed; draft left unpublished",
+                )
 
         # Execution admission may be minutes old after downloads and signatures.
         # Recheck immediately before the first persistent ledger mutation.

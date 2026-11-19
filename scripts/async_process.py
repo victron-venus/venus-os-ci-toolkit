@@ -207,6 +207,7 @@ class _SupervisorLaunch:
     process: subprocess.Popen[bytes]
     status_stream: BinaryIO
     control_fd: int
+    deadline: float | None
 
 
 def resolve_executable(name: str) -> str:
@@ -234,6 +235,7 @@ def _validate_process_request(argv: Sequence[str], max_output_bytes: int) -> tup
 
 def _write_supervisor_config(
     stream_fd: int, command: tuple[str, ...], target_env: Mapping[str, str], target_cwd: str,
+    *, deadline: float | None = None, timeout: float | None = None,
 ) -> None:
     """Send bounded target argv/env/cwd over a private pipe, not wrapper metadata."""
     payload = json.dumps(
@@ -248,10 +250,15 @@ def _write_supervisor_config(
     try:
         selector.register(stream_fd, selectors.EVENT_WRITE)
         offset = 0
-        deadline = time.monotonic() + CLEANUP_TIMEOUT_SECONDS
+        cleanup_deadline = time.monotonic() + CLEANUP_TIMEOUT_SECONDS
+        caller_deadline_wins = deadline is not None and deadline <= cleanup_deadline
         while offset < len(frame):
-            remaining = deadline - time.monotonic()
+            now = time.monotonic()
+            active_deadline = deadline if caller_deadline_wins else cleanup_deadline
+            remaining = active_deadline - now
             if remaining <= 0 or not selector.select(remaining):
+                if caller_deadline_wins:
+                    raise ProcessTimeout(timeout or 0, b"", b"")
                 raise ProcessCleanupError("Release helper supervisor did not accept command metadata")
             try:
                 offset += os.write(stream_fd, frame[offset:])
@@ -311,7 +318,7 @@ def _cleanup_failed_supervisor_launch(
 
 def _launch_supervised_process(
     command: tuple[str, ...], *, env: Mapping[str, str] | None,
-    cwd: str | Path | None, input_enabled: bool,
+    cwd: str | Path | None, input_enabled: bool, timeout: float | None = None,
 ) -> _SupervisorLaunch:
     """Start a sanitized live wrapper; pass request metadata only over its private pipe."""
     target_environment = dict(os.environ if env is None else env)
@@ -345,6 +352,9 @@ def _launch_supervised_process(
             pass_fds=(config_read, status_write, control_read),
             start_new_session=True,
         )
+        # The caller deadline begins as soon as the wrapper is created and
+        # covers config transfer, selector setup, and the supervised command.
+        deadline = time.monotonic() + timeout if timeout is not None else None
         os.close(config_read)
         config_read = -1
         os.close(status_write)
@@ -355,10 +365,13 @@ def _launch_supervised_process(
         status_read = -1
         _write_supervisor_config(
             config_write, command, target_environment, target_directory,
+            deadline=deadline, timeout=timeout,
         )
         os.close(config_write)
         config_write = -1
-        return _SupervisorLaunch(process, status_stream, control_write)
+        if deadline is not None and time.monotonic() >= deadline:
+            raise ProcessTimeout(timeout or 0, b"", b"")
+        return _SupervisorLaunch(process, status_stream, control_write, deadline)
     except BaseException as launch_error:
         cleanup_error = _cleanup_failed_supervisor_launch(
             process, status_stream,
@@ -807,7 +820,7 @@ def _execute_owned_process_launch(
             max_output_bytes=max_output_bytes,
             text=text,
             timeout=timeout,
-            deadline=time.monotonic() + timeout if timeout is not None else None,
+            deadline=launch.deadline,
             cancel_event=cancel_event,
             status_stream=launch.status_stream,
             control_fd=launch.control_fd,
@@ -839,7 +852,7 @@ def _run_owned_process(
     if cancel_event is not None and cancel_event.is_set():
         raise _ProcessCancelled()
     launch = _launch_supervised_process(
-        command, env=env, cwd=cwd, input_enabled=input_bytes is not None,
+        command, env=env, cwd=cwd, input_enabled=input_bytes is not None, timeout=timeout,
     )
     # Own every pipe before selector setup, then cleanup always sees even streams
     # that registration never reached.
