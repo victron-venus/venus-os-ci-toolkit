@@ -3075,11 +3075,12 @@ def _publish_prepared(
             "Tag moved before publication; draft left unpublished",
         )
 
-    # Run full publisher/provenance validation before the final tag lookup; it
-    # can require aggregate and paginated jobs reads. The final boundary then
-    # permits only the tag GET and one exact publisher-attempt GET, sharing a
-    # short deadline. GitHub has no conditional PATCH binding either identity,
-    # so these sequential reads still cannot make the public flip atomic.
+    # Run full publisher/provenance validation before the final shared 12-second
+    # read deadline; it can require aggregate and paginated jobs reads. Within
+    # that deadline, recheck the tag and run the optional final confirmation
+    # callback, which may GET the exact publisher attempt, default branch and
+    # source ref before the public PATCH. GitHub has no conditional PATCH that
+    # binds those observations, so the checks and flip are not atomic.
     if confirm_publish is not None:
         confirm_publish()
     deadline = time.monotonic() + FINAL_PUBLICATION_READ_TIMEOUT

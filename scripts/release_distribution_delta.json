@@ -637,6 +637,27 @@
               "after": "            for attempt in range(API_READ_ATTEMPTS):\n                if time.monotonic() >= deadline:\n                    raise subprocess.TimeoutExpired(command, ASSET_DOWNLOAD_TIMEOUT)\n                result = _stream_asset(command, output, deadline=deadline, frame_http=True)\n                if time.monotonic() >= deadline:\n                    raise subprocess.TimeoutExpired(command, ASSET_DOWNLOAD_TIMEOUT)\n                http = github_http_response(result.stdout) if result.stdout else None\n                status = http[0] if http is not None else None\n                if (attempt == API_READ_ATTEMPTS - 1\n                        or not self._transient_asset_failure(result, status)):\n                    self.response(result, f\"GET {endpoint}\", http)\n                    return\n                delay = random.uniform(1, 2 ** (attempt + 1))  # nosec B311\n                if delay >= deadline - time.monotonic():\n"
             }
           ]
+        },
+        {
+          "before_sha256": "91935d5a4527945b9067fc1dc16c9ac7c81a4054e72b803c3f09b5cd14ff2cb7",
+          "after_sha256": "79f8e8c5174f923177c02954732c08f8bffd455fe1de9dbc392cf40fca818f42",
+          "canonical_source_before_sha256": "363f3caf4292abcdfc0d6682fcf6c16772f0c306e8c48471c8a75d2fee39fb89",
+          "canonical_source_sha256": "5532b3263bf61ad6fb1094960632060360a263eb5d8530c018dade0f58ab0643",
+          "hunks": [
+            {
+              "before": "    # Run full publisher/provenance validation before the final tag lookup; it\n    # can require aggregate and paginated jobs reads. The final boundary then\n    # permits only the tag GET and one exact publisher-attempt GET, sharing a\n    # short deadline. GitHub has no conditional PATCH binding either identity,\n    # so these sequential reads still cannot make the public flip atomic.\n",
+              "after": "    # Run full publisher/provenance validation before the final shared 12-second\n    # read deadline; it can require aggregate and paginated jobs reads. Within\n    # that deadline, recheck the tag and run the optional final confirmation\n    # callback, which may GET the exact publisher attempt, default branch and\n    # source ref before the public PATCH. GitHub has no conditional PATCH that\n    # binds those observations, so the checks and flip are not atomic.\n",
+              "canonical_fragments": [
+                "    # Run full publisher/provenance validation before the final shared 12-second\n    # read deadline; it can require aggregate and paginated jobs reads. Within\n    # that deadline, recheck the tag and run the optional final confirmation\n    # callback, which may GET the exact publisher attempt, default branch and\n    # source ref before the public PATCH. GitHub has no conditional PATCH that\n    # binds those observations, so the checks and flip are not atomic.\n"
+              ]
+            }
+          ],
+          "source_hunks": [
+            {
+              "before": "    # Run full publisher/provenance validation before the final tag lookup; it\n    # can require aggregate and paginated jobs reads. The final boundary then\n    # permits only the tag GET and one exact publisher-attempt GET, sharing a\n    # short deadline. GitHub has no conditional PATCH binding either identity,\n    # so these sequential reads still cannot make the public flip atomic.\n",
+              "after": "    # Run full publisher/provenance validation before the final shared 12-second\n    # read deadline; it can require aggregate and paginated jobs reads. Within\n    # that deadline, recheck the tag and run the optional final confirmation\n    # callback, which may GET the exact publisher attempt, default branch and\n    # source ref before the public PATCH. GitHub has no conditional PATCH that\n    # binds those observations, so the checks and flip are not atomic.\n"
+            }
+          ]
         }
       ]
     },
