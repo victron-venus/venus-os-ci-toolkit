@@ -147,9 +147,12 @@ class InventoryMigrationTests(unittest.TestCase):
 class InventoryOracleTests(unittest.TestCase):
     def test_scheduled_reuse_readback_is_an_exact_reversible_layer(self):
         current = (ROOT / receipts.PUBLISHER).read_text()
-        previous = migration._before_scheduled_reuse_readback(current)
         self.assertEqual(hashlib.sha256(current.encode()).hexdigest(),
+                         "c4f02e3089771b4d90e78c6b465deeec3cbf689d558f238d0caa95864c54ec9b")
+        inline = migration._before_scheduled_reuse_readback_helper(current)
+        self.assertEqual(hashlib.sha256(inline.encode()).hexdigest(),
                          "8596c2464781f9cedabc8cf797e2c7584aa9af60f00069d5b9f4fa04df6bd722")
+        previous = migration._before_scheduled_reuse_readback(inline)
         self.assertEqual(hashlib.sha256(previous.encode()).hexdigest(),
                          "c5f203a3bc5fb4adb8ed9cb6c7de4dba66488c648f729f8f50f7b25e596c9c94")
         self.assertEqual(migration._before_scheduled_reuse_readback(previous), previous)
@@ -161,6 +164,40 @@ class InventoryOracleTests(unittest.TestCase):
         self.assertEqual(migration._before_scheduled_reuse_readback(changed), changed)
         with self.assertRaisesRegex(ValueError, "Unknown current inventory source"):
             migration.previous_canonical_source(changed, receipts.PUBLISHER)
+
+    def test_scheduled_reuse_helper_extraction_roundtrips_and_rejects_partial_sources(self):
+        current = (ROOT / receipts.PUBLISHER).read_text()
+        previous = migration._before_scheduled_reuse_readback_helper(current)
+        self.assertEqual(hashlib.sha256(previous.encode()).hexdigest(),
+                         "8596c2464781f9cedabc8cf797e2c7584aa9af60f00069d5b9f4fa04df6bd722")
+        self.assertNotIn("def _read_scheduled_manifest_before_snapshot(", previous)
+        self.assertEqual(migration._before_scheduled_reuse_readback_helper(previous), previous)
+
+        vendored_previous = previous.replace("#!/usr/bin/env python3\n", PREFIX, 1)
+        vendored_current = current.replace("#!/usr/bin/env python3\n", PREFIX, 1)
+        state, result = receipts.transform(
+            vendored_previous, receipts.PUBLISHER, migration.SCHEDULED_REUSE_READBACK_HELPER,
+        )
+        self.assertEqual((state, result), ("original", vendored_current))
+        self.assertEqual(migration._before_scheduled_reuse_readback_helper(vendored_current),
+                         vendored_previous)
+        self.assertEqual(receipts.transform(
+            vendored_current, receipts.PUBLISHER, migration.SCHEDULED_REUSE_READBACK_HELPER,
+        ), ("current", vendored_current))
+
+        variants = [current.replace(
+            "return raw, manifest_asset_id, manifest_size",
+            "return raw, manifest_asset_id, manifest_size  # changed",
+            1,
+        )]
+        for hunk in migration.SCHEDULED_REUSE_READBACK_HELPER["hunks"]:
+            self.assertEqual(previous.count(hunk["before"]), 1)
+            variants.append(previous.replace(hunk["before"], hunk["after"], 1))
+        for variant in variants:
+            with self.subTest(source_hash=receipts.digest(variant)):
+                self.assertEqual(migration._before_scheduled_reuse_readback_helper(variant), variant)
+                with self.assertRaisesRegex(ValueError, "Unknown current inventory source"):
+                    migration.previous_canonical_source(variant, receipts.PUBLISHER)
 
     def test_publisher_execution_boundary_is_an_exact_reversible_layer(self):
         current = (ROOT / receipts.PUBLISHER).read_text()

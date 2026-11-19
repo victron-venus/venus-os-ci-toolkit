@@ -554,17 +554,10 @@ def published_plan_snapshot(
     return ref, release, assets
 
 
-# Keep all evidence comparisons together at this read-only reuse boundary.
-# pylint: disable-next=too-many-locals,too-many-arguments,too-many-positional-arguments
-def verify_scheduled_reuse(
-    gh: rc.GitHub,
-    info: dict[str, object],
-    snapshot: dict[str, object],
-    plan: dict[str, object],
-    source_run_id: int,
-    tag: str,
-) -> None:
-    """Require retained immutable evidence and matching published asset metadata."""
+def _read_scheduled_manifest_before_snapshot(
+    gh: rc.GitHub, tag: str,
+) -> tuple[bytes, int, int]:
+    """Read the digestless manifest by its inventoried immutable asset ID."""
     # A digestless manifest has to be read on both sides of the checked asset
     # inventory. Discover its immutable asset ID first, then capture the
     # authoritative tag/source/asset snapshot after the first body read.
@@ -583,6 +576,21 @@ def verify_scheduled_reuse(
     manifest_size = cast(int, manifests_before[0]["size"])
     raw = gh.binary(f"releases/assets/{manifest_asset_id}")
     rc.require(len(raw) == manifest_size, "Qualified manifest size changed during read")
+    return raw, manifest_asset_id, manifest_size
+
+
+# Keep all evidence comparisons together at this read-only reuse boundary.
+# pylint: disable-next=too-many-locals,too-many-arguments,too-many-positional-arguments
+def verify_scheduled_reuse(
+    gh: rc.GitHub,
+    info: dict[str, object],
+    snapshot: dict[str, object],
+    plan: dict[str, object],
+    source_run_id: int,
+    tag: str,
+) -> None:
+    """Require retained immutable evidence and matching published asset metadata."""
+    raw, manifest_asset_id, manifest_size = _read_scheduled_manifest_before_snapshot(gh, tag)
 
     initial = published_plan_snapshot(
         gh, tag, cast(str, plan["source_sha"]), tag != f"v{plan['base_version']}"

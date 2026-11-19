@@ -183,6 +183,68 @@ SCHEDULED_REUSE_READBACK = {
 }
 
 
+# Preserve the extracted scheduled-manifest readback as a reversible layer above
+# the accepted inline readback postimage.
+SCHEDULED_REUSE_READBACK_HELPER = {'hunks': [{'before': '\n'
+                      '\n'
+                      '# Keep all evidence comparisons together at this read-only reuse boundary.\n'
+                      '# pylint: '
+                      'disable-next=too-many-locals,too-many-arguments,too-many-positional-arguments\n'
+                      'def verify_scheduled_reuse(\n'
+                      '    gh: rc.GitHub,\n'
+                      '    info: dict[str, object],\n'
+                      '    snapshot: dict[str, object],\n'
+                      '    plan: dict[str, object],\n'
+                      '    source_run_id: int,\n'
+                      '    tag: str,\n'
+                      ') -> None:\n'
+                      '    """Require retained immutable evidence and matching published asset '
+                      'metadata."""\n'
+                      '    # A digestless manifest has to be read on both sides of the checked '
+                      'asset\n'
+                      '    # inventory. Discover its immutable asset ID first, then capture the\n',
+            'after': '\n'
+                     '\n'
+                     'def _read_scheduled_manifest_before_snapshot(\n'
+                     '    gh: rc.GitHub, tag: str,\n'
+                     ') -> tuple[bytes, int, int]:\n'
+                     '    """Read the digestless manifest by its inventoried immutable asset '
+                     'ID."""\n'
+                     '    # A digestless manifest has to be read on both sides of the checked '
+                     'asset\n'
+                     '    # inventory. Discover its immutable asset ID first, then capture the\n'},
+           {'before': '    raw = gh.binary(f"releases/assets/{manifest_asset_id}")\n'
+                      '    rc.require(len(raw) == manifest_size, "Qualified manifest size changed '
+                      'during read")\n'
+                      '\n'
+                      '    initial = published_plan_snapshot(\n',
+            'after': '    raw = gh.binary(f"releases/assets/{manifest_asset_id}")\n'
+                     '    rc.require(len(raw) == manifest_size, "Qualified manifest size changed '
+                     'during read")\n'
+                     '    return raw, manifest_asset_id, manifest_size\n'
+                     '\n'
+                     '\n'
+                     '# Keep all evidence comparisons together at this read-only reuse boundary.\n'
+                     '# pylint: '
+                     'disable-next=too-many-locals,too-many-arguments,too-many-positional-arguments\n'
+                     'def verify_scheduled_reuse(\n'
+                     '    gh: rc.GitHub,\n'
+                     '    info: dict[str, object],\n'
+                     '    snapshot: dict[str, object],\n'
+                     '    plan: dict[str, object],\n'
+                     '    source_run_id: int,\n'
+                     '    tag: str,\n'
+                     ') -> None:\n'
+                     '    """Require retained immutable evidence and matching published asset '
+                     'metadata."""\n'
+                     '    raw, manifest_asset_id, manifest_size = '
+                     '_read_scheduled_manifest_before_snapshot(gh, tag)\n'
+                     '\n'
+                     '    initial = published_plan_snapshot(\n'}],
+ 'original_to_current': {'8596c2464781f9cedabc8cf797e2c7584aa9af60f00069d5b9f4fa04df6bd722': 'c4f02e3089771b4d90e78c6b465deeec3cbf689d558f238d0caa95864c54ec9b'},
+ 'current': ['c4f02e3089771b4d90e78c6b465deeec3cbf689d558f238d0caa95864c54ec9b']}
+
+
 # Recognize response reconciliation without adding it through inventory-only updates.
 CREATE_READBACK = {
     "hunks": [
@@ -443,8 +505,16 @@ def _before_publisher_execution_boundary(source: str) -> str:
 
 
 def _before_scheduled_reuse_readback(source: str) -> str:
-    """Reverse only the exact scheduled-reuse manifest readback layer."""
+    """Reverse extracted helper, then the accepted inline readback layer."""
+    source = _before_scheduled_reuse_readback_helper(source)
     return _before_layer(source, SCHEDULED_REUSE_READBACK, "Scheduled reuse readback")
+
+
+def _before_scheduled_reuse_readback_helper(source: str) -> str:
+    """Reverse only the exact helper extraction above the inline readback layer."""
+    return _before_layer(
+        source, SCHEDULED_REUSE_READBACK_HELPER, "Scheduled reuse helper extraction",
+    )
 
 
 def _before_compact_manifest_recheck(source: str) -> str:
@@ -536,6 +606,7 @@ def render(directory: Path) -> dict[str, str]:
                 _, result = receipts.transform(result, name, COMPACT_MANIFEST_RECHECK)
             if _before_scheduled_reuse_readback(source) != source:
                 _, result = receipts.transform(result, name, SCHEDULED_REUSE_READBACK)
+                _, result = receipts.transform(result, name, SCHEDULED_REUSE_READBACK_HELPER)
         states.add(state)
         if result != source:
             changes[name] = result

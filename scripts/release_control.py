@@ -998,6 +998,56 @@ class GitHub:
             return None
         return self.response(result, f"GET {endpoint}", http)
 
+    @staticmethod
+    def _read_attempt_timeout(deadline: float | None, timeout: int) -> float:
+        """Bound one process attempt by the shared publication deadline."""
+        if deadline is None:
+            return timeout
+        remaining = deadline - time.monotonic()
+        require(remaining > 0, "Publication metadata deadline exceeded")
+        return min(timeout, remaining)
+
+    def _run_read_attempt(
+        self, command: list[str], endpoint: str, paginated: bool,
+        final_attempt: bool, attempt: int, deadline: float | None, timeout: int,
+    ) -> bytes | None:
+        """Run and classify one complete metadata request, or allow a retry."""
+        attempt_timeout = self._read_attempt_timeout(deadline, timeout)
+        try:
+            result = run_process(
+                [resolve_executable(command[0]), *command[1:]],
+                check=False, timeout=attempt_timeout, max_output_bytes=64 * 1024 * 1024,
+            )
+        except (ProcessTimeout, subprocess.TimeoutExpired) as error:
+            if deadline is not None and time.monotonic() >= deadline:
+                raise GitHubError(
+                    f"GET {endpoint}: publication metadata deadline exceeded"
+                ) from error
+            denied = self._denied_partial_read(
+                error.stdout or b"", error.stderr or b"", paginated
+            )
+            if denied or final_attempt:
+                raise GitHubError(
+                    f"GET {endpoint}: read timed out after {attempt + 1} attempts"
+                ) from error
+            return None
+
+        if deadline is not None and time.monotonic() >= deadline:
+            raise GitHubError(f"GET {endpoint}: publication metadata deadline exceeded")
+        return self._completed_read(result, endpoint, paginated, final_attempt)
+
+    @staticmethod
+    def _wait_for_read_retry(deadline: float | None, attempt: int) -> None:
+        """Wait for bounded retry jitter without overshooting the shared deadline."""
+        remaining = float("inf")
+        if deadline is not None:
+            remaining = deadline - time.monotonic()
+            require(remaining > 0, "Publication metadata deadline exceeded")
+        # The complete previous stdout is discarded, including paginated
+        # prefixes and binary fragments. Jitter adds at most six seconds.
+        delay = random.uniform(1, 2 ** (attempt + 1))  # nosec B311
+        time.sleep(min(delay, remaining))
+
     def _read_get(self, command: list[str], endpoint: str, paginated: bool = False,
                   *, timeout: int) -> bytes:
         """Retry at most three whole reads; discard every failed response."""
@@ -1007,41 +1057,12 @@ class GitHub:
         deadline = _API_READ_DEADLINE.get()
         for attempt in range(API_READ_ATTEMPTS):
             final_attempt = attempt == API_READ_ATTEMPTS - 1
-            attempt_timeout = timeout
-            if deadline is not None:
-                remaining = deadline - time.monotonic()
-                require(remaining > 0, "Publication metadata deadline exceeded")
-                attempt_timeout = min(timeout, remaining)
-            try:
-                result = run_process(
-                    [resolve_executable(command[0]), *command[1:]],
-                    check=False, timeout=attempt_timeout, max_output_bytes=64 * 1024 * 1024,
-                )
-            except (ProcessTimeout, subprocess.TimeoutExpired) as error:
-                if deadline is not None and time.monotonic() >= deadline:
-                    raise GitHubError(f"GET {endpoint}: publication metadata deadline exceeded") from error
-                if (self._denied_partial_read(error.stdout or b"", error.stderr or b"", paginated)
-                        or final_attempt):
-                    raise GitHubError(
-                        f"GET {endpoint}: read timed out after {attempt + 1} attempts"
-                    ) from error
-            else:
-                if deadline is not None and time.monotonic() >= deadline:
-                    raise GitHubError(f"GET {endpoint}: publication metadata deadline exceeded")
-                content = self._completed_read(result, endpoint, paginated, final_attempt)
-                if content is not None:
-                    return content
-                # Drop the failed capture before sleeping or allocating the next one.
-                del result
-            if deadline is not None:
-                remaining = deadline - time.monotonic()
-                require(remaining > 0, "Publication metadata deadline exceeded")
-            else:
-                remaining = float("inf")
-            # The complete previous stdout is discarded, including paginated
-            # prefixes and binary fragments. Jitter adds at most six seconds.
-            delay = random.uniform(1, 2 ** (attempt + 1))  # nosec B311
-            time.sleep(min(delay, remaining))
+            content = self._run_read_attempt(
+                command, endpoint, paginated, final_attempt, attempt, deadline, timeout,
+            )
+            if content is not None:
+                return content
+            self._wait_for_read_retry(deadline, attempt)
         raise AssertionError("GET retry loop must return or raise")
 
     def api(

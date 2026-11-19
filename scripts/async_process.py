@@ -288,31 +288,22 @@ def _handle_owned_process_events(
         _read_owned_process_output(state, stream, key.data)
 
 
-def _complete_owned_process(state: _OwnedProcessState) -> ProcessResult:
-    # The loop reaches completion only after the leader exited and all captured
-    # pipes reached EOF. Keep its unreaped PID/PGID reserved until the whole
-    # owned group is gone: descendants may have closed their inherited pipes
-    # and otherwise outlive a successful leader.
-    if state.failure is None and state.cancel_event is not None and state.cancel_event.is_set():
+def _record_completion_failure(state: _OwnedProcessState) -> None:
+    """Remember cancellation or deadline observed around process-group cleanup."""
+    if state.failure is not None:
+        return
+    if state.cancel_event is not None and state.cancel_event.is_set():
         state.failure = _ProcessCancelled()
-    if state.failure is None and state.deadline is not None and time.monotonic() >= state.deadline:
+    elif state.deadline is not None and time.monotonic() >= state.deadline:
         state.failure = ProcessTimeout(
             state.timeout or 0,
             _format_output(bytes(state.captured["stdout"]), state.text),
             _format_output(bytes(state.captured["stderr"]), state.text),
         )
-    _kill_owned_process(state.process)
-    # Group cleanup must happen before wait() reaps the leader; after that its
-    # PID could be reused and killpg(pid, ...) would no longer be safe.
-    if state.failure is None and state.cancel_event is not None and state.cancel_event.is_set():
-        state.failure = _ProcessCancelled()
-    if state.failure is None and state.deadline is not None and time.monotonic() >= state.deadline:
-        state.failure = ProcessTimeout(
-            state.timeout or 0,
-            _format_output(bytes(state.captured["stdout"]), state.text),
-            _format_output(bytes(state.captured["stderr"]), state.text),
-        )
-    returncode = _wait_owned_process(state.process)
+
+
+def _raise_owned_process_failure(state: _OwnedProcessState) -> None:
+    """Raise a captured process failure after its leader and group are reaped."""
     if isinstance(state.failure, ProcessTimeout):
         raise ProcessTimeout(
             state.failure.timeout,
@@ -329,6 +320,20 @@ def _complete_owned_process(state: _OwnedProcessState) -> ProcessResult:
             _format_output(bytes(state.captured["stdout"]), state.text),
             _format_output(bytes(state.captured["stderr"]), state.text),
         )
+
+
+def _complete_owned_process(state: _OwnedProcessState) -> ProcessResult:
+    # The loop reaches completion only after the leader exited and all captured
+    # pipes reached EOF. Keep its unreaped PID/PGID reserved until the whole
+    # owned group is gone: descendants may have closed their inherited pipes
+    # and otherwise outlive a successful leader.
+    _record_completion_failure(state)
+    _kill_owned_process(state.process)
+    # Group cleanup must happen before wait() reaps the leader; after that its
+    # PID could be reused and killpg(pid, ...) would no longer be safe.
+    _record_completion_failure(state)
+    returncode = _wait_owned_process(state.process)
+    _raise_owned_process_failure(state)
     return ProcessResult(
         state.command,
         returncode,
