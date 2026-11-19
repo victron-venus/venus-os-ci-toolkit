@@ -227,10 +227,12 @@ class CandidateDownloadTests(unittest.TestCase):
 
     def test_candidate_supervisor_failure_aborts_verification_before_writes(self):
         gh = DownloadingGitHub()
-        denied = rc.GitHubError("Asset process-group termination failed; descendants may still be running")
+        denied = rc.ProcessCleanupError(
+            "Asset supervisor inherited pipes did not reach EOF before cleanup deadline",
+        )
 
         with patch.object(rc, "download_asset", side_effect=denied):
-            with self.assertRaises(rc.GitHubError) as raised:
+            with self.assertRaises(rc.ProcessCleanupError) as raised:
                 self.verify(gh)
 
         self.assertIs(raised.exception, denied)

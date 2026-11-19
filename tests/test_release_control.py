@@ -31,6 +31,7 @@ from urllib.parse import urlsplit
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
+async_process_module = importlib.import_module("async_process")
 SPEC = importlib.util.spec_from_file_location("release_control", ROOT / "scripts/release_control.py")
 rc = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(rc)
@@ -702,6 +703,39 @@ class WholeReadRecoveryTests(unittest.TestCase):
 class AssetStreamCleanupTests(unittest.TestCase):
     """Ensure a timed-out streaming helper cannot leave pipe-holding descendants."""
 
+    class _Pipe:
+        def __init__(self):
+            self.closed = False
+
+        def close(self):
+            self.closed = True
+
+    class _Process:
+        pid = 12345
+
+        def __init__(self):
+            self.stdout = AssetStreamCleanupTests._Pipe()
+            self.stderr = AssetStreamCleanupTests._Pipe()
+            self.wait_timeouts = []
+
+        def wait(self, timeout=None):
+            self.wait_timeouts.append(timeout)
+            return 0
+
+    class _Thread:
+        def __init__(self, *args, **kwargs):
+            self.ident = None
+
+        def start(self):
+            self.ident = 1
+
+        def join(self, timeout=None):
+            return None
+
+    class _Output:
+        def check(self):
+            return None
+
     def drain_status_events(self, statuses, eof=True):
         events = rc.queue.Queue()
         for frame in statuses:
@@ -961,6 +995,105 @@ class AssetStreamCleanupTests(unittest.TestCase):
         self.assertEqual(process.wait_timeouts, [rc.CLEANUP_TIMEOUT_SECONDS])
         self.assertEqual(process.returncode, 0, "the leader was not reaped")
         self.assertIs(raised.exception.__cause__, denied, "original signal failure was obscured")
+
+    @unittest.skipUnless(os.name == "posix", "stream process groups require POSIX")
+    def test_inherited_pipe_cleanup_uses_short_post_status_deadline(self):
+        with tempfile.TemporaryDirectory(prefix="release-stream-inherited-pipe-") as temp:
+            root = Path(temp)
+            destination = root / "asset.bin"
+            child_pid = root / "escaped-child.pid"
+            child_code = (
+                "import os,pathlib,time; os.setsid(); "
+                f"pathlib.Path({str(child_pid)!r}).write_text(str(os.getpid())); "
+                "time.sleep(30)"
+            )
+            script = (
+                "import os,subprocess,sys,time\n"
+                f"subprocess.Popen([sys.executable,'-c',{child_code!r}])\n"
+                f"ready={str(child_pid)!r}\n"
+                "deadline=time.monotonic()+2\n"
+                "while not os.path.exists(ready) and time.monotonic()<deadline:\n"
+                " time.sleep(0.01)\n"
+            )
+            command = [sys.executable, "-c", script]
+            started = rc.time.monotonic()
+            with destination.open("w+b", buffering=0) as output_file:
+                writer = rc._AssetWriter(
+                    output_file, destination,
+                    {"size": 0, "sha256": hashlib.sha256(b"").hexdigest()},
+                    rc.DownloadBudget(0),
+                )
+                with (
+                    patch.object(rc, "CLEANUP_TIMEOUT_SECONDS", 0.2),
+                    self.assertRaisesRegex(
+                        rc.ProcessCleanupError,
+                        "inherited pipes did not reach EOF before cleanup deadline",
+                    ),
+                ):
+                    rc._stream_asset(command, writer, deadline=started + 10)
+            elapsed = rc.time.monotonic() - started
+            self.assertTrue(child_pid.exists(), "target did not create the escaped child")
+            self.assertLess(elapsed, 5, "cleanup waited for the transfer deadline")
+            try:
+                os.kill(int(child_pid.read_text()), rc.signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+
+    @unittest.skipUnless(os.name == "posix", "stream process groups require POSIX")
+    def test_supervisor_control_fd_closes_if_group_termination_raises(self):
+        process = self._Process()
+        status_pipe = self._Pipe()
+        launch = types.SimpleNamespace(
+            process=process, status_stream=status_pipe, control_fd=1234,
+        )
+        termination_error = OSError("group signaling failed")
+        with (
+            patch.object(rc, "_require_nonreaping_wait_support"),
+            patch.object(rc, "_launch_supervised_process", return_value=launch),
+            patch.object(rc.threading, "Thread", self._Thread),
+            patch.object(rc, "_drain_asset_stream", side_effect=RuntimeError("stream failed")),
+            patch.object(rc, "_terminate_asset_process_group", side_effect=termination_error),
+            patch.object(rc.os, "close") as close_fd,
+            self.assertRaisesRegex(OSError, "group signaling failed"),
+        ):
+            rc._stream_asset(["/usr/bin/gh"], self._Output(), deadline=rc.time.monotonic() + 1)
+
+        close_fd.assert_called_once_with(1234)
+        self.assertEqual(launch.control_fd, -1)
+        self.assertTrue(process.stdout.closed)
+        self.assertTrue(process.stderr.closed)
+        self.assertTrue(status_pipe.closed)
+
+    @unittest.skipUnless(os.name == "posix", "stream process groups require POSIX")
+    def test_status_signal_denial_is_not_retried_during_teardown(self):
+        process = self._Process()
+        launch = types.SimpleNamespace(
+            process=process, status_stream=self._Pipe(), control_fd=1234,
+        )
+        denied = PermissionError("group signal denied")
+        frame = struct.pack("!4sBi", b"IVSP", 1, 0)
+
+        def fail_while_accepting_status(*_args):
+            rc._accept_asset_status(frame, bytearray(), None, launch)
+
+        with (
+            patch.object(rc, "_require_nonreaping_wait_support"),
+            patch.object(rc, "_launch_supervised_process", return_value=launch),
+            patch.object(rc.threading, "Thread", self._Thread),
+            patch.object(rc, "_drain_asset_stream", side_effect=fail_while_accepting_status),
+            patch.object(rc, "_kill_owned_process", return_value=denied) as signal_group,
+            patch.object(rc, "_terminate_asset_process_group") as fallback_signal,
+            patch.object(rc.os, "close") as close_fd,
+            self.assertRaisesRegex(rc.GitHubError, "termination failed; descendants may still be running") as raised,
+        ):
+            rc._stream_asset(["/usr/bin/gh"], self._Output(), deadline=rc.time.monotonic() + 1)
+
+        signal_group.assert_called_once_with(process)
+        fallback_signal.assert_not_called()
+        self.assertEqual(process.wait_timeouts, [rc.CLEANUP_TIMEOUT_SECONDS])
+        self.assertEqual(launch.control_fd, -1)
+        close_fd.assert_called_once_with(1234)
+        self.assertIs(raised.exception.__cause__, denied)
 
     @unittest.skipUnless(os.name == "posix", "stream process groups require POSIX")
     def test_timeout_kills_process_group_when_descendants_hold_or_close_pipes(self):
@@ -2528,6 +2661,80 @@ class TransportTests(unittest.TestCase):
             gh.api("git/refs", "POST", {"ref": f"refs/tags/{RC_TAG}", "sha": SHA})
             gh.api("releases/10", "PATCH", {"draft": False})
         self.assertEqual(command.call_count, len(paths) + 2)
+
+    @unittest.skipUnless(os.name == "posix", "the supervised asset downloader requires POSIX")
+    def test_download_asset_resolves_and_runs_real_gh_from_path(self):
+        payload = b"integration asset bytes"
+        with tempfile.TemporaryDirectory(prefix="release-fake-gh-") as temp:
+            root = Path(temp)
+            fake_bin = root / "bin"
+            fake_bin.mkdir()
+            gh_path = fake_bin / "gh"
+            argv_path = root / "argv.json"
+            gh_path.write_text(
+                f"#!{sys.executable}\n"
+                "import json,pathlib,sys\n"
+                f"pathlib.Path({str(argv_path)!r}).write_text(json.dumps(sys.argv[1:]))\n"
+                f"sys.stdout.buffer.write({payload!r})\n"
+            )
+            gh_path.chmod(0o755)
+            destination = root / "asset.bin"
+            expected = {
+                "size": len(payload),
+                "sha256": hashlib.sha256(payload).hexdigest(),
+            }
+            with (
+                patch.dict(os.environ, {"PATH": f"{fake_bin}{os.pathsep}{os.environ.get('PATH', '')}"}),
+                patch.object(rc, "resolve_executable", async_process_module.resolve_executable),
+            ):
+                with destination.open("w+b", buffering=0) as output_file:
+                    writer = rc._AssetWriter(
+                        output_file, destination, expected, rc.DownloadBudget(len(payload)),
+                    )
+                    rc.GitHub(REPO).download_asset("releases/assets/42", writer)
+                    self.assertEqual(writer.identity(), expected)
+
+            self.assertEqual(destination.read_bytes(), payload)
+            self.assertEqual(
+                json.loads(argv_path.read_text()),
+                [
+                    "api", "--hostname", rc.GITHUB_HOSTNAME, "--method", "GET",
+                    "-H", "Accept: application/octet-stream", "--",
+                    f"repos/{REPO}/releases/assets/42",
+                ],
+            )
+
+    @unittest.skipUnless(os.name == "posix", "the supervised asset downloader requires POSIX")
+    def test_download_asset_real_gh_timeout_is_not_retried(self):
+        with tempfile.TemporaryDirectory(prefix="release-fake-gh-timeout-") as temp:
+            root = Path(temp)
+            fake_bin = root / "bin"
+            fake_bin.mkdir()
+            calls = root / "calls"
+            gh_path = fake_bin / "gh"
+            gh_path.write_text(
+                f"#!{sys.executable}\n"
+                "import pathlib,time\n"
+                f"with pathlib.Path({str(calls)!r}).open('a') as stream: stream.write('call\\n')\n"
+                "time.sleep(30)\n"
+            )
+            gh_path.chmod(0o755)
+            destination = root / "asset.bin"
+            payload = b"expected asset"
+            with (
+                patch.dict(os.environ, {"PATH": f"{fake_bin}{os.pathsep}{os.environ.get('PATH', '')}"}),
+                patch.object(rc, "resolve_executable", async_process_module.resolve_executable),
+                patch.object(rc, "ASSET_DOWNLOAD_TIMEOUT", 1.5),
+            ):
+                with destination.open("w+b", buffering=0) as output_file:
+                    writer = rc._AssetWriter(
+                        output_file, destination,
+                        {"size": len(payload), "sha256": hashlib.sha256(payload).hexdigest()},
+                        rc.DownloadBudget(len(payload)),
+                    )
+                    with self.assertRaisesRegex(rc.GitHubError, "asset download exceeded"):
+                        rc.GitHub(REPO).download_asset("releases/assets/42", writer)
+            self.assertEqual(calls.read_text().splitlines(), ["call"])
 
     def test_upload_rejects_tags_labels_symlinks_and_unstaged_paths(self):
         """Only a regular asset in the private staging directory can reach gh."""

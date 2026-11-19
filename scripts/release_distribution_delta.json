@@ -487,6 +487,37 @@
           "canonical_fragments": [
             "def _handle_asset_stream_event("
           ]
+        },
+        {
+          "before_sha256": "9e0818bf3ba1d7ede28a91ef76da2411712497321efbcfcbd1b703cc498c8bc6",
+          "after_sha256": "9fbea203852ee6c0b2146b1d8f030871e32fad1287caa25c4a0840fabfeabf93",
+          "canonical_source_sha256": "afc060678fd0cd1964d3e937be2e0f28e3401c7ec00e9f110f8ae06264310cc2",
+          "hunks": [
+            {
+              "before": "    if status == \"error\":\n        raise OSError(status_value, \"Asset helper could not be started\")\n    group_error = _kill_owned_process(launch.process)\n    if group_error is not None:\n        _close_asset_supervisor_control(launch)\n        raise ProcessCleanupError(\n            \"Asset supervisor process-group termination failed\"\n        ) from group_error\n    _close_asset_supervisor_control(launch)\n    return status_value\n",
+              "after": "    if status == \"error\":\n        raise OSError(status_value, \"Asset helper could not be started\")\n    launch.group_signal_attempted = True\n    group_error = _kill_owned_process(launch.process)\n    if group_error is not None:\n        launch.group_signal_error = group_error\n        _close_asset_supervisor_control(launch)\n        raise ProcessCleanupError(\n            \"Asset supervisor process-group termination failed\"\n        ) from group_error\n    launch.group_signaled = True\n    _close_asset_supervisor_control(launch)\n    return status_value\n"
+            },
+            {
+              "before": "    target_returncode: int | None = None\n    status_buffer = bytearray()\n    while len(ended) != 3:\n        output.check()\n        remaining = deadline - time.monotonic()\n        if remaining <= 0:\n            raise subprocess.TimeoutExpired(command, ASSET_DOWNLOAD_TIMEOUT)\n        try:\n",
+              "after": "    target_returncode: int | None = None\n    status_buffer = bytearray()\n    cleanup_deadline: float | None = None\n    while len(ended) != 3:\n        output.check()\n        active_deadline = deadline\n        if cleanup_deadline is not None:\n            active_deadline = min(active_deadline, cleanup_deadline)\n        remaining = active_deadline - time.monotonic()\n        if remaining <= 0:\n            if cleanup_deadline is not None and cleanup_deadline <= deadline:\n                raise ProcessCleanupError(\n                    \"Asset supervisor inherited pipes did not reach EOF before cleanup deadline\"\n                )\n            raise subprocess.TimeoutExpired(command, ASSET_DOWNLOAD_TIMEOUT)\n        try:\n"
+            },
+            {
+              "before": "        except queue.Empty:\n            continue\n        target_returncode = _handle_asset_stream_event(\n            kind, value, ended, output, stderr, status_buffer,\n            target_returncode, launch,\n        )\n    if target_returncode is None:\n        raise GitHubError(\"Asset supervisor did not confirm target completion\")\n",
+              "after": "        except queue.Empty:\n            continue\n        previous_returncode = target_returncode\n        target_returncode = _handle_asset_stream_event(\n            kind, value, ended, output, stderr, status_buffer,\n            target_returncode, launch,\n        )\n        if previous_returncode is None and target_returncode is not None:\n            cleanup_deadline = time.monotonic() + CLEANUP_TIMEOUT_SECONDS\n    if target_returncode is None:\n        raise GitHubError(\"Asset supervisor did not confirm target completion\")\n"
+            },
+            {
+              "before": "        try:\n            if not complete:\n                group_signal_error = _terminate_asset_process_group(process)\n                _close_asset_supervisor_control(launch)\n            try:\n                process_status = process.wait(timeout=CLEANUP_TIMEOUT_SECONDS)\n",
+              "after": "        try:\n            if not complete:\n                if not getattr(launch, \"group_signal_attempted\", False):\n                    launch.group_signal_attempted = True\n                    group_signal_error = _terminate_asset_process_group(process)\n                else:\n                    group_signal_error = getattr(launch, \"group_signal_error\", None)\n            try:\n                process_status = process.wait(timeout=CLEANUP_TIMEOUT_SECONDS)\n"
+            },
+            {
+              "before": "                )\n        finally:\n            for thread in threads:\n                if thread.ident is not None:\n",
+              "after": "                )\n        finally:\n            _close_asset_supervisor_control(launch)\n            for thread in threads:\n                if thread.ident is not None:\n"
+            },
+            {
+              "before": "        # Developer/CI toolchain selected by the invoking operator via PATH.\n        command = [\n            \"gh\", \"api\", \"--hostname\", GITHUB_HOSTNAME, \"--method\", \"GET\",\n            \"-H\", \"Accept: application/octet-stream\", \"--\", endpoint,\n        ]\n",
+              "after": "        # Developer/CI toolchain selected by the invoking operator via PATH.\n        command = [\n            resolve_executable(\"gh\"), \"api\", \"--hostname\", GITHUB_HOSTNAME, \"--method\", \"GET\",\n            \"-H\", \"Accept: application/octet-stream\", \"--\", endpoint,\n        ]\n"
+            }
+          ]
         }
       ]
     },
@@ -712,6 +743,17 @@
           ],
           "canonical_fragments": [
             "The shared confirm_publish contract"
+          ]
+        },
+        {
+          "before_sha256": "084d5e37a2a33b050e7d88d04ac16a5ebd7000c9fea8408fcee46711fcdbbaf5",
+          "after_sha256": "4f6c15e2ab465fdf510df2275cd937b3df543baf1652e9030303dc5ca7086a92",
+          "canonical_source_sha256": "bcd7ad592c9fdb5b668584d56b50fc7a13737853206f92acce2d37fcc1ece4f9",
+          "hunks": [
+            {
+              "before": "            payload = directory / (cast(str, item[\"name\"]) if retained else \"payload\")\n            # Keep candidate transfers on the shared bounded supervisor; it\n            # retains PID/PGID ownership through deadline cleanup before reaping.\n            # If group signaling is denied, its error still surfaces after reap.\n            identity = rc.download_asset(\n                gh, item[\"id\"], payload,\n",
+              "after": "            payload = directory / (cast(str, item[\"name\"]) if retained else \"payload\")\n            # Keep candidate transfers on the shared bounded supervisor; it\n            # resolves gh and bounds post-status pipe cleanup before reaping.\n            # Signal failures still surface after bounded reap.\n            identity = rc.download_asset(\n                gh, item[\"id\"], payload,\n"
+            }
           ]
         }
       ]
@@ -1087,6 +1129,29 @@
           "canonical_fragments": [
             "command = [\"gh\"]"
           ]
+        },
+        {
+          "before_sha256": "3b7b35d9597c93ee5c01181412af9aa27a33131a91f74c909001470243298fbe",
+          "after_sha256": "771c364e6bf221c1b3d3593a0c0f2cc4bb4daf06d9d3c4847c0a95fa5141aa3d",
+          "canonical_source_sha256": "d497ec9c4cae5875e2e332de39847af942e30744766408c0c5eca87e90d4de57",
+          "hunks": [
+            {
+              "before": "sys.path.insert(0, str(ROOT / \"scripts\"))\nSPEC = importlib.util.spec_from_file_location(\"release_control\", ROOT / \"scripts/release_control.py\")\n",
+              "after": "sys.path.insert(0, str(ROOT / \"scripts\"))\nasync_process_module = importlib.import_module(\"async_process\")\nSPEC = importlib.util.spec_from_file_location(\"release_control\", ROOT / \"scripts/release_control.py\")\n"
+            },
+            {
+              "before": "\n    def drain_status_events(self, statuses, eof=True):\n",
+              "after": "\n    class _Pipe:\n        def __init__(self):\n            self.closed = False\n\n        def close(self):\n            self.closed = True\n\n    class _Process:\n        pid = 12345\n\n        def __init__(self):\n            self.stdout = AssetStreamCleanupTests._Pipe()\n            self.stderr = AssetStreamCleanupTests._Pipe()\n            self.wait_timeouts = []\n\n        def wait(self, timeout=None):\n            self.wait_timeouts.append(timeout)\n            return 0\n\n    class _Thread:\n        def __init__(self, *args, **kwargs):\n            self.ident = None\n\n        def start(self):\n            self.ident = 1\n\n        def join(self, timeout=None):\n            return None\n\n    class _Output:\n        def check(self):\n            return None\n\n    def drain_status_events(self, statuses, eof=True):\n"
+            },
+            {
+              "before": "        self.assertIs(raised.exception.__cause__, denied, \"original signal failure was obscured\")\n\n",
+              "after": "        self.assertIs(raised.exception.__cause__, denied, \"original signal failure was obscured\")\n\n    @unittest.skipUnless(os.name == \"posix\", \"stream process groups require POSIX\")\n    def test_inherited_pipe_cleanup_uses_short_post_status_deadline(self):\n        with tempfile.TemporaryDirectory(prefix=\"release-stream-inherited-pipe-\") as temp:\n            root = Path(temp)\n            destination = root / \"asset.bin\"\n            child_pid = root / \"escaped-child.pid\"\n            child_code = (\n                \"import os,pathlib,time; os.setsid(); \"\n                f\"pathlib.Path({str(child_pid)!r}).write_text(str(os.getpid())); \"\n                \"time.sleep(30)\"\n            )\n            script = (\n                \"import os,subprocess,sys,time\\n\"\n                f\"subprocess.Popen([sys.executable,'-c',{child_code!r}])\\n\"\n                f\"ready={str(child_pid)!r}\\n\"\n                \"deadline=time.monotonic()+2\\n\"\n                \"while not os.path.exists(ready) and time.monotonic()<deadline:\\n\"\n                \" time.sleep(0.01)\\n\"\n            )\n            command = [sys.executable, \"-c\", script]\n            started = rc.time.monotonic()\n            with destination.open(\"w+b\", buffering=0) as output_file:\n                writer = rc._AssetWriter(\n                    output_file, destination,\n                    {\"size\": 0, \"sha256\": hashlib.sha256(b\"\").hexdigest()},\n                    rc.DownloadBudget(0),\n                )\n                with (\n                    patch.object(rc, \"CLEANUP_TIMEOUT_SECONDS\", 0.2),\n                    self.assertRaisesRegex(\n                        rc.ProcessCleanupError,\n                        \"inherited pipes did not reach EOF before cleanup deadline\",\n                    ),\n                ):\n                    rc._stream_asset(command, writer, deadline=started + 10)\n            elapsed = rc.time.monotonic() - started\n            self.assertTrue(child_pid.exists(), \"target did not create the escaped child\")\n            self.assertLess(elapsed, 5, \"cleanup waited for the transfer deadline\")\n            try:\n                os.kill(int(child_pid.read_text()), rc.signal.SIGKILL)\n            except ProcessLookupError:\n                pass\n\n    @unittest.skipUnless(os.name == \"posix\", \"stream process groups require POSIX\")\n    def test_supervisor_control_fd_closes_if_group_termination_raises(self):\n        process = self._Process()\n        status_pipe = self._Pipe()\n        launch = types.SimpleNamespace(\n            process=process, status_stream=status_pipe, control_fd=1234,\n        )\n        termination_error = OSError(\"group signaling failed\")\n        with (\n            patch.object(rc, \"_require_nonreaping_wait_support\"),\n            patch.object(rc, \"_launch_supervised_process\", return_value=launch),\n            patch.object(rc.threading, \"Thread\", self._Thread),\n            patch.object(rc, \"_drain_asset_stream\", side_effect=RuntimeError(\"stream failed\")),\n            patch.object(rc, \"_terminate_asset_process_group\", side_effect=termination_error),\n            patch.object(rc.os, \"close\") as close_fd,\n            self.assertRaisesRegex(OSError, \"group signaling failed\"),\n        ):\n            rc._stream_asset([\"/usr/bin/gh\"], self._Output(), deadline=rc.time.monotonic() + 1)\n\n        close_fd.assert_called_once_with(1234)\n        self.assertEqual(launch.control_fd, -1)\n        self.assertTrue(process.stdout.closed)\n        self.assertTrue(process.stderr.closed)\n        self.assertTrue(status_pipe.closed)\n\n    @unittest.skipUnless(os.name == \"posix\", \"stream process groups require POSIX\")\n    def test_status_signal_denial_is_not_retried_during_teardown(self):\n        process = self._Process()\n        launch = types.SimpleNamespace(\n            process=process, status_stream=self._Pipe(), control_fd=1234,\n        )\n        denied = PermissionError(\"group signal denied\")\n        frame = struct.pack(\"!4sBi\", b\"IVSP\", 1, 0)\n\n        def fail_while_accepting_status(*_args):\n            rc._accept_asset_status(frame, bytearray(), None, launch)\n\n        with (\n            patch.object(rc, \"_require_nonreaping_wait_support\"),\n            patch.object(rc, \"_launch_supervised_process\", return_value=launch),\n            patch.object(rc.threading, \"Thread\", self._Thread),\n            patch.object(rc, \"_drain_asset_stream\", side_effect=fail_while_accepting_status),\n            patch.object(rc, \"_kill_owned_process\", return_value=denied) as signal_group,\n            patch.object(rc, \"_terminate_asset_process_group\") as fallback_signal,\n            patch.object(rc.os, \"close\") as close_fd,\n            self.assertRaisesRegex(rc.GitHubError, \"termination failed; descendants may still be running\") as raised,\n        ):\n            rc._stream_asset([\"/usr/bin/gh\"], self._Output(), deadline=rc.time.monotonic() + 1)\n\n        signal_group.assert_called_once_with(process)\n        fallback_signal.assert_not_called()\n        self.assertEqual(process.wait_timeouts, [rc.CLEANUP_TIMEOUT_SECONDS])\n        self.assertEqual(launch.control_fd, -1)\n        close_fd.assert_called_once_with(1234)\n        self.assertIs(raised.exception.__cause__, denied)\n\n"
+            },
+            {
+              "before": "        self.assertEqual(command.call_count, len(paths) + 2)\n\n",
+              "after": "        self.assertEqual(command.call_count, len(paths) + 2)\n\n    @unittest.skipUnless(os.name == \"posix\", \"the supervised asset downloader requires POSIX\")\n    def test_download_asset_resolves_and_runs_real_gh_from_path(self):\n        payload = b\"integration asset bytes\"\n        with tempfile.TemporaryDirectory(prefix=\"release-fake-gh-\") as temp:\n            root = Path(temp)\n            fake_bin = root / \"bin\"\n            fake_bin.mkdir()\n            gh_path = fake_bin / \"gh\"\n            argv_path = root / \"argv.json\"\n            gh_path.write_text(\n                f\"#!{sys.executable}\\n\"\n                \"import json,pathlib,sys\\n\"\n                f\"pathlib.Path({str(argv_path)!r}).write_text(json.dumps(sys.argv[1:]))\\n\"\n                f\"sys.stdout.buffer.write({payload!r})\\n\"\n            )\n            gh_path.chmod(0o755)\n            destination = root / \"asset.bin\"\n            expected = {\n                \"size\": len(payload),\n                \"sha256\": hashlib.sha256(payload).hexdigest(),\n            }\n            with (\n                patch.dict(os.environ, {\"PATH\": f\"{fake_bin}{os.pathsep}{os.environ.get('PATH', '')}\"}),\n                patch.object(rc, \"resolve_executable\", async_process_module.resolve_executable),\n            ):\n                with destination.open(\"w+b\", buffering=0) as output_file:\n                    writer = rc._AssetWriter(\n                        output_file, destination, expected, rc.DownloadBudget(len(payload)),\n                    )\n                    rc.GitHub(REPO).download_asset(\"releases/assets/42\", writer)\n                    self.assertEqual(writer.identity(), expected)\n\n            self.assertEqual(destination.read_bytes(), payload)\n            self.assertEqual(\n                json.loads(argv_path.read_text()),\n                [\n                    \"api\", \"--hostname\", rc.GITHUB_HOSTNAME, \"--method\", \"GET\",\n                    \"-H\", \"Accept: application/octet-stream\", \"--\",\n                    f\"repos/{REPO}/releases/assets/42\",\n                ],\n            )\n\n    @unittest.skipUnless(os.name == \"posix\", \"the supervised asset downloader requires POSIX\")\n    def test_download_asset_real_gh_timeout_is_not_retried(self):\n        with tempfile.TemporaryDirectory(prefix=\"release-fake-gh-timeout-\") as temp:\n            root = Path(temp)\n            fake_bin = root / \"bin\"\n            fake_bin.mkdir()\n            calls = root / \"calls\"\n            gh_path = fake_bin / \"gh\"\n            gh_path.write_text(\n                f\"#!{sys.executable}\\n\"\n                \"import pathlib,time\\n\"\n                f\"with pathlib.Path({str(calls)!r}).open('a') as stream: stream.write('call\\\\n')\\n\"\n                \"time.sleep(30)\\n\"\n            )\n            gh_path.chmod(0o755)\n            destination = root / \"asset.bin\"\n            payload = b\"expected asset\"\n            with (\n                patch.dict(os.environ, {\"PATH\": f\"{fake_bin}{os.pathsep}{os.environ.get('PATH', '')}\"}),\n                patch.object(rc, \"resolve_executable\", async_process_module.resolve_executable),\n                patch.object(rc, \"ASSET_DOWNLOAD_TIMEOUT\", 1.5),\n            ):\n                with destination.open(\"w+b\", buffering=0) as output_file:\n                    writer = rc._AssetWriter(\n                        output_file, destination,\n                        {\"size\": len(payload), \"sha256\": hashlib.sha256(payload).hexdigest()},\n                        rc.DownloadBudget(len(payload)),\n                    )\n                    with self.assertRaisesRegex(rc.GitHubError, \"asset download exceeded\"):\n                        rc.GitHub(REPO).download_asset(\"releases/assets/42\", writer)\n            self.assertEqual(calls.read_text().splitlines(), [\"call\"])\n\n"
+            }
+          ]
         }
       ],
       "test_only_successor_layers": [
@@ -1334,6 +1399,17 @@
           "canonical_fragments": [
             "test_publisher_termination_during_final_tag_read_stops_before_public_release"
           ]
+        },
+        {
+          "before_sha256": "5cc197a1c5df9cd24c4677fd98f8dc3cc3af8d32a08c1f148edbd72f65afe933",
+          "after_sha256": "8910559a530c24be4a7ee0a5152c240d383678a5c6b383242445217fca4a55bb",
+          "canonical_source_sha256": "2f4f3fe69851319a1e33a8fc529cb2a6aca276a5290e470d04b280f106d8b66e",
+          "hunks": [
+            {
+              "before": "    def test_candidate_supervisor_failure_aborts_verification_before_writes(self):\n        gh = DownloadingGitHub()\n        denied = rc.GitHubError(\"Asset process-group termination failed; descendants may still be running\")\n\n        with patch.object(rc, \"download_asset\", side_effect=denied):\n            with self.assertRaises(rc.GitHubError) as raised:\n                self.verify(gh)\n\n",
+              "after": "    def test_candidate_supervisor_failure_aborts_verification_before_writes(self):\n        gh = DownloadingGitHub()\n        denied = rc.ProcessCleanupError(\n            \"Asset supervisor inherited pipes did not reach EOF before cleanup deadline\",\n        )\n\n        with patch.object(rc, \"download_asset\", side_effect=denied):\n            with self.assertRaises(rc.ProcessCleanupError) as raised:\n                self.verify(gh)\n\n"
+            }
+          ]
         }
       ]
     },
@@ -1480,6 +1556,18 @@
               "after": "        )\n        return _drive_owned_process(state)\n    except (ProcessTimeout, ProcessOutputLimit, _ProcessCancelled, ProcessCleanupError):\n        raise\n    except BaseException:\n        _abort_owned_process_run(process, state, launch.control_fd)\n        raise\n    finally:\n        _close_owned_process_run(selector, opened_streams, state)\n\n\ndef _run_owned_process(\n    command: tuple[str, ...],\n    *,\n    env: Mapping[str, str] | None,\n    cwd: str | Path | None,\n    input_bytes: bytes | None,\n    max_output_bytes: int,\n    text: bool,\n    timeout: float | None,\n    cancel_event: threading.Event | None = None,\n) -> ProcessResult:\n    \"\"\"Run a POSIX child whose PID is owned before any timeout can arrive.\"\"\"\n    _require_supported_runtime()\n    if cancel_event is not None and cancel_event.is_set():\n        raise _ProcessCancelled()\n    launch = _launch_supervised_process(\n        command, env=env, cwd=cwd, input_enabled=input_bytes is not None,\n    )\n    # Own every pipe before selector setup, then cleanup always sees even streams\n    # that registration never reached.\n    return _execute_owned_process_launch(\n        launch, command, input_bytes=input_bytes, max_output_bytes=max_output_bytes,\n        text=text, timeout=timeout, cancel_event=cancel_event,\n    )\n\n\n"
             }
           ]
+        },
+        {
+          "before_sha256": "774241476967fc972ce946b43c4bfa0deb7e6d82cdb6419b5cff85a87701e9dc",
+          "after_sha256": "52ef7d2833d2cb957085b11193ce0ff210ffe500f0aabdaf907c046309a13e3e",
+          "canonical_source_before_sha256": "092b0a3b8466d1631445deeaf992feb676d24aba34c6df74e2859e1fafc66700",
+          "canonical_source_sha256": "c93482ede99b87b15d9548c4ddc5189ce07ea3f0c02346c37ae9545dbee1edaf",
+          "source_hunks": [
+            {
+              "before": "try:\n    # The parent SIGKILLs this still-live group as soon as it validates status.\n    # If the parent disappears first, EOF triggers the same cleanup locally.\n    os.read(control_fd, 1)\nexcept OSError:\n",
+              "after": "try:\n    # The parent SIGKILLs this still-live group as soon as it validates status.\n    # If the parent disappears first, EOF triggers cleanup while the wrapper\n    # still pins the process-group identity.\n    os.read(control_fd, 1)\nexcept OSError:\n"
+            }
+          ]
         }
       ]
     },
@@ -1506,6 +1594,30 @@
             {
               "before": "                    self.assertEqual(os.getsid(descendant_pid), processes[0].pid)\n                    self.assertNotEqual(os.getpgid(descendant_pid), processes[0].pid)\n                    try:\n                        os.kill(descendant_pid, 0)\n                    except ProcessLookupError:\n                        self.fail(\"fixture descendant exited before failed group cleanup was observed\")\n                finally:\n                    if pid_file.exists():\n",
               "after": "                    self.assertEqual(os.getsid(descendant_pid), processes[0].pid)\n                    self.assertNotEqual(os.getpgid(descendant_pid), processes[0].pid)\n                    os.kill(descendant_pid, 0)\n                finally:\n                    if pid_file.exists():\n"
+            }
+          ]
+        },
+        {
+          "before_sha256": "4f8b7d7574672474831800420ef447f671d2ae73e8fe70d3b59f9af1ed16713c",
+          "after_sha256": "d73a55de5ad2f5a5d5b4ee9f040712ae2ea4a0fbd99bbfc03a9c8467b0eee3e4",
+          "canonical_source_before_sha256": "6ac53d0a6757eec6b756f30e9be0e1db2b0477593530169b955499c79a006979",
+          "canonical_source_sha256": "e44f57f3d3457ac69f9635a7aa501a03a3f90c653d1f72766f36fe7129a97e73",
+          "source_hunks": [
+            {
+              "before": "                deadline = time.monotonic() + 5\n                while not ready.exists() and time.monotonic() < deadline:\n                    if supervised.process.poll() is not None:\n                        break\n                    time.sleep(0.005)\n                if not ready.exists():\n                    async_process._kill_owned_process(supervised.process)\n                    supervised.process.wait(timeout=2)\n                    raise AssertionError(\"child did not flush initial output before timeout starts\")\n                return supervised\n",
+              "after": "                deadline = time.monotonic() + 5\n                while not ready.exists() and time.monotonic() < deadline:\n                    if async_process._process_has_exited(supervised.process):\n                        break\n                    time.sleep(0.005)\n                if not ready.exists():\n                    try:\n                        group_error = kill(supervised.process)\n                        if group_error is not None:\n                            async_process._reap_after_group_signal_error(\n                                supervised.process, group_error,\n                            )\n                        supervised.process.wait(timeout=2)\n                    finally:\n                        async_process._close_supervisor_fd(supervised.control_fd)\n                        async_process._close_supervisor_stream(supervised.status_stream)\n                        for stream in (\n                            supervised.process.stdin,\n                            supervised.process.stdout,\n                            supervised.process.stderr,\n                        ):\n                            async_process._close_supervisor_stream(stream)\n                    raise AssertionError(\"child did not flush initial output before timeout starts\")\n                return supervised\n"
+            },
+            {
+              "before": "    @unittest.skipUnless(os.name == \"posix\", \"supervisor process groups are POSIX-specific\")\n    def test_supervisor_control_pipe_eof_kills_owned_group(self):\n        launch = async_process._launch_supervised_process(\n            (sys.executable, \"-c\", \"import time; time.sleep(60)\"),\n            env=None, cwd=None, input_enabled=False,\n        )\n        try:\n            os.close(launch.control_fd)\n            launch.control_fd = -1\n            returncode = launch.process.wait(timeout=5)\n            self.assertEqual(returncode, -signal.SIGKILL)\n        finally:\n            launch.status_stream.close()\n            for stream in (launch.process.stdin, launch.process.stdout, launch.process.stderr):\n                if stream is not None:\n                    stream.close()\n\n    def test_process_group_kill_fails_closed_if_leader_was_reaped_elsewhere(self):\n",
+              "after": "    @unittest.skipUnless(os.name == \"posix\", \"supervisor process groups are POSIX-specific\")\n    def test_supervisor_control_pipe_eof_kills_owned_group(self):\n        with tempfile.TemporaryDirectory() as directory:\n            pid_file = Path(directory) / \"control-eof-target.pid\"\n            target = (\n                \"from pathlib import Path; import os,time; \"\n                f\"Path({str(pid_file)!r}).write_text(str(os.getpid())); time.sleep(60)\"\n            )\n            launch = async_process._launch_supervised_process(\n                (sys.executable, \"-c\", target),\n                env=None, cwd=None, input_enabled=False,\n            )\n            try:\n                deadline = time.monotonic() + 5\n                while not pid_file.exists() and time.monotonic() < deadline:\n                    if async_process._process_has_exited(launch.process):\n                        break\n                    time.sleep(0.01)\n                self.assertTrue(pid_file.exists(), \"control-EOF target never started\")\n                os.close(launch.control_fd)\n                launch.control_fd = -1\n                returncode = launch.process.wait(timeout=5)\n                self.assertEqual(returncode, -signal.SIGKILL)\n            finally:\n                if launch.control_fd >= 0:\n                    async_process._close_supervisor_fd(launch.control_fd)\n                async_process._close_supervisor_stream(launch.status_stream)\n                for stream in (launch.process.stdin, launch.process.stdout, launch.process.stderr):\n                    async_process._close_supervisor_stream(stream)\n            self.assert_process_stopped(pid_file)\n\n    def test_process_group_kill_fails_closed_if_leader_was_reaped_elsewhere(self):\n"
+            },
+            {
+              "before": "                        await asyncio.wait_for(task, timeout=8)\n                    self.assertLess(time.monotonic() - start, 8)\n                    AsyncProcessTests.assert_process_stopped(self, pid_file)\n                    self.assertEqual(len(wrappers), 1)\n                    self.assertIsNotNone(wrappers[0].returncode, \"supervisor wrapper was not reaped\")\n",
+              "after": "                        await asyncio.wait_for(task, timeout=8)\n                    self.assertLess(time.monotonic() - start, 8)\n                    self.assertEqual(len(wrappers), 1)\n                    self.assertIsNotNone(wrappers[0].returncode, \"supervisor wrapper was not reaped\")\n"
+            },
+            {
+              "before": "                    except ProcessLookupError:\n                        pass\n\n    async def test_unsupported_platform_fails_before_spawning(self):\n",
+              "after": "                    except ProcessLookupError:\n                        pass\n            AsyncProcessTests.assert_process_stopped(self, pid_file)\n\n    async def test_unsupported_platform_fails_before_spawning(self):\n"
             }
           ]
         }

@@ -289,8 +289,8 @@ def _read_verified_rc(
                 continue
             payload = directory / (cast(str, item["name"]) if retained else "payload")
             # Keep candidate transfers on the shared bounded supervisor; it
-            # retains PID/PGID ownership through deadline cleanup before reaping.
-            # If group signaling is denied, its error still surfaces after reap.
+            # resolves gh and bounds post-status pipe cleanup before reaping.
+            # Signal failures still surface after bounded reap.
             identity = rc.download_asset(
                 gh, item["id"], payload,
                 expected=cast(rc.AssetIdentity, {

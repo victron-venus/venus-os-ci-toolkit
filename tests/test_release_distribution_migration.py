@@ -303,8 +303,10 @@ class ShippedDistributionDeltaTests(unittest.TestCase):
     def test_async_helper_copy_successor_preserves_old_layer_and_rejects_unknown_hash(self):
         specification = json.loads(migration.DELTA.read_bytes())
         entry = specification["files"]["scripts/async_process.py"]
-        layer = entry["copy_successor_layers"][-1]
-        self.assertEqual(layer["before_sha256"], entry["after_sha256"])
+        layers = entry["copy_successor_layers"]
+        layer = layers[-1]
+        expected_before = layers[-2]["after_sha256"] if len(layers) > 1 else entry["after_sha256"]
+        self.assertEqual(layer["before_sha256"], expected_before)
         helper_text = (ROOT / "scripts/async_process.py").read_text(encoding="utf-8")
         for hunk in reversed(layer["source_hunks"]):
             self.assertEqual(helper_text.count(hunk["after"]), 1)
@@ -337,7 +339,9 @@ class ShippedDistributionDeltaTests(unittest.TestCase):
         specification = json.loads(migration.DELTA.read_bytes())
         historical = json.loads(json.dumps(specification))
         for name in self.ADVANCED_SUCCESSOR_FILES:
-            historical["files"][name]["successor_layers"].pop()
+            rewinds = 2 if include_old_test_overlay else 1
+            for _ in range(rewinds):
+                historical["files"][name]["successor_layers"].pop()
         for name, entry in historical["files"].items():
             if entry.get("copy_successor_layers"):
                 entry["copy_successor_layers"].pop()

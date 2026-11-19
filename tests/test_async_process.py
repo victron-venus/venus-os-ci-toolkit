@@ -127,12 +127,26 @@ class AsyncProcessTests(unittest.TestCase):
                 supervised = launch(*args, **kwargs)
                 deadline = time.monotonic() + 5
                 while not ready.exists() and time.monotonic() < deadline:
-                    if supervised.process.poll() is not None:
+                    if async_process._process_has_exited(supervised.process):
                         break
                     time.sleep(0.005)
                 if not ready.exists():
-                    async_process._kill_owned_process(supervised.process)
-                    supervised.process.wait(timeout=2)
+                    try:
+                        group_error = kill(supervised.process)
+                        if group_error is not None:
+                            async_process._reap_after_group_signal_error(
+                                supervised.process, group_error,
+                            )
+                        supervised.process.wait(timeout=2)
+                    finally:
+                        async_process._close_supervisor_fd(supervised.control_fd)
+                        async_process._close_supervisor_stream(supervised.status_stream)
+                        for stream in (
+                            supervised.process.stdin,
+                            supervised.process.stdout,
+                            supervised.process.stderr,
+                        ):
+                            async_process._close_supervisor_stream(stream)
                     raise AssertionError("child did not flush initial output before timeout starts")
                 return supervised
 
@@ -408,20 +422,34 @@ class AsyncProcessTests(unittest.TestCase):
 
     @unittest.skipUnless(os.name == "posix", "supervisor process groups are POSIX-specific")
     def test_supervisor_control_pipe_eof_kills_owned_group(self):
-        launch = async_process._launch_supervised_process(
-            (sys.executable, "-c", "import time; time.sleep(60)"),
-            env=None, cwd=None, input_enabled=False,
-        )
-        try:
-            os.close(launch.control_fd)
-            launch.control_fd = -1
-            returncode = launch.process.wait(timeout=5)
-            self.assertEqual(returncode, -signal.SIGKILL)
-        finally:
-            launch.status_stream.close()
-            for stream in (launch.process.stdin, launch.process.stdout, launch.process.stderr):
-                if stream is not None:
-                    stream.close()
+        with tempfile.TemporaryDirectory() as directory:
+            pid_file = Path(directory) / "control-eof-target.pid"
+            target = (
+                "from pathlib import Path; import os,time; "
+                f"Path({str(pid_file)!r}).write_text(str(os.getpid())); time.sleep(60)"
+            )
+            launch = async_process._launch_supervised_process(
+                (sys.executable, "-c", target),
+                env=None, cwd=None, input_enabled=False,
+            )
+            try:
+                deadline = time.monotonic() + 5
+                while not pid_file.exists() and time.monotonic() < deadline:
+                    if async_process._process_has_exited(launch.process):
+                        break
+                    time.sleep(0.01)
+                self.assertTrue(pid_file.exists(), "control-EOF target never started")
+                os.close(launch.control_fd)
+                launch.control_fd = -1
+                returncode = launch.process.wait(timeout=5)
+                self.assertEqual(returncode, -signal.SIGKILL)
+            finally:
+                if launch.control_fd >= 0:
+                    async_process._close_supervisor_fd(launch.control_fd)
+                async_process._close_supervisor_stream(launch.status_stream)
+                for stream in (launch.process.stdin, launch.process.stdout, launch.process.stderr):
+                    async_process._close_supervisor_stream(stream)
+            self.assert_process_stopped(pid_file)
 
     def test_process_group_kill_fails_closed_if_leader_was_reaped_elsewhere(self):
         class FakeProcess:
@@ -1009,7 +1037,6 @@ class AsyncCancellationTests(unittest.IsolatedAsyncioTestCase):
                     with self.assertRaises(asyncio.CancelledError):
                         await asyncio.wait_for(task, timeout=8)
                     self.assertLess(time.monotonic() - start, 8)
-                    AsyncProcessTests.assert_process_stopped(self, pid_file)
                     self.assertEqual(len(wrappers), 1)
                     self.assertIsNotNone(wrappers[0].returncode, "supervisor wrapper was not reaped")
                     self.assertTrue(wrappers[0].stdout.closed)
@@ -1026,6 +1053,7 @@ class AsyncCancellationTests(unittest.IsolatedAsyncioTestCase):
                         os.kill(int(pid_file.read_text()), signal.SIGKILL)
                     except ProcessLookupError:
                         pass
+            AsyncProcessTests.assert_process_stopped(self, pid_file)
 
     async def test_unsupported_platform_fails_before_spawning(self):
         with patch.object(async_process, "POSIX_PROCESS_RUNNER", False), \

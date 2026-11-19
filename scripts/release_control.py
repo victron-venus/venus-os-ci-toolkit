@@ -516,12 +516,15 @@ def _accept_asset_status(
     status_buffer.clear()
     if status == "error":
         raise OSError(status_value, "Asset helper could not be started")
+    launch.group_signal_attempted = True
     group_error = _kill_owned_process(launch.process)
     if group_error is not None:
+        launch.group_signal_error = group_error
         _close_asset_supervisor_control(launch)
         raise ProcessCleanupError(
             "Asset supervisor process-group termination failed"
         ) from group_error
+    launch.group_signaled = True
     _close_asset_supervisor_control(launch)
     return status_value
 
@@ -560,19 +563,30 @@ def _drain_asset_stream(
     stderr = bytearray()
     target_returncode: int | None = None
     status_buffer = bytearray()
+    cleanup_deadline: float | None = None
     while len(ended) != 3:
         output.check()
-        remaining = deadline - time.monotonic()
+        active_deadline = deadline
+        if cleanup_deadline is not None:
+            active_deadline = min(active_deadline, cleanup_deadline)
+        remaining = active_deadline - time.monotonic()
         if remaining <= 0:
+            if cleanup_deadline is not None and cleanup_deadline <= deadline:
+                raise ProcessCleanupError(
+                    "Asset supervisor inherited pipes did not reach EOF before cleanup deadline"
+                )
             raise subprocess.TimeoutExpired(command, ASSET_DOWNLOAD_TIMEOUT)
         try:
             kind, value = events.get(timeout=min(0.2, remaining))
         except queue.Empty:
             continue
+        previous_returncode = target_returncode
         target_returncode = _handle_asset_stream_event(
             kind, value, ended, output, stderr, status_buffer,
             target_returncode, launch,
         )
+        if previous_returncode is None and target_returncode is not None:
+            cleanup_deadline = time.monotonic() + CLEANUP_TIMEOUT_SECONDS
     if target_returncode is None:
         raise GitHubError("Asset supervisor did not confirm target completion")
     return bytes(stderr), target_returncode
@@ -672,8 +686,11 @@ def _stream_asset(command: list[str], output: _AssetWriter, *,
         # reaping its live group leader; its target argv process is a child.
         try:
             if not complete:
-                group_signal_error = _terminate_asset_process_group(process)
-                _close_asset_supervisor_control(launch)
+                if not getattr(launch, "group_signal_attempted", False):
+                    launch.group_signal_attempted = True
+                    group_signal_error = _terminate_asset_process_group(process)
+                else:
+                    group_signal_error = getattr(launch, "group_signal_error", None)
             try:
                 process_status = process.wait(timeout=CLEANUP_TIMEOUT_SECONDS)
             except subprocess.TimeoutExpired as error:
@@ -688,6 +705,7 @@ def _stream_asset(command: list[str], output: _AssetWriter, *,
                     "Asset supervisor did not exit from confirmed process-group cleanup"
                 )
         finally:
+            _close_asset_supervisor_control(launch)
             for thread in threads:
                 if thread.ident is not None:
                     thread.join(timeout=1)
@@ -1240,7 +1258,7 @@ class GitHub:
         endpoint = f"{self.base}/{path}"
         # Developer/CI toolchain selected by the invoking operator via PATH.
         command = [
-            "gh", "api", "--hostname", GITHUB_HOSTNAME, "--method", "GET",
+            resolve_executable("gh"), "api", "--hostname", GITHUB_HOSTNAME, "--method", "GET",
             "-H", "Accept: application/octet-stream", "--", endpoint,
         ]
         deadline = time.monotonic() + ASSET_DOWNLOAD_TIMEOUT

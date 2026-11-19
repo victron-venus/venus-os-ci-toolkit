@@ -19,6 +19,7 @@ HEADER = (
     "# Vendored release toolkit; change the toolkit source, then render again.\n"
     "# ruff: noqa\n# mypy: ignore-errors\n# pylint: skip-file\n# fmt: off\n"
 )
+INVALID_COPIED_SOURCE_SUCCESSOR_CHAIN = "Invalid compact copied-source successor chain: "
 
 
 def digest(data: bytes) -> str:
@@ -153,7 +154,7 @@ def render(directory: Path) -> dict[str, str]:
                         not isinstance(layer.get("canonical_source_sha256"), str) or
                         len(layer["canonical_source_sha256"]) != 64 or
                         not isinstance(layer.get("source_hunks"), list) or not layer["source_hunks"]):
-                    raise ValueError("Invalid compact copied-source successor chain: " + name)
+                    raise ValueError(INVALID_COPIED_SOURCE_SUCCESSOR_CHAIN + name)
                 previous = layer["after_sha256"]
                 accepted.append(previous)
             if identity is None:
@@ -269,7 +270,7 @@ def render(directory: Path) -> dict[str, str]:
                         len(layer["after_sha256"]) != 64 or
                         any(char not in "0123456789abcdef" for char in layer["after_sha256"]) or
                         not isinstance(layer.get("hunks"), list) or not layer["hunks"]):
-                    raise ValueError("Invalid compact copied-source successor chain: " + name)
+                    raise ValueError(INVALID_COPIED_SOURCE_SUCCESSOR_CHAIN + name)
                 previous = layer["after_sha256"]
                 accepted.append(previous)
             for layer in copy_layers:
@@ -282,7 +283,7 @@ def render(directory: Path) -> dict[str, str]:
                         not isinstance(layer.get("canonical_source_sha256"), str) or
                         len(layer["canonical_source_sha256"]) != 64 or
                         not isinstance(layer.get("source_hunks"), list) or not layer["source_hunks"]):
-                    raise ValueError("Invalid compact copied-source successor chain: " + name)
+                    raise ValueError(INVALID_COPIED_SOURCE_SUCCESSOR_CHAIN + name)
                 previous = layer["after_sha256"]
                 accepted.append(previous)
             if identity is None:

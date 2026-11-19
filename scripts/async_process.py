@@ -122,7 +122,8 @@ finally:
 
 try:
     # The parent SIGKILLs this still-live group as soon as it validates status.
-    # If the parent disappears first, EOF triggers the same cleanup locally.
+    # If the parent disappears first, EOF triggers cleanup while the wrapper
+    # still pins the process-group identity.
     os.read(control_fd, 1)
 except OSError:
     pass
