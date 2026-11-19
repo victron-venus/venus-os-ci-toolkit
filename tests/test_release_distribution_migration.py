@@ -339,7 +339,7 @@ class ShippedDistributionDeltaTests(unittest.TestCase):
         specification = json.loads(migration.DELTA.read_bytes())
         historical = json.loads(json.dumps(specification))
         for name in self.ADVANCED_SUCCESSOR_FILES:
-            rewinds = 2 if include_old_test_overlay else 1
+            rewinds = 3 if include_old_test_overlay else 1
             for _ in range(rewinds):
                 historical["files"][name]["successor_layers"].pop()
         for name, entry in historical["files"].items():

@@ -48,6 +48,34 @@ def tearDownModule():
     _resolver_patch.stop()
 
 
+def asset_process_recorders(events):
+    """Record supervisor observe→signal→reap ordering around the real process."""
+    real_popen = rc.subprocess.Popen
+    real_waitid = rc.os.waitid
+    real_killpg = rc.os.killpg
+
+    def recording_popen(*args, **kwargs):
+        process = real_popen(*args, **kwargs)
+        wait = process.wait
+
+        def recording_wait(*wait_args, **wait_kwargs):
+            events.append("reap")
+            return wait(*wait_args, **wait_kwargs)
+
+        process.wait = recording_wait
+        return process
+
+    def observing_waitid(*args):
+        events.append("observe")
+        return real_waitid(*args)
+
+    def recording_killpg(*args):
+        events.append("killpg")
+        return real_killpg(*args)
+
+    return recording_popen, observing_waitid, recording_killpg
+
+
 # These fixtures model the original unsigned publication contract. Consumers may
 # opt into signatures; that boundary is exercised with enforcement enabled in
 # test_release_signing.py, rather than requiring Cosign/network access here.
@@ -828,29 +856,7 @@ class AssetStreamCleanupTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="release-stream-order-") as temp:
             destination = Path(temp) / "asset.bin"
             events = []
-            real_popen = rc.subprocess.Popen
-            real_waitid = rc.os.waitid
-            real_killpg = rc.os.killpg
-
-            def recording_popen(*args, **kwargs):
-                process = real_popen(*args, **kwargs)
-                wait = process.wait
-
-                def recording_wait(*wait_args, **wait_kwargs):
-                    events.append("reap")
-                    return wait(*wait_args, **wait_kwargs)
-
-                process.wait = recording_wait
-                return process
-
-            def observing_waitid(*args):
-                events.append("observe")
-                return real_waitid(*args)
-
-            def recording_killpg(*args):
-                events.append("killpg")
-                return real_killpg(*args)
-
+            recording_popen, observing_waitid, recording_killpg = asset_process_recorders(events)
             with destination.open("w+b") as output_file:
                 writer = rc._AssetWriter(
                     output_file, destination,
@@ -1117,29 +1123,7 @@ class AssetStreamCleanupTests(unittest.TestCase):
                 destination = Path(temp) / "asset.bin"
                 command = [sys.executable, "-c", script]
                 events = []
-                real_popen = rc.subprocess.Popen
-                real_waitid = rc.os.waitid
-                real_killpg = rc.os.killpg
-
-                def recording_popen(*args, **kwargs):
-                    process = real_popen(*args, **kwargs)
-                    wait = process.wait
-
-                    def recording_wait(*wait_args, **wait_kwargs):
-                        events.append("reap")
-                        return wait(*wait_args, **wait_kwargs)
-
-                    process.wait = recording_wait
-                    return process
-
-                def observing_waitid(*args):
-                    events.append("observe")
-                    return real_waitid(*args)
-
-                def recording_killpg(*args):
-                    events.append("killpg")
-                    return real_killpg(*args)
-
+                recording_popen, observing_waitid, recording_killpg = asset_process_recorders(events)
                 with destination.open("w+b") as output_file:
                     writer = rc._AssetWriter(
                         output_file, destination, {"size": 100, "sha256": "0" * 64},

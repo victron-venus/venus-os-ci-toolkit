@@ -27,6 +27,27 @@ def digest(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def _copied_successor_hashes(layers: object, previous: str, name: str) -> list[str]:
+    """Validate the exact source-bound postimage chain for copied files."""
+    if not isinstance(layers, list):
+        raise ValueError(INVALID_COPIED_SOURCE_SUCCESSOR_CHAIN + name)
+    accepted = [previous]
+    for layer in layers:
+        if (not isinstance(layer, dict) or layer.get("before_sha256") != previous or
+                not isinstance(layer.get("after_sha256"), str) or
+                len(layer["after_sha256"]) != 64 or
+                any(char not in "0123456789abcdef" for char in layer["after_sha256"]) or
+                not isinstance(layer.get("canonical_source_before_sha256"), str) or
+                len(layer["canonical_source_before_sha256"]) != 64 or
+                not isinstance(layer.get("canonical_source_sha256"), str) or
+                len(layer["canonical_source_sha256"]) != 64 or
+                not isinstance(layer.get("source_hunks"), list) or not layer["source_hunks"]):
+            raise ValueError(INVALID_COPIED_SOURCE_SUCCESSOR_CHAIN + name)
+        previous = layer["after_sha256"]
+        accepted.append(previous)
+    return accepted
+
+
 def destination(name: str) -> bool:
     """Keep every writable destination inside the explicit migration boundary."""
     parts = Path(name).parts
@@ -143,20 +164,7 @@ def render(directory: Path) -> dict[str, str]:
                     not isinstance(copy_layers, list)):
                 raise ValueError("Invalid compact migration addition: " + name)
             previous = entry["after_sha256"]
-            accepted = [previous]
-            for layer in copy_layers:
-                if (not isinstance(layer, dict) or layer.get("before_sha256") != previous or
-                        not isinstance(layer.get("after_sha256"), str) or
-                        len(layer["after_sha256"]) != 64 or
-                        any(char not in "0123456789abcdef" for char in layer["after_sha256"]) or
-                        not isinstance(layer.get("canonical_source_before_sha256"), str) or
-                        len(layer["canonical_source_before_sha256"]) != 64 or
-                        not isinstance(layer.get("canonical_source_sha256"), str) or
-                        len(layer["canonical_source_sha256"]) != 64 or
-                        not isinstance(layer.get("source_hunks"), list) or not layer["source_hunks"]):
-                    raise ValueError(INVALID_COPIED_SOURCE_SUCCESSOR_CHAIN + name)
-                previous = layer["after_sha256"]
-                accepted.append(previous)
+            accepted = _copied_successor_hashes(copy_layers, previous, name)
             if identity is None:
                 additions.append(False)
                 source_bytes = canonical_copy(entry)
@@ -273,19 +281,7 @@ def render(directory: Path) -> dict[str, str]:
                     raise ValueError(INVALID_COPIED_SOURCE_SUCCESSOR_CHAIN + name)
                 previous = layer["after_sha256"]
                 accepted.append(previous)
-            for layer in copy_layers:
-                if (not isinstance(layer, dict) or layer.get("before_sha256") != previous or
-                        not isinstance(layer.get("after_sha256"), str) or
-                        len(layer["after_sha256"]) != 64 or
-                        any(char not in "0123456789abcdef" for char in layer["after_sha256"]) or
-                        not isinstance(layer.get("canonical_source_before_sha256"), str) or
-                        len(layer["canonical_source_before_sha256"]) != 64 or
-                        not isinstance(layer.get("canonical_source_sha256"), str) or
-                        len(layer["canonical_source_sha256"]) != 64 or
-                        not isinstance(layer.get("source_hunks"), list) or not layer["source_hunks"]):
-                    raise ValueError(INVALID_COPIED_SOURCE_SUCCESSOR_CHAIN + name)
-                previous = layer["after_sha256"]
-                accepted.append(previous)
+            accepted.extend(_copied_successor_hashes(copy_layers, previous, name)[1:])
             if identity is None:
                 states.add("original")
                 source_bytes = canonical_copy(entry)

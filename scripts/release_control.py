@@ -649,6 +649,69 @@ def _raise_asset_group_failure(error: OSError, message: str) -> NoReturn:
     raise GitHubError(message) from error
 
 
+def _asset_group_signal_error(launch, complete: bool) -> OSError | None:
+    """Attempt group cleanup once, retaining any failure from status handling."""
+    if complete:
+        return None
+    if getattr(launch, "group_signal_attempted", False):
+        return getattr(launch, "group_signal_error", None)
+    launch.group_signal_attempted = True
+    return _terminate_asset_process_group(launch.process)
+
+
+def _reap_asset_supervisor(
+    process: subprocess.Popen[bytes], complete: bool, group_error: OSError | None,
+) -> None:
+    """Boundedly reap the wrapper and preserve any unconfirmed group signal."""
+    try:
+        process_status = process.wait(timeout=CLEANUP_TIMEOUT_SECONDS)
+    except subprocess.TimeoutExpired as error:
+        if group_error is not None:
+            _raise_asset_group_failure(
+                group_error,
+                "Asset supervisor termination failed and leader could not be reaped",
+            )
+        raise GitHubError("Asset transfer process could not be reaped within five seconds") from error
+    if complete and process_status != -signal.SIGKILL:
+        raise GitHubError("Asset supervisor did not exit from confirmed process-group cleanup")
+    if group_error is not None:
+        _raise_asset_group_failure(
+            group_error,
+            "Asset supervisor process-group termination failed; descendants may still be running",
+        )
+
+
+def _close_asset_streams(launch, threads: list[threading.Thread]) -> None:
+    """Close control and capture descriptors after bounded wrapper cleanup."""
+    _close_asset_supervisor_control(launch)
+    for thread in threads:
+        if thread.ident is not None:
+            thread.join(timeout=1)
+    launch.process.stdout.close()
+    launch.process.stderr.close()
+    launch.status_stream.close()
+
+
+def _finish_asset_stream(launch, threads: list[threading.Thread], complete: bool) -> None:
+    """Signal once, reap within the cleanup bound, and always close owned pipes."""
+    try:
+        group_error = _asset_group_signal_error(launch, complete)
+        _reap_asset_supervisor(launch.process, complete, group_error)
+    finally:
+        _close_asset_streams(launch, threads)
+
+
+def _start_asset_stream_readers(launch, events, stopped) -> list[threading.Thread]:
+    """Create one bounded reader per captured target and supervisor stream."""
+    process = launch.process
+    return [threading.Thread(target=_read_asset_pipe,
+                             args=(pipe, kind, events, stopped), daemon=True)
+            for pipe, kind in [
+                (process.stdout, "stdout"), (process.stderr, "stderr"),
+                (launch.status_stream, "status"),
+            ]]
+
+
 def _stream_asset(command: list[str], output: _AssetWriter, *,
                   deadline: float | None = None) -> subprocess.CompletedProcess[bytes]:
     """Pump bounded chunks portably, including silent/stderr-heavy transfers."""
@@ -664,13 +727,8 @@ def _stream_asset(command: list[str], output: _AssetWriter, *,
             "Missing supervised transfer pipes")
     events: queue.Queue[AssetStreamEvent] = queue.Queue(maxsize=2)
     stopped = threading.Event()
+    threads = _start_asset_stream_readers(launch, events, stopped)
     complete = False
-    threads = [threading.Thread(target=_read_asset_pipe,
-                                args=(pipe, kind, events, stopped), daemon=True)
-               for pipe, kind in [
-                   (process.stdout, "stdout"), (process.stderr, "stderr"),
-                   (launch.status_stream, "status"),
-               ]]
     try:
         for thread in threads:
             thread.start()
@@ -681,42 +739,7 @@ def _stream_asset(command: list[str], output: _AssetWriter, *,
         return subprocess.CompletedProcess(command, returncode, b"", stderr)
     finally:
         stopped.set()
-        group_signal_error: OSError | None = None
-        # On incomplete transfer, signal the still-owned supervisor group before
-        # reaping its live group leader; its target argv process is a child.
-        try:
-            if not complete:
-                if not getattr(launch, "group_signal_attempted", False):
-                    launch.group_signal_attempted = True
-                    group_signal_error = _terminate_asset_process_group(process)
-                else:
-                    group_signal_error = getattr(launch, "group_signal_error", None)
-            try:
-                process_status = process.wait(timeout=CLEANUP_TIMEOUT_SECONDS)
-            except subprocess.TimeoutExpired as error:
-                if group_signal_error is not None:
-                    _raise_asset_group_failure(
-                        group_signal_error,
-                        "Asset supervisor termination failed and leader could not be reaped",
-                    )
-                raise GitHubError("Asset transfer process could not be reaped within five seconds") from error
-            if complete and process_status != -signal.SIGKILL:
-                raise GitHubError(
-                    "Asset supervisor did not exit from confirmed process-group cleanup"
-                )
-        finally:
-            _close_asset_supervisor_control(launch)
-            for thread in threads:
-                if thread.ident is not None:
-                    thread.join(timeout=1)
-            process.stdout.close()
-            process.stderr.close()
-            launch.status_stream.close()
-        if group_signal_error is not None:
-            _raise_asset_group_failure(
-                group_signal_error,
-                "Asset supervisor process-group termination failed; descendants may still be running",
-            )
+        _finish_asset_stream(launch, threads, complete)
 
 def json_bytes(value: object) -> bytes:
     """Encode deterministic UTF-8 JSON for manifests and request bodies."""

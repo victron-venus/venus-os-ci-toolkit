@@ -27,6 +27,29 @@ async def cancel_test_task(task, timeout=5):
         task.result()
 
 
+def descendant_pipe_fixture(directory: str, after_start: str) -> tuple[Path, Path, Path, str]:
+    """Build one child fixture whose descendant inherits the captured pipes."""
+    root = Path(directory)
+    started = root / "descendant-started"
+    pid_file = root / "descendant.pid"
+    gate = root / "release-descendant"
+    survived = root / "descendant-survived"
+    descendant = (
+        "from pathlib import Path; import os,time; "
+        f"Path({str(pid_file)!r}).write_text(str(os.getpid())); "
+        f"Path({str(started)!r}).write_text('started'); gate=Path({str(gate)!r}); "
+        "exec('while not gate.exists(): time.sleep(.01)'); "
+        f"Path({str(survived)!r}).write_text('alive')"
+    )
+    parent = (
+        "from pathlib import Path; import os,subprocess,sys,time; "
+        f"subprocess.Popen([sys.executable, '-c', {descendant!r}]); "
+        f"started=Path({str(started)!r}); "
+        f"exec('while not started.exists(): time.sleep(.01)'); {after_start}"
+    )
+    return started, pid_file, survived, parent
+
+
 class AsyncProcessTests(unittest.TestCase):
     def assert_process_stopped(self, pid_file: Path, timeout: float = 3.0) -> None:
         pid = int(pid_file.read_text())
@@ -171,22 +194,8 @@ class AsyncProcessTests(unittest.TestCase):
     @unittest.skipUnless(os.name == "posix", "process-group cleanup is POSIX-specific")
     def test_timeout_kills_descendant_that_inherits_capture_pipes(self):
         with tempfile.TemporaryDirectory() as directory:
-            started = Path(directory) / "descendant-started"
-            pid_file = Path(directory) / "descendant.pid"
-            gate = Path(directory) / "release-descendant"
-            survived = Path(directory) / "descendant-survived"
-            descendant = (
-                "from pathlib import Path; import os,time; "
-                f"Path({str(pid_file)!r}).write_text(str(os.getpid())); Path({str(started)!r}).write_text('started'); "
-                f"gate=Path({str(gate)!r}); "
-                "exec('while not gate.exists(): time.sleep(.01)'); "
-                f"Path({str(survived)!r}).write_text('alive')"
-            )
-            parent = (
-                "from pathlib import Path; import os,subprocess,sys,time; "
-                f"subprocess.Popen([sys.executable, '-c', {descendant!r}]); "
-                f"started=Path({str(started)!r}); "
-                "exec('while not started.exists(): time.sleep(.01)'); time.sleep(60)"
+            started, pid_file, survived, parent = descendant_pipe_fixture(
+                directory, "time.sleep(60)",
             )
             start_time = time.monotonic()
             with self.assertRaises(async_process.ProcessTimeout):
@@ -578,23 +587,9 @@ class AsyncProcessTests(unittest.TestCase):
     @unittest.skipUnless(os.name == "posix", "process-group cleanup is POSIX-specific")
     def test_output_limit_kills_descendant_that_holds_capture_pipe_open(self):
         with tempfile.TemporaryDirectory() as directory:
-            started = Path(directory) / "descendant-started"
-            pid_file = Path(directory) / "descendant.pid"
-            gate = Path(directory) / "release-descendant"
-            survived = Path(directory) / "descendant-survived"
-            descendant = (
-                "from pathlib import Path; import os,time; "
-                f"Path({str(pid_file)!r}).write_text(str(os.getpid())); Path({str(started)!r}).write_text('started'); "
-                f"gate=Path({str(gate)!r}); "
-                "exec('while not gate.exists(): time.sleep(.01)'); "
-                f"Path({str(survived)!r}).write_text('alive')"
-            )
-            parent = (
-                "from pathlib import Path; import os,subprocess,sys,time; "
-                f"subprocess.Popen([sys.executable, '-c', {descendant!r}]); "
-                f"started=Path({str(started)!r}); "
-                "exec('while not started.exists(): time.sleep(.01)'); "
-                "sys.stdout.buffer.write(b'x' * 4096); sys.stdout.flush(); time.sleep(60)"
+            started, pid_file, survived, parent = descendant_pipe_fixture(
+                directory,
+                "sys.stdout.buffer.write(b'x' * 4096); sys.stdout.flush(); time.sleep(60)",
             )
             start_time = time.monotonic()
             with self.assertRaises(async_process.ProcessOutputLimit):

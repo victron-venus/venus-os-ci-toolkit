@@ -288,9 +288,8 @@ def _read_verified_rc(
             if item["name"] == rc.MANIFEST:
                 continue
             payload = directory / (cast(str, item["name"]) if retained else "payload")
-            # Keep candidate transfers on the shared bounded supervisor; it
-            # resolves gh and bounds post-status pipe cleanup before reaping.
-            # Signal failures still surface after bounded reap.
+            # The shared supervisor resolves gh and bounds post-status cleanup.
+            # Its ProcessCleanupError stays fatal; retrying could mask live work.
             identity = rc.download_asset(
                 gh, item["id"], payload,
                 expected=cast(rc.AssetIdentity, {

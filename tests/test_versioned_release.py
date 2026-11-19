@@ -237,6 +237,7 @@ class CandidateDownloadTests(unittest.TestCase):
 
         self.assertIs(raised.exception, denied)
         self.assertEqual(gh.writes, [])
+        self.assertEqual(gh.downloads, [rc.MANIFEST])
 
     def test_payloads_use_streaming_and_only_one_private_staged_file(self):
         gh = legacy_tests.FakeGitHub()
