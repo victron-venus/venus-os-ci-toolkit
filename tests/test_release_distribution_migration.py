@@ -265,6 +265,30 @@ class DistributionGeneratorTests(unittest.TestCase):
 class ShippedDistributionDeltaTests(unittest.TestCase):
     """Keep the narrow delta tied to reviewed canonical source sections."""
 
+    ADVANCED_SUCCESSOR_FILES = (
+        "scripts/release_control.py", "scripts/release_versioned.py",
+        ".github/release-tests/test_release_control.py",
+        ".github/release-tests/test_versioned_release.py",
+    )
+
+    def _historical_consumer(self, temporary):
+        """Return the pinned consumer after applying the prior four-file layer."""
+        specification = json.loads(migration.DELTA.read_bytes())
+        historical = json.loads(json.dumps(specification))
+        for name in self.ADVANCED_SUCCESSOR_FILES:
+            historical["files"][name]["successor_layers"].pop()
+        historical["files"].pop("scripts/release_state.py")
+
+        consumer = Path(temporary) / "consumer"
+        consumer.mkdir()
+        self._extract_pinned_ott_snapshot(consumer)
+        old_delta = Path(temporary) / "historical-delta.json"
+        old_delta.write_text(json.dumps(historical))
+        with patch.object(migration, "DELTA", old_delta):
+            old_changes = migration.render(consumer)
+            migration.apply(consumer, old_changes)
+        return consumer, specification, old_changes
+
     def test_rendered_publication_dispatches_schema_one_and_two(self):
         """Exercise both paths in the actual pinned OTT consumer postimage."""
         import importlib.util
@@ -454,29 +478,11 @@ class ShippedDistributionDeltaTests(unittest.TestCase):
         self.assertNotIn("Only an explicit HTTP 500", workflow["hunks"][0]["after"])
 
     def test_historical_postimage_advances_as_one_successor_layer(self):
-        current_specification = json.loads(migration.DELTA.read_bytes())
-        historical = json.loads(json.dumps(current_specification))
-        advanced = (
-            "scripts/release_control.py", "scripts/release_versioned.py",
-            ".github/release-tests/test_release_control.py",
-            ".github/release-tests/test_versioned_release.py",
-        )
-        for name in advanced:
-            historical["files"][name]["successor_layers"].pop()
-        historical["files"].pop("scripts/release_state.py")
-
         with tempfile.TemporaryDirectory() as temporary:
-            consumer = Path(temporary) / "consumer"
-            consumer.mkdir()
-            self._extract_pinned_ott_snapshot(consumer)
-            old_delta = Path(temporary) / "historical-delta.json"
-            old_delta.write_text(json.dumps(historical))
-            with patch.object(migration, "DELTA", old_delta):
-                old_changes = migration.render(consumer)
-                migration.apply(consumer, old_changes)
+            consumer, current_specification, old_changes = self._historical_consumer(temporary)
             new_changes = migration.render(consumer)
-            self.assertEqual(set(new_changes), set(advanced) | {"scripts/release_state.py"})
-            for name in advanced:
+            self.assertEqual(set(new_changes), set(self.ADVANCED_SUCCESSOR_FILES) | {"scripts/release_state.py"})
+            for name in self.ADVANCED_SUCCESSOR_FILES:
                 entry = current_specification["files"][name]
                 self.assertEqual(hashlib.sha256(old_changes[name].encode()).hexdigest(),
                                  entry["successor_layers"][-2]["after_sha256"])
@@ -488,27 +494,11 @@ class ShippedDistributionDeltaTests(unittest.TestCase):
                 self.assertEqual(hashlib.sha256((consumer / name).read_bytes()).hexdigest(), final_sha)
 
     def test_new_successor_rejects_partial_and_mutated_four_file_bundles(self):
-        specification = json.loads(migration.DELTA.read_bytes())
-        advanced = (
-            "scripts/release_control.py", "scripts/release_versioned.py",
-            ".github/release-tests/test_release_control.py",
-            ".github/release-tests/test_versioned_release.py",
-        )
-        historical = json.loads(json.dumps(specification))
-        for name in advanced:
-            historical["files"][name]["successor_layers"].pop()
-        historical["files"].pop("scripts/release_state.py")
         with tempfile.TemporaryDirectory() as temporary:
-            consumer = Path(temporary) / "consumer"
-            consumer.mkdir()
-            self._extract_pinned_ott_snapshot(consumer)
-            old_delta = Path(temporary) / "historical-delta.json"
-            old_delta.write_text(json.dumps(historical))
-            with patch.object(migration, "DELTA", old_delta):
-                migration.apply(consumer, migration.render(consumer))
+            consumer, _, _ = self._historical_consumer(temporary)
 
-            first = consumer / advanced[0]
-            first.write_text(migration.render(consumer)[advanced[0]], encoding="utf-8")
+            first = consumer / self.ADVANCED_SUCCESSOR_FILES[0]
+            first.write_text(migration.render(consumer)[self.ADVANCED_SUCCESSOR_FILES[0]], encoding="utf-8")
             snapshot = {str(path.relative_to(consumer)): path.read_bytes()
                         for path in consumer.rglob("*") if path.is_file()}
             with self.assertRaisesRegex(ValueError, "Partially migrated"):
@@ -525,24 +515,8 @@ class ShippedDistributionDeltaTests(unittest.TestCase):
                               for path in consumer.rglob("*") if path.is_file()}, snapshot)
 
     def test_mixed_successor_and_unknown_postimage_are_rejected(self):
-        specification = json.loads(migration.DELTA.read_bytes())
-        historical = json.loads(json.dumps(specification))
-        advanced = (
-            "scripts/release_control.py", "scripts/release_versioned.py",
-            ".github/release-tests/test_release_control.py",
-            ".github/release-tests/test_versioned_release.py",
-        )
-        for name in advanced:
-            historical["files"][name]["successor_layers"].pop()
-        historical["files"].pop("scripts/release_state.py")
         with tempfile.TemporaryDirectory() as temporary:
-            consumer = Path(temporary) / "consumer"
-            consumer.mkdir()
-            self._extract_pinned_ott_snapshot(consumer)
-            old_delta = Path(temporary) / "historical-delta.json"
-            old_delta.write_text(json.dumps(historical))
-            with patch.object(migration, "DELTA", old_delta):
-                migration.apply(consumer, migration.render(consumer))
+            consumer, specification, _ = self._historical_consumer(temporary)
 
             control = consumer / "scripts/release_control.py"
             control.write_text(migration.render(consumer)["scripts/release_control.py"])

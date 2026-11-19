@@ -654,53 +654,39 @@ class AssetStreamCleanupTests(unittest.TestCase):
     """Ensure a timed-out streaming helper cannot leave pipe-holding descendants."""
 
     @unittest.skipUnless(os.name == "posix", "stream process groups require POSIX")
-    def test_timeout_kills_the_isolated_process_group(self):
-        with tempfile.TemporaryDirectory(prefix="release-stream-") as temp:
-            destination = Path(temp) / "asset.bin"
-            command = [
-                sys.executable, "-c",
+    def test_timeout_kills_process_group_when_descendants_hold_or_close_pipes(self):
+        cases = (
+            (
+                "descendant inherits pipes",
                 "import subprocess,sys,time; "
                 "subprocess.Popen([sys.executable,'-c','import time; time.sleep(30)']); "
                 "time.sleep(30)",
-            ]
-            with destination.open("w+b") as output_file:
-                writer = rc._AssetWriter(
-                    output_file, destination, {"size": 100, "sha256": "0" * 64},
-                    rc.DownloadBudget(100),
-                )
-                deadline = rc.time.monotonic() + 0.3
-                with (
-                    patch.object(rc.os, "killpg", wraps=rc.os.killpg) as kill_group,
-                    self.assertRaises(subprocess.TimeoutExpired),
-                ):
-                    rc._stream_asset(command, writer, deadline=deadline)
-            kill_group.assert_called_once()
-            self.assertEqual(kill_group.call_args.args[1], rc.signal.SIGKILL)
-
-    @unittest.skipUnless(os.name == "posix", "stream process groups require POSIX")
-    def test_wait_timeout_kills_group_after_descendant_closes_pipes(self):
-        with tempfile.TemporaryDirectory(prefix="release-stream-") as temp:
-            destination = Path(temp) / "asset.bin"
-            command = [
-                sys.executable, "-c",
+            ),
+            (
+                "descendant closes parent pipes",
                 "import os,subprocess,sys,time; "
                 "subprocess.Popen([sys.executable,'-c','import time; time.sleep(30)'], "
                 "stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL); "
                 "os.close(1); os.close(2); time.sleep(30)",
-            ]
-            with destination.open("w+b") as output_file:
-                writer = rc._AssetWriter(
-                    output_file, destination, {"size": 100, "sha256": "0" * 64},
-                    rc.DownloadBudget(100),
-                )
-                deadline = rc.time.monotonic() + 0.3
-                with (
-                    patch.object(rc.os, "killpg", wraps=rc.os.killpg) as kill_group,
-                    self.assertRaises(subprocess.TimeoutExpired),
-                ):
-                    rc._stream_asset(command, writer, deadline=deadline)
-            kill_group.assert_called_once()
-            self.assertEqual(kill_group.call_args.args[1], rc.signal.SIGKILL)
+            ),
+        )
+        for name, script in cases:
+            with self.subTest(scenario=name), tempfile.TemporaryDirectory(prefix="release-stream-") as temp:
+                destination = Path(temp) / "asset.bin"
+                command = [sys.executable, "-c", script]
+                with destination.open("w+b") as output_file:
+                    writer = rc._AssetWriter(
+                        output_file, destination, {"size": 100, "sha256": "0" * 64},
+                        rc.DownloadBudget(100),
+                    )
+                    deadline = rc.time.monotonic() + 0.3
+                    with (
+                        patch.object(rc.os, "killpg", wraps=rc.os.killpg) as kill_group,
+                        self.assertRaises(subprocess.TimeoutExpired),
+                    ):
+                        rc._stream_asset(command, writer, deadline=deadline)
+                kill_group.assert_called_once()
+                self.assertEqual(kill_group.call_args.args[1], rc.signal.SIGKILL)
 
 
 class JobPaginationTests(unittest.TestCase):
