@@ -1851,7 +1851,7 @@ class LifecycleTests(unittest.TestCase):  # pylint: disable=too-many-public-meth
         self.assertFalse(any(method == "PATCH" for _, method, _ in self.gh.writes))
 
     def test_publisher_termination_during_final_tag_read_stops_before_public_release(self):
-        """The shared final callback catches a publisher ending during tag readback."""
+        """The exact-attempt callback catches termination after the final tag read."""
         plan = self.automatic_build()
         api = self.gh.api
         final_tag_reads = 0
@@ -1864,9 +1864,9 @@ class LifecycleTests(unittest.TestCase):  # pylint: disable=too-many-public-meth
                           if release["tag_name"] == plan["tag"]), None)
             if path == tag_path and draft and self.gh.assets[draft["id"]]:
                 final_tag_reads += 1
-                if final_tag_reads == 2:
+                if final_tag_reads == 1:
                     # The tag GET succeeds, but the publisher ends before the
-                    # callback which immediately precedes the public PATCH.
+                    # exact-attempt GET which immediately precedes the PATCH.
                     self.gh.runs[99].update(status="completed", conclusion="cancelled")
             return result
 
@@ -1874,7 +1874,7 @@ class LifecycleTests(unittest.TestCase):  # pylint: disable=too-many-public-meth
             with self.assertRaisesRegex(rc.ReleaseError, "not active"):
                 lifecycle.publish_versioned(self.args)
 
-        self.assertEqual(final_tag_reads, 2)
+        self.assertEqual(final_tag_reads, 1)
         draft = next(release for release in self.gh.releases.values()
                      if release["tag_name"] == plan["tag"])
         self.assertTrue(draft["draft"])

@@ -1109,11 +1109,19 @@ def publish_versioned(args: argparse.Namespace) -> dict[str, object]:
             ), "Release gate is no longer ready before publication")
 
         def confirm_before_publish() -> None:
-            # _publish_prepared calls this around its final tag readbacks; keep
-            # publisher and automatic-source checks in that shared boundary.
+            # This full validation runs before _publish_prepared's final tag
+            # read; it may inspect publisher jobs and automatic source state.
             confirm_publisher_execution()
             if automatic:
                 confirm_automatic_source()
+
+        def confirm_final_publisher_attempt() -> None:
+            # The final boundary shares a short deadline with the tag GET, so
+            # keep this to one exact attempt read without aggregate/jobs calls.
+            current = gh.api(
+                f"actions/runs/{run['id']}/attempts/{run['run_attempt']}"
+            )
+            rc.require_active_attempt(current, run)
 
         # Execution admission may be minutes old after downloads and signatures.
         # Recheck immediately before the first persistent ledger mutation.
@@ -1131,6 +1139,7 @@ def publish_versioned(args: argparse.Namespace) -> dict[str, object]:
             body,
             confirm_create=confirm_create,
             confirm_publish=confirm_before_publish,
+            confirm_final_publish=confirm_final_publisher_attempt,
         )
     return {
         "status": "published",

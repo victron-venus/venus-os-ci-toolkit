@@ -147,17 +147,24 @@ class InventoryMigrationTests(unittest.TestCase):
 class InventoryOracleTests(unittest.TestCase):
     def test_publisher_successor_is_an_exact_reversible_layer(self):
         latest = (ROOT / receipts.PUBLISHER).read_text()
-        layer = json.loads(migration.DELTA.read_text())["files"][receipts.PUBLISHER][
+        layers = json.loads(migration.DELTA.read_text())["files"][receipts.PUBLISHER][
             "successor_layers"
-        ][0]
-        self.assertEqual(receipts.digest(latest), layer["after_sha256"])
+        ]
+        self.assertEqual(receipts.digest(latest), layers[-1]["after_sha256"])
+        for layer in reversed(layers):
+            self.assertEqual(receipts.digest(latest), layer["after_sha256"])
+            for hunk in reversed(layer["hunks"]):
+                self.assertEqual(latest.count(hunk["after"]), 1)
+                latest = latest.replace(hunk["after"], hunk["before"], 1)
+            self.assertEqual(receipts.digest(latest), layer["before_sha256"])
+        latest = (ROOT / receipts.PUBLISHER).read_text()
         previous = migration._before_publisher_successors(latest)
-        self.assertEqual(receipts.digest(previous), layer["before_sha256"])
+        self.assertEqual(receipts.digest(previous), layers[0]["before_sha256"])
         self.assertEqual(migration._apply_publisher_successors(previous), latest)
         self.assertEqual(migration._before_publisher_successors(previous), previous)
 
-        changed = latest.replace("publisher and automatic-source checks in that shared boundary.",
-                                 "publisher checks in that shared boundary.", 1)
+        changed = latest.replace("This full validation runs before _publish_prepared's final tag",
+                                 "This validation runs before _publish_prepared's final tag", 1)
         self.assertEqual(migration._before_publisher_successors(changed), changed)
         with self.assertRaisesRegex(ValueError, "Unknown current inventory source"):
             migration.previous_canonical_source(changed, receipts.PUBLISHER)

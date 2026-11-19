@@ -1279,7 +1279,7 @@ class ReleaseControlTests(unittest.TestCase):
             result = rc.promote(self.args)
 
         self.assertEqual(result["tag"], "v1.2.3")
-        self.assertEqual(len(observations), 4)  # Admission and three publication checks.
+        self.assertEqual(len(observations), 3)  # Admission, full recheck and final attempt read.
 
     def test_terminal_attempt_after_jobs_inventory_blocks_first_protected_write(self):
         """A terminal attempt after stale jobs readback cannot authorize a tag write."""
@@ -4298,9 +4298,10 @@ class CheckRunExecutionTests(unittest.TestCase):
 
 
 class PublishBoundaryOrderingTests(unittest.TestCase):
-    def test_final_publisher_confirmation_after_tag_read_blocks_patch_if_terminal(self):
-        """A publisher ending during final tag read blocks the public PATCH."""
+    def test_final_exact_publisher_read_after_tag_blocks_patch_if_terminal(self):
+        """A publisher ending during the final tag GET blocks the public PATCH."""
         events = []
+        deadlines = []
 
         class Client:
             repo = REPO
@@ -4316,11 +4317,13 @@ class PublishBoundaryOrderingTests(unittest.TestCase):
                     return {"id": 20, "tag_name": "v1.2.3", "draft": True}
                 if path == "git/ref/tags/v1.2.3":
                     self.tag_reads += 1
-                    if self.tag_reads == 2:
+                    if self.tag_reads == 1:
                         self.publisher_status = "completed"
+                    deadlines.append(rc._API_READ_DEADLINE.get())
                     return {"ref": "refs/tags/v1.2.3",
                             "object": {"type": "commit", "sha": self.tag_sha}}
                 if path == "actions/runs/99/attempts/1":
+                    deadlines.append(rc._API_READ_DEADLINE.get())
                     conclusion = None if self.publisher_status == "in_progress" else "cancelled"
                     return {"id": 99, "run_attempt": 1, "head_sha": SHA,
                             "path": rc.WORKFLOW, "event": "workflow_dispatch",
@@ -4334,7 +4337,8 @@ class PublishBoundaryOrderingTests(unittest.TestCase):
             def upload(self, *_args, **_kwargs):
                 events.append(("upload", "POST"))
 
-            def pages(self, *_args, **_kwargs):
+            def pages(self, path, *_args, **_kwargs):
+                events.append((path, "GET"))
                 return [{"name": "package.bin"}]
 
         with tempfile.TemporaryDirectory() as temporary:
@@ -4342,7 +4346,11 @@ class PublishBoundaryOrderingTests(unittest.TestCase):
             (directory / "package.bin").write_bytes(b"package")
 
             def confirm_publish():
-                events.append(("confirm-publisher", "GET"))
+                events.append(("full-publisher-validation", "GET"))
+                client.pages("actions/runs/99/attempts/1/jobs")
+
+            def confirm_final_publish():
+                events.append(("confirm-publisher-attempt", "GET"))
                 current = client.api("actions/runs/99/attempts/1")
                 rc.require_active_attempt(current, current)
 
@@ -4358,16 +4366,22 @@ class PublishBoundaryOrderingTests(unittest.TestCase):
                 rc._publish_prepared(
                     client, "v1.2.3", SHA, directory, True, "notes",
                     confirm_publish=confirm_publish,
+                    confirm_final_publish=confirm_final_publish,
                 )
 
-        self.assertEqual(events[-3:], [
+        self.assertEqual(events[-5:], [
+            ("full-publisher-validation", "GET"),
+            ("actions/runs/99/attempts/1/jobs", "GET"),
             ("git/ref/tags/v1.2.3", "GET"),
-            ("confirm-publisher", "GET"),
+            ("confirm-publisher-attempt", "GET"),
             ("actions/runs/99/attempts/1", "GET"),
         ])
+        self.assertEqual(len(deadlines), 2)
+        self.assertIsInstance(deadlines[0], float)
+        self.assertEqual(deadlines[0], deadlines[1])
         self.assertFalse(any(event == ("releases/20", "PATCH") for event in events))
 
-    def test_publish_confirmation_runs_after_final_tag_read_and_before_patch(self):
+    def test_full_publish_confirmation_precedes_final_tag_and_move_blocks_patch(self):
         events = []
 
         class Client:
@@ -4397,12 +4411,14 @@ class PublishBoundaryOrderingTests(unittest.TestCase):
             (directory / "package.bin").write_bytes(b"package")
 
             def confirm_publish():
-                events.append(("confirm", "READ"))
-                self.assertIn(("git/ref/tags/v1.2.3", "GET"), events)
+                events.append(("full-confirm", "READ"))
                 self.assertNotIn(("releases/20", "PATCH"), events)
-                # The tag can move while source/publisher checks are running.
-                # A final tag read must catch it before the public PATCH.
+                # The tag can move while source/publisher checks are running;
+                # the tag read after this full callback must catch it.
                 client.tag_sha = "b" * 40
+
+            def confirm_final_publish():
+                events.append(("exact-attempt-confirm", "READ"))
 
             client = Client()
             with (
@@ -4416,8 +4432,13 @@ class PublishBoundaryOrderingTests(unittest.TestCase):
                 rc._publish_prepared(
                     client, "v1.2.3", SHA, directory, True, "notes",
                     confirm_publish=confirm_publish,
+                    confirm_final_publish=confirm_final_publish,
                 )
-        self.assertEqual(events[-1], ("git/ref/tags/v1.2.3", "GET"))
+        self.assertEqual(events[-2:], [
+            ("full-confirm", "READ"),
+            ("git/ref/tags/v1.2.3", "GET"),
+        ])
+        self.assertNotIn(("exact-attempt-confirm", "READ"), events)
         self.assertNotIn(("releases/20", "PATCH"), events)
 
 

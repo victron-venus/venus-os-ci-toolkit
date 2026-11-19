@@ -73,6 +73,24 @@
               "after": "        def confirm_before_publish() -> None:\n            # _publish_prepared calls this around its final tag readbacks; keep\n            # publisher and automatic-source checks in that shared boundary.\n            confirm_publisher_execution()\n"
             }
           ]
+        },
+        {
+          "before_sha256": "26d7149a3a3966b4421da2fd3ce988e0f7ef87f0a14d1853fd50466a903e49b9",
+          "after_sha256": "6bbc1b9be793a4f2d65d6819bb2fda78963faaa98ec7a26352908fdc413c7d43",
+          "hunks": [
+            {
+              "before": "            # _publish_prepared calls this around its final tag readbacks; keep\n            # publisher and automatic-source checks in that shared boundary.\n",
+              "after": "            # This full validation runs before _publish_prepared's final tag\n            # read; it may inspect publisher jobs and automatic source state.\n"
+            },
+            {
+              "before": "                confirm_automatic_source()\n\n",
+              "after": "                confirm_automatic_source()\n\n        def confirm_final_publisher_attempt() -> None:\n            # The final boundary shares a short deadline with the tag GET, so\n            # keep this to one exact attempt read without aggregate/jobs calls.\n            current = gh.api(\n                f\"actions/runs/{run['id']}/attempts/{run['run_attempt']}\"\n            )\n            rc.require_active_attempt(current, run)\n\n"
+            },
+            {
+              "before": "            confirm_publish=confirm_before_publish,\n        )\n",
+              "after": "            confirm_publish=confirm_before_publish,\n            confirm_final_publish=confirm_final_publisher_attempt,\n        )\n"
+            }
+          ]
         }
       ]
     }

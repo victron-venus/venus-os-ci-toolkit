@@ -128,6 +128,7 @@ ASSET_UPLOAD_TIMEOUT = 900
 API_READ_TIMEOUT = 30
 API_BINARY_READ_TIMEOUT = 120
 API_READ_ATTEMPTS = 3
+FINAL_PUBLICATION_READ_TIMEOUT = 12
 EXECUTING_RUN_WAIT_SECONDS = 300
 HTTP_HEADER_SEPARATOR = rb"\r?\n\r?\n"
 HTTP_HEADERS_MISSING = "GitHub response headers are missing or truncated"
@@ -2807,6 +2808,7 @@ def _publish_prepared(
     gh: GitHub, tag: str, sha: str, directory: Path, prerelease: bool, body: str,
     *, confirm_create: Callable[[CreateReadback], None] | None = None,
     confirm_publish: Callable[[], None] | None = None,
+    confirm_final_publish: Callable[[], None] | None = None,
 ) -> JSONObject:
     """Internal transaction after callers validate immutable source-bound notes.
 
@@ -2860,16 +2862,23 @@ def _publish_prepared(
             "Tag moved before publication; draft left unpublished",
         )
 
-    # Recheck both mutable identities before the public flip. GitHub exposes
-    # no conditional release PATCH bound to a tag SHA or publisher attempt, so
-    # these final readbacks remain sequential rather than atomic: a tag can
-    # move during publisher validation, or the attempt can end after its read.
-    confirm_tag()
+    # Run full publisher/provenance validation before the final tag lookup; it
+    # can require aggregate and paginated jobs reads. The final boundary then
+    # permits only the tag GET and one exact publisher-attempt GET, sharing a
+    # short deadline. GitHub has no conditional PATCH binding either identity,
+    # so these sequential reads still cannot make the public flip atomic.
     if confirm_publish is not None:
         confirm_publish()
-    confirm_tag()
-    if confirm_publish is not None:
-        confirm_publish()
+    deadline = time.monotonic() + FINAL_PUBLICATION_READ_TIMEOUT
+    deadline_token = _API_READ_DEADLINE.set(deadline)
+    try:
+        confirm_tag()
+        if confirm_final_publish is not None:
+            confirm_final_publish()
+        require(time.monotonic() < deadline,
+                "Final publication checks exceeded deadline; draft left unpublished")
+    finally:
+        _API_READ_DEADLINE.reset(deadline_token)
     result = cast(
         JSONObject,
         gh.api(
@@ -3539,7 +3548,7 @@ def promote(args: argparse.Namespace) -> JSONObject:
     )
 
     def confirm_active_publisher() -> None:
-        """Recheck the exact publisher attempt before ledger and public flip."""
+        """Run full publisher and execution provenance checks before publication."""
         raw_current = gh.api(
             f"actions/runs/{current_id}/attempts/{publisher_attempt}"
         )
@@ -3572,6 +3581,13 @@ def promote(args: argparse.Namespace) -> JSONObject:
             f"actions/runs/{current_id}/attempts/{publisher_attempt}"
         )
         require_active_attempt(latest_raw, current)
+
+    def confirm_final_publisher_attempt() -> None:
+        """Re-read only the exact publisher attempt at the final write boundary."""
+        latest = gh.api(
+            f"actions/runs/{current_id}/attempts/{publisher_attempt}"
+        )
+        require_active_attempt(latest, initial_publisher_run)
 
     require_reviewers(gh)
     initial, ref, candidate_release, release_assets, raw, manifest = (
@@ -3625,6 +3641,7 @@ def promote(args: argparse.Namespace) -> JSONObject:
             False,
             body,
             confirm_publish=confirm_active_publisher,
+            confirm_final_publish=confirm_final_publisher_attempt,
         )
     return {"tag": tag, "release_url": release["html_url"]}
 
