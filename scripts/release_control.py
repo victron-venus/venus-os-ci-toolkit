@@ -130,6 +130,7 @@ SHA_RE = re.compile(r"[0-9a-f]{40}\Z")
 NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+-]{0,199}\Z")
 REPO_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*/[A-Za-z0-9][A-Za-z0-9_.-]*\Z")
 ASSET_CHUNK_SIZE = 1024 * 1024
+ASSET_HTTP_HEADER_LIMIT = 64 * 1024
 ASSET_DOWNLOAD_TIMEOUT = 900
 ASSET_UPLOAD_TIMEOUT = 900
 API_READ_TIMEOUT = 30
@@ -712,8 +713,49 @@ def _start_asset_stream_readers(launch, events, stopped) -> list[threading.Threa
             ]]
 
 
+class _AssetHTTPStream:
+    """Frame gh --include output without charging headers or error bodies to the asset."""
+
+    def __init__(self, output: _AssetWriter):
+        self.output = output
+        self.header = bytearray()
+        self.status: int | None = None
+
+    def check(self, size: int = 0) -> None:
+        """Keep the underlying disk and exact-size guards active during framing."""
+        self.output.check(size)
+
+    def write(self, chunk: bytes) -> int:
+        """Parse one bounded header block, then forward only a successful response body."""
+        if self.status is not None:
+            if 200 <= self.status < 300:
+                self.output.write(chunk)
+            return len(chunk)
+        self.header.extend(chunk)
+        separator = re.search(HTTP_HEADER_SEPARATOR, self.header)
+        if separator is None:
+            if len(self.header) > ASSET_HTTP_HEADER_LIMIT:
+                raise GitHubError("GitHub asset response headers exceed the bounded limit")
+            return len(chunk)
+        if separator.start() > ASSET_HTTP_HEADER_LIMIT:
+            raise GitHubError("GitHub asset response headers exceed the bounded limit")
+        status, body = _github_http_head(bytes(self.header))
+        self.status = status
+        self.header.clear()
+        if 200 <= status < 300 and body:
+            self.output.write(body)
+        return len(chunk)
+
+    def result_headers(self) -> bytes:
+        """Return a bounded status-only HTTP frame for normal response handling."""
+        if self.status is None:
+            return b""
+        return f"HTTP/2 {self.status}\r\n\r\n".encode("ascii")
+
+
 def _stream_asset(command: list[str], output: _AssetWriter, *,
-                  deadline: float | None = None) -> subprocess.CompletedProcess[bytes]:
+                  deadline: float | None = None,
+                  frame_http: bool = False) -> subprocess.CompletedProcess[bytes]:
     """Pump bounded chunks portably, including silent/stderr-heavy transfers."""
     if deadline is None:
         deadline = time.monotonic() + ASSET_DOWNLOAD_TIMEOUT
@@ -728,15 +770,20 @@ def _stream_asset(command: list[str], output: _AssetWriter, *,
     events: queue.Queue[AssetStreamEvent] = queue.Queue(maxsize=2)
     stopped = threading.Event()
     threads = _start_asset_stream_readers(launch, events, stopped)
+    framed_output = _AssetHTTPStream(output) if frame_http else None
+    sink = framed_output if framed_output is not None else output
     complete = False
     try:
         for thread in threads:
             thread.start()
         stderr, returncode = _drain_asset_stream(
-            events, output, command, deadline, launch,
+            events, sink, command, deadline, launch,
         )
         complete = True
-        return subprocess.CompletedProcess(command, returncode, b"", stderr)
+        if framed_output is not None and returncode == 0 and framed_output.status is None:
+            raise GitHubError(HTTP_HEADERS_MISSING)
+        stdout = framed_output.result_headers() if framed_output is not None else b""
+        return subprocess.CompletedProcess(command, returncode, stdout, stderr)
     finally:
         stopped.set()
         _finish_asset_stream(launch, threads, complete)
@@ -1103,7 +1150,8 @@ class GitHub:
         )
 
     @classmethod
-    def _transient_asset_failure(cls, result: ProcessResult) -> bool:
+    def _transient_asset_failure(cls, result: ProcessResult,
+                                 http_status: int | None = None) -> bool:
         """Allow only complete, non-denial diagnostics from a failed asset GET."""
         stderr = result.stderr or b""
         # At the capture limit, a later denial may have been discarded.
@@ -1114,6 +1162,8 @@ class GitHub:
                              rb"client\.timeout exceeded", stderr.lower())
                 or re.search(rb"\bhttp(?:/[0-9.]+)?[ /:]+4\d\d(?:\D|$)", stderr.lower())):
             return False
+        if http_status in {500, 502, 503, 504}:
+            return True
         return cls._transient_read_failure(result) or bool(re.fullmatch(
             rb"(?:gh: )?unexpected end of JSON input", stderr.strip()
         ))
@@ -1281,7 +1331,8 @@ class GitHub:
         endpoint = f"{self.base}/{path}"
         # Developer/CI toolchain selected by the invoking operator via PATH.
         command = [
-            resolve_executable("gh"), "api", "--hostname", GITHUB_HOSTNAME, "--method", "GET",
+            resolve_executable("gh"), "api", "--hostname", GITHUB_HOSTNAME, "--include",
+            "--method", "GET",
             "-H", "Accept: application/octet-stream", "--", endpoint,
         ]
         deadline = time.monotonic() + ASSET_DOWNLOAD_TIMEOUT
@@ -1289,12 +1340,14 @@ class GitHub:
             for attempt in range(API_READ_ATTEMPTS):
                 if time.monotonic() >= deadline:
                     raise subprocess.TimeoutExpired(command, ASSET_DOWNLOAD_TIMEOUT)
-                result = _stream_asset(command, output, deadline=deadline)
+                result = _stream_asset(command, output, deadline=deadline, frame_http=True)
                 if time.monotonic() >= deadline:
                     raise subprocess.TimeoutExpired(command, ASSET_DOWNLOAD_TIMEOUT)
+                http = github_http_response(result.stdout) if result.stdout else None
+                status = http[0] if http is not None else None
                 if (attempt == API_READ_ATTEMPTS - 1
-                        or not self._transient_asset_failure(result)):
-                    self.response(result, f"GET {endpoint}")
+                        or not self._transient_asset_failure(result, status)):
+                    self.response(result, f"GET {endpoint}", http)
                     return
                 delay = random.uniform(1, 2 ** (attempt + 1))  # nosec B311
                 if delay >= deadline - time.monotonic():
@@ -3022,11 +3075,12 @@ def _publish_prepared(
             "Tag moved before publication; draft left unpublished",
         )
 
-    # Run full publisher/provenance validation before the final tag lookup; it
-    # can require aggregate and paginated jobs reads. The final boundary then
-    # permits only the tag GET and one exact publisher-attempt GET, sharing a
-    # short deadline. GitHub has no conditional PATCH binding either identity,
-    # so these sequential reads still cannot make the public flip atomic.
+    # Run full publisher/provenance validation before the final shared 12-second
+    # read deadline; it can require aggregate and paginated jobs reads. Within
+    # that deadline, recheck the tag and run the optional final confirmation
+    # callback, which may GET the exact publisher attempt, default branch and
+    # source ref before the public PATCH. GitHub has no conditional PATCH that
+    # binds those observations, so the checks and flip are not atomic.
     if confirm_publish is not None:
         confirm_publish()
     deadline = time.monotonic() + FINAL_PUBLICATION_READ_TIMEOUT
