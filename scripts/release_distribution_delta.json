@@ -658,6 +658,35 @@
               "after": "    # Run full publisher/provenance validation before the final shared 12-second\n    # read deadline; it can require aggregate and paginated jobs reads. Within\n    # that deadline, recheck the tag and run the optional final confirmation\n    # callback, which may GET the exact publisher attempt, default branch and\n    # source ref before the public PATCH. GitHub has no conditional PATCH that\n    # binds those observations, so the checks and flip are not atomic.\n"
             }
           ]
+        },
+        {
+          "before_sha256": "79f8e8c5174f923177c02954732c08f8bffd455fe1de9dbc392cf40fca818f42",
+          "after_sha256": "37f6d876962b1b9867c412da76d3104d4465c710278d3cc4025a8d4ad6519425",
+          "hunks": [
+            {
+              "before": "    # Run full publisher/provenance validation before the final shared 12-second\n    # read deadline; it can require aggregate and paginated jobs reads. Within\n    # that deadline, recheck the tag and run the optional final confirmation\n    # callback, which may GET the exact publisher attempt, default branch and\n    # source ref before the public PATCH. GitHub has no conditional PATCH that\n    # binds those observations, so the checks and flip are not atomic.\n    if confirm_publish is not None:\n        confirm_publish()\n",
+              "after": "    # Run full publisher/provenance validation before the final shared 12-second\n    # read deadline; it can require aggregate and paginated jobs reads. Within\n    # that deadline, recheck the tag, run the optional final confirmation\n    # callback, then recheck the tag again immediately before the public PATCH.\n    # The callback may GET the exact publisher attempt, default branch and\n    # source ref, during which the tag could move. GitHub has no conditional\n    # PATCH that binds those observations, so the checks and flip are not atomic.\n    if confirm_publish is not None:\n        confirm_publish()\n"
+            },
+            {
+              "before": "        if confirm_final_publish is not None:\n            confirm_final_publish()\n        require(time.monotonic() < deadline,\n                \"Final publication checks exceeded deadline; draft left unpublished\")\n",
+              "after": "        if confirm_final_publish is not None:\n            confirm_final_publish()\n            confirm_tag()\n        require(time.monotonic() < deadline,\n                \"Final publication checks exceeded deadline; draft left unpublished\")\n"
+            }
+          ],
+          "canonical_source_before_sha256": "5532b3263bf61ad6fb1094960632060360a263eb5d8530c018dade0f58ab0643",
+          "canonical_source_sha256": "29b185657aa5f47f562043bd6dbf0e796549d68848e1d884e4d895623ff024a4",
+          "source_hunks": [
+            {
+              "before": "    # Run full publisher/provenance validation before the final shared 12-second\n    # read deadline; it can require aggregate and paginated jobs reads. Within\n    # that deadline, recheck the tag and run the optional final confirmation\n    # callback, which may GET the exact publisher attempt, default branch and\n    # source ref before the public PATCH. GitHub has no conditional PATCH that\n    # binds those observations, so the checks and flip are not atomic.\n    if confirm_publish is not None:\n        confirm_publish()\n",
+              "after": "    # Run full publisher/provenance validation before the final shared 12-second\n    # read deadline; it can require aggregate and paginated jobs reads. Within\n    # that deadline, recheck the tag, run the optional final confirmation\n    # callback, then recheck the tag again immediately before the public PATCH.\n    # The callback may GET the exact publisher attempt, default branch and\n    # source ref, during which the tag could move. GitHub has no conditional\n    # PATCH that binds those observations, so the checks and flip are not atomic.\n    if confirm_publish is not None:\n        confirm_publish()\n"
+            },
+            {
+              "before": "        if confirm_final_publish is not None:\n            confirm_final_publish()\n        require(time.monotonic() < deadline,\n                \"Final publication checks exceeded deadline; draft left unpublished\")\n",
+              "after": "        if confirm_final_publish is not None:\n            confirm_final_publish()\n            confirm_tag()\n        require(time.monotonic() < deadline,\n                \"Final publication checks exceeded deadline; draft left unpublished\")\n"
+            }
+          ],
+          "canonical_fragments": [
+            "            confirm_tag()\n        require(time.monotonic() < deadline"
+          ]
         }
       ]
     },
@@ -936,6 +965,72 @@
           ],
           "canonical_fragments": [
             "Recheck regardless of asset digest metadata before accepting reuse."
+          ]
+        },
+        {
+          "before_sha256": "a233edf44c6adc6b83d1b4317afec291e33435e9acacd85471c2925fa181c910",
+          "after_sha256": "f86dbacb769c52fea3142cdb2b6f3d3f6a0bce11c0820cc96e503eefa9e49b90",
+          "hunks": [
+            {
+              "before": "            except (rc.ReleaseError, ValueError, KeyError, TypeError):\n                # Missing, expired or unprovable releases never authorize a skip.\n                continue\n            if cast(\n",
+              "after": "            except (rc.ReleaseError, ValueError, KeyError, TypeError):\n                # Missing, expired or unprovable releases never authorize a skip.\n                # ProcessCleanupError is intentionally not caught: an unconfirmed\n                # child-process cleanup is fatal and must not fall through to more work.\n                continue\n            if cast(\n"
+            },
+            {
+              "before": "    except (rc.ReleaseError, ValueError, KeyError, TypeError, OSError):\n        # An unavailable/expired/pending proof must not suppress delivery.\n        return None\n    if not tag:\n",
+              "after": "    except (rc.ReleaseError, ValueError, KeyError, TypeError, OSError):\n        # An unavailable/expired/pending proof must not suppress delivery.\n        # ProcessCleanupError is a RuntimeError, not an OSError, and propagates:\n        # never continue while a release helper may still have a live child.\n        return None\n    if not tag:\n"
+            },
+            {
+              "before": "\n        def confirm_final_publisher_attempt() -> None:\n            # The final boundary shares a short deadline with the tag GET, so\n            # keep this to one exact attempt read without aggregate/jobs calls.\n            # The release-control caller invokes it immediately after the last\n            # tag GET and before its protected public PATCH.\n            # The shared confirm_publish contract separates this last-attempt\n            # recheck from the full pre-tag provenance callback above.\n            current = gh.api(\n                f\"actions/runs/{run['id']}/attempts/{run['run_attempt']}\"\n            )\n            rc.require_active_attempt(current, run)\n\n        # Execution admission may be minutes old after downloads and signatures.\n",
+              "after": "\n        def confirm_final_publisher_attempt() -> None:\n            # The final boundary shares a short deadline with the tag GET.\n            # Recheck the exact attempt, default branch identity and captured\n            # source ref after the final tag read and before public PATCH. Do\n            # not add aggregate/jobs reads at this boundary.\n            current = gh.api(\n                f\"actions/runs/{run['id']}/attempts/{run['run_attempt']}\"\n            )\n            rc.require_active_attempt(current, run)\n            if automatic:\n                rc.require(\n                    rc.repository_info(gh)[\"default_branch\"] == info[\"default_branch\"],\n                    \"Automatic publication default branch changed; draft left unpublished\",\n                )\n                rc.require(\n                    gh.api(source_path) == source_ref[1],\n                    \"Automatic publication default source changed; draft left unpublished\",\n                )\n\n        # Execution admission may be minutes old after downloads and signatures.\n"
+            }
+          ],
+          "canonical_source_before_sha256": "9347ff07d4cd866529571166d3c16b6a413211e26c9b0d1aa3f2d905db754395",
+          "canonical_source_sha256": "9eb76e5a00f7fe05078f04476412d055f8095e1053145c1a9a38d9e9c9688b56",
+          "source_hunks": [
+            {
+              "before": "            except (rc.ReleaseError, ValueError, KeyError, TypeError):\n                # Missing, expired or unprovable releases never authorize a skip.\n                continue\n            if cast(\n",
+              "after": "            except (rc.ReleaseError, ValueError, KeyError, TypeError):\n                # Missing, expired or unprovable releases never authorize a skip.\n                # ProcessCleanupError is intentionally not caught: an unconfirmed\n                # child-process cleanup is fatal and must not fall through to more work.\n                continue\n            if cast(\n"
+            },
+            {
+              "before": "    except (rc.ReleaseError, ValueError, KeyError, TypeError, OSError):\n        # An unavailable/expired/pending proof must not suppress delivery.\n        return None\n    if not tag:\n",
+              "after": "    except (rc.ReleaseError, ValueError, KeyError, TypeError, OSError):\n        # An unavailable/expired/pending proof must not suppress delivery.\n        # ProcessCleanupError is a RuntimeError, not an OSError, and propagates:\n        # never continue while a release helper may still have a live child.\n        return None\n    if not tag:\n"
+            },
+            {
+              "before": "\n        def confirm_final_publisher_attempt() -> None:\n            # The final boundary shares a short deadline with the tag GET, so\n            # keep this to one exact attempt read without aggregate/jobs calls.\n            # The release-control caller invokes it immediately after the last\n            # tag GET and before its protected public PATCH.\n            # The shared confirm_publish contract separates this last-attempt\n            # recheck from the full pre-tag provenance callback above.\n            current = gh.api(\n                f\"actions/runs/{run['id']}/attempts/{run['run_attempt']}\"\n            )\n            rc.require_active_attempt(current, run)\n\n        # Execution admission may be minutes old after downloads and signatures.\n",
+              "after": "\n        def confirm_final_publisher_attempt() -> None:\n            # The final boundary shares a short deadline with the tag GET.\n            # Recheck the exact attempt, default branch identity and captured\n            # source ref after the final tag read and before public PATCH. Do\n            # not add aggregate/jobs reads at this boundary.\n            current = gh.api(\n                f\"actions/runs/{run['id']}/attempts/{run['run_attempt']}\"\n            )\n            rc.require_active_attempt(current, run)\n            if automatic:\n                rc.require(\n                    rc.repository_info(gh)[\"default_branch\"] == info[\"default_branch\"],\n                    \"Automatic publication default branch changed; draft left unpublished\",\n                )\n                rc.require(\n                    gh.api(source_path) == source_ref[1],\n                    \"Automatic publication default source changed; draft left unpublished\",\n                )\n\n        # Execution admission may be minutes old after downloads and signatures.\n"
+            }
+          ],
+          "canonical_fragments": [
+            "Recheck the exact attempt, default branch identity and captured"
+          ]
+        },
+        {
+          "before_sha256": "f86dbacb769c52fea3142cdb2b6f3d3f6a0bce11c0820cc96e503eefa9e49b90",
+          "after_sha256": "c00445facf753856cf2f2deb54c37c78d273358e76501aa912cde2376612f9eb",
+          "hunks": [
+            {
+              "before": "            except (rc.ReleaseError, ValueError, KeyError, TypeError):\n                # Missing, expired or unprovable releases never authorize a skip.\n                # ProcessCleanupError is intentionally not caught: an unconfirmed\n                # child-process cleanup is fatal and must not fall through to more work.\n                continue\n            if cast(\n",
+              "after": "            except (rc.ReleaseError, ValueError, KeyError, TypeError):\n                # Missing, expired or unprovable releases never authorize a skip.\n                continue\n            if cast(\n"
+            },
+            {
+              "before": "    except (rc.ReleaseError, ValueError, KeyError, TypeError, OSError):\n        # An unavailable/expired/pending proof must not suppress delivery.\n        # ProcessCleanupError is a RuntimeError, not an OSError, and propagates:\n        # never continue while a release helper may still have a live child.\n        return None\n    if not tag:\n",
+              "after": "    except (rc.ReleaseError, ValueError, KeyError, TypeError, OSError):\n        # An unavailable/expired/pending proof must not suppress delivery.\n        return None\n    if not tag:\n"
+            }
+          ],
+          "canonical_source_before_sha256": "9eb76e5a00f7fe05078f04476412d055f8095e1053145c1a9a38d9e9c9688b56",
+          "canonical_source_sha256": "b59bc005a75bf9fcfde9f334d914864b6391cb1d6ffe3993796c9acf8b20882e",
+          "source_hunks": [
+            {
+              "before": "            except (rc.ReleaseError, ValueError, KeyError, TypeError):\n                # Missing, expired or unprovable releases never authorize a skip.\n                # ProcessCleanupError is intentionally not caught: an unconfirmed\n                # child-process cleanup is fatal and must not fall through to more work.\n                continue\n            if cast(\n",
+              "after": "            except (rc.ReleaseError, ValueError, KeyError, TypeError):\n                # Missing, expired or unprovable releases never authorize a skip.\n                continue\n            if cast(\n"
+            },
+            {
+              "before": "    except (rc.ReleaseError, ValueError, KeyError, TypeError, OSError):\n        # An unavailable/expired/pending proof must not suppress delivery.\n        # ProcessCleanupError is a RuntimeError, not an OSError, and propagates:\n        # never continue while a release helper may still have a live child.\n        return None\n    if not tag:\n",
+              "after": "    except (rc.ReleaseError, ValueError, KeyError, TypeError, OSError):\n        # An unavailable/expired/pending proof must not suppress delivery.\n        return None\n    if not tag:\n"
+            }
+          ],
+          "canonical_fragments": [
+            "Recheck the exact attempt, default branch identity and captured"
           ]
         }
       ]
@@ -1393,6 +1488,27 @@
               "after": "            self.assertEqual(\n                json.loads(argv_path.read_text()),\n                [\n                    \"api\", \"--hostname\", rc.GITHUB_HOSTNAME, \"--include\", \"--method\", \"GET\",\n                    \"-H\", \"Accept: application/octet-stream\", \"--\",\n                    f\"repos/{REPO}/releases/assets/42\",\n                ],\n"
             }
           ]
+        },
+        {
+          "before_sha256": "1bec8b58e04daaddbab707aa9f90eea864f2c8fb4cc5fd2854d1f2695c10a1d2",
+          "after_sha256": "6849e12cd04f1e54a6fc8b8bea7695636cf0d7e3999540dca794943e93b1a34b",
+          "hunks": [
+            {
+              "before": "        self.assertNotIn((\"releases/20\", \"PATCH\"), events)\n\n\nif __name__ == \"__main__\":\n",
+              "after": "        self.assertNotIn((\"releases/20\", \"PATCH\"), events)\n\n    def test_tag_moved_during_final_publish_confirmation_blocks_patch(self):\n        \"\"\"Recheck the release tag after final publisher/source reads.\"\"\"\n        events = []\n\n        class Client:\n            repo = REPO\n            tag_sha = SHA\n            tag_reads = 0\n\n            def api(self, path, method=\"GET\", body=None):\n                events.append((path, method))\n                if path == \"git/refs\" and method == \"POST\":\n                    return {\"ref\": \"refs/tags/v1.2.3\"}\n                if path == \"releases\" and method == \"POST\":\n                    return {\"id\": 20, \"tag_name\": \"v1.2.3\", \"draft\": True}\n                if path == \"git/ref/tags/v1.2.3\":\n                    self.tag_reads += 1\n                    return {\"ref\": \"refs/tags/v1.2.3\",\n                            \"object\": {\"type\": \"commit\", \"sha\": self.tag_sha}}\n                if path == \"releases/20\" and method == \"PATCH\":\n                    return {\"id\": 20, \"tag_name\": \"v1.2.3\", \"draft\": False,\n                            \"prerelease\": True,\n                            \"html_url\": \"https://example.invalid/release\"}\n                raise AssertionError(f\"Unexpected API call {method} {path}\")\n\n            def upload(self, *_args, **_kwargs):\n                events.append((\"upload\", \"POST\"))\n\n            def pages(self, path, *_args, **_kwargs):\n                events.append((path, \"GET\"))\n                return [{\"name\": \"package.bin\"}]\n\n        with tempfile.TemporaryDirectory() as temporary:\n            directory = Path(temporary)\n            (directory / \"package.bin\").write_bytes(b\"package\")\n\n            client = Client()\n\n            def confirm_final_publish():\n                events.append((\"final-source-ref-read\", \"GET\"))\n                # Simulate the tag moving during the final attempt/branch/source\n                # observations, after the first check in the bounded window.\n                self.assertEqual(client.tag_reads, 1)\n                client.tag_sha = \"b\" * 40\n\n            with (\n                patch.object(rc, \"verify_required_signatures\"),\n                patch.object(rc, \"reject_restricted_assets\"),\n                patch.object(rc, \"ensure_absent\"),\n                patch.object(rc, \"check_workflow_publication\"),\n                patch.object(rc, \"verify_uploaded_asset\"),\n                self.assertRaisesRegex(rc.ReleaseError, \"Tag moved before publication\"),\n            ):\n                rc._publish_prepared(\n                    client, \"v1.2.3\", SHA, directory, True, \"notes\",\n                    confirm_final_publish=confirm_final_publish,\n                )\n\n        self.assertEqual(client.tag_reads, 2)\n        self.assertEqual(events[-3:], [\n            (\"git/ref/tags/v1.2.3\", \"GET\"),\n            (\"final-source-ref-read\", \"GET\"),\n            (\"git/ref/tags/v1.2.3\", \"GET\"),\n        ])\n        self.assertNotIn((\"releases/20\", \"PATCH\"), events)\n\n\nif __name__ == \"__main__\":\n"
+            }
+          ],
+          "canonical_source_before_sha256": "2e00b9551e36a914eaf630acff0268b04d5128d1bcda278d525f67fd391b5c73",
+          "canonical_source_sha256": "d7b796a9fa31a684506ac952f632bc6adeb0794622b71d29b999f669ba977ba2",
+          "source_hunks": [
+            {
+              "before": "        self.assertNotIn((\"releases/20\", \"PATCH\"), events)\n\n\nif __name__ == \"__main__\":\n",
+              "after": "        self.assertNotIn((\"releases/20\", \"PATCH\"), events)\n\n    def test_tag_moved_during_final_publish_confirmation_blocks_patch(self):\n        \"\"\"Recheck the release tag after final publisher/source reads.\"\"\"\n        events = []\n\n        class Client:\n            repo = REPO\n            tag_sha = SHA\n            tag_reads = 0\n\n            def api(self, path, method=\"GET\", body=None):\n                events.append((path, method))\n                if path == \"git/refs\" and method == \"POST\":\n                    return {\"ref\": \"refs/tags/v1.2.3\"}\n                if path == \"releases\" and method == \"POST\":\n                    return {\"id\": 20, \"tag_name\": \"v1.2.3\", \"draft\": True}\n                if path == \"git/ref/tags/v1.2.3\":\n                    self.tag_reads += 1\n                    return {\"ref\": \"refs/tags/v1.2.3\",\n                            \"object\": {\"type\": \"commit\", \"sha\": self.tag_sha}}\n                if path == \"releases/20\" and method == \"PATCH\":\n                    return {\"id\": 20, \"tag_name\": \"v1.2.3\", \"draft\": False,\n                            \"prerelease\": True,\n                            \"html_url\": \"https://example.invalid/release\"}\n                raise AssertionError(f\"Unexpected API call {method} {path}\")\n\n            def upload(self, *_args, **_kwargs):\n                events.append((\"upload\", \"POST\"))\n\n            def pages(self, path, *_args, **_kwargs):\n                events.append((path, \"GET\"))\n                return [{\"name\": \"package.bin\"}]\n\n        with tempfile.TemporaryDirectory() as temporary:\n            directory = Path(temporary)\n            (directory / \"package.bin\").write_bytes(b\"package\")\n\n            client = Client()\n\n            def confirm_final_publish():\n                events.append((\"final-source-ref-read\", \"GET\"))\n                # Simulate the tag moving during the final attempt/branch/source\n                # observations, after the first check in the bounded window.\n                self.assertEqual(client.tag_reads, 1)\n                client.tag_sha = \"b\" * 40\n\n            with (\n                patch.object(rc, \"verify_required_signatures\"),\n                patch.object(rc, \"reject_restricted_assets\"),\n                patch.object(rc, \"ensure_absent\"),\n                patch.object(rc, \"check_workflow_publication\"),\n                patch.object(rc, \"verify_uploaded_asset\"),\n                self.assertRaisesRegex(rc.ReleaseError, \"Tag moved before publication\"),\n            ):\n                rc._publish_prepared(\n                    client, \"v1.2.3\", SHA, directory, True, \"notes\",\n                    confirm_final_publish=confirm_final_publish,\n                )\n\n        self.assertEqual(client.tag_reads, 2)\n        self.assertEqual(events[-3:], [\n            (\"git/ref/tags/v1.2.3\", \"GET\"),\n            (\"final-source-ref-read\", \"GET\"),\n            (\"git/ref/tags/v1.2.3\", \"GET\"),\n        ])\n        self.assertNotIn((\"releases/20\", \"PATCH\"), events)\n\n\nif __name__ == \"__main__\":\n"
+            }
+          ],
+          "canonical_fragments": [
+            "def test_tag_moved_during_final_publish_confirmation_blocks_patch"
+          ]
         }
       ],
       "test_only_successor_layers": [
@@ -1440,6 +1556,42 @@
                 }
               ],
               "canonical_source_sha256": "d0f4f09cb271da5bdc89067626a374266a262e4dc4704938b443c492a74fdbb2"
+            }
+          ]
+        },
+        {
+          "base_sha256": "6849e12cd04f1e54a6fc8b8bea7695636cf0d7e3999540dca794943e93b1a34b",
+          "layers": [
+            {
+              "before_sha256": "6849e12cd04f1e54a6fc8b8bea7695636cf0d7e3999540dca794943e93b1a34b",
+              "after_sha256": "9a4e781810c45ee28d7f8cf11ece47294fda98a175c79659922ae3fd53aed00e",
+              "canonical_source_sha256": "91eda55f35fb1beb4621aa633cbc4ad88d01cd230db7883cd927559f3cda9075",
+              "hunks": [
+                {
+                  "before": "class PublishBoundaryOrderingTests(unittest.TestCase):\n    def test_final_exact_publisher_read_after_tag_blocks_patch_if_terminal(self):\n",
+                  "after": "class PublishBoundaryOrderingTests(unittest.TestCase):\n    def _publish_package(self, client, *, confirm_publish=None, confirm_final_publish=None):\n        with tempfile.TemporaryDirectory() as temporary:\n            directory = Path(temporary)\n            (directory / \"package.bin\").write_bytes(b\"package\")\n            with (\n                patch.object(rc, \"verify_required_signatures\"),\n                patch.object(rc, \"reject_restricted_assets\"),\n                patch.object(rc, \"ensure_absent\"),\n                patch.object(rc, \"check_workflow_publication\"),\n                patch.object(rc, \"verify_uploaded_asset\"),\n            ):\n                rc._publish_prepared(\n                    client, \"v1.2.3\", SHA, directory, True, \"notes\",\n                    confirm_publish=confirm_publish,\n                    confirm_final_publish=confirm_final_publish,\n                )\n\n    def test_final_exact_publisher_read_after_tag_blocks_patch_if_terminal(self):\n"
+                },
+                {
+                  "before": "                            \"status\": self.publisher_status, \"conclusion\": conclusion}\n                if path == \"releases/20\" and method == \"PATCH\":\n                    return {\"id\": 20, \"tag_name\": \"v1.2.3\", \"draft\": False,\n                            \"prerelease\": True,\n                            \"html_url\": \"https://example.invalid/release\"}\n                raise AssertionError(f\"Unexpected API call {method} {path}\")\n",
+                  "after": "                            \"status\": self.publisher_status, \"conclusion\": conclusion}\n                raise AssertionError(f\"Unexpected API call {method} {path}\")\n"
+                },
+                {
+                  "before": "\n        with tempfile.TemporaryDirectory() as temporary:\n            directory = Path(temporary)\n            (directory / \"package.bin\").write_bytes(b\"package\")\n\n            def confirm_publish():\n                events.append((\"full-publisher-validation\", \"GET\"))\n                client.pages(\"actions/runs/99/attempts/1/jobs\")\n\n            def confirm_final_publish():\n                events.append((\"confirm-publisher-attempt\", \"GET\"))\n                current = client.api(\"actions/runs/99/attempts/1\")\n                rc.require_active_attempt(current, current)\n\n            client = Client()\n            with (\n                patch.object(rc, \"verify_required_signatures\"),\n                patch.object(rc, \"reject_restricted_assets\"),\n                patch.object(rc, \"ensure_absent\"),\n                patch.object(rc, \"check_workflow_publication\"),\n                patch.object(rc, \"verify_uploaded_asset\"),\n                self.assertRaisesRegex(rc.ReleaseError, \"Execution attempt is not active\"),\n            ):\n                rc._publish_prepared(\n                    client, \"v1.2.3\", SHA, directory, True, \"notes\",\n                    confirm_publish=confirm_publish,\n                    confirm_final_publish=confirm_final_publish,\n                )\n\n",
+                  "after": "\n        def confirm_publish():\n            events.append((\"full-publisher-validation\", \"GET\"))\n            client.pages(\"actions/runs/99/attempts/1/jobs\")\n\n        def confirm_final_publish():\n            events.append((\"confirm-publisher-attempt\", \"GET\"))\n            current = client.api(\"actions/runs/99/attempts/1\")\n            rc.require_active_attempt(current, current)\n\n        client = Client()\n        with self.assertRaisesRegex(rc.ReleaseError, \"Execution attempt is not active\"):\n            self._publish_package(\n                client, confirm_publish=confirm_publish,\n                confirm_final_publish=confirm_final_publish,\n            )\n\n"
+                },
+                {
+                  "before": "                            \"object\": {\"type\": \"commit\", \"sha\": self.tag_sha}}\n                if path == \"releases/20\" and method == \"PATCH\":\n                    return {\"id\": 20, \"tag_name\": \"v1.2.3\", \"draft\": False,\n                            \"prerelease\": True,\n                            \"html_url\": \"https://example.invalid/release\"}\n                raise AssertionError(f\"Unexpected API call {method} {path}\")\n",
+                  "after": "                            \"object\": {\"type\": \"commit\", \"sha\": self.tag_sha}}\n                raise AssertionError(f\"Unexpected API call {method} {path}\")\n"
+                },
+                {
+                  "before": "\n        with tempfile.TemporaryDirectory() as temporary:\n            directory = Path(temporary)\n            (directory / \"package.bin\").write_bytes(b\"package\")\n\n            client = Client()\n\n            def confirm_final_publish():\n                events.append((\"final-source-ref-read\", \"GET\"))\n                # Simulate the tag moving during the final attempt/branch/source\n                # observations, after the first check in the bounded window.\n                self.assertEqual(client.tag_reads, 1)\n                client.tag_sha = \"b\" * 40\n\n            with (\n                patch.object(rc, \"verify_required_signatures\"),\n                patch.object(rc, \"reject_restricted_assets\"),\n                patch.object(rc, \"ensure_absent\"),\n                patch.object(rc, \"check_workflow_publication\"),\n                patch.object(rc, \"verify_uploaded_asset\"),\n                self.assertRaisesRegex(rc.ReleaseError, \"Tag moved before publication\"),\n            ):\n                rc._publish_prepared(\n                    client, \"v1.2.3\", SHA, directory, True, \"notes\",\n                    confirm_final_publish=confirm_final_publish,\n                )\n\n",
+                  "after": "\n        client = Client()\n\n        def confirm_final_publish():\n            events.append((\"final-source-ref-read\", \"GET\"))\n            # Simulate the tag moving during the final attempt/branch/source\n            # observations, after the first check in the bounded window.\n            self.assertEqual(client.tag_reads, 1)\n            client.tag_sha = \"b\" * 40\n\n        with self.assertRaisesRegex(rc.ReleaseError, \"Tag moved before publication\"):\n            self._publish_package(client, confirm_final_publish=confirm_final_publish)\n\n"
+                }
+              ],
+              "canonical_fragments": [
+                "    def _publish_package(self, client, *,",
+                "    def test_final_exact_publisher_read_after_tag_blocks_patch_if_terminal(self):"
+              ]
             }
           ]
         }
@@ -1687,6 +1839,35 @@
             "def test_digest_present_reuse_rechecks_source_attempt_after_evidence_read",
             "def test_compact_reuse_rechecks_source_attempt_after_nested_distribution_read"
           ]
+        },
+        {
+          "before_sha256": "76be56940c3f180c9debfd823e239c7644f602b8b7d2cd6b25eca4a7a0816e9e",
+          "after_sha256": "e1f482668f9f9717e8db1a8a5fc470d929eb8db31bce71835fff3e879df5e5f0",
+          "hunks": [
+            {
+              "before": "import prepare_version\nimport release_state as state\nimport release_versioned as lifecycle\nimport test_release_control as legacy_tests\n",
+              "after": "import prepare_version\nimport release_state as state\nimport release_push_scope\nimport release_versioned as lifecycle\nimport test_release_control as legacy_tests\n"
+            },
+            {
+              "before": "            )\n        self.assertEqual(result, \"\")\n\n    def test_failed_current_gate_cannot_reuse_previous_rc(self):\n",
+              "after": "            )\n        self.assertEqual(result, \"\")\n\n    def test_automatic_beta_rechecks_source_after_final_tag_read(self):\n        \"\"\"A branch advance after the tag read must leave the uploaded release a draft.\"\"\"\n        plan = self.automatic_build()\n        api = self.gh.api\n        events = []\n        source_path = \"git/ref/heads/main\"\n        tag_path = f\"git/ref/tags/{plan['tag']}\"\n        source_reads = 0\n\n        def advance_after_final_tag(path, method=\"GET\", body=None):\n            nonlocal source_reads\n            result = api(path, method, body)\n            if path == source_path:\n                source_reads += 1\n                events.append(\"source\")\n            elif path == tag_path:\n                events.append(\"tag\")\n                if source_reads >= 2:\n                    # Move after the final tag response but before the last\n                    # source-ref read that gates the public PATCH.\n                    self.gh.default_head = \"b\" * 40\n            elif path == \"\":\n                events.append(\"repository\")\n            elif path == \"actions/runs/99/attempts/1\":\n                events.append(\"attempt\")\n            return result\n\n        with (\n            patch.object(self.gh, \"api\", side_effect=advance_after_final_tag),\n            self.assertRaisesRegex(\n                rc.ReleaseError, \"Automatic publication default source changed\"\n            ),\n        ):\n            lifecycle.publish_versioned(self.args)\n\n        self.assertEqual(events[-4:], [\"tag\", \"attempt\", \"repository\", \"source\"])\n        self.assertEqual(self.gh.default_head, \"b\" * 40)\n        draft = next(\n            release for release in self.gh.releases.values()\n            if release[\"tag_name\"] == plan[\"tag\"]\n        )\n        self.assertTrue(draft[\"draft\"])\n        self.assertTrue(self.gh.assets[draft[\"id\"]])\n        self.assertFalse(any(method == \"PATCH\" for _, method, _ in self.gh.writes))\n\n    def test_automatic_beta_rechecks_default_branch_after_final_tag_read(self):\n        \"\"\"A default-branch rename at the final boundary must block publication.\"\"\"\n        plan = self.automatic_build()\n        api = self.gh.api\n        events = []\n        source_reads = 0\n        tag_path = f\"git/ref/tags/{plan['tag']}\"\n\n        def rename_after_final_tag(path, method=\"GET\", body=None):\n            nonlocal source_reads\n            result = api(path, method, body)\n            if path == \"git/ref/heads/main\":\n                source_reads += 1\n                events.append(\"source\")\n            elif path == tag_path:\n                events.append(\"tag\")\n                if source_reads >= 2:\n                    self.gh.info[\"default_branch\"] = \"replacement\"\n            elif path == \"actions/runs/99/attempts/1\":\n                events.append(\"attempt\")\n            elif path == \"\":\n                events.append(\"repository\")\n            return result\n\n        with (\n            patch.object(self.gh, \"api\", side_effect=rename_after_final_tag),\n            self.assertRaisesRegex(\n                rc.ReleaseError, \"Automatic publication default branch changed\"\n            ),\n        ):\n            lifecycle.publish_versioned(self.args)\n\n        self.assertEqual(events[-3:], [\"tag\", \"attempt\", \"repository\"])\n        draft = next(\n            release for release in self.gh.releases.values()\n            if release[\"tag_name\"] == plan[\"tag\"]\n        )\n        self.assertEqual(self.gh.info[\"default_branch\"], \"replacement\")\n        self.assertTrue(draft[\"draft\"])\n        self.assertTrue(self.gh.assets[draft[\"id\"]])\n        self.assertFalse(any(method == \"PATCH\" for _, method, _ in self.gh.writes))\n\n    def test_scheduled_reuse_propagates_unconfirmed_process_cleanup(self):\n        \"\"\"An unconfirmed child process must abort reuse rather than look unavailable.\"\"\"\n        self.qualify_schedule_fixture()\n        self.build_schedule()\n        info = rc.repository_info(self.gh)\n        snapshot = rc.source_policy_snapshot(self.gh, SHA)\n        cleanup_error = rc.ProcessCleanupError(\"child cleanup was not confirmed\")\n\n        with patch.object(\n            lifecycle, \"verify_scheduled_reuse\", side_effect=cleanup_error,\n        ):\n            with self.assertRaises(rc.ProcessCleanupError) as raised:\n                lifecycle.scheduled_reuse(\n                    self.gh, info, self.gh.runs[200], snapshot, \"1.2.3\"\n                )\n\n        self.assertIs(raised.exception, cleanup_error)\n\n    def test_automatic_test_push_propagates_unconfirmed_process_cleanup(self):\n        \"\"\"Cleanup uncertainty is fatal even though ordinary proof gaps allow delivery.\"\"\"\n        selected_policy = copy.deepcopy(self.policy)\n        selected_policy[\"change_scope\"] = {\n            \"automatic_release_test_paths\": [\"tests/release_fixture.py\"]\n        }\n        snapshot = {\"data\": selected_policy}\n        info = {\"default_branch\": \"main\"}\n        run = {\"head_sha\": SHA}\n        cleanup_error = rc.ProcessCleanupError(\"child cleanup was not confirmed\")\n        admission = {\"test_only\": True, \"after\": SHA, \"before\": \"b\" * 40}\n\n        with (\n            patch.dict(os.environ, {\"GITHUB_EVENT_NAME\": \"push\"}),\n            patch.object(release_push_scope, \"current_push\", return_value=admission),\n            patch.object(lifecycle, \"scheduled_reuse\", side_effect=cleanup_error),\n            self.assertRaises(rc.ProcessCleanupError) as raised,\n        ):\n            lifecycle.automatic_test_push(self.gh, info, run, snapshot, \"1.2.3\")\n\n        self.assertIs(raised.exception, cleanup_error)\n        self.assertFalse((self.root / \".release-push-admission.json\").exists())\n\n    def test_failed_current_gate_cannot_reuse_previous_rc(self):\n"
+            }
+          ],
+          "canonical_source_before_sha256": "68bc80cf52047134afa0427f668d65a76ac28765ff1edb46976374570ce6fb3c",
+          "canonical_source_sha256": "5e732ad1e67081c41ad15857ed1ba2593bb229aaf57524a67aa189b0646630f8",
+          "source_hunks": [
+            {
+              "before": "import prepare_version\nimport release_state as state\nimport release_versioned as lifecycle\nimport test_release_control as legacy_tests\n",
+              "after": "import prepare_version\nimport release_state as state\nimport release_push_scope\nimport release_versioned as lifecycle\nimport test_release_control as legacy_tests\n"
+            },
+            {
+              "before": "            )\n        self.assertEqual(result, \"\")\n\n    def test_failed_current_gate_cannot_reuse_previous_rc(self):\n",
+              "after": "            )\n        self.assertEqual(result, \"\")\n\n    def test_automatic_beta_rechecks_source_after_final_tag_read(self):\n        \"\"\"A branch advance after the tag read must leave the uploaded release a draft.\"\"\"\n        plan = self.automatic_build()\n        api = self.gh.api\n        events = []\n        source_path = \"git/ref/heads/main\"\n        tag_path = f\"git/ref/tags/{plan['tag']}\"\n        source_reads = 0\n\n        def advance_after_final_tag(path, method=\"GET\", body=None):\n            nonlocal source_reads\n            result = api(path, method, body)\n            if path == source_path:\n                source_reads += 1\n                events.append(\"source\")\n            elif path == tag_path:\n                events.append(\"tag\")\n                if source_reads >= 2:\n                    # Move after the final tag response but before the last\n                    # source-ref read that gates the public PATCH.\n                    self.gh.default_head = \"b\" * 40\n            elif path == \"\":\n                events.append(\"repository\")\n            elif path == \"actions/runs/99/attempts/1\":\n                events.append(\"attempt\")\n            return result\n\n        with (\n            patch.object(self.gh, \"api\", side_effect=advance_after_final_tag),\n            self.assertRaisesRegex(\n                rc.ReleaseError, \"Automatic publication default source changed\"\n            ),\n        ):\n            lifecycle.publish_versioned(self.args)\n\n        self.assertEqual(events[-4:], [\"tag\", \"attempt\", \"repository\", \"source\"])\n        self.assertEqual(self.gh.default_head, \"b\" * 40)\n        draft = next(\n            release for release in self.gh.releases.values()\n            if release[\"tag_name\"] == plan[\"tag\"]\n        )\n        self.assertTrue(draft[\"draft\"])\n        self.assertTrue(self.gh.assets[draft[\"id\"]])\n        self.assertFalse(any(method == \"PATCH\" for _, method, _ in self.gh.writes))\n\n    def test_automatic_beta_rechecks_default_branch_after_final_tag_read(self):\n        \"\"\"A default-branch rename at the final boundary must block publication.\"\"\"\n        plan = self.automatic_build()\n        api = self.gh.api\n        events = []\n        source_reads = 0\n        tag_path = f\"git/ref/tags/{plan['tag']}\"\n\n        def rename_after_final_tag(path, method=\"GET\", body=None):\n            nonlocal source_reads\n            result = api(path, method, body)\n            if path == \"git/ref/heads/main\":\n                source_reads += 1\n                events.append(\"source\")\n            elif path == tag_path:\n                events.append(\"tag\")\n                if source_reads >= 2:\n                    self.gh.info[\"default_branch\"] = \"replacement\"\n            elif path == \"actions/runs/99/attempts/1\":\n                events.append(\"attempt\")\n            elif path == \"\":\n                events.append(\"repository\")\n            return result\n\n        with (\n            patch.object(self.gh, \"api\", side_effect=rename_after_final_tag),\n            self.assertRaisesRegex(\n                rc.ReleaseError, \"Automatic publication default branch changed\"\n            ),\n        ):\n            lifecycle.publish_versioned(self.args)\n\n        self.assertEqual(events[-3:], [\"tag\", \"attempt\", \"repository\"])\n        draft = next(\n            release for release in self.gh.releases.values()\n            if release[\"tag_name\"] == plan[\"tag\"]\n        )\n        self.assertEqual(self.gh.info[\"default_branch\"], \"replacement\")\n        self.assertTrue(draft[\"draft\"])\n        self.assertTrue(self.gh.assets[draft[\"id\"]])\n        self.assertFalse(any(method == \"PATCH\" for _, method, _ in self.gh.writes))\n\n    def test_scheduled_reuse_propagates_unconfirmed_process_cleanup(self):\n        \"\"\"An unconfirmed child process must abort reuse rather than look unavailable.\"\"\"\n        self.qualify_schedule_fixture()\n        self.build_schedule()\n        info = rc.repository_info(self.gh)\n        snapshot = rc.source_policy_snapshot(self.gh, SHA)\n        cleanup_error = rc.ProcessCleanupError(\"child cleanup was not confirmed\")\n\n        with patch.object(\n            lifecycle, \"verify_scheduled_reuse\", side_effect=cleanup_error,\n        ):\n            with self.assertRaises(rc.ProcessCleanupError) as raised:\n                lifecycle.scheduled_reuse(\n                    self.gh, info, self.gh.runs[200], snapshot, \"1.2.3\"\n                )\n\n        self.assertIs(raised.exception, cleanup_error)\n\n    def test_automatic_test_push_propagates_unconfirmed_process_cleanup(self):\n        \"\"\"Cleanup uncertainty is fatal even though ordinary proof gaps allow delivery.\"\"\"\n        selected_policy = copy.deepcopy(self.policy)\n        selected_policy[\"change_scope\"] = {\n            \"automatic_release_test_paths\": [\"tests/release_fixture.py\"]\n        }\n        snapshot = {\"data\": selected_policy}\n        info = {\"default_branch\": \"main\"}\n        run = {\"head_sha\": SHA}\n        cleanup_error = rc.ProcessCleanupError(\"child cleanup was not confirmed\")\n        admission = {\"test_only\": True, \"after\": SHA, \"before\": \"b\" * 40}\n\n        with (\n            patch.dict(os.environ, {\"GITHUB_EVENT_NAME\": \"push\"}),\n            patch.object(release_push_scope, \"current_push\", return_value=admission),\n            patch.object(lifecycle, \"scheduled_reuse\", side_effect=cleanup_error),\n            self.assertRaises(rc.ProcessCleanupError) as raised,\n        ):\n            lifecycle.automatic_test_push(self.gh, info, run, snapshot, \"1.2.3\")\n\n        self.assertIs(raised.exception, cleanup_error)\n        self.assertFalse((self.root / \".release-push-admission.json\").exists())\n\n    def test_failed_current_gate_cannot_reuse_previous_rc(self):\n"
+            }
+          ],
+          "canonical_fragments": [
+            "def test_automatic_beta_rechecks_source_after_final_tag_read"
+          ]
         }
       ]
     },
@@ -1845,6 +2026,58 @@
               "after": "try:\n    # The parent SIGKILLs this still-live group as soon as it validates status.\n    # If the parent disappears first, EOF triggers cleanup while the wrapper\n    # still pins the process-group identity.\n    os.read(control_fd, 1)\nexcept OSError:\n"
             }
           ]
+        },
+        {
+          "before_sha256": "52ef7d2833d2cb957085b11193ce0ff210ffe500f0aabdaf907c046309a13e3e",
+          "after_sha256": "4bd349797eaf7e01c1f1f477961e103ce52803f6738ab6f30b5dfa7f79fd9b5a",
+          "canonical_source_before_sha256": "c93482ede99b87b15d9548c4ddc5189ce07ea3f0c02346c37ae9545dbee1edaf",
+          "canonical_source_sha256": "a8ca6bb5f14ea02a4495746a7df2cdba836e7045c2f009068bd630d20d28d5c8",
+          "source_hunks": [
+            {
+              "before": "    status_stream: BinaryIO\n    control_fd: int\n\n\n",
+              "after": "    status_stream: BinaryIO\n    control_fd: int\n    deadline: float | None\n\n\n"
+            },
+            {
+              "before": "def _write_supervisor_config(\n    stream_fd: int, command: tuple[str, ...], target_env: Mapping[str, str], target_cwd: str,\n) -> None:\n    \"\"\"Send bounded target argv/env/cwd over a private pipe, not wrapper metadata.\"\"\"\n",
+              "after": "def _write_supervisor_config(\n    stream_fd: int, command: tuple[str, ...], target_env: Mapping[str, str], target_cwd: str,\n    *, deadline: float | None = None, timeout: float | None = None,\n) -> None:\n    \"\"\"Send bounded target argv/env/cwd over a private pipe, not wrapper metadata.\"\"\"\n"
+            },
+            {
+              "before": "        selector.register(stream_fd, selectors.EVENT_WRITE)\n        offset = 0\n        deadline = time.monotonic() + CLEANUP_TIMEOUT_SECONDS\n        while offset < len(frame):\n            remaining = deadline - time.monotonic()\n            if remaining <= 0 or not selector.select(remaining):\n                raise ProcessCleanupError(\"Release helper supervisor did not accept command metadata\")\n            try:\n",
+              "after": "        selector.register(stream_fd, selectors.EVENT_WRITE)\n        offset = 0\n        cleanup_deadline = time.monotonic() + CLEANUP_TIMEOUT_SECONDS\n        while offset < len(frame):\n            now = time.monotonic()\n            active_deadline = deadline if deadline is not None else cleanup_deadline\n            remaining = active_deadline - now\n            if remaining <= 0 or not selector.select(remaining):\n                if deadline is not None:\n                    raise ProcessTimeout(timeout or 0, b\"\", b\"\")\n                raise ProcessCleanupError(\"Release helper supervisor did not accept command metadata\")\n            try:\n"
+            },
+            {
+              "before": "def _launch_supervised_process(\n    command: tuple[str, ...], *, env: Mapping[str, str] | None,\n    cwd: str | Path | None, input_enabled: bool,\n) -> _SupervisorLaunch:\n    \"\"\"Start a sanitized live wrapper; pass request metadata only over its private pipe.\"\"\"\n",
+              "after": "def _launch_supervised_process(\n    command: tuple[str, ...], *, env: Mapping[str, str] | None,\n    cwd: str | Path | None, input_enabled: bool, timeout: float | None = None,\n) -> _SupervisorLaunch:\n    \"\"\"Start a sanitized live wrapper; pass request metadata only over its private pipe.\"\"\"\n"
+            },
+            {
+              "before": "            start_new_session=True,\n        )\n        os.close(config_read)\n        config_read = -1\n",
+              "after": "            start_new_session=True,\n        )\n        # The caller deadline begins as soon as the wrapper is created and\n        # covers config transfer, selector setup, and the supervised command.\n        deadline = time.monotonic() + timeout if timeout is not None else None\n        os.close(config_read)\n        config_read = -1\n"
+            },
+            {
+              "before": "        _write_supervisor_config(\n            config_write, command, target_environment, target_directory,\n        )\n        os.close(config_write)\n        config_write = -1\n        return _SupervisorLaunch(process, status_stream, control_write)\n    except BaseException as launch_error:\n        cleanup_error = _cleanup_failed_supervisor_launch(\n",
+              "after": "        _write_supervisor_config(\n            config_write, command, target_environment, target_directory,\n            deadline=deadline, timeout=timeout,\n        )\n        os.close(config_write)\n        config_write = -1\n        if deadline is not None and time.monotonic() >= deadline:\n            raise ProcessTimeout(timeout or 0, b\"\", b\"\")\n        return _SupervisorLaunch(process, status_stream, control_write, deadline)\n    except BaseException as launch_error:\n        cleanup_error = _cleanup_failed_supervisor_launch(\n"
+            },
+            {
+              "before": "            text=text,\n            timeout=timeout,\n            deadline=time.monotonic() + timeout if timeout is not None else None,\n            cancel_event=cancel_event,\n            status_stream=launch.status_stream,\n",
+              "after": "            text=text,\n            timeout=timeout,\n            deadline=launch.deadline,\n            cancel_event=cancel_event,\n            status_stream=launch.status_stream,\n"
+            },
+            {
+              "before": "        raise _ProcessCancelled()\n    launch = _launch_supervised_process(\n        command, env=env, cwd=cwd, input_enabled=input_bytes is not None,\n    )\n    # Own every pipe before selector setup, then cleanup always sees even streams\n",
+              "after": "        raise _ProcessCancelled()\n    launch = _launch_supervised_process(\n        command, env=env, cwd=cwd, input_enabled=input_bytes is not None, timeout=timeout,\n    )\n    # Own every pipe before selector setup, then cleanup always sees even streams\n"
+            }
+          ]
+        },
+        {
+          "before_sha256": "4bd349797eaf7e01c1f1f477961e103ce52803f6738ab6f30b5dfa7f79fd9b5a",
+          "after_sha256": "3366087fbb937aa15a48c880fddb714d416eeb5faa03399203d8e73e1353fc18",
+          "canonical_source_before_sha256": "a8ca6bb5f14ea02a4495746a7df2cdba836e7045c2f009068bd630d20d28d5c8",
+          "canonical_source_sha256": "2a047c9add926e96f589d3d9f04e911d0a755beb087f772c187b8f16efa3bd26",
+          "source_hunks": [
+            {
+              "before": "        offset = 0\n        cleanup_deadline = time.monotonic() + CLEANUP_TIMEOUT_SECONDS\n        while offset < len(frame):\n            now = time.monotonic()\n            active_deadline = deadline if deadline is not None else cleanup_deadline\n            remaining = active_deadline - now\n            if remaining <= 0 or not selector.select(remaining):\n                if deadline is not None:\n                    raise ProcessTimeout(timeout or 0, b\"\", b\"\")\n                raise ProcessCleanupError(\"Release helper supervisor did not accept command metadata\")\n",
+              "after": "        offset = 0\n        cleanup_deadline = time.monotonic() + CLEANUP_TIMEOUT_SECONDS\n        caller_deadline_wins = deadline is not None and deadline <= cleanup_deadline\n        while offset < len(frame):\n            now = time.monotonic()\n            active_deadline = deadline if caller_deadline_wins else cleanup_deadline\n            remaining = active_deadline - now\n            if remaining <= 0 or not selector.select(remaining):\n                if caller_deadline_wins:\n                    raise ProcessTimeout(timeout or 0, b\"\", b\"\")\n                raise ProcessCleanupError(\"Release helper supervisor did not accept command metadata\")\n"
+            }
+          ]
         }
       ]
     },
@@ -1933,8 +2166,84 @@
               "after": "            with patch.object(async_process.subprocess, \"Popen\", side_effect=observe_wrapper_argv):\n                result = async_process.run_process(\n                    [sys.executable, \"-c\", target],\n                    env={\"TARGET_SECRET\": argument_marker}, cwd=directory, timeout=5,\n                )\n            self.assertEqual(\n                result.stdout.decode().splitlines(),\n                [argument_marker, os.path.realpath(directory)],\n            )\n            self.assertEqual(len(calls), 1)\n            wrapper_argv, wrapper_env, wrapper_cwd = calls[0]\n            self.assertNotIn(argument_marker, \" \".join(wrapper_argv))\n            self.assertNotIn(directory, \" \".join(wrapper_argv))\n            self.assertNotIn(argument_marker, repr(wrapper_env))\n            self.assertNotIn(directory, repr(wrapper_env))\n            self.assertEqual(wrapper_cwd, \"/\")\n\n"
             }
           ]
+        },
+        {
+          "before_sha256": "3280b054bfced331356fd0c79a04f537344e47415c03815be74502b60addcb2a",
+          "after_sha256": "3dcaf74d15c7b95432f51818542b3a7d2c9f2bf6588f3c8b786b538c418e2df5",
+          "canonical_source_before_sha256": "6a8c92112107688c77c2f4b1db24c70616e5526abb8c9916f5c372e629779bce",
+          "canonical_source_sha256": "cbe6c2bcf4c0f9519f4349fb557297e017d43457e6b6c731a709076423b0b43d",
+          "source_hunks": [
+            {
+              "before": "            os.kill(pid, signal.SIGKILL)\n        except ProcessLookupError:\n            pass\n        self.fail(f\"descendant process {pid} remained after bounded cleanup\")\n\n",
+              "after": "            os.kill(pid, signal.SIGKILL)\n        except ProcessLookupError:\n            # The process exited between the bounded liveness check and kill.\n            return\n        self.fail(f\"descendant process {pid} remained after bounded cleanup\")\n\n"
+            },
+            {
+              "before": "        )))\n\n    @unittest.skipUnless(os.name == \"posix\", \"supervisor process groups are POSIX-specific\")\n    def test_repeated_quick_exit_boundary_preserves_target_status(self):\n",
+              "after": "        )))\n\n    def test_config_writer_times_out_when_caller_deadline_is_expired(self):\n        read_fd, write_fd = os.pipe()\n        try:\n            with patch.object(async_process.time, \"monotonic\", return_value=10.0):\n                with self.assertRaises(async_process.ProcessTimeout) as raised:\n                    async_process._write_supervisor_config(\n                        write_fd, (sys.executable, \"-c\", \"pass\"), {}, \"/\",\n                        deadline=9.0, timeout=0.25,\n                    )\n            self.assertEqual(raised.exception.timeout, 0.25)\n        finally:\n            os.close(read_fd)\n            os.close(write_fd)\n\n    def test_expired_launch_handshake_preserves_timeout_after_confirmed_cleanup(self):\n        class Stream:\n            closed = False\n\n            def close(self):\n                self.closed = True\n\n        class FakeProcess:\n            def __init__(self):\n                self.stdin = Stream()\n                self.stdout = Stream()\n                self.stderr = Stream()\n\n        process = FakeProcess()\n        timeout = 0.25\n        observed = {}\n\n        def expire_during_handshake(*_args, **kwargs):\n            observed.update(kwargs)\n            raise async_process.ProcessTimeout(timeout, b\"\", b\"\")\n\n        with (\n            patch.object(async_process.subprocess, \"Popen\", return_value=process),\n            patch.object(async_process, \"_write_supervisor_config\", side_effect=expire_during_handshake),\n            patch.object(async_process, \"_reap_owned_process_after_error\") as reap,\n            self.assertRaises(async_process.ProcessTimeout) as raised,\n        ):\n            async_process._launch_supervised_process(\n                (sys.executable, \"-c\", \"pass\"), env=None, cwd=None,\n                input_enabled=False, timeout=timeout,\n            )\n\n        self.assertEqual(observed[\"timeout\"], timeout)\n        self.assertIsInstance(observed[\"deadline\"], float)\n        self.assertEqual(raised.exception.timeout, timeout)\n        reap.assert_called_once_with(process, control_fd=-1)\n        self.assertTrue(all(stream.closed for stream in (\n            process.stdin, process.stdout, process.stderr,\n        )))\n\n    def test_expired_launch_handshake_cleanup_failure_remains_fatal(self):\n        class Stream:\n            closed = False\n\n            def close(self):\n                self.closed = True\n\n        class FakeProcess:\n            def __init__(self):\n                self.stdin = Stream()\n                self.stdout = Stream()\n                self.stderr = Stream()\n\n        process = FakeProcess()\n        timeout_error = async_process.ProcessTimeout(0.25, b\"\", b\"\")\n        cleanup_error = async_process.ProcessCleanupError(\"wrapper could not be reaped\")\n        with (\n            patch.object(async_process.subprocess, \"Popen\", return_value=process),\n            patch.object(async_process, \"_write_supervisor_config\", side_effect=timeout_error),\n            patch.object(\n                async_process, \"_reap_owned_process_after_error\", side_effect=cleanup_error,\n            ),\n            self.assertRaises(async_process.ProcessCleanupError) as raised,\n        ):\n            async_process._launch_supervised_process(\n                (sys.executable, \"-c\", \"pass\"), env=None, cwd=None,\n                input_enabled=False, timeout=0.25,\n            )\n\n        self.assertIs(raised.exception, cleanup_error)\n        self.assertIs(raised.exception.__cause__, timeout_error)\n        self.assertTrue(all(stream.closed for stream in (\n            process.stdin, process.stdout, process.stderr,\n        )))\n\n    @unittest.skipUnless(os.name == \"posix\", \"supervisor process groups are POSIX-specific\")\n    def test_repeated_quick_exit_boundary_preserves_target_status(self):\n"
+            },
+            {
+              "before": "                            os.kill(int(pid_file.read_text()), signal.SIGKILL)\n                        except ProcessLookupError:\n                            pass\n\n",
+              "after": "                            os.kill(int(pid_file.read_text()), signal.SIGKILL)\n                        except ProcessLookupError:\n                            # The child exited after the assertion and before cleanup.\n                            pass\n\n"
+            },
+            {
+              "before": "                        os.kill(int(pid_file.read_text()), signal.SIGKILL)\n                    except ProcessLookupError:\n                        pass\n\n",
+              "after": "                        os.kill(int(pid_file.read_text()), signal.SIGKILL)\n                    except ProcessLookupError:\n                        # The expected escaped child may have exited between checks.\n                        pass\n\n"
+            },
+            {
+              "before": "                    try:\n                        await asyncio.wait_for(task, timeout=8)\n                    except (asyncio.CancelledError, async_process.ProcessCleanupError):\n                        pass\n\n",
+              "after": "                    try:\n                        await asyncio.wait_for(task, timeout=8)\n                    except asyncio.CancelledError:\n                        # Cancellation completed its cleanup; other failures propagate.\n                        pass\n\n"
+            },
+            {
+              "before": "                        try:\n                            await asyncio.wait_for(task, timeout=8)\n                        except (asyncio.CancelledError, async_process.ProcessCleanupError):\n                            pass\n                if pid_file.exists():\n",
+              "after": "                        try:\n                            await asyncio.wait_for(task, timeout=8)\n                        except asyncio.CancelledError:\n                            # Cancellation completed its cleanup; other failures propagate.\n                            pass\n                if pid_file.exists():\n"
+            },
+            {
+              "before": "                        os.kill(int(pid_file.read_text()), signal.SIGKILL)\n                    except ProcessLookupError:\n                        pass\n            AsyncProcessTests.assert_process_stopped(self, pid_file)\n",
+              "after": "                        os.kill(int(pid_file.read_text()), signal.SIGKILL)\n                    except ProcessLookupError:\n                        # The target exited after the prior assertion and before cleanup.\n                        pass\n            AsyncProcessTests.assert_process_stopped(self, pid_file)\n"
+            }
+          ]
+        },
+        {
+          "before_sha256": "3dcaf74d15c7b95432f51818542b3a7d2c9f2bf6588f3c8b786b538c418e2df5",
+          "after_sha256": "d98788a5ad2e01c7e35a8970823e0805ff97fc326a6870228c74bd467bd6db95",
+          "canonical_source_before_sha256": "cbe6c2bcf4c0f9519f4349fb557297e017d43457e6b6c731a709076423b0b43d",
+          "canonical_source_sha256": "bb5a8c633dc4d22937a2d6c5c11de3408b28cc70b79c5e0db8044b82451b7794",
+          "source_hunks": [
+            {
+              "before": "                        deadline=9.0, timeout=0.25,\n                    )\n            self.assertEqual(raised.exception.timeout, 0.25)\n        finally:\n",
+              "after": "                        deadline=9.0, timeout=0.25,\n                    )\n            self.assertEqual(raised.exception.timeout, 0.25)\n        finally:\n            os.close(read_fd)\n            os.close(write_fd)\n\n    def test_config_writer_treats_stalled_handshake_wait_as_caller_timeout(self):\n        class WaitingSelector:\n            def __init__(self):\n                self.registered = None\n                self.timeout = None\n                self.closed = False\n\n            def register(self, fileobj, events):\n                self.registered = (fileobj, events)\n\n            def select(self, timeout):\n                self.timeout = timeout\n                return []\n\n            def close(self):\n                self.closed = True\n\n        selector = WaitingSelector()\n        read_fd, write_fd = os.pipe()\n        try:\n            with (\n                patch.object(async_process.selectors, \"DefaultSelector\", return_value=selector),\n                patch.object(async_process.time, \"monotonic\", return_value=10.0),\n                self.assertRaises(async_process.ProcessTimeout) as raised,\n            ):\n                async_process._write_supervisor_config(\n                    write_fd, (sys.executable, \"-c\", \"pass\"), {}, \"/\",\n                    deadline=11.0, timeout=0.25,\n                )\n            self.assertEqual(selector.registered, (write_fd, async_process.selectors.EVENT_WRITE))\n            self.assertEqual(selector.timeout, 1.0)\n            self.assertTrue(selector.closed)\n            self.assertEqual(raised.exception.timeout, 0.25)\n        finally:\n"
+            }
+          ]
+        },
+        {
+          "before_sha256": "d98788a5ad2e01c7e35a8970823e0805ff97fc326a6870228c74bd467bd6db95",
+          "after_sha256": "a040dc6a16fc99d1a946495c4955ff6409ed9381c18856c161bb3f2c168375c3",
+          "canonical_source_before_sha256": "bb5a8c633dc4d22937a2d6c5c11de3408b28cc70b79c5e0db8044b82451b7794",
+          "canonical_source_sha256": "ca30d0423322f06f4bf06257878f935cc95a04a1f09ed48cddd2ad7c2636dd6e",
+          "source_hunks": [
+            {
+              "before": "            self.assertTrue(selector.closed)\n            self.assertEqual(raised.exception.timeout, 0.25)\n        finally:\n            os.close(read_fd)\n",
+              "after": "            self.assertTrue(selector.closed)\n            self.assertEqual(raised.exception.timeout, 0.25)\n        finally:\n            os.close(read_fd)\n            os.close(write_fd)\n\n    def test_config_writer_keeps_handshake_cap_when_caller_deadline_is_later(self):\n        class WaitingSelector:\n            def register(self, _fileobj, _events):\n                pass\n\n            def select(self, timeout):\n                self.timeout = timeout\n                return []\n\n            def close(self):\n                pass\n\n        selector = WaitingSelector()\n        read_fd, write_fd = os.pipe()\n        try:\n            with (\n                patch.object(async_process.selectors, \"DefaultSelector\", return_value=selector),\n                patch.object(async_process.time, \"monotonic\", return_value=10.0),\n                self.assertRaises(async_process.ProcessCleanupError),\n            ):\n                async_process._write_supervisor_config(\n                    write_fd, (sys.executable, \"-c\", \"pass\"), {}, \"/\",\n                    deadline=20.0, timeout=10.0,\n                )\n            self.assertEqual(selector.timeout, async_process.CLEANUP_TIMEOUT_SECONDS)\n        finally:\n            os.close(read_fd)\n"
+            }
+          ]
         }
       ]
+    },
+    "scripts/release_push_scope.py": {
+      "before_sha256": null,
+      "source": "scripts/release_push_scope.py",
+      "source_sha256": "a86d7dde2b2678548c75e40ac937b4b75756c16d76bda606325145bc86ac0081",
+      "addition": true,
+      "after_sha256": "8d7e795a8c1519cda2bcc012edf2d44676aa9ff41afcab4ee8ddb570a37b62a1",
+      "addition_group": "automatic_push_admission"
+    },
+    ".github/release-tests/release_push_scope.py": {
+      "before_sha256": null,
+      "source": "scripts/release_push_scope.py",
+      "source_sha256": "a86d7dde2b2678548c75e40ac937b4b75756c16d76bda606325145bc86ac0081",
+      "addition": true,
+      "after_sha256": "8d7e795a8c1519cda2bcc012edf2d44676aa9ff41afcab4ee8ddb570a37b62a1",
+      "addition_group": "automatic_push_admission"
     }
   }
 }

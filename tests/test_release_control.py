@@ -4787,6 +4787,23 @@ class CheckRunExecutionTests(unittest.TestCase):
 
 
 class PublishBoundaryOrderingTests(unittest.TestCase):
+    def _publish_package(self, client, *, confirm_publish=None, confirm_final_publish=None):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            (directory / "package.bin").write_bytes(b"package")
+            with (
+                patch.object(rc, "verify_required_signatures"),
+                patch.object(rc, "reject_restricted_assets"),
+                patch.object(rc, "ensure_absent"),
+                patch.object(rc, "check_workflow_publication"),
+                patch.object(rc, "verify_uploaded_asset"),
+            ):
+                rc._publish_prepared(
+                    client, "v1.2.3", SHA, directory, True, "notes",
+                    confirm_publish=confirm_publish,
+                    confirm_final_publish=confirm_final_publish,
+                )
+
     def test_final_exact_publisher_read_after_tag_blocks_patch_if_terminal(self):
         """A publisher ending during the final tag GET blocks the public PATCH."""
         events = []
@@ -4817,10 +4834,6 @@ class PublishBoundaryOrderingTests(unittest.TestCase):
                     return {"id": 99, "run_attempt": 1, "head_sha": SHA,
                             "path": rc.WORKFLOW, "event": "workflow_dispatch",
                             "status": self.publisher_status, "conclusion": conclusion}
-                if path == "releases/20" and method == "PATCH":
-                    return {"id": 20, "tag_name": "v1.2.3", "draft": False,
-                            "prerelease": True,
-                            "html_url": "https://example.invalid/release"}
                 raise AssertionError(f"Unexpected API call {method} {path}")
 
             def upload(self, *_args, **_kwargs):
@@ -4830,33 +4843,21 @@ class PublishBoundaryOrderingTests(unittest.TestCase):
                 events.append((path, "GET"))
                 return [{"name": "package.bin"}]
 
-        with tempfile.TemporaryDirectory() as temporary:
-            directory = Path(temporary)
-            (directory / "package.bin").write_bytes(b"package")
+        def confirm_publish():
+            events.append(("full-publisher-validation", "GET"))
+            client.pages("actions/runs/99/attempts/1/jobs")
 
-            def confirm_publish():
-                events.append(("full-publisher-validation", "GET"))
-                client.pages("actions/runs/99/attempts/1/jobs")
+        def confirm_final_publish():
+            events.append(("confirm-publisher-attempt", "GET"))
+            current = client.api("actions/runs/99/attempts/1")
+            rc.require_active_attempt(current, current)
 
-            def confirm_final_publish():
-                events.append(("confirm-publisher-attempt", "GET"))
-                current = client.api("actions/runs/99/attempts/1")
-                rc.require_active_attempt(current, current)
-
-            client = Client()
-            with (
-                patch.object(rc, "verify_required_signatures"),
-                patch.object(rc, "reject_restricted_assets"),
-                patch.object(rc, "ensure_absent"),
-                patch.object(rc, "check_workflow_publication"),
-                patch.object(rc, "verify_uploaded_asset"),
-                self.assertRaisesRegex(rc.ReleaseError, "Execution attempt is not active"),
-            ):
-                rc._publish_prepared(
-                    client, "v1.2.3", SHA, directory, True, "notes",
-                    confirm_publish=confirm_publish,
-                    confirm_final_publish=confirm_final_publish,
-                )
+        client = Client()
+        with self.assertRaisesRegex(rc.ReleaseError, "Execution attempt is not active"):
+            self._publish_package(
+                client, confirm_publish=confirm_publish,
+                confirm_final_publish=confirm_final_publish,
+            )
 
         self.assertEqual(events[-5:], [
             ("full-publisher-validation", "GET"),
@@ -4928,6 +4929,54 @@ class PublishBoundaryOrderingTests(unittest.TestCase):
             ("git/ref/tags/v1.2.3", "GET"),
         ])
         self.assertNotIn(("exact-attempt-confirm", "READ"), events)
+        self.assertNotIn(("releases/20", "PATCH"), events)
+
+    def test_tag_moved_during_final_publish_confirmation_blocks_patch(self):
+        """Recheck the release tag after final publisher/source reads."""
+        events = []
+
+        class Client:
+            repo = REPO
+            tag_sha = SHA
+            tag_reads = 0
+
+            def api(self, path, method="GET", body=None):
+                events.append((path, method))
+                if path == "git/refs" and method == "POST":
+                    return {"ref": "refs/tags/v1.2.3"}
+                if path == "releases" and method == "POST":
+                    return {"id": 20, "tag_name": "v1.2.3", "draft": True}
+                if path == "git/ref/tags/v1.2.3":
+                    self.tag_reads += 1
+                    return {"ref": "refs/tags/v1.2.3",
+                            "object": {"type": "commit", "sha": self.tag_sha}}
+                raise AssertionError(f"Unexpected API call {method} {path}")
+
+            def upload(self, *_args, **_kwargs):
+                events.append(("upload", "POST"))
+
+            def pages(self, path, *_args, **_kwargs):
+                events.append((path, "GET"))
+                return [{"name": "package.bin"}]
+
+        client = Client()
+
+        def confirm_final_publish():
+            events.append(("final-source-ref-read", "GET"))
+            # Simulate the tag moving during the final attempt/branch/source
+            # observations, after the first check in the bounded window.
+            self.assertEqual(client.tag_reads, 1)
+            client.tag_sha = "b" * 40
+
+        with self.assertRaisesRegex(rc.ReleaseError, "Tag moved before publication"):
+            self._publish_package(client, confirm_final_publish=confirm_final_publish)
+
+        self.assertEqual(client.tag_reads, 2)
+        self.assertEqual(events[-3:], [
+            ("git/ref/tags/v1.2.3", "GET"),
+            ("final-source-ref-read", "GET"),
+            ("git/ref/tags/v1.2.3", "GET"),
+        ])
         self.assertNotIn(("releases/20", "PATCH"), events)
 
 

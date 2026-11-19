@@ -28,6 +28,7 @@ from unittest.mock import Mock, patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 import prepare_version
 import release_state as state
+import release_push_scope
 import release_versioned as lifecycle
 import test_release_control as legacy_tests
 import version_plan as versions
@@ -1218,6 +1219,134 @@ class LifecycleTests(unittest.TestCase):  # pylint: disable=too-many-public-meth
                 self.gh, info, self.gh.runs[200], snapshot, "1.2.3"
             )
         self.assertEqual(result, "")
+
+    def test_automatic_beta_rechecks_source_after_final_tag_read(self):
+        """A branch advance after the tag read must leave the uploaded release a draft."""
+        plan = self.automatic_build()
+        api = self.gh.api
+        events = []
+        source_path = "git/ref/heads/main"
+        tag_path = f"git/ref/tags/{plan['tag']}"
+        source_reads = 0
+
+        def advance_after_final_tag(path, method="GET", body=None):
+            nonlocal source_reads
+            result = api(path, method, body)
+            if path == source_path:
+                source_reads += 1
+                events.append("source")
+            elif path == tag_path:
+                events.append("tag")
+                if source_reads >= 2:
+                    # Move after the final tag response but before the last
+                    # source-ref read that gates the public PATCH.
+                    self.gh.default_head = "b" * 40
+            elif path == "":
+                events.append("repository")
+            elif path == "actions/runs/99/attempts/1":
+                events.append("attempt")
+            return result
+
+        with (
+            patch.object(self.gh, "api", side_effect=advance_after_final_tag),
+            self.assertRaisesRegex(
+                rc.ReleaseError, "Automatic publication default source changed"
+            ),
+        ):
+            lifecycle.publish_versioned(self.args)
+
+        self.assertEqual(events[-4:], ["tag", "attempt", "repository", "source"])
+        self.assertEqual(self.gh.default_head, "b" * 40)
+        draft = next(
+            release for release in self.gh.releases.values()
+            if release["tag_name"] == plan["tag"]
+        )
+        self.assertTrue(draft["draft"])
+        self.assertTrue(self.gh.assets[draft["id"]])
+        self.assertFalse(any(method == "PATCH" for _, method, _ in self.gh.writes))
+
+    def test_automatic_beta_rechecks_default_branch_after_final_tag_read(self):
+        """A default-branch rename at the final boundary must block publication."""
+        plan = self.automatic_build()
+        api = self.gh.api
+        events = []
+        source_reads = 0
+        tag_path = f"git/ref/tags/{plan['tag']}"
+
+        def rename_after_final_tag(path, method="GET", body=None):
+            nonlocal source_reads
+            result = api(path, method, body)
+            if path == "git/ref/heads/main":
+                source_reads += 1
+                events.append("source")
+            elif path == tag_path:
+                events.append("tag")
+                if source_reads >= 2:
+                    self.gh.info["default_branch"] = "replacement"
+            elif path == "actions/runs/99/attempts/1":
+                events.append("attempt")
+            elif path == "":
+                events.append("repository")
+            return result
+
+        with (
+            patch.object(self.gh, "api", side_effect=rename_after_final_tag),
+            self.assertRaisesRegex(
+                rc.ReleaseError, "Automatic publication default branch changed"
+            ),
+        ):
+            lifecycle.publish_versioned(self.args)
+
+        self.assertEqual(events[-3:], ["tag", "attempt", "repository"])
+        draft = next(
+            release for release in self.gh.releases.values()
+            if release["tag_name"] == plan["tag"]
+        )
+        self.assertEqual(self.gh.info["default_branch"], "replacement")
+        self.assertTrue(draft["draft"])
+        self.assertTrue(self.gh.assets[draft["id"]])
+        self.assertFalse(any(method == "PATCH" for _, method, _ in self.gh.writes))
+
+    def test_scheduled_reuse_propagates_unconfirmed_process_cleanup(self):
+        """An unconfirmed child process must abort reuse rather than look unavailable."""
+        self.qualify_schedule_fixture()
+        self.build_schedule()
+        info = rc.repository_info(self.gh)
+        snapshot = rc.source_policy_snapshot(self.gh, SHA)
+        cleanup_error = rc.ProcessCleanupError("child cleanup was not confirmed")
+
+        with patch.object(
+            lifecycle, "verify_scheduled_reuse", side_effect=cleanup_error,
+        ):
+            with self.assertRaises(rc.ProcessCleanupError) as raised:
+                lifecycle.scheduled_reuse(
+                    self.gh, info, self.gh.runs[200], snapshot, "1.2.3"
+                )
+
+        self.assertIs(raised.exception, cleanup_error)
+
+    def test_automatic_test_push_propagates_unconfirmed_process_cleanup(self):
+        """Cleanup uncertainty is fatal even though ordinary proof gaps allow delivery."""
+        selected_policy = copy.deepcopy(self.policy)
+        selected_policy["change_scope"] = {
+            "automatic_release_test_paths": ["tests/release_fixture.py"]
+        }
+        snapshot = {"data": selected_policy}
+        info = {"default_branch": "main"}
+        run = {"head_sha": SHA}
+        cleanup_error = rc.ProcessCleanupError("child cleanup was not confirmed")
+        admission = {"test_only": True, "after": SHA, "before": "b" * 40}
+
+        with (
+            patch.dict(os.environ, {"GITHUB_EVENT_NAME": "push"}),
+            patch.object(release_push_scope, "current_push", return_value=admission),
+            patch.object(lifecycle, "scheduled_reuse", side_effect=cleanup_error),
+            self.assertRaises(rc.ProcessCleanupError) as raised,
+        ):
+            lifecycle.automatic_test_push(self.gh, info, run, snapshot, "1.2.3")
+
+        self.assertIs(raised.exception, cleanup_error)
+        self.assertFalse((self.root / ".release-push-admission.json").exists())
 
     def test_failed_current_gate_cannot_reuse_previous_rc(self):
         self.qualify_schedule_fixture()

@@ -147,7 +147,7 @@ def render(directory: Path) -> dict[str, str]:
     for name in specification.get("absent_paths", []):
         if not destination(name) or read_optional(directory, name) is not None:
             raise ValueError("Compact migration requires reviewed optional-module absence")
-    states, successor_states, additions, changes = set(), set(), [], {}
+    states, successor_states, additions, changes = set(), set(), {}, {}
     for name, entry in specification["files"].items():
         if not destination(name):
             raise ValueError("Compact migration destination is outside scripts/tests/docs")
@@ -160,13 +160,15 @@ def render(directory: Path) -> dict[str, str]:
         identity = digest(before) if before is not None else None
         if entry.get("addition") is True:
             copy_layers = entry.get("copy_successor_layers", [])
+            addition_group = entry.get("addition_group", "default")
             if (entry.get("before_sha256") is not None or entry.get("hunks") or
-                    not isinstance(copy_layers, list)):
+                    not isinstance(copy_layers, list) or
+                    not isinstance(addition_group, str) or not addition_group):
                 raise ValueError("Invalid compact migration addition: " + name)
             previous = entry["after_sha256"]
             accepted = _copied_successor_hashes(copy_layers, previous, name)
             if identity is None:
-                additions.append(False)
+                additions.setdefault(addition_group, []).append(False)
                 source_bytes = canonical_copy(entry)
                 if digest(source_bytes) != accepted[-1]:
                     raise ValueError("Compact migration postimage changed: " + name)
@@ -177,7 +179,7 @@ def render(directory: Path) -> dict[str, str]:
             if identity not in accepted:
                 raise ValueError("Unknown compact migration preimage: " + name)
             generation = accepted.index(identity)
-            additions.append(generation == len(copy_layers))
+            additions.setdefault(addition_group, []).append(generation == len(copy_layers))
             if generation == len(copy_layers):
                 continue
             after = canonical_copy(entry)
@@ -378,13 +380,14 @@ def render(directory: Path) -> dict[str, str]:
         changes[name] = after.decode("utf-8")
     if len(states) > 1 or len(successor_states) > 1:
         raise ValueError("Partially migrated compact bundle requires explicit review")
-    if additions and any(additions) != all(additions):
-        raise ValueError("Partially migrated compact bundle requires explicit review")
-    if additions and additions[0]:
-        if states != {"current"} or successor_states != {True}:
+    for group, generations in additions.items():
+        if any(generations) != all(generations):
             raise ValueError("Partially migrated compact bundle requires explicit review")
-    elif additions and states == {"current"}:
-        if successor_states == {True}:
+        if group == "default" and generations and generations[0]:
+            if states != {"current"} or successor_states != {True}:
+                raise ValueError("Partially migrated compact bundle requires explicit review")
+        elif (group == "default" and generations and states == {"current"}
+              and successor_states == {True}):
             raise ValueError("Partially migrated compact bundle requires explicit review")
     return changes
 

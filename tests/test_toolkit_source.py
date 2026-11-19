@@ -39,7 +39,7 @@ class ToolkitReleaseNotesTests(unittest.TestCase):
         )
         self.assertFalse(required - declared, f"Unshipped source or acceptance input: {sorted(required - declared)}")
 
-    def test_source_archive_ships_admission_runtime_tests_and_operator_guide(self):
+    def test_source_archive_ships_admission_and_migration_inputs(self):
         root = Path(__file__).resolve().parents[1]
         declared = toolkit_source.inventory(root)
         required = {
@@ -48,8 +48,10 @@ class ToolkitReleaseNotesTests(unittest.TestCase):
             "tests/test_release_push_prepare.py",
             "tests/test_release_push_scope.py",
             "docs/automatic-release-test-paths.md",
+            "tests/fixtures/release_distribution/ottplay-foss-7677cfb.json",
+            "tests/fixtures/release_distribution/ottplay-foss-7677cfb.tar.gz",
         }
-        self.assertFalse(required - set(declared), "Admission inputs missing from source archive")
+        self.assertFalse(required - set(declared), "Acceptance inputs missing from source archive")
         with tempfile.TemporaryDirectory() as temporary:
             work = Path(temporary)
             checkout = work / "checkout"

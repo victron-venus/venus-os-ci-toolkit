@@ -3077,10 +3077,11 @@ def _publish_prepared(
 
     # Run full publisher/provenance validation before the final shared 12-second
     # read deadline; it can require aggregate and paginated jobs reads. Within
-    # that deadline, recheck the tag and run the optional final confirmation
-    # callback, which may GET the exact publisher attempt, default branch and
-    # source ref before the public PATCH. GitHub has no conditional PATCH that
-    # binds those observations, so the checks and flip are not atomic.
+    # that deadline, recheck the tag, run the optional final confirmation
+    # callback, then recheck the tag again immediately before the public PATCH.
+    # The callback may GET the exact publisher attempt, default branch and
+    # source ref, during which the tag could move. GitHub has no conditional
+    # PATCH that binds those observations, so the checks and flip are not atomic.
     if confirm_publish is not None:
         confirm_publish()
     deadline = time.monotonic() + FINAL_PUBLICATION_READ_TIMEOUT
@@ -3089,6 +3090,7 @@ def _publish_prepared(
         confirm_tag()
         if confirm_final_publish is not None:
             confirm_final_publish()
+            confirm_tag()
         require(time.monotonic() < deadline,
                 "Final publication checks exceeded deadline; draft left unpublished")
     finally:
