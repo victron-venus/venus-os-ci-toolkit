@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"net/url"
 	"runtime"
 	"strings"
 	"testing"
@@ -51,6 +52,45 @@ func response(status int, body *testBody) *http.Response {
 func TestQualifiedRuntime(t *testing.T) {
 	if runtime.Version() != "go1.27.4" || !fips140.Enabled() {
 		t.Fatal("regressions must run with the production Go 1.27.4 FIPS profile")
+	}
+}
+
+func TestDownloadClientKeepsTLSAndRedirectRestrictions(t *testing.T) {
+	client := newDownloadClient()
+	if client.Timeout != 60*time.Second {
+		t.Fatalf("timeout=%s, want 60s", client.Timeout)
+	}
+	transport, ok := client.Transport.(*http.Transport)
+	if !ok || transport.TLSClientConfig == nil ||
+		transport.TLSClientConfig.MinVersion != tls.VersionTLS12 ||
+		transport.TLSClientConfig.InsecureSkipVerify {
+		t.Fatal("client does not retain the qualified TLS profile")
+	}
+	request := func(address string) *http.Request {
+		parsed, err := url.Parse(address)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return &http.Request{URL: parsed}
+	}
+	prior := make([]*http.Request, 9)
+	if err := checkDownloadRedirect(request("https://example.invalid/next"), prior); err != nil {
+		t.Fatalf("HTTPS redirect within the hop limit was rejected: %v", err)
+	}
+	for _, test := range []struct {
+		name    string
+		address string
+		via     []*http.Request
+	}{
+		{name: "downgrade", address: "http://example.invalid/next"},
+		{name: "userinfo", address: "https://user:secret@example.invalid/next"},
+		{name: "hop limit", address: "https://example.invalid/next", via: append(prior, request("https://example.invalid/previous"))},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if err := checkDownloadRedirect(request(test.address), test.via); err == nil {
+				t.Fatal("unsafe redirect was accepted")
+			}
+		})
 	}
 }
 

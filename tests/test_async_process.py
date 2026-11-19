@@ -400,7 +400,7 @@ class AsyncProcessTests(unittest.TestCase):
             self.assertEqual(result.returncode, 7)
 
     def test_target_arguments_are_not_present_in_wrapper_command_line(self):
-        secret_marker = "wrapper-private-argv-marker"
+        argument_marker = "wrapper-argument-sentinel"
         with tempfile.TemporaryDirectory() as directory:
             target = (
                 "import os; print(os.environ['TARGET_SECRET']); print(os.getcwd())"
@@ -415,17 +415,17 @@ class AsyncProcessTests(unittest.TestCase):
             with patch.object(async_process.subprocess, "Popen", side_effect=observe_wrapper_argv):
                 result = async_process.run_process(
                     [sys.executable, "-c", target],
-                    env={"TARGET_SECRET": secret_marker}, cwd=directory, timeout=5,
+                    env={"TARGET_SECRET": argument_marker}, cwd=directory, timeout=5,
                 )
             self.assertEqual(
                 result.stdout.decode().splitlines(),
-                [secret_marker, os.path.realpath(directory)],
+                [argument_marker, os.path.realpath(directory)],
             )
             self.assertEqual(len(calls), 1)
             wrapper_argv, wrapper_env, wrapper_cwd = calls[0]
-            self.assertNotIn(secret_marker, " ".join(wrapper_argv))
+            self.assertNotIn(argument_marker, " ".join(wrapper_argv))
             self.assertNotIn(directory, " ".join(wrapper_argv))
-            self.assertNotIn(secret_marker, repr(wrapper_env))
+            self.assertNotIn(argument_marker, repr(wrapper_env))
             self.assertNotIn(directory, repr(wrapper_env))
             self.assertEqual(wrapper_cwd, "/")
 
