@@ -145,8 +145,25 @@ class InventoryMigrationTests(unittest.TestCase):
 
 
 class InventoryOracleTests(unittest.TestCase):
+    def test_publisher_successor_is_an_exact_reversible_layer(self):
+        latest = (ROOT / receipts.PUBLISHER).read_text()
+        layer = json.loads(migration.DELTA.read_text())["files"][receipts.PUBLISHER][
+            "successor_layers"
+        ][0]
+        self.assertEqual(receipts.digest(latest), layer["after_sha256"])
+        previous = migration._before_publisher_successors(latest)
+        self.assertEqual(receipts.digest(previous), layer["before_sha256"])
+        self.assertEqual(migration._apply_publisher_successors(previous), latest)
+        self.assertEqual(migration._before_publisher_successors(previous), previous)
+
+        changed = latest.replace("publisher and automatic-source checks in that shared boundary.",
+                                 "publisher checks in that shared boundary.", 1)
+        self.assertEqual(migration._before_publisher_successors(changed), changed)
+        with self.assertRaisesRegex(ValueError, "Unknown current inventory source"):
+            migration.previous_canonical_source(changed, receipts.PUBLISHER)
+
     def test_scheduled_reuse_readback_is_an_exact_reversible_layer(self):
-        current = (ROOT / receipts.PUBLISHER).read_text()
+        current = migration._before_publisher_successors((ROOT / receipts.PUBLISHER).read_text())
         self.assertEqual(hashlib.sha256(current.encode()).hexdigest(),
                          "c4f02e3089771b4d90e78c6b465deeec3cbf689d558f238d0caa95864c54ec9b")
         inline = migration._before_scheduled_reuse_readback_helper(current)
@@ -166,7 +183,7 @@ class InventoryOracleTests(unittest.TestCase):
             migration.previous_canonical_source(changed, receipts.PUBLISHER)
 
     def test_scheduled_reuse_helper_extraction_roundtrips_and_rejects_partial_sources(self):
-        current = (ROOT / receipts.PUBLISHER).read_text()
+        current = migration._before_publisher_successors((ROOT / receipts.PUBLISHER).read_text())
         previous = migration._before_scheduled_reuse_readback_helper(current)
         self.assertEqual(hashlib.sha256(previous.encode()).hexdigest(),
                          "8596c2464781f9cedabc8cf797e2c7584aa9af60f00069d5b9f4fa04df6bd722")
@@ -200,7 +217,7 @@ class InventoryOracleTests(unittest.TestCase):
                     migration.previous_canonical_source(variant, receipts.PUBLISHER)
 
     def test_publisher_execution_boundary_is_an_exact_reversible_layer(self):
-        current = (ROOT / receipts.PUBLISHER).read_text()
+        current = migration._before_publisher_successors((ROOT / receipts.PUBLISHER).read_text())
         previous = migration._before_publisher_execution_boundary(current)
         self.assertEqual(hashlib.sha256(previous.encode()).hexdigest(),
                          "855728a86446b1062417a9b3ba75f0e3ad2329ecef9df6586dba547f4662f223")
@@ -213,7 +230,7 @@ class InventoryOracleTests(unittest.TestCase):
             migration.previous_canonical_source(changed, receipts.PUBLISHER)
 
     def test_digestless_source_layer_resolves_exact_prior_source_and_rejects_mutation(self):
-        current = (ROOT / receipts.PUBLISHER).read_text()
+        current = migration._before_publisher_successors((ROOT / receipts.PUBLISHER).read_text())
         previous = migration._before_digestless_metadata(current)
         self.assertEqual(hashlib.sha256(previous.encode()).hexdigest(),
                          "9d8957d25de18740c016da30774a47b7e2dc934a4d2d7bde96c4cdf8017908d8")
@@ -242,8 +259,9 @@ class InventoryOracleTests(unittest.TestCase):
                 self.assertEqual(state, "original")
                 inventory_v1 = migration._before_casefold(current) if name == migration.PLAN else current
                 if name == receipts.PUBLISHER:
+                    inventory_v1 = migration._before_publisher_successors(inventory_v1)
                     inventory_v1 = migration._before_notes_provenance(
-                        migration._before_publisher_execution_boundary(current)
+                        migration._before_publisher_execution_boundary(inventory_v1)
                     )
                 self.assertEqual(result, inventory_v1.replace("#!/usr/bin/env python3\n", PREFIX, 1))
                 with self.assertRaisesRegex(ValueError, "Unknown current"):
@@ -254,6 +272,10 @@ class PlanLayerCompatibilityTests(unittest.TestCase):
     def setUp(self):
         """Freeze real canonical states, including the literal accepted v1 plan hash."""
         self.current = {name: (ROOT / name).read_text() for name in migration.FILES}
+        self.latest_publisher = self.current[receipts.PUBLISHER]
+        self.current[receipts.PUBLISHER] = migration._before_publisher_successors(
+            self.latest_publisher
+        )
         self.compat_publisher = self.current[receipts.PUBLISHER]
         self.compact_publisher = migration._before_legacy_rc_compatibility(
             migration._before_publisher_execution_boundary(self.compat_publisher)
@@ -695,6 +717,13 @@ class PlanLayerCompatibilityTests(unittest.TestCase):
     def test_current_inventory_is_idempotent(self):
         self.write_state(self.current)
         self.assertEqual(migration.render(self.root), {})
+
+    def test_inventory_render_preserves_exact_publisher_successor(self):
+        self.write_state({**self.current, receipts.PUBLISHER: self.latest_publisher})
+        self.assertEqual(migration.render(self.root), {})
+        self.write_state({**self.v1, receipts.PUBLISHER: self.latest_publisher})
+        changes = migration.render(self.root)
+        self.assertEqual(set(changes), {migration.PLAN})
 
     def test_partial_inventory_is_still_rejected_for_all_plan_versions(self):
         for plan in (self.v1[migration.PLAN], self.casefold[migration.PLAN], self.current[migration.PLAN]):

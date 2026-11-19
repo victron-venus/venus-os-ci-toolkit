@@ -65,6 +65,21 @@ class DistributionSchemaTests(unittest.TestCase):
                          {item["name"] for item in self.rc["assets"]} - {"release-inputs-build.json"})
         distribution.verify_distribution(compact, self.rc, encoded(self.rc))
 
+    def test_receipt_like_nonreceipt_payload_is_retained(self):
+        name = "release-inputs-.json"
+        asset = {"name": name, "size": len(name), "sha256": hashlib.sha256(name.encode()).hexdigest()}
+        self.rc["assets"].append(asset)
+        compact = distribution.stable_distribution(self.rc, encoded(self.rc))
+        self.assertIn(asset, compact["assets"])
+
+    def test_undeclared_exact_receipt_cannot_be_withheld(self):
+        name = "release-inputs-extra.json"
+        self.rc["assets"].append({
+            "name": name, "size": len(name), "sha256": hashlib.sha256(name.encode()).hexdigest(),
+        })
+        with self.assertRaisesRegex(ValueError, "Undeclared release-inputs asset"):
+            distribution.stable_distribution(self.rc, encoded(self.rc))
+
     def test_partial_fuzz_declaration_cannot_be_reclassified_as_an_ordinary_payload(self):
         for remove in ("profile", "report", "receipt", "receipt-and-report"):
             altered = deepcopy(self.rc)

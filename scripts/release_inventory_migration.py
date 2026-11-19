@@ -448,6 +448,49 @@ def _before_layer(source: str, layer: dict, label: str) -> str:
     return body.replace(SHEBANG, prefix, 1) if vendored else body
 
 
+def _before_publisher_successors(source: str) -> str:
+    """Reverse only exact reviewed publisher-source successors in the inventory oracle."""
+    prefix = SHEBANG + receipts.HEADER
+    vendored = source.startswith(prefix)
+    body = source.replace(receipts.HEADER, "", 1) if vendored else source
+    layers = json.loads(DELTA.read_text(encoding="utf-8"))["files"][receipts.PUBLISHER].get(
+        "successor_layers", []
+    )
+    for layer in reversed(layers):
+        if receipts.digest(body) != layer["after_sha256"]:
+            continue
+        for hunk in reversed(layer["hunks"]):
+            if body.count(hunk["after"]) != 1:
+                raise ValueError("Publisher successor reverse context changed")
+            body = body.replace(hunk["after"], hunk["before"], 1)
+        if receipts.digest(body) != layer["before_sha256"]:
+            raise ValueError("Publisher successor reverse result changed")
+    return body.replace(SHEBANG, prefix, 1) if vendored else body
+
+
+def _apply_publisher_successors(source: str) -> str:
+    """Reapply exact reviewed publisher successors only when the input carried them."""
+    prefix = SHEBANG + receipts.HEADER
+    vendored = source.startswith(prefix)
+    body = source.replace(receipts.HEADER, "", 1) if vendored else source
+    layers = json.loads(DELTA.read_text(encoding="utf-8"))["files"][receipts.PUBLISHER].get(
+        "successor_layers", []
+    )
+    for layer in layers:
+        if receipts.digest(body) == layer["after_sha256"]:
+            continue
+        if receipts.digest(body) != layer["before_sha256"]:
+            # Older consumer source shapes do not carry this later comment layer.
+            continue
+        for hunk in layer["hunks"]:
+            if body.count(hunk["before"]) != 1:
+                raise ValueError("Publisher successor apply context changed")
+            body = body.replace(hunk["before"], hunk["after"], 1)
+        if receipts.digest(body) != layer["after_sha256"]:
+            raise ValueError("Publisher successor apply result changed")
+    return body.replace(SHEBANG, prefix, 1) if vendored else body
+
+
 def _before_digestless_metadata(source: str) -> str:
     """Reverse only the exact absent-digest byte-verification source layer."""
     return _before_layer(
@@ -574,37 +617,39 @@ def render(directory: Path) -> dict[str, str]:
     states = set()
     for name in FILES:
         source = receipts.read_local(directory, name)
+        source_for_layers = source
         prior = _before_casefold(source) if name == PLAN else source
         if name == receipts.PUBLISHER:
-            prior = _before_notes_provenance(source)
+            source_for_layers = _before_publisher_successors(source)
+            prior = _before_notes_provenance(source_for_layers)
         state, result = receipts.transform(prior, name, specification[name])
         if name == PLAN:
             _, result = receipts.transform(result, name, CASEFOLD)
             _, result = receipts.transform(result, name, NAME_LIMIT)
-        elif name == receipts.PUBLISHER and prior != source:
+        elif name == receipts.PUBLISHER and prior != source_for_layers:
             # Preserve a fix already present; this mode does not install it.
             _, result = receipts.transform(result, name, NOTES_PROVENANCE)
-            if _before_create_readback(source) != source:
+            if _before_create_readback(source_for_layers) != source_for_layers:
                 _, result = receipts.transform(result, name, CREATE_READBACK)
-                if _before_create_identity(source) != source:
+                if _before_create_identity(source_for_layers) != source_for_layers:
                     _, result = receipts.transform(result, name, CREATE_IDENTITY)
-                    if _before_automatic_source(source) != source:
+                    if _before_automatic_source(source_for_layers) != source_for_layers:
                         _, result = receipts.transform(result, name, AUTOMATIC_SOURCE)
-                        if _before_execution_job(source) != source:
+                        if _before_execution_job(source_for_layers) != source_for_layers:
                             _, result = receipts.transform(result, name, EXECUTION_JOB)
-            if _before_automatic_test_push(source) != source:
+            if _before_automatic_test_push(source_for_layers) != source_for_layers:
                 _, result = receipts.transform(result, name, AUTOMATIC_TEST_PUSH)
-            if _before_compact_distribution(source) != source:
+            if _before_compact_distribution(source_for_layers) != source_for_layers:
                 _, result = receipts.transform(result, name, COMPACT_DISTRIBUTION)
-            if _before_legacy_rc_compatibility(source) != source:
+            if _before_legacy_rc_compatibility(source_for_layers) != source_for_layers:
                 _, result = receipts.transform(result, name, LEGACY_RC_COMPATIBILITY)
-            if _before_digestless_metadata(source) != source:
+            if _before_digestless_metadata(source_for_layers) != source_for_layers:
                 _, result = receipts.transform(result, name, DIGESTLESS_METADATA)
-            if _before_publisher_execution_boundary(source) != source:
+            if _before_publisher_execution_boundary(source_for_layers) != source_for_layers:
                 result = _apply_publisher_execution_boundary(result)
-            if _before_compact_manifest_recheck(source) != source:
+            if _before_compact_manifest_recheck(source_for_layers) != source_for_layers:
                 _, result = receipts.transform(result, name, COMPACT_MANIFEST_RECHECK)
-            if _before_scheduled_reuse_readback(source) != source:
+            if _before_scheduled_reuse_readback(source_for_layers) != source_for_layers:
                 _, result = receipts.transform(result, name, SCHEDULED_REUSE_READBACK)
                 _, result = receipts.transform(result, name, SCHEDULED_REUSE_READBACK_HELPER)
         states.add(state)
@@ -612,7 +657,26 @@ def render(directory: Path) -> dict[str, str]:
             changes[name] = result
     if len(states) != 1:
         raise ValueError("Partially migrated inventory guard requires explicit review")
+    if receipts.PUBLISHER in changes:
+        original = receipts.read_local(directory, receipts.PUBLISHER)
+        result = changes[receipts.PUBLISHER]
+        if source_has_publisher_successor(original):
+            result = _apply_publisher_successors(result)
+        if result == original:
+            changes.pop(receipts.PUBLISHER)
+        else:
+            changes[receipts.PUBLISHER] = result
     return changes
+
+
+def source_has_publisher_successor(source: str) -> bool:
+    """Return whether the exact current source contains any reviewed successor layer."""
+    prefix = SHEBANG + receipts.HEADER
+    body = source.replace(receipts.HEADER, "", 1) if source.startswith(prefix) else source
+    layers = json.loads(DELTA.read_text(encoding="utf-8"))["files"][receipts.PUBLISHER].get(
+        "successor_layers", []
+    )
+    return any(receipts.digest(body) == layer["after_sha256"] for layer in layers)
 
 
 def previous_canonical_source(source: str, name: str) -> str:
@@ -622,7 +686,7 @@ def previous_canonical_source(source: str, name: str) -> str:
     if name == PLAN:
         source = _before_casefold(source)
     elif name == receipts.PUBLISHER:
-        source = _before_notes_provenance(source)
+        source = _before_notes_provenance(_before_publisher_successors(source))
     if name not in FILES:
         raise ValueError("Unknown inventory source")
     specification = json.loads(DELTA.read_text(encoding="utf-8"))["files"][name]

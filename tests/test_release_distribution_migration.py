@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import shutil
 import sys
+import subprocess
 import tarfile
 import tempfile
 import unittest
@@ -277,14 +278,27 @@ class ShippedDistributionDeltaTests(unittest.TestCase):
         historical = json.loads(json.dumps(specification))
         for name in self.ADVANCED_SUCCESSOR_FILES:
             historical["files"][name]["successor_layers"].pop()
+        for name in ("scripts/release_distribution.py", ".github/release-tests/test_release_distribution.py"):
+            historical["files"][name]["successor_layers"].pop()
         historical["files"].pop("scripts/release_state.py")
+
+        # These two compact files were original copies before this successor.
+        # Recreate their exact pinned canonical inputs from HEAD so this test
+        # exercises the historical source bytes, not today's reviewed updates.
+        canonical = Path(temporary) / "historical-canonical"
+        for name in ("scripts", "tests", "docs"):
+            shutil.copytree(ROOT / name, canonical / name, dirs_exist_ok=True)
+        for name in ("scripts/release_distribution.py", "tests/test_release_distribution.py"):
+            target = canonical / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(subprocess.check_output(["git", "show", f"HEAD:{name}"], cwd=ROOT))
 
         consumer = Path(temporary) / "consumer"
         consumer.mkdir()
         self._extract_pinned_ott_snapshot(consumer)
         old_delta = Path(temporary) / "historical-delta.json"
         old_delta.write_text(json.dumps(historical))
-        with patch.object(migration, "DELTA", old_delta):
+        with patch.object(migration, "DELTA", old_delta), patch.object(migration, "ROOT", canonical):
             old_changes = migration.render(consumer)
             migration.apply(consumer, old_changes)
         return consumer, specification, old_changes
@@ -445,7 +459,9 @@ class ShippedDistributionDeltaTests(unittest.TestCase):
         for name, entry in specification["files"].items():
             self.assertTrue(migration.destination(name), name)
             if entry["before_sha256"] is None:
-                self.assertEqual(migration.digest(migration.canonical_copy(entry)), entry["after_sha256"])
+                latest = (entry["successor_layers"][-1]["after_sha256"]
+                          if entry.get("successor_layers") else entry["after_sha256"])
+                self.assertEqual(migration.digest(migration.canonical_copy(entry)), latest)
                 continue
             source = (ROOT / entry["canonical_source"]).read_bytes()
             source_pin = (entry.get("successor_layers", [{}])[-1].get("canonical_source_sha256")
@@ -481,7 +497,10 @@ class ShippedDistributionDeltaTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             consumer, current_specification, old_changes = self._historical_consumer(temporary)
             new_changes = migration.render(consumer)
-            self.assertEqual(set(new_changes), set(self.ADVANCED_SUCCESSOR_FILES) | {"scripts/release_state.py"})
+            self.assertEqual(set(new_changes), set(self.ADVANCED_SUCCESSOR_FILES) | {
+                "scripts/release_state.py", "scripts/release_distribution.py",
+                ".github/release-tests/test_release_distribution.py",
+            })
             for name in self.ADVANCED_SUCCESSOR_FILES:
                 entry = current_specification["files"][name]
                 self.assertEqual(hashlib.sha256(old_changes[name].encode()).hexdigest(),

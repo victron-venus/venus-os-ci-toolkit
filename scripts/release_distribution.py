@@ -143,8 +143,7 @@ def stable_distribution(candidate: dict, candidate_raw: bytes) -> dict:
                  and receipt.get("sha256") == expected[name]["sha256"],
                  "Receipt declaration differs from the RC inventory")
         omit.add(name)
-    receipt_names = {name for name in expected if name.startswith("release-inputs-")
-                     and name.endswith(".json")}
+    receipt_names = {name for name in expected if _matches(RECEIPT, name)}
     _require(receipt_names == omit, "Undeclared release-inputs asset")
     fuzz_receipts = [item for item in validation if item.get("name") == "release-inputs-fuzz.json"]
     if fuzz_receipts or "fuzzing_profile" in candidate:

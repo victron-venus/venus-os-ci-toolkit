@@ -62,6 +62,18 @@
         "179a6fe589801c59bccfea0c9a0c2e1b5d0be1915e87e1b4ec9313f32380aa7a",
         "91ce53cb7a9db48e203a36350f8a5db1da18a9171e227d79b9eb0b3132826b91",
         "9427d169503d4f687742d601a28c180971aa5739555896c7d55f8b49a2c6f884"
+      ],
+      "successor_layers": [
+        {
+          "before_sha256": "c4f02e3089771b4d90e78c6b465deeec3cbf689d558f238d0caa95864c54ec9b",
+          "after_sha256": "26d7149a3a3966b4421da2fd3ce988e0f7ef87f0a14d1853fd50466a903e49b9",
+          "hunks": [
+            {
+              "before": "        def confirm_before_publish() -> None:\n            confirm_publisher_execution()\n",
+              "after": "        def confirm_before_publish() -> None:\n            # _publish_prepared calls this around its final tag readbacks; keep\n            # publisher and automatic-source checks in that shared boundary.\n            confirm_publisher_execution()\n"
+            }
+          ]
+        }
       ]
     }
   }

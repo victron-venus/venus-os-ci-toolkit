@@ -1109,6 +1109,8 @@ def publish_versioned(args: argparse.Namespace) -> dict[str, object]:
             ), "Release gate is no longer ready before publication")
 
         def confirm_before_publish() -> None:
+            # _publish_prepared calls this around its final tag readbacks; keep
+            # publisher and automatic-source checks in that shared boundary.
             confirm_publisher_execution()
             if automatic:
                 confirm_automatic_source()

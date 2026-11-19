@@ -446,6 +446,8 @@ def download_asset(gh: GitHub, asset_id: object, destination: Path, *,
             if (current.st_dev, current.st_ino) == (owned.st_dev, owned.st_ino):
                 destination.unlink()
         except FileNotFoundError:
+            # The failed transfer's owned staging path is already absent.
+            # Preserve the transfer error; never remove a replacement path.
             pass
         raise
 
@@ -1018,6 +1020,10 @@ class GitHub:
                 [resolve_executable(command[0]), *command[1:]],
                 check=False, timeout=attempt_timeout, max_output_bytes=64 * 1024 * 1024,
             )
+        except ProcessOutputLimit:
+            # The process runner already stopped and reaped the overflowing
+            # reader; do not retry or expose any captured response fragment.
+            raise GitHubError(f"GET {endpoint}: response exceeded output limit") from None
         except (ProcessTimeout, subprocess.TimeoutExpired) as error:
             if deadline is not None and time.monotonic() >= deadline:
                 raise GitHubError(
@@ -2854,14 +2860,16 @@ def _publish_prepared(
             "Tag moved before publication; draft left unpublished",
         )
 
-    # Verify the tag once, run every mutable source/publisher callback, then
-    # make the final tag GET immediately before the public flip. GitHub exposes
-    # no conditional release PATCH bound to a tag SHA, so a caller must retain
-    # its narrow mutable-source window after this final tag read.
+    # Recheck both mutable identities before the public flip. GitHub exposes
+    # no conditional release PATCH bound to a tag SHA or publisher attempt, so
+    # these final readbacks remain sequential rather than atomic: a tag can
+    # move during publisher validation, or the attempt can end after its read.
     confirm_tag()
     if confirm_publish is not None:
         confirm_publish()
     confirm_tag()
+    if confirm_publish is not None:
+        confirm_publish()
     result = cast(
         JSONObject,
         gh.api(
@@ -3546,6 +3554,10 @@ def promote(args: argparse.Namespace) -> JSONObject:
             require(latest.get("status") == "in_progress"
                     and latest.get("conclusion") is None,
                     "Publisher aggregate is no longer in progress")
+            latest_attempt = gh.api(
+                f"actions/runs/{current_id}/attempts/{publisher_attempt}"
+            )
+            require_active_attempt(latest_attempt, latest)
             return
         require(len(execution_proof) == 1
                 and execution_proof[0].check_run_id == check_run_id,
@@ -3553,6 +3565,13 @@ def promote(args: argparse.Namespace) -> JSONObject:
         observed = current_execution_job(gh, current, check_run_id)
         require(observed == execution_proof[0],
                 "Current publisher execution proof is stale or changed")
+        # The exact attempt can finish while the paginated jobs inventory is
+        # being read. Re-read it after that inventory so a stale in-progress
+        # job record cannot authorize the protected state write.
+        latest_raw = gh.api(
+            f"actions/runs/{current_id}/attempts/{publisher_attempt}"
+        )
+        require_active_attempt(latest_raw, current)
 
     require_reviewers(gh)
     initial, ref, candidate_release, release_assets, raw, manifest = (

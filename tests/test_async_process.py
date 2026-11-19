@@ -110,16 +110,32 @@ class AsyncProcessTests(unittest.TestCase):
     def test_late_output_limit_does_not_replace_timeout_result(self):
         with tempfile.TemporaryDirectory() as directory:
             gate = Path(directory) / "write-after-timeout"
+            ready = Path(directory) / "initial-output-written"
             overflowed = Path(directory) / "overflow-written"
             script = (
                 "from pathlib import Path; import sys,time; "
                 "sys.stdout.buffer.write(b'a' * 100); sys.stdout.flush(); "
-                f"gate=Path({str(gate)!r}); overflowed=Path({str(overflowed)!r}); "
+                f"ready=Path({str(ready)!r}); gate=Path({str(gate)!r}); "
+                f"overflowed=Path({str(overflowed)!r}); ready.write_text('ready'); "
                 "exec('while not gate.exists(): time.sleep(.005)'); "
                 "sys.stdout.buffer.write(b'b' * 2000); sys.stdout.flush(); "
                 "overflowed.write_text('yes'); time.sleep(60)"
             )
             kill = async_process._kill_owned_process
+            popen = async_process.subprocess.Popen
+
+            def start_after_initial_output(*args, **kwargs):
+                process = popen(*args, **kwargs)
+                deadline = time.monotonic() + 5
+                while not ready.exists() and time.monotonic() < deadline:
+                    if process.poll() is not None:
+                        break
+                    time.sleep(0.005)
+                if not ready.exists():
+                    process.kill()
+                    process.wait(timeout=2)
+                    raise AssertionError("child did not flush initial output before timeout starts")
+                return process
 
             def delayed_kill(process):
                 gate.write_text("release")
@@ -130,10 +146,11 @@ class AsyncProcessTests(unittest.TestCase):
                     raise AssertionError("child did not write overflowing output after timeout")
                 kill(process)
 
-            with patch.object(async_process, "_kill_owned_process", side_effect=delayed_kill):
+            with patch.object(async_process.subprocess, "Popen", side_effect=start_after_initial_output), \
+                    patch.object(async_process, "_kill_owned_process", side_effect=delayed_kill):
                 with self.assertRaises(async_process.ProcessTimeout) as raised:
                     async_process.run_process(
-                        [sys.executable, "-c", script], timeout=0.05, max_output_bytes=1024,
+                        [sys.executable, "-c", script], timeout=1, max_output_bytes=1024,
                     )
             self.assertTrue(overflowed.exists(), "regression did not actually exceed output bound")
             self.assertEqual(raised.exception.stdout, b"a" * 100)

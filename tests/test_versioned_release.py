@@ -1850,6 +1850,37 @@ class LifecycleTests(unittest.TestCase):  # pylint: disable=too-many-public-meth
         self.assertTrue(self.gh.assets[draft["id"]])
         self.assertFalse(any(method == "PATCH" for _, method, _ in self.gh.writes))
 
+    def test_publisher_termination_during_final_tag_read_stops_before_public_release(self):
+        """The shared final callback catches a publisher ending during tag readback."""
+        plan = self.automatic_build()
+        api = self.gh.api
+        final_tag_reads = 0
+        tag_path = f"git/ref/tags/{plan['tag']}"
+
+        def terminate_during_final_tag_read(path, method="GET", body=None):
+            nonlocal final_tag_reads
+            result = api(path, method, body)
+            draft = next((release for release in self.gh.releases.values()
+                          if release["tag_name"] == plan["tag"]), None)
+            if path == tag_path and draft and self.gh.assets[draft["id"]]:
+                final_tag_reads += 1
+                if final_tag_reads == 2:
+                    # The tag GET succeeds, but the publisher ends before the
+                    # callback which immediately precedes the public PATCH.
+                    self.gh.runs[99].update(status="completed", conclusion="cancelled")
+            return result
+
+        with patch.object(self.gh, "api", side_effect=terminate_during_final_tag_read):
+            with self.assertRaisesRegex(rc.ReleaseError, "not active"):
+                lifecycle.publish_versioned(self.args)
+
+        self.assertEqual(final_tag_reads, 2)
+        draft = next(release for release in self.gh.releases.values()
+                     if release["tag_name"] == plan["tag"])
+        self.assertTrue(draft["draft"])
+        self.assertTrue(self.gh.assets[draft["id"]])
+        self.assertFalse(any(method == "PATCH" for _, method, _ in self.gh.writes))
+
     def reject_workflow_drift_without_publication(self, publish):
         """Keep an allocated plan reusable when a known permission failure is found."""
         self.gh.default_head = "b" * 40
