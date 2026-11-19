@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import contextvars
 import hashlib
 import io
 import json
@@ -17,6 +18,7 @@ import queue
 import random
 import re
 import shutil
+import signal
 import stat
 
 # Subprocess calls below use argument vectors with shell=False.
@@ -49,6 +51,9 @@ POLICY = ".release-policy.json"
 EVIDENCE = Path(".release-evidence") / MANIFEST
 INVALID_EXECUTION_CHECK_RUN_URL = "Invalid execution check-run URL"
 CREATE_READBACK_RESPONSE_LIMIT_ERROR = "Create readback response limit exceeded"
+_API_READ_DEADLINE: contextvars.ContextVar[float | None] = contextvars.ContextVar(
+    "release_api_read_deadline", default=None,
+)
 
 
 class AssetRestriction(TypedDict):
@@ -532,10 +537,13 @@ def _stream_asset(command: list[str], output: _AssetWriter, *,
     output.check()
     if time.monotonic() >= deadline:
         raise subprocess.TimeoutExpired(command, ASSET_DOWNLOAD_TIMEOUT)
-    process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)  # nosec B603
+    process = subprocess.Popen(
+        command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True,
+    )  # nosec B603
     require(process.stdout is not None and process.stderr is not None, "Missing transfer pipes")
     events: queue.Queue[AssetStreamEvent] = queue.Queue(maxsize=2)
     stopped = threading.Event()
+    complete = False
     threads = [threading.Thread(target=_read_asset_pipe,
                                 args=(pipe, kind, events, stopped), daemon=True)
                for pipe, kind in [(process.stdout, "stdout"), (process.stderr, "stderr")]]
@@ -544,9 +552,18 @@ def _stream_asset(command: list[str], output: _AssetWriter, *,
             thread.start()
         stderr = _drain_asset_stream(events, output, command, deadline)
         returncode = _wait_for_asset_process(process, output, command, deadline)
+        complete = True
         return subprocess.CompletedProcess(command, returncode, b"", stderr)
     finally:
         stopped.set()
+        # gh may leave helpers alive with inherited pipes. On any incomplete
+        # transfer, terminate the isolated process group before waiting for the
+        # leader or closing pipes, so descendants cannot outlive the deadline.
+        if not complete:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
         try:
             if process.poll() is None:
                 process.kill()
@@ -652,9 +669,11 @@ def _next_paginated_response(
         raise GitHubError("GitHub pagination included an unadvertised response page")
     header_start = text.rfind("\n", 0, position) + 1
     header = text[header_start:separator.end()].encode("utf-8", errors="surrogateescape")
-    has_next = _github_page_has_next(header)
     response_header = text[position:separator.end()].encode("utf-8", errors="surrogateescape")
     status, _ = _github_http_head(response_header)
+    # Link metadata is meaningful only for a successful page. In particular,
+    # malformed pagination metadata on a 5xx must not hide the retryable status.
+    has_next = _github_page_has_next(header) if 200 <= status < 300 else False
     return status, separator.end(), has_next
 
 
@@ -721,6 +740,11 @@ class GitHub:
                     or re.match(rb"HTTP/(?:1\.[01]|2(?:\.0)?) 4\d\d(?:\s|$)", error.stdout or b"")):
                 raise GitHubError("Release create timed out with a denial") from error
             raise AmbiguousCreate("Release create response timed out") from error
+        except ProcessOutputLimit as error:
+            # A POST may have committed before its response exceeded the
+            # capture bound. The caller's one-shot readback must reconcile it;
+            # the POST itself must never be replayed.
+            raise AmbiguousCreate("Release create response exceeded its capture limit") from error
         denied = (self._denied_partial_read(result.stdout or b"", result.stderr or b"")
                   or bool(re.match(rb"HTTP/(?:1\.[01]|2(?:\.0)?) 4\d\d(?:\s|$)", result.stdout or b"")))
         decode_failure = result.returncode == 1 and bool(re.search(
@@ -980,28 +1004,44 @@ class GitHub:
         require(command[:2] == ["gh", "api"] and command.count("--method") == 1
                 and command[command.index("--method") + 1] == "GET"
                 and "--input" not in command, "Retries require a read-only GET")
+        deadline = _API_READ_DEADLINE.get()
         for attempt in range(API_READ_ATTEMPTS):
             final_attempt = attempt == API_READ_ATTEMPTS - 1
+            attempt_timeout = timeout
+            if deadline is not None:
+                remaining = deadline - time.monotonic()
+                require(remaining > 0, "Publication metadata deadline exceeded")
+                attempt_timeout = min(timeout, remaining)
             try:
                 result = run_process(
                     [resolve_executable(command[0]), *command[1:]],
-                    check=False, timeout=timeout, max_output_bytes=64 * 1024 * 1024,
+                    check=False, timeout=attempt_timeout, max_output_bytes=64 * 1024 * 1024,
                 )
             except (ProcessTimeout, subprocess.TimeoutExpired) as error:
+                if deadline is not None and time.monotonic() >= deadline:
+                    raise GitHubError(f"GET {endpoint}: publication metadata deadline exceeded") from error
                 if (self._denied_partial_read(error.stdout or b"", error.stderr or b"", paginated)
                         or final_attempt):
                     raise GitHubError(
                         f"GET {endpoint}: read timed out after {attempt + 1} attempts"
                     ) from error
             else:
+                if deadline is not None and time.monotonic() >= deadline:
+                    raise GitHubError(f"GET {endpoint}: publication metadata deadline exceeded")
                 content = self._completed_read(result, endpoint, paginated, final_attempt)
                 if content is not None:
                     return content
                 # Drop the failed capture before sleeping or allocating the next one.
                 del result
+            if deadline is not None:
+                remaining = deadline - time.monotonic()
+                require(remaining > 0, "Publication metadata deadline exceeded")
+            else:
+                remaining = float("inf")
             # The complete previous stdout is discarded, including paginated
             # prefixes and binary fragments. Jitter adds at most six seconds.
-            time.sleep(random.uniform(1, 2 ** (attempt + 1)))  # nosec B311
+            delay = random.uniform(1, 2 ** (attempt + 1))  # nosec B311
+            time.sleep(min(delay, remaining))
         raise AssertionError("GET retry loop must return or raise")
 
     def api(
@@ -2157,13 +2197,14 @@ def accepted_execution_run(
 
 # Execution identity is deliberately checked again on every fresh response.
 # pylint: disable-next=too-many-arguments
-def wait_for_executing_run(
+def _wait_for_executing_run_until(
     gh: GitHub,
     run_id: int,
     channel: str,
     info: JSONObject,
     sha: str,
     attempt: int,
+    deadline: float,
     gate: bool = True,
     execution_proof: list[ExecutionJobProof] | None = None,
 ) -> JSONObject:
@@ -2176,7 +2217,6 @@ def wait_for_executing_run(
     terminal/conflicting evidence fails immediately, and historical completed-RC
     validation is unchanged.
     """
-    deadline = time.monotonic() + EXECUTING_RUN_WAIT_SECONDS
     check_run_id = execution_check_run_id()
     if execution_proof is not None:
         execution_proof.clear()
@@ -2227,6 +2267,28 @@ def wait_for_executing_run(
             )
             reported_status = waiting_for
         time.sleep(min(2, remaining))
+
+
+def wait_for_executing_run(
+    gh: GitHub,
+    run_id: int,
+    channel: str,
+    info: JSONObject,
+    sha: str,
+    attempt: int,
+    gate: bool = True,
+    execution_proof: list[ExecutionJobProof] | None = None,
+) -> JSONObject:
+    """Run the exact-attempt readback under one deadline for every API GET."""
+    deadline = time.monotonic() + EXECUTING_RUN_WAIT_SECONDS
+    token = _API_READ_DEADLINE.set(deadline)
+    try:
+        return _wait_for_executing_run_until(
+            gh, run_id, channel, info, sha, attempt, deadline,
+            gate=gate, execution_proof=execution_proof,
+        )
+    finally:
+        _API_READ_DEADLINE.reset(token)
 
 
 def closed_push_cycle(gh: GitHub, base: str, kind: str) -> JSONObject | None:
@@ -3404,6 +3466,8 @@ def _begin_promotion_publication(
 ) -> None:
     """Recheck allocation ordering and record the protected publication start."""
     if not manifest.get("version_plan"):
+        if confirm_before_write is not None:
+            confirm_before_write()
         return
     plan = cast(JSONObject, manifest["version_plan"])
     _verify_promotion_order(gh, manifest)

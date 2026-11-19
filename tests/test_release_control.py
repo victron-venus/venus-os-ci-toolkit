@@ -387,6 +387,7 @@ class WholeReadRecoveryTests(unittest.TestCase):
                     self.assertEqual(sleep.call_count, 1)
                     self.assertEqual(run.call_args_list[0], run.call_args_list[1])
 
+
     def test_timed_out_first_header_denials_still_veto_retry(self):
         for newline, status, complete_header in product(
             (b"\n", b"\r\n"), (401, 403, 404, 429), (False, True),
@@ -546,6 +547,78 @@ class WholeReadRecoveryTests(unittest.TestCase):
             self.assertEqual(self.gh.pages("releases"), [{"id": 2}])
             self.assertEqual(run.call_count, 2)
 
+    def test_malformed_link_on_later_503_page_does_not_hide_retryable_status(self):
+        first = http_response(
+            stdout=b'[{"id":1}]',
+            link=b'<https://api.github.com/repos/example/project/releases?per_page=100&page=2>; rel="next"',
+        )
+        failed_page = http_response(503, stdout=b'{"message":"try again"}', link=b"not a link")
+        partial = subprocess.CompletedProcess(
+            [], 1, first.stdout + b"\n" + failed_page.stdout,
+            b"gh: Server Error (HTTP 503)",
+        )
+        with (
+            patch.object(rc, "run_process", side_effect=[partial, http_response(stdout=b'[{"id":2}]')]) as run,
+            patch.object(rc.time, "sleep"),
+        ):
+            self.assertEqual(self.gh.pages("releases"), [{"id": 2}])
+        self.assertEqual(run.call_count, 2)
+
+    def test_execution_deadline_caps_each_metadata_get_timeout(self):
+        gh = rc.GitHub(REPO)
+        now = rc.time.monotonic()
+        token = rc._API_READ_DEADLINE.set(now + 4)
+        try:
+            with (
+                patch.object(rc.time, "monotonic", return_value=now),
+                patch.object(rc, "run_process", side_effect=[
+                    http_response(503), http_response(stdout=b'{"id":7}'),
+                ]) as run,
+                patch.object(rc.time, "sleep"),
+            ):
+                self.assertEqual(gh.api("releases/7"), {"id": 7})
+            self.assertEqual([call.kwargs["timeout"] for call in run.call_args_list], [4, 4])
+        finally:
+            rc._API_READ_DEADLINE.reset(token)
+
+    def test_retry_jitter_is_capped_by_remaining_execution_deadline(self):
+        gh = rc.GitHub(REPO)
+        now = rc.time.monotonic()
+        token = rc._API_READ_DEADLINE.set(now + 1.5)
+        try:
+            with (
+                patch.object(rc.time, "monotonic", return_value=now),
+                patch.object(rc, "run_process", side_effect=[
+                    http_response(503), http_response(stdout=b'{"id":7}'),
+                ]) as run,
+                patch.object(rc.random, "uniform", return_value=2),
+                patch.object(rc.time, "sleep") as sleep,
+            ):
+                self.assertEqual(gh.api("releases/7"), {"id": 7})
+            self.assertEqual([call.kwargs["timeout"] for call in run.call_args_list], [1.5, 1.5])
+            sleep.assert_called_once_with(1.5)
+        finally:
+            rc._API_READ_DEADLINE.reset(token)
+
+    def test_expired_execution_deadline_prevents_another_get_or_retry(self):
+        gh = rc.GitHub(REPO)
+        token = rc._API_READ_DEADLINE.set(rc.time.monotonic() - 1)
+        try:
+            with patch.object(rc, "run_process") as run, self.assertRaisesRegex(
+                rc.ReleaseError, "metadata deadline exceeded",
+            ):
+                gh.api("releases/7")
+            run.assert_not_called()
+        finally:
+            rc._API_READ_DEADLINE.reset(token)
+
+    def test_create_response_output_limit_is_reconciliable_ambiguity(self):
+        gh = rc.GitHub(REPO)
+        with patch.object(rc, "run_process", side_effect=rc.ProcessOutputLimit("too large")) as post:
+            with self.assertRaises(rc.AmbiguousCreate):
+                gh.create_release_once({"tag_name": RC_TAG})
+        post.assert_called_once()
+
     def test_paginated_response_must_reach_advertised_terminal_page(self):
         first = http_response(
             stdout=b'[{"id":1}]',
@@ -575,6 +648,59 @@ class WholeReadRecoveryTests(unittest.TestCase):
             with self.assertRaisesRegex(rc.GitHubError, "unadvertised response page"):
                 rc.GitHub(REPO).pages("releases")
 
+
+
+class AssetStreamCleanupTests(unittest.TestCase):
+    """Ensure a timed-out streaming helper cannot leave pipe-holding descendants."""
+
+    @unittest.skipUnless(os.name == "posix", "stream process groups require POSIX")
+    def test_timeout_kills_the_isolated_process_group(self):
+        with tempfile.TemporaryDirectory(prefix="release-stream-") as temp:
+            destination = Path(temp) / "asset.bin"
+            command = [
+                sys.executable, "-c",
+                "import subprocess,sys,time; "
+                "subprocess.Popen([sys.executable,'-c','import time; time.sleep(30)']); "
+                "time.sleep(30)",
+            ]
+            with destination.open("w+b") as output_file:
+                writer = rc._AssetWriter(
+                    output_file, destination, {"size": 100, "sha256": "0" * 64},
+                    rc.DownloadBudget(100),
+                )
+                deadline = rc.time.monotonic() + 0.3
+                with (
+                    patch.object(rc.os, "killpg", wraps=rc.os.killpg) as kill_group,
+                    self.assertRaises(subprocess.TimeoutExpired),
+                ):
+                    rc._stream_asset(command, writer, deadline=deadline)
+            kill_group.assert_called_once()
+            self.assertEqual(kill_group.call_args.args[1], rc.signal.SIGKILL)
+
+    @unittest.skipUnless(os.name == "posix", "stream process groups require POSIX")
+    def test_wait_timeout_kills_group_after_descendant_closes_pipes(self):
+        with tempfile.TemporaryDirectory(prefix="release-stream-") as temp:
+            destination = Path(temp) / "asset.bin"
+            command = [
+                sys.executable, "-c",
+                "import os,subprocess,sys,time; "
+                "subprocess.Popen([sys.executable,'-c','import time; time.sleep(30)'], "
+                "stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL); "
+                "os.close(1); os.close(2); time.sleep(30)",
+            ]
+            with destination.open("w+b") as output_file:
+                writer = rc._AssetWriter(
+                    output_file, destination, {"size": 100, "sha256": "0" * 64},
+                    rc.DownloadBudget(100),
+                )
+                deadline = rc.time.monotonic() + 0.3
+                with (
+                    patch.object(rc.os, "killpg", wraps=rc.os.killpg) as kill_group,
+                    self.assertRaises(subprocess.TimeoutExpired),
+                ):
+                    rc._stream_asset(command, writer, deadline=deadline)
+            kill_group.assert_called_once()
+            self.assertEqual(kill_group.call_args.args[1], rc.signal.SIGKILL)
 
 
 class JobPaginationTests(unittest.TestCase):
@@ -1126,7 +1252,7 @@ class ReleaseControlTests(unittest.TestCase):
             result = rc.promote(self.args)
 
         self.assertEqual(result["tag"], "v1.2.3")
-        self.assertEqual(len(observations), 2)  # Admission and before public flip.
+        self.assertEqual(len(observations), 3)  # Admission, first write, public flip.
 
     def test_cancel_during_final_promotion_order_read_prevents_ledger_put(self):
         """Publisher cancellation after order reads is checked before ledger CAS."""
@@ -1175,6 +1301,15 @@ class ReleaseControlTests(unittest.TestCase):
         self.assertEqual(events, ["order-read-1", "order-read-2", "publisher-completed"])
         self.assertEqual(len(gh.ledger_writes), before_writes)
 
+    def test_legacy_promotion_confirms_active_publisher_before_publication(self):
+        """Legacy manifests still validate the publisher before creating release state."""
+        confirmed = []
+        rc._begin_promotion_publication(
+            self.gh, {"version_plan": None}, 100,
+            lambda: confirmed.append("active"),
+        )
+        self.assertEqual(confirmed, ["active"])
+
     def test_promotion_rechecks_publisher_before_public_release_patch(self):
         """A publisher cancelled after draft upload leaves the release unpublished."""
         original_api = self.gh.api
@@ -1186,7 +1321,7 @@ class ReleaseControlTests(unittest.TestCase):
             nonlocal attempt_reads
             if path == "actions/runs/99/attempts/1":
                 attempt_reads += 1
-                status = "in_progress" if attempt_reads == 1 else "completed"
+                status = "completed" if attempt_reads >= 3 else "in_progress"
                 conclusion = None if status == "in_progress" else "cancelled"
                 current = original_api(path, method, body)
                 current.update(status=status, conclusion=conclusion)
@@ -1211,7 +1346,7 @@ class ReleaseControlTests(unittest.TestCase):
             with self.assertRaisesRegex(rc.ReleaseError, "not active"):
                 rc.promote(self.args)
 
-        self.assertGreaterEqual(attempt_reads, 2)
+        self.assertGreaterEqual(attempt_reads, 3)
         stable = next(item for item in self.gh.releases.values()
                       if item["tag_name"] == "v1.2.3")
         self.assertTrue(stable["draft"])

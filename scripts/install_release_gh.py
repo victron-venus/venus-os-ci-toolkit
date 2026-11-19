@@ -22,6 +22,7 @@ MANIFEST = ROOT / ".github/gh/release.json"
 MAX_ARCHIVE = 32 * 1024 * 1024
 MAX_BINARY = 64 * 1024 * 1024
 EXECUTABLE_NAME = "gh"
+SYSTEM_IMAGE_EXECUTABLE = Path("/usr/local/bin/gh")
 
 
 def _path_has_parent_reference(path: Path) -> bool:
@@ -40,7 +41,9 @@ def _trusted_path_roots(*, include_path: bool = False) -> list[Path]:
     return roots
 
 
-def _verified_executable_path(path: Path, *, allow_temporary: bool = False) -> Path:
+def _verified_executable_path(
+    path: Path, *, allow_temporary: bool = False, allow_system_image_stage: bool = False,
+) -> Path:
     """Resolve an explicit check target, requiring a real qualified gh file."""
     allowed_name = path.name == EXECUTABLE_NAME or (
         allow_temporary and path.name.startswith(".gh-")
@@ -49,7 +52,15 @@ def _verified_executable_path(path: Path, *, allow_temporary: bool = False) -> P
         raise ValueError("Release CLI check path must name gh without parent traversal")
     resolved = path.resolve(strict=True)
     roots = [root.resolve() for root in _trusted_path_roots(include_path=True)]
-    if not any(resolved.is_relative_to(root) for root in roots):
+    trusted_root = any(resolved.is_relative_to(root) for root in roots)
+    system_image_stage = (
+        allow_system_image_stage
+        and resolved.parent == SYSTEM_IMAGE_EXECUTABLE.parent.resolve()
+        and os.name == "posix"
+        and hasattr(os, "geteuid")
+        and os.geteuid() == 0
+    )
+    if not trusted_root and not system_image_stage:
         raise ValueError("Release CLI check target must be inside a trusted executable directory")
     metadata = resolved.stat()
     resolved_name_ok = resolved.name == EXECUTABLE_NAME or (
@@ -69,7 +80,15 @@ def _verify_executable_bytes(path: Path, artifact: dict, version: str) -> None:
         raise ValueError("Release CLI executable does not match the qualified native build")
     if os.environ.get("GODEBUG") != "fips140=on":
         raise ValueError("Release operations require exactly GODEBUG=fips140=on")
-    result = run_process([str(path), "--version"], timeout=15)
+    # Execute a private copy of the bytes just hashed. Running `path` here would
+    # permit another writer to replace it between the read above and execve.
+    with tempfile.TemporaryDirectory(prefix="release-gh-verify-") as directory:
+        executable = Path(directory) / EXECUTABLE_NAME
+        descriptor = os.open(executable, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o700)
+        with os.fdopen(descriptor, "wb") as destination:
+            destination.write(binary)
+        executable.chmod(0o700)
+        result = run_process([str(executable), "--version"], timeout=15)
     if not result.stdout.startswith(f"gh version {version} ".encode()):
         raise ValueError("Release CLI version does not match the reviewed version")
 
@@ -80,11 +99,10 @@ def _install_destination(path: Path, *, allow_system_image: bool = False) -> Pat
         raise ValueError("Release CLI output path must name gh without parent traversal")
     destination = path.parent.resolve() / EXECUTABLE_NAME
     roots = [root.resolve() for root in _trusted_path_roots()]
-    private_image_target = Path("/usr/local/bin/gh")
     exact_system_install = (
-        allow_system_image and path == private_image_target and os.name == "posix"
+        allow_system_image and path == SYSTEM_IMAGE_EXECUTABLE and os.name == "posix"
         and hasattr(os, "geteuid") and os.geteuid() == 0
-        and destination == private_image_target
+        and destination == SYSTEM_IMAGE_EXECUTABLE
     )
     if not exact_system_install and not any(destination.is_relative_to(root) for root in roots):
         raise ValueError("Release CLI output must be inside the checkout or runner temp directory")
@@ -201,8 +219,13 @@ def binary_from_archive(data: bytes, artifact: dict) -> bytes:
     return binary
 
 
-def verify(path: Path, artifact: dict, version: str, *, allow_temporary: bool = False) -> None:
-    executable = _verified_executable_path(path, allow_temporary=allow_temporary)
+def verify(
+    path: Path, artifact: dict, version: str, *, allow_temporary: bool = False,
+    allow_system_image_stage: bool = False,
+) -> None:
+    executable = _verified_executable_path(
+        path, allow_temporary=allow_temporary, allow_system_image_stage=allow_system_image_stage,
+    )
     _verify_executable_bytes(executable, artifact, version)
 
 
@@ -214,16 +237,21 @@ def install(
     data = _release_archive(manifest, artifact, archive)
     binary = binary_from_archive(data, artifact)
     output.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile(dir=output.parent, prefix=".gh-", delete=False) as temporary:
-        temporary.write(binary)
-        temporary_path = Path(temporary.name)
+    temporary_path = None
     try:
+        with tempfile.NamedTemporaryFile(dir=output.parent, prefix=".gh-", delete=False) as temporary:
+            # Capture the name as soon as the file exists so write and close
+            # failures are covered by the same cleanup path as verification.
+            temporary_path = Path(temporary.name)
+            temporary.write(binary)
         temporary_path.chmod(0o755)
         # The private temporary path is created under the validated parent.
-        verify(temporary_path, artifact, manifest["version"], allow_temporary=True)
+        verify_options = {"allow_system_image_stage": True} if allow_system_image else {}
+        verify(temporary_path, artifact, manifest["version"], allow_temporary=True, **verify_options)
         os.replace(temporary_path, output)
     finally:
-        temporary_path.unlink(missing_ok=True)
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
 
 
 def _release_archive(manifest: dict, artifact: dict, archive: Path | None) -> bytes:

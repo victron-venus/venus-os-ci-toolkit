@@ -145,6 +145,23 @@ class InventoryMigrationTests(unittest.TestCase):
 
 
 class InventoryOracleTests(unittest.TestCase):
+    def test_scheduled_reuse_readback_is_an_exact_reversible_layer(self):
+        current = (ROOT / receipts.PUBLISHER).read_text()
+        previous = migration._before_scheduled_reuse_readback(current)
+        self.assertEqual(hashlib.sha256(current.encode()).hexdigest(),
+                         "8596c2464781f9cedabc8cf797e2c7584aa9af60f00069d5b9f4fa04df6bd722")
+        self.assertEqual(hashlib.sha256(previous.encode()).hexdigest(),
+                         "c5f203a3bc5fb4adb8ed9cb6c7de4dba66488c648f729f8f50f7b25e596c9c94")
+        self.assertEqual(migration._before_scheduled_reuse_readback(previous), previous)
+        self.assertEqual(migration._before_compact_manifest_recheck(current),
+                         migration._before_compact_manifest_recheck(previous))
+
+        changed = current.replace("Qualified manifest asset changed during inventory read",
+                                  "Qualified manifest asset differs during inventory read", 1)
+        self.assertEqual(migration._before_scheduled_reuse_readback(changed), changed)
+        with self.assertRaisesRegex(ValueError, "Unknown current inventory source"):
+            migration.previous_canonical_source(changed, receipts.PUBLISHER)
+
     def test_publisher_execution_boundary_is_an_exact_reversible_layer(self):
         current = (ROOT / receipts.PUBLISHER).read_text()
         previous = migration._before_publisher_execution_boundary(current)
@@ -423,6 +440,25 @@ class PlanLayerCompatibilityTests(unittest.TestCase):
         for publisher in variants:
             with self.subTest(publisher_hash=receipts.digest(publisher)):
                 self.assertEqual(migration._before_compact_distribution(publisher), publisher)
+                self.write_state({**self.casefold, receipts.PUBLISHER: publisher})
+                before = self.snapshot()
+                with self.assertRaisesRegex(ValueError, "Unknown or partially migrated"):
+                    migration.render(self.root)
+                with self.assertRaisesRegex(ValueError, "Unknown current"):
+                    migration.previous_canonical_source(publisher, receipts.PUBLISHER)
+                self.assertEqual(self.snapshot(), before)
+
+    def test_partial_or_unknown_scheduled_readback_layer_is_rejected(self):
+        current = self.current[receipts.PUBLISHER]
+        previous = migration._before_scheduled_reuse_readback(current)
+        variants = [previous + "# unreviewed scheduled reuse change\n"]
+        for hunk in migration.SCHEDULED_REUSE_READBACK["hunks"]:
+            self.assertEqual(previous.count(hunk["before"]), 1)
+            variants.append(previous.replace(hunk["before"], hunk["after"], 1))
+
+        for publisher in variants:
+            with self.subTest(publisher_hash=receipts.digest(publisher)):
+                self.assertEqual(migration._before_scheduled_reuse_readback(publisher), publisher)
                 self.write_state({**self.casefold, receipts.PUBLISHER: publisher})
                 before = self.snapshot()
                 with self.assertRaisesRegex(ValueError, "Unknown or partially migrated"):

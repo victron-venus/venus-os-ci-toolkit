@@ -289,6 +289,29 @@ def _handle_owned_process_events(
 
 
 def _complete_owned_process(state: _OwnedProcessState) -> ProcessResult:
+    # The loop reaches completion only after the leader exited and all captured
+    # pipes reached EOF. Keep its unreaped PID/PGID reserved until the whole
+    # owned group is gone: descendants may have closed their inherited pipes
+    # and otherwise outlive a successful leader.
+    if state.failure is None and state.cancel_event is not None and state.cancel_event.is_set():
+        state.failure = _ProcessCancelled()
+    if state.failure is None and state.deadline is not None and time.monotonic() >= state.deadline:
+        state.failure = ProcessTimeout(
+            state.timeout or 0,
+            _format_output(bytes(state.captured["stdout"]), state.text),
+            _format_output(bytes(state.captured["stderr"]), state.text),
+        )
+    _kill_owned_process(state.process)
+    # Group cleanup must happen before wait() reaps the leader; after that its
+    # PID could be reused and killpg(pid, ...) would no longer be safe.
+    if state.failure is None and state.cancel_event is not None and state.cancel_event.is_set():
+        state.failure = _ProcessCancelled()
+    if state.failure is None and state.deadline is not None and time.monotonic() >= state.deadline:
+        state.failure = ProcessTimeout(
+            state.timeout or 0,
+            _format_output(bytes(state.captured["stdout"]), state.text),
+            _format_output(bytes(state.captured["stderr"]), state.text),
+        )
     returncode = _wait_owned_process(state.process)
     if isinstance(state.failure, ProcessTimeout):
         raise ProcessTimeout(
@@ -315,9 +338,11 @@ def _complete_owned_process(state: _OwnedProcessState) -> ProcessResult:
 
 
 def _drive_owned_process(state: _OwnedProcessState) -> ProcessResult:
-    while state.selector.get_map() or not _process_has_exited(state.process):
+    while True:
         now = time.monotonic()
         _advance_owned_process_failure(state, now)
+        if not state.selector.get_map() and _process_has_exited(state.process):
+            return _complete_owned_process(state)
         wait_time = _owned_process_wait_time(state, now)
         if state.selector.get_map():
             events = state.selector.select(wait_time)
@@ -325,7 +350,6 @@ def _drive_owned_process(state: _OwnedProcessState) -> ProcessResult:
             time.sleep(wait_time)
             events = []
         _handle_owned_process_events(state, events)
-    return _complete_owned_process(state)
 
 
 def _reap_owned_process_after_error(process: subprocess.Popen[bytes]) -> None:

@@ -174,6 +174,46 @@ class InstallReleaseGhTests(unittest.TestCase):
             self.assertEqual(output.read_bytes(), binary)
             self.assertEqual(list(Path(directory).glob(".gh-*")), [])
 
+    def test_staging_write_and_close_failures_remove_temp_and_preserve_output(self):
+        raw, artifact, _ = fixture()
+        real_named_temporary_file = tempfile.NamedTemporaryFile
+        for failure in ("write", "close"):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                archive = root / "download.tar.gz"
+                archive.write_bytes(raw)
+                output = root / "gh"
+                output.write_bytes(b"old")
+
+                def failing_temporary_file(*args, **kwargs):
+                    handle = real_named_temporary_file(*args, **kwargs)
+
+                    class FailingWriter:
+                        name = handle.name
+
+                        def __enter__(self):
+                            return self
+
+                        def write(self, data):
+                            if failure == "write":
+                                handle.write(data[:1])
+                                raise OSError("synthetic staging write failure")
+                            return handle.write(data)
+
+                        def __exit__(self, exc_type, exc, traceback):
+                            result = handle.__exit__(exc_type, exc, traceback)
+                            if failure == "close" and exc_type is None:
+                                raise OSError("synthetic staging close failure")
+                            return result
+
+                    return FailingWriter()
+
+                with patch.object(installer.tempfile, "NamedTemporaryFile", side_effect=failing_temporary_file), \
+                        self.assertRaisesRegex(OSError, "staging (write|close) failure"):
+                    installer.install(output, {"version": "test"}, artifact, archive)
+                self.assertEqual(output.read_bytes(), b"old")
+                self.assertEqual(list(root.glob(".gh-*")), [])
+
     def test_local_archive_requires_trusted_regular_nonsymlink_file(self):
         raw, _, _ = fixture()
         with tempfile.TemporaryDirectory() as directory:
@@ -320,6 +360,50 @@ class InstallReleaseGhTests(unittest.TestCase):
         with patch.object(installer.os, "geteuid", return_value=1001), \
                 self.assertRaisesRegex(ValueError, "inside the checkout or runner temp"):
             installer._install_destination(expected, allow_system_image=True)
+
+    def test_validated_system_image_stage_verifies_without_path_membership(self):
+        raw, artifact, binary = fixture()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            executable = root / "gh"
+            untrusted_check = root / ".gh-untrusted-check"
+            untrusted_check.write_bytes(binary)
+
+            def check_private_copy(command, **kwargs):
+                self.assertEqual(Path(command[0]).read_bytes(), binary)
+                return SimpleNamespace(stdout=b"gh version test (fixture)\n")
+
+            with patch.object(installer, "SYSTEM_IMAGE_EXECUTABLE", executable), \
+                    patch.object(installer, "_trusted_path_roots", return_value=[]), \
+                    patch.object(installer.os, "geteuid", return_value=0), \
+                    patch.dict(os.environ, {"PATH": "/usr/bin", "GODEBUG": "fips140=on"}), \
+                    patch.object(installer, "_release_archive", return_value=raw), \
+                    patch.object(installer, "run_process", side_effect=check_private_copy) as run:
+                installer.install(executable, {"version": "test"}, artifact, allow_system_image=True)
+                self.assertEqual(executable.read_bytes(), binary)
+                self.assertNotIn(str(root), os.environ["PATH"])
+                with self.assertRaisesRegex(ValueError, "trusted executable directory"):
+                    installer.verify(untrusted_check, artifact, "test", allow_temporary=True)
+            run.assert_called_once()
+
+    def test_verified_bytes_are_the_bytes_executed_if_source_changes_after_hash(self):
+        _, artifact, binary = fixture()
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "gh"
+            source.write_bytes(binary)
+
+            def replace_source_then_report_version(command, **kwargs):
+                invoked = Path(command[0])
+                self.assertNotEqual(invoked, source)
+                self.assertEqual(invoked.read_bytes(), binary)
+                source.write_bytes(b"unqualified replacement")
+                return SimpleNamespace(stdout=b"gh version test (fixture)\n")
+
+            with patch.dict(os.environ, {"GODEBUG": "fips140=on"}), \
+                    patch.object(installer, "run_process", side_effect=replace_source_then_report_version) as run:
+                installer.verify(source, artifact, "test")
+            run.assert_called_once()
+            self.assertEqual(source.read_bytes(), b"unqualified replacement")
 
     def test_install_creates_missing_directory_inside_allowed_temp_root(self):
         raw, artifact, binary = fixture()

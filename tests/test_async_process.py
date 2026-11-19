@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import signal
 import sys
+import subprocess
 import tempfile
 import threading
 import time
@@ -35,6 +36,14 @@ class AsyncProcessTests(unittest.TestCase):
             try:
                 os.kill(pid, 0)
             except ProcessLookupError:
+                return
+            # kill(pid, 0) also succeeds for zombies. They cannot run or hold
+            # pipes, so distinguish them before declaring leaked live work.
+            status = subprocess.run(
+                ["/bin/ps", "-o", "stat=", "-p", str(pid)],
+                check=False, capture_output=True, text=True,
+            )
+            if status.returncode != 0 or status.stdout.strip().startswith("Z"):
                 return
             time.sleep(0.02)
         try:
@@ -99,22 +108,35 @@ class AsyncProcessTests(unittest.TestCase):
 
     @unittest.skipUnless(os.name == "posix", "process-group cleanup is POSIX-specific")
     def test_late_output_limit_does_not_replace_timeout_result(self):
-        script = (
-            "import sys,time; sys.stdout.buffer.write(b'a' * 100); sys.stdout.flush(); "
-            "time.sleep(.1); sys.stdout.buffer.write(b'b' * 2000); sys.stdout.flush(); time.sleep(60)"
-        )
-        kill = async_process._kill_owned_process
+        with tempfile.TemporaryDirectory() as directory:
+            gate = Path(directory) / "write-after-timeout"
+            overflowed = Path(directory) / "overflow-written"
+            script = (
+                "from pathlib import Path; import sys,time; "
+                "sys.stdout.buffer.write(b'a' * 100); sys.stdout.flush(); "
+                f"gate=Path({str(gate)!r}); overflowed=Path({str(overflowed)!r}); "
+                "exec('while not gate.exists(): time.sleep(.005)'); "
+                "sys.stdout.buffer.write(b'b' * 2000); sys.stdout.flush(); "
+                "overflowed.write_text('yes'); time.sleep(60)"
+            )
+            kill = async_process._kill_owned_process
 
-        def delayed_kill(process):
-            time.sleep(0.2)
-            kill(process)
+            def delayed_kill(process):
+                gate.write_text("release")
+                deadline = time.monotonic() + 2
+                while not overflowed.exists() and time.monotonic() < deadline:
+                    time.sleep(0.005)
+                if not overflowed.exists():
+                    raise AssertionError("child did not write overflowing output after timeout")
+                kill(process)
 
-        with patch.object(async_process, "_kill_owned_process", side_effect=delayed_kill):
-            with self.assertRaises(async_process.ProcessTimeout) as raised:
-                async_process.run_process(
-                    [sys.executable, "-c", script], timeout=0.05, max_output_bytes=1024,
-                )
-        self.assertEqual(raised.exception.stdout, b"a" * 100)
+            with patch.object(async_process, "_kill_owned_process", side_effect=delayed_kill):
+                with self.assertRaises(async_process.ProcessTimeout) as raised:
+                    async_process.run_process(
+                        [sys.executable, "-c", script], timeout=0.05, max_output_bytes=1024,
+                    )
+            self.assertTrue(overflowed.exists(), "regression did not actually exceed output bound")
+            self.assertEqual(raised.exception.stdout, b"a" * 100)
 
     @unittest.skipUnless(os.name == "posix", "process-group cleanup is POSIX-specific")
     def test_timeout_kills_descendant_that_inherits_capture_pipes(self):
@@ -168,6 +190,67 @@ class AsyncProcessTests(unittest.TestCase):
             gate.write_text("release")
             time.sleep(0.2)
             self.assertFalse(survived.exists(), "same-group descendant survived leader timeout")
+
+    @unittest.skipUnless(os.name == "posix", "process-group cleanup is POSIX-specific")
+    def test_expired_deadline_kills_descendant_before_reaping_exited_leader(self):
+        with tempfile.TemporaryDirectory() as directory:
+            started = Path(directory) / "detached-pipe-descendant-started"
+            pid_file = Path(directory) / "detached-pipe-descendant.pid"
+            gate = Path(directory) / "release-detached-pipe-descendant"
+            survived = Path(directory) / "detached-pipe-descendant-survived"
+            descendant = (
+                "from pathlib import Path; import os,time; "
+                f"Path({str(started)!r}).write_text('started'); "
+                f"Path({str(pid_file)!r}).write_text(str(os.getpid())); "
+                f"gate=Path({str(gate)!r}); "
+                "exec('while not gate.exists(): time.sleep(.005)'); "
+                f"Path({str(survived)!r}).write_text('alive')"
+            )
+            leader = (
+                "from pathlib import Path; import subprocess,sys,time; "
+                f"subprocess.Popen([sys.executable, '-c', {descendant!r}], "
+                "stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL); "
+                f"started=Path({str(started)!r}); "
+                "exec('while not started.exists(): time.sleep(.005)')"
+            )
+            process = async_process.subprocess.Popen(
+                [sys.executable, "-c", leader],
+                stdout=async_process.subprocess.PIPE,
+                stderr=async_process.subprocess.PIPE,
+                start_new_session=True,
+                bufsize=0,
+            )
+            selector = async_process.selectors.DefaultSelector()
+            streams = [process.stdout, process.stderr]
+            try:
+                deadline = time.monotonic() + 3
+                while (not started.exists() or not async_process._process_has_exited(process)):
+                    if time.monotonic() >= deadline:
+                        self.fail("leader/descendant fixture did not reach the completion boundary")
+                    time.sleep(0.005)
+                self.assertTrue(pid_file.exists(), "descendant did not publish its PID")
+                state = async_process._OwnedProcessState(
+                    process=process,
+                    command=(sys.executable, "-c", leader),
+                    selector=selector,
+                    opened_streams=streams,
+                    captured={"stdout": bytearray(), "stderr": bytearray()},
+                    input_view=memoryview(b""),
+                    max_output_bytes=1024,
+                    text=False,
+                    timeout=0.1,
+                    deadline=time.monotonic() - 1,
+                    cancel_event=None,
+                )
+                with self.assertRaises(async_process.ProcessTimeout):
+                    async_process._complete_owned_process(state)
+            finally:
+                selector.close()
+                for stream in streams:
+                    stream.close()
+            self.assert_process_stopped(pid_file)
+            gate.write_text("release")
+            self.assertFalse(survived.exists(), "descendant ran after completion cleanup")
 
     @unittest.skipUnless(os.name == "posix", "process-group cleanup is POSIX-specific")
     def test_output_limit_kills_descendant_that_holds_capture_pipe_open(self):

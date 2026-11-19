@@ -160,6 +160,29 @@ COMPACT_MANIFEST_RECHECK = {
 }
 
 
+# Preserve the scheduled-reuse manifest identity readback as a separate exact
+# layer above the compact reader's manifest-byte verification.
+SCHEDULED_REUSE_READBACK = {
+    "hunks": [
+        {
+            "before": "    \"\"\"Require retained immutable evidence and matching published asset metadata.\"\"\"\n    initial = published_plan_snapshot(\n        gh, tag, cast(str, plan[\"source_sha\"]), tag != f\"v{plan['base_version']}\"\n    )\n",
+            "after": "    \"\"\"Require retained immutable evidence and matching published asset metadata.\"\"\"\n    # A digestless manifest has to be read on both sides of the checked asset\n    # inventory. Discover its immutable asset ID first, then capture the\n    # authoritative tag/source/asset snapshot after the first body read.\n    release_before = cast(dict[str, object], gh.api(f\"releases/tags/{tag}\"))\n    release_id_before = rc.positive(release_before.get(\"id\"), \"release ID\")\n    assets_before = gh.pages(f\"releases/{release_id_before}/assets\")\n    manifests_before = [asset for asset in assets_before if asset.get(\"name\") == rc.MANIFEST]\n    rc.require(\n        len(manifests_before) == 1\n        and manifests_before[0].get(\"state\") == \"uploaded\"\n        and type(manifests_before[0].get(\"size\")) is int\n        and 0 < cast(int, manifests_before[0][\"size\"]) <= 2_000_000,\n        \"Qualified manifest inventory is invalid\",\n    )\n    manifest_asset_id = rc.positive(manifests_before[0].get(\"id\"), \"manifest ID\")\n    manifest_size = cast(int, manifests_before[0][\"size\"])\n    raw = gh.binary(f\"releases/assets/{manifest_asset_id}\")\n    rc.require(len(raw) == manifest_size, \"Qualified manifest size changed during read\")\n\n    initial = published_plan_snapshot(\n        gh, tag, cast(str, plan[\"source_sha\"]), tag != f\"v{plan['base_version']}\"\n    )\n"
+        },
+        {
+            "before": "    rc.require(cast(int, asset[\"size\"]) <= 2_000_000, \"Qualified manifest is too large\")\n    raw = gh.binary(f\"releases/assets/{rc.positive(asset['id'], 'manifest ID')}\")\n    manifest = rc.parse_json(raw, \"qualified manifest\")\n",
+            "after": "    rc.require(cast(int, asset[\"size\"]) <= 2_000_000, \"Qualified manifest is too large\")\n    rc.require(\n        rc.positive(asset[\"id\"], \"manifest ID\") == manifest_asset_id\n        and asset[\"size\"] == manifest_size,\n        \"Qualified manifest asset changed during inventory read\",\n    )\n    manifest_identity: rc.AssetIdentity = {\"size\": len(raw), \"sha256\": rc.digest(raw)}\n    with tempfile.TemporaryDirectory(prefix=\"scheduled-manifest-readback-\") as temporary:\n        manifest_path = Path(temporary) / rc.MANIFEST\n        observed_manifest = rc.download_asset(\n            gh, manifest_asset_id, manifest_path,\n            expected=manifest_identity,\n            budget=rc.DownloadBudget(manifest_identity[\"size\"]),\n        )\n        rc.require(\n            observed_manifest == manifest_identity and manifest_path.read_bytes() == raw,\n            \"Qualified manifest changed from its pre-snapshot bytes\",\n        )\n    manifest = rc.parse_json(raw, \"qualified manifest\")\n"
+        }
+    ],
+    "original_to_current": {
+        "c5f203a3bc5fb4adb8ed9cb6c7de4dba66488c648f729f8f50f7b25e596c9c94":
+        "8596c2464781f9cedabc8cf797e2c7584aa9af60f00069d5b9f4fa04df6bd722"
+    },
+    "current": [
+        "8596c2464781f9cedabc8cf797e2c7584aa9af60f00069d5b9f4fa04df6bd722"
+    ],
+}
+
+
 # Recognize response reconciliation without adding it through inventory-only updates.
 CREATE_READBACK = {
     "hunks": [
@@ -414,13 +437,19 @@ def _before_notes_provenance(source: str) -> str:
 
 
 def _before_publisher_execution_boundary(source: str) -> str:
-    """Reverse compact manifest and publisher-job revalidation layers when exact."""
+    """Reverse newer readback layers before the publisher-job proof layer."""
     source = _before_compact_manifest_recheck(source)
     return _before_layer(source, PUBLISHER_EXECUTION_BOUNDARY, "Publisher execution boundary")
 
 
+def _before_scheduled_reuse_readback(source: str) -> str:
+    """Reverse only the exact scheduled-reuse manifest readback layer."""
+    return _before_layer(source, SCHEDULED_REUSE_READBACK, "Scheduled reuse readback")
+
+
 def _before_compact_manifest_recheck(source: str) -> str:
-    """Reverse only the exact compact stable manifest byte reread layer."""
+    """Reverse scheduled readback before the compact stable manifest layer."""
+    source = _before_scheduled_reuse_readback(source)
     return _before_layer(source, COMPACT_MANIFEST_RECHECK, "Compact manifest reread")
 
 
@@ -505,6 +534,8 @@ def render(directory: Path) -> dict[str, str]:
                 result = _apply_publisher_execution_boundary(result)
             if _before_compact_manifest_recheck(source) != source:
                 _, result = receipts.transform(result, name, COMPACT_MANIFEST_RECHECK)
+            if _before_scheduled_reuse_readback(source) != source:
+                _, result = receipts.transform(result, name, SCHEDULED_REUSE_READBACK)
         states.add(state)
         if result != source:
             changes[name] = result
