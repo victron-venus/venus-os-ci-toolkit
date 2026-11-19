@@ -1,6 +1,8 @@
 """Configure the same qualified GitHub API client at every publication boundary."""
 from __future__ import annotations
 
+RELEASE_PYTHON_VERSION = "3.13"
+
 
 def installer() -> dict:
     return {
@@ -29,11 +31,15 @@ def apply(workflow: dict, pins: dict) -> None:
             raise ValueError(f"Multiple Python runtimes configured before release CLI installation in {name}")
         python_setup = python_steps[0] if python_steps else {
             "uses": pins["actions/setup-python"],
-            "with": {"python-version": "3.12"},
+            "with": {"python-version": RELEASE_PYTHON_VERSION},
         }
-        if (python_setup.get("uses") != pins["actions/setup-python"] or
-                python_setup.get("with", {}).get("python-version") != "3.12"):
-            raise ValueError(f"Release CLI installation requires the pinned Python 3.12 runtime in {name}")
+        if python_setup.get("uses") != pins["actions/setup-python"]:
+            raise ValueError(f"Release CLI requires the pinned Python setup action in {name}")
+        if "if" in python_setup or "continue-on-error" in python_setup:
+            raise ValueError(
+                f"Release CLI Python setup must be unconditional and fail closed in {name}"
+            )
+        python_setup.setdefault("with", {})["python-version"] = RELEASE_PYTHON_VERSION
         if python_steps:
             steps.remove(python_setup)
         steps[1:1] = [

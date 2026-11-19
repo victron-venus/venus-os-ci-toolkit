@@ -1085,7 +1085,7 @@ PY
             + [
                 {
                     "uses": ACTION_REFS["actions/setup-python"],
-                    "with": {"python-version": "3.12"},
+                    "with": {"python-version": "3.13"},
                 },
                 {
                     "name": "Promote RC bytes after approval",

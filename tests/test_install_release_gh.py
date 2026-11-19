@@ -79,7 +79,7 @@ class InstallReleaseGhTests(unittest.TestCase):
                 python_index = next(i for i, step in enumerate(steps)
                                     if step.get("uses", "").startswith("actions/setup-python@"))
                 self.assertEqual(go_versions, [expected], name)
-                self.assertEqual(python_versions, ["3.12"], name)
+                self.assertEqual(python_versions, ["3.13"], name)
                 self.assertEqual(steps[python_index]["uses"], expected_python, name)
                 self.assertLess(python_index, installer_index, name)
                 producers.append(name)
@@ -523,7 +523,7 @@ class InstallReleaseGhTests(unittest.TestCase):
         })
         for job in workflow["jobs"].values():
             self.assertEqual(job["steps"][1]["uses"], "actions/setup-python@pin")
-            self.assertEqual(job["steps"][1]["with"]["python-version"], "3.12")
+            self.assertEqual(job["steps"][1]["with"]["python-version"], "3.13")
             self.assertEqual(job["steps"][2]["with"]["go-version"], "1.27.4")
             self.assertEqual(job["steps"][3], release_gh_workflow.installer())
             self.assertEqual(job["steps"][4], {"run": "publish"})
@@ -531,7 +531,7 @@ class InstallReleaseGhTests(unittest.TestCase):
     def test_existing_pinned_python_setup_moves_before_the_installer_once(self):
         python_setup = {
             "uses": "actions/setup-python@pin",
-            "with": {"python-version": "3.12"},
+            "with": {"python-version": "3.12", "cache": "pip"},
         }
         workflow = {"jobs": {"stable": {"steps": [
             {"uses": "actions/checkout@pin"}, python_setup, {"run": "promote"},
@@ -542,10 +542,33 @@ class InstallReleaseGhTests(unittest.TestCase):
         })
         steps = workflow["jobs"]["stable"]["steps"]
         self.assertIs(steps[1], python_setup)
+        self.assertEqual(python_setup["with"], {"python-version": "3.13", "cache": "pip"})
         self.assertEqual(sum(step.get("uses", "").startswith("actions/setup-python@") for step in steps), 1)
         self.assertEqual(steps[2]["with"]["go-version"], "1.27.4")
         self.assertIn("scripts/install_release_gh.py", steps[3]["run"])
         self.assertEqual(steps[4], {"run": "promote"})
+
+    def test_conditional_or_non_fatal_python_setup_is_rejected(self):
+        for unsafe_option in ({"if": "false"}, {"continue-on-error": True}):
+            with self.subTest(unsafe_option=unsafe_option):
+                workflow = {"jobs": {"stable": {"steps": [
+                    {"uses": "actions/checkout@pin"},
+                    {
+                        "uses": "actions/setup-python@pin",
+                        "with": {"python-version": "3.13"},
+                        **unsafe_option,
+                    },
+                ]}}}
+                with self.assertRaisesRegex(ValueError, "unconditional and fail closed"):
+                    release_gh_workflow.apply(workflow, {
+                        "actions/setup-go": "actions/setup-go@pin",
+                        "actions/setup-python": "actions/setup-python@pin",
+                    })
+
+    def test_python_setup_supports_the_release_process_runner_on_every_os(self):
+        source = (ROOT / "scripts" / "async_process.py").read_text()
+        self.assertIn("Linux Python 3.12+ and macOS Python 3.13+ only", source)
+        self.assertEqual(release_gh_workflow.RELEASE_PYTHON_VERSION, "3.13")
 
 
 if __name__ == "__main__":
