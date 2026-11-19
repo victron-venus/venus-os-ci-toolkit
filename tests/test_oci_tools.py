@@ -786,6 +786,26 @@ class QualificationTests(unittest.TestCase):
             self.assertEqual(packages["zlib1g-dev"]["version"], packages["zlib1g"]["version"])
             self.assertEqual(packages["zlib1g-dev"]["architecture"], arch)
 
+    def test_native_glibc_packages_share_the_exact_runtime_version(self):
+        version_members = ("libc6", "libc6-dev", "libc-dev-bin")
+        versions = set()
+        for arch in ("amd64", "arm64"):
+            with self.subTest(arch=arch):
+                data = json.loads((build.INPUTS / f"native-{arch}.json").read_text())
+                packages = {package["name"]: package for package in data["packages"]}
+                for name in version_members:
+                    self.assertIn(name, packages)
+                    versions.add(packages[name]["version"])
+                if arch == "amd64":
+                    self.assertIn("libc6-i386", data["roots"])
+                    self.assertIn("libc6-i386", packages)
+                    self.assertEqual(packages["libc6-i386"]["architecture"], arch)
+                    versions.add(packages["libc6-i386"]["version"])
+                else:
+                    self.assertNotIn("libc6-i386", data["roots"])
+                    self.assertNotIn("libc6-i386", packages)
+        self.assertEqual(len(versions), 1)
+
     def test_native_install_keeps_no_remove_with_both_zlib_packages(self):
         original_read = Path.read_text
 

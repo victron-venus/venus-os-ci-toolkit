@@ -2,8 +2,8 @@
   "schema": 1,
   "distribution": "ubuntu:24.04",
   "architecture": "amd64",
-  "snapshot": "20261103T000000Z",
-  "base_url": "https://snapshot.ubuntu.com/ubuntu/20261103T000000Z/",
+  "snapshot": "20261118T000000Z",
+  "base_url": "https://snapshot.ubuntu.com/ubuntu/20261118T000000Z/",
   "roots": [
     "gcc-13",
     "libc6-dev",
@@ -11,7 +11,8 @@
     "linux-libc-dev",
     "binutils",
     "pkgconf",
-    "zlib1g-dev"
+    "zlib1g-dev",
+    "libc6-i386"
   ],
   "packages": [
     {
@@ -124,29 +125,38 @@
     },
     {
       "name": "libc-dev-bin",
-      "version": "2.39-0ubuntu8.9",
+      "version": "2.39-0ubuntu8.12",
       "architecture": "amd64",
-      "filename": "pool/main/g/glibc/libc-dev-bin_2.39-0ubuntu8.9_amd64.deb",
-      "sha256": "77db23aba4582d034d9a95e4818a16e7e51a2d4fb17a9204439688e288d67f4c",
-      "size": 20402,
+      "filename": "pool/main/g/glibc/libc-dev-bin_2.39-0ubuntu8.12_amd64.deb",
+      "sha256": "74ac21dab2a0a6524a2cf9de623adf1bb1f7d9b672e6b0f70adec0c40452bae3",
+      "size": 20450,
       "source": "glibc"
     },
     {
       "name": "libc6",
-      "version": "2.39-0ubuntu8.9",
+      "version": "2.39-0ubuntu8.12",
       "architecture": "amd64",
-      "filename": "pool/main/g/glibc/libc6_2.39-0ubuntu8.9_amd64.deb",
-      "sha256": "ff5557d99b51f761c4b7c92368b9cc45565eda17df9bf9eb4b134d09825008be",
-      "size": 3264314,
+      "filename": "pool/main/g/glibc/libc6_2.39-0ubuntu8.12_amd64.deb",
+      "sha256": "d821b41fc59cb4978ecd53bc83e5c964ac15d305c8d2ac4c8a35aebe55010fb9",
+      "size": 3264258,
       "source": "glibc"
     },
     {
       "name": "libc6-dev",
-      "version": "2.39-0ubuntu8.9",
+      "version": "2.39-0ubuntu8.12",
       "architecture": "amd64",
-      "filename": "pool/main/g/glibc/libc6-dev_2.39-0ubuntu8.9_amd64.deb",
-      "sha256": "e13d5fcc1b2a86f75bca8e0026a8e39f24fe97ca86e92be79991f8697eb1306f",
-      "size": 2125612,
+      "filename": "pool/main/g/glibc/libc6-dev_2.39-0ubuntu8.12_amd64.deb",
+      "sha256": "d81dd6dc9d515762cc93f338efa6219252acf3e2e87b5b89dd7dc517741e6eed",
+      "size": 2124506,
+      "source": "glibc"
+    },
+    {
+      "name": "libc6-i386",
+      "version": "2.39-0ubuntu8.12",
+      "architecture": "amd64",
+      "filename": "pool/main/g/glibc/libc6-i386_2.39-0ubuntu8.12_amd64.deb",
+      "sha256": "f3357fcee4a907404f5231381834cf31647326496d5bb4259338a717b3544c89",
+      "size": 2786812,
       "source": "glibc"
     },
     {
