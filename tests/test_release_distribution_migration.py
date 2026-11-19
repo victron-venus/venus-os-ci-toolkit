@@ -384,7 +384,13 @@ class ShippedDistributionDeltaTests(unittest.TestCase):
         historical = json.loads(json.dumps(specification))
         if include_old_test_overlay:
             entry = historical["files"][".github/release-tests/test_release_control.py"]
-            overlay_base = entry["test_only_overlay_successors"][-1]["base_sha256"]
+            # Reconstruct the earliest independently vendored overlay so this
+            # fixture remains historical as newer canonical overlay groups are added.
+            overlay_base = entry["test_only_overlay_successors"][0]["base_sha256"]
+            entry["test_only_overlay_successors"] = [
+                group for group in entry["test_only_overlay_successors"]
+                if group["base_sha256"] == overlay_base
+            ]
             production = entry["successor_layers"]
             base_index = next(
                 (index for index, layer in enumerate(production)
@@ -737,7 +743,9 @@ class ShippedDistributionDeltaTests(unittest.TestCase):
                 temporary, include_old_test_overlay=True,
             )
             target = ".github/release-tests/test_release_control.py"
-            old_overlay = specification["files"][target]["test_only_overlay_successors"][-1]
+            # Keep reconstructing the original migration generation: later
+            # canonical-only fixture overlays may target newer production bases.
+            old_overlay = specification["files"][target]["test_only_overlay_successors"][0]
             self.assertEqual(
                 hashlib.sha256((consumer / target).read_bytes()).hexdigest(),
                 old_overlay["layers"][-1]["after_sha256"],
@@ -802,12 +810,19 @@ class ShippedDistributionDeltaTests(unittest.TestCase):
             target = ".github/release-tests/test_release_control.py"
             base_only = json.loads(json.dumps(specification))
             base_only["files"][target].pop("test_only_successor_layers", None)
-            base_only["files"][target].pop("test_only_overlay_successors", None)
+            latest_production = base_only["files"][target]["successor_layers"][-1]["after_sha256"]
+            base_only["files"][target]["test_only_overlay_successors"] = [
+                group for group in base_only["files"][target].get("test_only_overlay_successors", [])
+                if group["base_sha256"] != latest_production
+            ]
             base_delta = Path(temporary) / "base-only-delta.json"
             base_delta.write_text(json.dumps(base_only))
             with patch.object(migration, "DELTA", base_delta):
                 migration.apply(consumer, migration.render(consumer))
 
+            changes = migration.render(consumer)
+            self.assertIn(target, changes)
+            migration.apply(consumer, changes)
             self.assertEqual(migration.render(consumer), {})
             self.assertEqual(
                 hashlib.sha256((consumer / target).read_bytes()).hexdigest(),
