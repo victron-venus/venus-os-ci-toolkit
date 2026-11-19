@@ -24,4 +24,20 @@ def apply(workflow: dict, pins: dict) -> None:
         steps = workflow["jobs"][name]["steps"]
         if not steps[0].get("uses", "").startswith("actions/checkout@"):
             raise ValueError(f"Review checkout order before installing release CLI in {name}")
-        steps[1:1] = [{"uses": pins["actions/setup-go"], "with": {"go-version": "1.27.4", "cache": False}}, installer()]
+        python_steps = [step for step in steps if step.get("uses", "").startswith("actions/setup-python@")]
+        if len(python_steps) > 1:
+            raise ValueError(f"Multiple Python runtimes configured before release CLI installation in {name}")
+        python_setup = python_steps[0] if python_steps else {
+            "uses": pins["actions/setup-python"],
+            "with": {"python-version": "3.12"},
+        }
+        if (python_setup.get("uses") != pins["actions/setup-python"] or
+                python_setup.get("with", {}).get("python-version") != "3.12"):
+            raise ValueError(f"Release CLI installation requires the pinned Python 3.12 runtime in {name}")
+        if python_steps:
+            steps.remove(python_setup)
+        steps[1:1] = [
+            python_setup,
+            {"uses": pins["actions/setup-go"], "with": {"go-version": "1.27.4", "cache": False}},
+            installer(),
+        ]
