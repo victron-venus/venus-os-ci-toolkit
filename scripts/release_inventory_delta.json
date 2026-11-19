@@ -141,6 +141,26 @@
               "after": "            # The shared confirm_publish contract separates this last-attempt\n            # recheck from the full pre-tag provenance callback above.\n"
             }
           ]
+        },
+        {
+          "before_sha256": "7ce99af939a8c0f7c61ebf681295f780154976321284bb4df7a08aa7b69dbedd",
+          "after_sha256": "bcd7ad592c9fdb5b668584d56b50fc7a13737853206f92acce2d37fcc1ece4f9",
+          "hunks": [
+            {
+              "before": "            # retains PID/PGID ownership through deadline cleanup before reaping.\n            # If group signaling is denied, its error still surfaces after reap.\n",
+              "after": "            # resolves gh and bounds post-status pipe cleanup before reaping.\n            # Signal failures still surface after bounded reap.\n"
+            }
+          ]
+        },
+        {
+          "before_sha256": "bcd7ad592c9fdb5b668584d56b50fc7a13737853206f92acce2d37fcc1ece4f9",
+          "after_sha256": "479ca7320f453dad0382c9f6b7292f41d9384e2c6db0f992f556ba858ae3d8c6",
+          "hunks": [
+            {
+              "before": "            # Keep candidate transfers on the shared bounded supervisor; it\n            # resolves gh and bounds post-status pipe cleanup before reaping.\n            # Signal failures still surface after bounded reap.\n",
+              "after": "            # The shared supervisor resolves gh and bounds post-status cleanup.\n            # Its ProcessCleanupError stays fatal; retrying could mask live work.\n"
+            }
+          ]
         }
       ]
     }
