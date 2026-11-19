@@ -90,6 +90,46 @@ class MetadataReadRetryTests(unittest.TestCase):
             return subprocess.CompletedProcess(command, 1, self.response(status).stdout, message)
         return run
 
+    def assert_read_output_limit_is_redacted_and_not_retried(self, callback):
+        gh = rc.GitHub(REPO)
+        with (
+            patch.object(rc, "run_process", side_effect=rc.ProcessOutputLimit("private captured bytes")) as run,
+            patch.object(rc.time, "sleep") as sleep,
+            self.assertRaisesRegex(rc.GitHubError, "response exceeded output limit") as caught,
+        ):
+            callback(gh)
+        run.assert_called_once()
+        sleep.assert_not_called()
+        self.assertNotIn("private captured bytes", str(caught.exception))
+        self.assertTrue(caught.exception.__suppress_context__)
+
+    def test_output_limited_api_read_becomes_redacted_nonretryable_github_error(self):
+        self.assert_read_output_limit_is_redacted_and_not_retried(
+            lambda gh: gh.api("releases/7")
+        )
+
+    def test_output_limited_pages_read_becomes_redacted_nonretryable_github_error(self):
+        self.assert_read_output_limit_is_redacted_and_not_retried(
+            lambda gh: gh.pages("releases")
+        )
+
+    def test_output_limited_binary_read_becomes_redacted_nonretryable_github_error(self):
+        self.assert_read_output_limit_is_redacted_and_not_retried(
+            lambda gh: gh.binary("releases/assets/7")
+        )
+
+    def test_cli_reports_redacted_bounded_read_failure(self):
+        stderr = io.StringIO()
+        with (
+            patch.object(rc, "run_process", side_effect=rc.ProcessOutputLimit("private captured bytes")) as run,
+            patch.object(rc.sys, "stderr", stderr),
+        ):
+            result = rc.main(["next", "--repo", REPO, "--channel", "beta", "--version", "1.2.3"])
+        self.assertEqual(result, 1)
+        run.assert_called_once()
+        self.assertIn("response exceeded output limit", stderr.getvalue())
+        self.assertNotIn("private captured bytes", stderr.getvalue())
+
     def test_transient_read_retries_and_discards_partial_pages(self):
         for status, error_format in product((500, 502, 503, 504), self.ERROR_FORMATS):
             partial = self.response(
@@ -387,6 +427,7 @@ class WholeReadRecoveryTests(unittest.TestCase):
                     self.assertEqual(sleep.call_count, 1)
                     self.assertEqual(run.call_args_list[0], run.call_args_list[1])
 
+
     def test_timed_out_first_header_denials_still_veto_retry(self):
         for newline, status, complete_header in product(
             (b"\n", b"\r\n"), (401, 403, 404, 429), (False, True),
@@ -546,6 +587,78 @@ class WholeReadRecoveryTests(unittest.TestCase):
             self.assertEqual(self.gh.pages("releases"), [{"id": 2}])
             self.assertEqual(run.call_count, 2)
 
+    def test_malformed_link_on_later_503_page_does_not_hide_retryable_status(self):
+        first = http_response(
+            stdout=b'[{"id":1}]',
+            link=b'<https://api.github.com/repos/example/project/releases?per_page=100&page=2>; rel="next"',
+        )
+        failed_page = http_response(503, stdout=b'{"message":"try again"}', link=b"not a link")
+        partial = subprocess.CompletedProcess(
+            [], 1, first.stdout + b"\n" + failed_page.stdout,
+            b"gh: Server Error (HTTP 503)",
+        )
+        with (
+            patch.object(rc, "run_process", side_effect=[partial, http_response(stdout=b'[{"id":2}]')]) as run,
+            patch.object(rc.time, "sleep"),
+        ):
+            self.assertEqual(self.gh.pages("releases"), [{"id": 2}])
+        self.assertEqual(run.call_count, 2)
+
+    def test_execution_deadline_caps_each_metadata_get_timeout(self):
+        gh = rc.GitHub(REPO)
+        now = rc.time.monotonic()
+        token = rc._API_READ_DEADLINE.set(now + 4)
+        try:
+            with (
+                patch.object(rc.time, "monotonic", return_value=now),
+                patch.object(rc, "run_process", side_effect=[
+                    http_response(503), http_response(stdout=b'{"id":7}'),
+                ]) as run,
+                patch.object(rc.time, "sleep"),
+            ):
+                self.assertEqual(gh.api("releases/7"), {"id": 7})
+            self.assertEqual([call.kwargs["timeout"] for call in run.call_args_list], [4, 4])
+        finally:
+            rc._API_READ_DEADLINE.reset(token)
+
+    def test_retry_jitter_is_capped_by_remaining_execution_deadline(self):
+        gh = rc.GitHub(REPO)
+        now = rc.time.monotonic()
+        token = rc._API_READ_DEADLINE.set(now + 1.5)
+        try:
+            with (
+                patch.object(rc.time, "monotonic", return_value=now),
+                patch.object(rc, "run_process", side_effect=[
+                    http_response(503), http_response(stdout=b'{"id":7}'),
+                ]) as run,
+                patch.object(rc.random, "uniform", return_value=2),
+                patch.object(rc.time, "sleep") as sleep,
+            ):
+                self.assertEqual(gh.api("releases/7"), {"id": 7})
+            self.assertEqual([call.kwargs["timeout"] for call in run.call_args_list], [1.5, 1.5])
+            sleep.assert_called_once_with(1.5)
+        finally:
+            rc._API_READ_DEADLINE.reset(token)
+
+    def test_expired_execution_deadline_prevents_another_get_or_retry(self):
+        gh = rc.GitHub(REPO)
+        token = rc._API_READ_DEADLINE.set(rc.time.monotonic() - 1)
+        try:
+            with patch.object(rc, "run_process") as run, self.assertRaisesRegex(
+                rc.ReleaseError, "metadata deadline exceeded",
+            ):
+                gh.api("releases/7")
+            run.assert_not_called()
+        finally:
+            rc._API_READ_DEADLINE.reset(token)
+
+    def test_create_response_output_limit_is_reconciliable_ambiguity(self):
+        gh = rc.GitHub(REPO)
+        with patch.object(rc, "run_process", side_effect=rc.ProcessOutputLimit("too large")) as post:
+            with self.assertRaises(rc.AmbiguousCreate):
+                gh.create_release_once({"tag_name": RC_TAG})
+        post.assert_called_once()
+
     def test_paginated_response_must_reach_advertised_terminal_page(self):
         first = http_response(
             stdout=b'[{"id":1}]',
@@ -575,6 +688,45 @@ class WholeReadRecoveryTests(unittest.TestCase):
             with self.assertRaisesRegex(rc.GitHubError, "unadvertised response page"):
                 rc.GitHub(REPO).pages("releases")
 
+
+
+class AssetStreamCleanupTests(unittest.TestCase):
+    """Ensure a timed-out streaming helper cannot leave pipe-holding descendants."""
+
+    @unittest.skipUnless(os.name == "posix", "stream process groups require POSIX")
+    def test_timeout_kills_process_group_when_descendants_hold_or_close_pipes(self):
+        cases = (
+            (
+                "descendant inherits pipes",
+                "import subprocess,sys,time; "
+                "subprocess.Popen([sys.executable,'-c','import time; time.sleep(30)']); "
+                "time.sleep(30)",
+            ),
+            (
+                "descendant closes parent pipes",
+                "import os,subprocess,sys,time; "
+                "subprocess.Popen([sys.executable,'-c','import time; time.sleep(30)'], "
+                "stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL); "
+                "os.close(1); os.close(2); time.sleep(30)",
+            ),
+        )
+        for name, script in cases:
+            with self.subTest(scenario=name), tempfile.TemporaryDirectory(prefix="release-stream-") as temp:
+                destination = Path(temp) / "asset.bin"
+                command = [sys.executable, "-c", script]
+                with destination.open("w+b") as output_file:
+                    writer = rc._AssetWriter(
+                        output_file, destination, {"size": 100, "sha256": "0" * 64},
+                        rc.DownloadBudget(100),
+                    )
+                    deadline = rc.time.monotonic() + 0.3
+                    with (
+                        patch.object(rc.os, "killpg", wraps=rc.os.killpg) as kill_group,
+                        self.assertRaises(subprocess.TimeoutExpired),
+                    ):
+                        rc._stream_asset(command, writer, deadline=deadline)
+                kill_group.assert_called_once()
+                self.assertEqual(kill_group.call_args.args[1], rc.signal.SIGKILL)
 
 
 class JobPaginationTests(unittest.TestCase):
@@ -1066,7 +1218,8 @@ class ReleaseControlTests(unittest.TestCase):
     def test_promotion_waits_for_fresh_active_run_and_keeps_rc_bytes(self):
         """A stale post-approval status delays, rather than bypasses, promotion."""
         original_api = self.gh.api
-        statuses = iter(("waiting", "queued", "in_progress", "in_progress", "in_progress"))
+        statuses = iter(("waiting", "queued", "in_progress", "in_progress",
+                         "in_progress", "in_progress"))
 
         def delayed(path, method="GET", body=None):
             value = original_api(path, method, body)
@@ -1126,7 +1279,83 @@ class ReleaseControlTests(unittest.TestCase):
             result = rc.promote(self.args)
 
         self.assertEqual(result["tag"], "v1.2.3")
-        self.assertEqual(len(observations), 2)  # Admission and before public flip.
+        self.assertEqual(len(observations), 3)  # Admission, full recheck and final attempt read.
+
+    def test_terminal_attempt_after_jobs_inventory_blocks_first_protected_write(self):
+        """A terminal attempt after stale jobs readback cannot authorize a tag write."""
+        publisher = self.active_publisher_job()
+        pages = self.gh.pages
+        api = self.gh.api
+        events = []
+        job_reads = 0
+
+        def observe_api(path, method="GET", body=None):
+            if path == "actions/runs/99/attempts/1":
+                events.append("attempt")
+            return api(path, method, body)
+
+        def finish_during_inventory(path, field=None):
+            nonlocal job_reads
+            if path == "actions/runs/99/attempts/1/jobs":
+                job_reads += 1
+                events.append("jobs")
+                result = [deepcopy(publisher)]
+                if job_reads == 2:
+                    # The returned paginated inventory is stale: it still says
+                    # in_progress although this exact attempt just terminated.
+                    self.gh.runs[99].update(
+                        status="completed", conclusion="cancelled",
+                    )
+                return result
+            return pages(path, field)
+
+        with (
+            patch.dict(os.environ, {
+                "RELEASE_EXECUTION_CHECK_RUN_ID": "800",
+                "RUNNER_NAME": "runner-example",
+                "GITHUB_JOB": "stable-publisher-job",
+            }),
+            patch.object(self.gh, "api", side_effect=observe_api),
+            patch.object(self.gh, "pages", side_effect=finish_during_inventory),
+            self.assertRaisesRegex(rc.ReleaseError, "Execution attempt is not active"),
+        ):
+            rc.promote(self.args)
+
+        self.assertEqual(job_reads, 2)  # Admission, then pre-write revalidation.
+        self.assertEqual(events[-3:], ["attempt", "jobs", "attempt"])
+        self.assertEqual(self.gh.writes, [])
+
+    def test_terminal_attempt_after_aggregate_read_blocks_first_protected_write(self):
+        """Legacy execution context re-reads the exact attempt after its aggregate."""
+        api = self.gh.api
+        aggregate_reads = 0
+        events = []
+
+        def finish_after_aggregate(path, method="GET", body=None):
+            nonlocal aggregate_reads
+            result = api(path, method, body)
+            if path == "actions/runs/99/attempts/1":
+                events.append("attempt")
+            elif path == "actions/runs/99":
+                aggregate_reads += 1
+                events.append("aggregate")
+                if aggregate_reads == 2:
+                    # The aggregate response was active when read, but the
+                    # exact publisher attempt terminates before the next read.
+                    self.gh.runs[99].update(
+                        status="completed", conclusion="cancelled",
+                    )
+            return result
+
+        with (
+            patch.object(self.gh, "api", side_effect=finish_after_aggregate),
+            self.assertRaisesRegex(rc.ReleaseError, "Execution attempt is not active"),
+        ):
+            rc.promote(self.args)
+
+        self.assertEqual(aggregate_reads, 2)  # Admission then pre-write check.
+        self.assertEqual(events[-3:], ["attempt", "aggregate", "attempt"])
+        self.assertEqual(self.gh.writes, [])
 
     def test_cancel_during_final_promotion_order_read_prevents_ledger_put(self):
         """Publisher cancellation after order reads is checked before ledger CAS."""
@@ -1175,6 +1404,15 @@ class ReleaseControlTests(unittest.TestCase):
         self.assertEqual(events, ["order-read-1", "order-read-2", "publisher-completed"])
         self.assertEqual(len(gh.ledger_writes), before_writes)
 
+    def test_legacy_promotion_confirms_active_publisher_before_publication(self):
+        """Legacy manifests still validate the publisher before creating release state."""
+        confirmed = []
+        rc._begin_promotion_publication(
+            self.gh, {"version_plan": None}, 100,
+            lambda: confirmed.append("active"),
+        )
+        self.assertEqual(confirmed, ["active"])
+
     def test_promotion_rechecks_publisher_before_public_release_patch(self):
         """A publisher cancelled after draft upload leaves the release unpublished."""
         original_api = self.gh.api
@@ -1186,7 +1424,7 @@ class ReleaseControlTests(unittest.TestCase):
             nonlocal attempt_reads
             if path == "actions/runs/99/attempts/1":
                 attempt_reads += 1
-                status = "in_progress" if attempt_reads == 1 else "completed"
+                status = "completed" if attempt_reads >= 5 else "in_progress"
                 conclusion = None if status == "in_progress" else "cancelled"
                 current = original_api(path, method, body)
                 current.update(status=status, conclusion=conclusion)
@@ -1211,7 +1449,7 @@ class ReleaseControlTests(unittest.TestCase):
             with self.assertRaisesRegex(rc.ReleaseError, "not active"):
                 rc.promote(self.args)
 
-        self.assertGreaterEqual(attempt_reads, 2)
+        self.assertGreaterEqual(attempt_reads, 3)
         stable = next(item for item in self.gh.releases.values()
                       if item["tag_name"] == "v1.2.3")
         self.assertTrue(stable["draft"])
@@ -4060,7 +4298,90 @@ class CheckRunExecutionTests(unittest.TestCase):
 
 
 class PublishBoundaryOrderingTests(unittest.TestCase):
-    def test_publish_confirmation_runs_after_final_tag_read_and_before_patch(self):
+    def test_final_exact_publisher_read_after_tag_blocks_patch_if_terminal(self):
+        """A publisher ending during the final tag GET blocks the public PATCH."""
+        events = []
+        deadlines = []
+
+        class Client:
+            repo = REPO
+            tag_sha = SHA
+            tag_reads = 0
+            publisher_status = "in_progress"
+
+            def api(self, path, method="GET", body=None):
+                events.append((path, method))
+                if path == "git/refs" and method == "POST":
+                    return {"ref": "refs/tags/v1.2.3"}
+                if path == "releases" and method == "POST":
+                    return {"id": 20, "tag_name": "v1.2.3", "draft": True}
+                if path == "git/ref/tags/v1.2.3":
+                    self.tag_reads += 1
+                    if self.tag_reads == 1:
+                        self.publisher_status = "completed"
+                    deadlines.append(rc._API_READ_DEADLINE.get())
+                    return {"ref": "refs/tags/v1.2.3",
+                            "object": {"type": "commit", "sha": self.tag_sha}}
+                if path == "actions/runs/99/attempts/1":
+                    deadlines.append(rc._API_READ_DEADLINE.get())
+                    conclusion = None if self.publisher_status == "in_progress" else "cancelled"
+                    return {"id": 99, "run_attempt": 1, "head_sha": SHA,
+                            "path": rc.WORKFLOW, "event": "workflow_dispatch",
+                            "status": self.publisher_status, "conclusion": conclusion}
+                if path == "releases/20" and method == "PATCH":
+                    return {"id": 20, "tag_name": "v1.2.3", "draft": False,
+                            "prerelease": True,
+                            "html_url": "https://example.invalid/release"}
+                raise AssertionError(f"Unexpected API call {method} {path}")
+
+            def upload(self, *_args, **_kwargs):
+                events.append(("upload", "POST"))
+
+            def pages(self, path, *_args, **_kwargs):
+                events.append((path, "GET"))
+                return [{"name": "package.bin"}]
+
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            (directory / "package.bin").write_bytes(b"package")
+
+            def confirm_publish():
+                events.append(("full-publisher-validation", "GET"))
+                client.pages("actions/runs/99/attempts/1/jobs")
+
+            def confirm_final_publish():
+                events.append(("confirm-publisher-attempt", "GET"))
+                current = client.api("actions/runs/99/attempts/1")
+                rc.require_active_attempt(current, current)
+
+            client = Client()
+            with (
+                patch.object(rc, "verify_required_signatures"),
+                patch.object(rc, "reject_restricted_assets"),
+                patch.object(rc, "ensure_absent"),
+                patch.object(rc, "check_workflow_publication"),
+                patch.object(rc, "verify_uploaded_asset"),
+                self.assertRaisesRegex(rc.ReleaseError, "Execution attempt is not active"),
+            ):
+                rc._publish_prepared(
+                    client, "v1.2.3", SHA, directory, True, "notes",
+                    confirm_publish=confirm_publish,
+                    confirm_final_publish=confirm_final_publish,
+                )
+
+        self.assertEqual(events[-5:], [
+            ("full-publisher-validation", "GET"),
+            ("actions/runs/99/attempts/1/jobs", "GET"),
+            ("git/ref/tags/v1.2.3", "GET"),
+            ("confirm-publisher-attempt", "GET"),
+            ("actions/runs/99/attempts/1", "GET"),
+        ])
+        self.assertEqual(len(deadlines), 2)
+        self.assertIsInstance(deadlines[0], float)
+        self.assertEqual(deadlines[0], deadlines[1])
+        self.assertFalse(any(event == ("releases/20", "PATCH") for event in events))
+
+    def test_full_publish_confirmation_precedes_final_tag_and_move_blocks_patch(self):
         events = []
 
         class Client:
@@ -4090,12 +4411,14 @@ class PublishBoundaryOrderingTests(unittest.TestCase):
             (directory / "package.bin").write_bytes(b"package")
 
             def confirm_publish():
-                events.append(("confirm", "READ"))
-                self.assertIn(("git/ref/tags/v1.2.3", "GET"), events)
+                events.append(("full-confirm", "READ"))
                 self.assertNotIn(("releases/20", "PATCH"), events)
-                # The tag can move while source/publisher checks are running.
-                # A final tag read must catch it before the public PATCH.
+                # The tag can move while source/publisher checks are running;
+                # the tag read after this full callback must catch it.
                 client.tag_sha = "b" * 40
+
+            def confirm_final_publish():
+                events.append(("exact-attempt-confirm", "READ"))
 
             client = Client()
             with (
@@ -4109,8 +4432,13 @@ class PublishBoundaryOrderingTests(unittest.TestCase):
                 rc._publish_prepared(
                     client, "v1.2.3", SHA, directory, True, "notes",
                     confirm_publish=confirm_publish,
+                    confirm_final_publish=confirm_final_publish,
                 )
-        self.assertEqual(events[-1], ("git/ref/tags/v1.2.3", "GET"))
+        self.assertEqual(events[-2:], [
+            ("full-confirm", "READ"),
+            ("git/ref/tags/v1.2.3", "GET"),
+        ])
+        self.assertNotIn(("exact-attempt-confirm", "READ"), events)
         self.assertNotIn(("releases/20", "PATCH"), events)
 
 

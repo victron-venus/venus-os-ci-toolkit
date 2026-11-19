@@ -265,6 +265,63 @@ class DistributionGeneratorTests(unittest.TestCase):
 class ShippedDistributionDeltaTests(unittest.TestCase):
     """Keep the narrow delta tied to reviewed canonical source sections."""
 
+    ADVANCED_SUCCESSOR_FILES = (
+        "scripts/release_control.py", "scripts/release_versioned.py",
+        ".github/release-tests/test_release_control.py",
+        ".github/release-tests/test_versioned_release.py",
+    )
+
+    def _historical_consumer(self, temporary):
+        """Return the pinned consumer after applying the prior four-file layer."""
+        specification = json.loads(migration.DELTA.read_bytes())
+        historical = json.loads(json.dumps(specification))
+        for name in self.ADVANCED_SUCCESSOR_FILES:
+            historical["files"][name]["successor_layers"].pop()
+        for name in ("scripts/release_distribution.py", ".github/release-tests/test_release_distribution.py"):
+            historical["files"][name]["successor_layers"].pop()
+        historical["files"].pop("scripts/release_state.py")
+
+        # These two compact files were original copies before this successor.
+        # Reverse their exact vendored successor hunks to reconstruct the
+        # original canonical bytes pinned by the prior migration.
+        canonical = Path(temporary) / "historical-canonical"
+        for name in ("scripts", "tests", "docs"):
+            shutil.copytree(ROOT / name, canonical / name, dirs_exist_ok=True)
+        for name in ("scripts/release_distribution.py", ".github/release-tests/test_release_distribution.py"):
+            entry = specification["files"][name]
+            source = entry["source"]
+            raw = (ROOT / source).read_text(encoding="utf-8")
+            self.assertEqual(migration.digest(raw.encode()),
+                             entry["successor_layers"][-1]["canonical_source_sha256"])
+            if source.startswith("tests/"):
+                raw = raw.replace("Path(__file__).parents[1]", "Path(__file__).parents[2]")
+                raw = raw.replace("Path(__file__).resolve().parents[1]", "Path(__file__).resolve().parents[2]")
+            vendored = installer.consumer_python(raw)
+            for layer in reversed(entry["successor_layers"]):
+                for hunk in reversed(layer["hunks"]):
+                    self.assertTrue(hunk["after"])
+                    self.assertEqual(vendored.count(hunk["after"]), 1, name)
+                    vendored = vendored.replace(hunk["after"], hunk["before"], 1)
+            self.assertTrue(vendored.startswith(migration.HEADER))
+            raw = vendored[len(migration.HEADER):]
+            if source.startswith("tests/"):
+                raw = raw.replace("Path(__file__).resolve().parents[2]", "Path(__file__).resolve().parents[1]")
+                raw = raw.replace("Path(__file__).parents[2]", "Path(__file__).parents[1]")
+            self.assertEqual(migration.digest(raw.encode()), entry["source_sha256"], name)
+            target = canonical / source
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(raw, encoding="utf-8")
+
+        consumer = Path(temporary) / "consumer"
+        consumer.mkdir()
+        self._extract_pinned_ott_snapshot(consumer)
+        old_delta = Path(temporary) / "historical-delta.json"
+        old_delta.write_text(json.dumps(historical))
+        with patch.object(migration, "DELTA", old_delta), patch.object(migration, "ROOT", canonical):
+            old_changes = migration.render(consumer)
+            migration.apply(consumer, old_changes)
+        return consumer, specification, old_changes
+
     def test_rendered_publication_dispatches_schema_one_and_two(self):
         """Exercise both paths in the actual pinned OTT consumer postimage."""
         import importlib.util
@@ -421,10 +478,15 @@ class ShippedDistributionDeltaTests(unittest.TestCase):
         for name, entry in specification["files"].items():
             self.assertTrue(migration.destination(name), name)
             if entry["before_sha256"] is None:
-                self.assertEqual(migration.digest(migration.canonical_copy(entry)), entry["after_sha256"])
+                latest = (entry["successor_layers"][-1]["after_sha256"]
+                          if entry.get("successor_layers") else entry["after_sha256"])
+                self.assertEqual(migration.digest(migration.canonical_copy(entry)), latest)
                 continue
             source = (ROOT / entry["canonical_source"]).read_bytes()
-            self.assertEqual(migration.digest(source), entry["canonical_source_sha256"], name)
+            source_pin = (entry.get("successor_layers", [{}])[-1].get("canonical_source_sha256")
+                          if entry.get("successor_layers") else None)
+            self.assertEqual(migration.digest(source),
+                             source_pin or entry["canonical_source_sha256"], name)
             text = source.decode()
             if entry["canonical_source"].startswith("tests/"):
                 text = text.replace("Path(__file__).parents[1]", "Path(__file__).parents[2]")
@@ -435,10 +497,13 @@ class ShippedDistributionDeltaTests(unittest.TestCase):
                 continue
             if name.endswith(".py"):
                 text = installer.consumer_python(text)
-            for hunk in entry["hunks"]:
-                for fragment in hunk.get("canonical_fragments", [hunk["after"]]):
-                    self.assertEqual(text.count(fragment), 1, name)
+            if not entry.get("successor_layers"):
+                for hunk in entry["hunks"]:
+                    for fragment in hunk.get("canonical_fragments", [hunk["after"]]):
+                        self.assertEqual(text.count(fragment), 1, name)
             for layer in entry.get("successor_layers", []):
+                if layer.get("canonical_source_sha256") != migration.digest(source):
+                    continue
                 for fragment in layer.get("canonical_fragments", []):
                     self.assertEqual(text.count(fragment), 1, name)
         workflow = specification["files"]["docs/release-workflow.md"]
@@ -448,36 +513,17 @@ class ShippedDistributionDeltaTests(unittest.TestCase):
         self.assertNotIn("Only an explicit HTTP 500", workflow["hunks"][0]["after"])
 
     def test_historical_postimage_advances_as_one_successor_layer(self):
-        current_specification = json.loads(migration.DELTA.read_bytes())
-        historical = json.loads(json.dumps(current_specification))
-        for name in ("scripts/release_control.py", "scripts/release_versioned.py"):
-            historical["files"][name].pop("successor_layers")
-            historical["files"][name]["canonical_source_sha256"] = {
-                "scripts/release_control.py": "75bb7c7bf975121baf60018491ebab36aae6b629535b74d43cf59586591960c4",
-                "scripts/release_versioned.py": "f202a8706ed481f71076c4dc66c68c145a1f993e33589ed341bdcb5a9dc8dc1c",
-            }[name]
-        historical["files"].pop("scripts/release_state.py")
-
         with tempfile.TemporaryDirectory() as temporary:
-            consumer = Path(temporary) / "consumer"
-            consumer.mkdir()
-            self._extract_pinned_ott_snapshot(consumer)
-            old_delta = Path(temporary) / "historical-delta.json"
-            old_delta.write_text(json.dumps(historical))
-            with patch.object(migration, "DELTA", old_delta):
-                old_changes = migration.render(consumer)
-                migration.apply(consumer, old_changes)
-            self.assertEqual(migration.render(consumer).keys(), {
-                "scripts/release_control.py", "scripts/release_versioned.py", "scripts/release_state.py",
-            })
+            consumer, current_specification, old_changes = self._historical_consumer(temporary)
             new_changes = migration.render(consumer)
-            self.assertEqual(set(new_changes), {
-                "scripts/release_control.py", "scripts/release_versioned.py", "scripts/release_state.py",
+            self.assertEqual(set(new_changes), set(self.ADVANCED_SUCCESSOR_FILES) | {
+                "scripts/release_state.py", "scripts/release_distribution.py",
+                ".github/release-tests/test_release_distribution.py",
             })
-            for name in ("scripts/release_control.py", "scripts/release_versioned.py"):
+            for name in self.ADVANCED_SUCCESSOR_FILES:
                 entry = current_specification["files"][name]
                 self.assertEqual(hashlib.sha256(old_changes[name].encode()).hexdigest(),
-                                 entry["after_sha256"])
+                                 entry["successor_layers"][-2]["after_sha256"])
             migration.apply(consumer, new_changes)
             self.assertEqual(migration.render(consumer), {})
             for name, entry in current_specification["files"].items():
@@ -485,20 +531,30 @@ class ShippedDistributionDeltaTests(unittest.TestCase):
                              if entry.get("successor_layers") else entry["after_sha256"])
                 self.assertEqual(hashlib.sha256((consumer / name).read_bytes()).hexdigest(), final_sha)
 
-    def test_mixed_successor_and_unknown_postimage_are_rejected(self):
-        specification = json.loads(migration.DELTA.read_bytes())
-        historical = json.loads(json.dumps(specification))
-        for name in ("scripts/release_control.py", "scripts/release_versioned.py"):
-            historical["files"][name].pop("successor_layers")
-        historical["files"].pop("scripts/release_state.py")
+    def test_new_successor_rejects_partial_and_mutated_four_file_bundles(self):
         with tempfile.TemporaryDirectory() as temporary:
-            consumer = Path(temporary) / "consumer"
-            consumer.mkdir()
-            self._extract_pinned_ott_snapshot(consumer)
-            old_delta = Path(temporary) / "historical-delta.json"
-            old_delta.write_text(json.dumps(historical))
-            with patch.object(migration, "DELTA", old_delta):
-                migration.apply(consumer, migration.render(consumer))
+            consumer, _, _ = self._historical_consumer(temporary)
+
+            first = consumer / self.ADVANCED_SUCCESSOR_FILES[0]
+            first.write_text(migration.render(consumer)[self.ADVANCED_SUCCESSOR_FILES[0]], encoding="utf-8")
+            snapshot = {str(path.relative_to(consumer)): path.read_bytes()
+                        for path in consumer.rglob("*") if path.is_file()}
+            with self.assertRaisesRegex(ValueError, "Partially migrated"):
+                migration.render(consumer)
+            self.assertEqual({str(path.relative_to(consumer)): path.read_bytes()
+                              for path in consumer.rglob("*") if path.is_file()}, snapshot)
+
+            first.write_bytes(first.read_bytes() + b"# unreviewed mutation\n")
+            snapshot = {str(path.relative_to(consumer)): path.read_bytes()
+                        for path in consumer.rglob("*") if path.is_file()}
+            with self.assertRaisesRegex(ValueError, "Unknown compact migration preimage"):
+                migration.render(consumer)
+            self.assertEqual({str(path.relative_to(consumer)): path.read_bytes()
+                              for path in consumer.rglob("*") if path.is_file()}, snapshot)
+
+    def test_mixed_successor_and_unknown_postimage_are_rejected(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            consumer, specification, _ = self._historical_consumer(temporary)
 
             control = consumer / "scripts/release_control.py"
             control.write_text(migration.render(consumer)["scripts/release_control.py"])
