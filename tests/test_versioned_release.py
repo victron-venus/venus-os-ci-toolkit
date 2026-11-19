@@ -209,6 +209,33 @@ class CandidateDownloadTests(unittest.TestCase):
         self.assertEqual([asset["download_count"] for asset in gh.assets[10]], [1, 1])
         self.assertEqual(gh.writes, [])
 
+    def test_candidate_payload_uses_the_shared_bounded_asset_supervisor(self):
+        gh = DownloadingGitHub()
+        download = rc.download_asset
+        asset_ids = []
+
+        def observe_download(client, asset_id, *args, **kwargs):
+            asset_ids.append(asset_id)
+            return download(client, asset_id, *args, **kwargs)
+
+        with patch.object(rc, "download_asset", side_effect=observe_download):
+            manifest, _parent = self.verify(gh)
+
+        self.assertEqual(manifest, legacy_tests.manifest())
+        self.assertEqual(asset_ids, [20])
+        self.assertEqual(gh.downloads, [rc.MANIFEST, "package.tar.gz"])
+
+    def test_candidate_supervisor_failure_aborts_verification_before_writes(self):
+        gh = DownloadingGitHub()
+        denied = rc.GitHubError("Asset process-group termination failed; descendants may still be running")
+
+        with patch.object(rc, "download_asset", side_effect=denied):
+            with self.assertRaises(rc.GitHubError) as raised:
+                self.verify(gh)
+
+        self.assertIs(raised.exception, denied)
+        self.assertEqual(gh.writes, [])
+
     def test_payloads_use_streaming_and_only_one_private_staged_file(self):
         gh = legacy_tests.FakeGitHub()
         candidate = legacy_tests.manifest()
@@ -1855,19 +1882,27 @@ class LifecycleTests(unittest.TestCase):  # pylint: disable=too-many-public-meth
         plan = self.automatic_build()
         api = self.gh.api
         final_tag_reads = 0
+        final_boundary_events = []
         tag_path = f"git/ref/tags/{plan['tag']}"
 
         def terminate_during_final_tag_read(path, method="GET", body=None):
             nonlocal final_tag_reads
+            if final_boundary_events and path in {
+                "actions/runs/99", "actions/runs/99/jobs",
+            }:
+                final_boundary_events.append("aggregate")
             result = api(path, method, body)
             draft = next((release for release in self.gh.releases.values()
                           if release["tag_name"] == plan["tag"]), None)
             if path == tag_path and draft and self.gh.assets[draft["id"]]:
                 final_tag_reads += 1
                 if final_tag_reads == 1:
+                    final_boundary_events.append("tag")
                     # The tag GET succeeds, but the publisher ends before the
                     # exact-attempt GET which immediately precedes the PATCH.
                     self.gh.runs[99].update(status="completed", conclusion="cancelled")
+            elif path == "actions/runs/99/attempts/1" and final_boundary_events:
+                final_boundary_events.append("attempt")
             return result
 
         with patch.object(self.gh, "api", side_effect=terminate_during_final_tag_read):
@@ -1875,6 +1910,9 @@ class LifecycleTests(unittest.TestCase):  # pylint: disable=too-many-public-meth
                 lifecycle.publish_versioned(self.args)
 
         self.assertEqual(final_tag_reads, 1)
+        self.assertEqual(final_boundary_events, ["tag", "attempt"])
+        self.assertNotIn("aggregate", final_boundary_events,
+                         "the post-tag publisher check must remain a single exact-attempt read")
         draft = next(release for release in self.gh.releases.values()
                      if release["tag_name"] == plan["tag"])
         self.assertTrue(draft["draft"])

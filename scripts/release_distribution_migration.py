@@ -151,9 +151,15 @@ def render(directory: Path) -> dict[str, str]:
             changes[name] = after.decode("utf-8")
             continue
         layers = entry.get("successor_layers", [])
+        test_layers = entry.get("test_only_successor_layers", [])
+        test_overlays = entry.get("test_only_overlay_successors", [])
         if not isinstance(layers, list):
             raise ValueError("Invalid compact migration successor layers: " + name)
+        if (not isinstance(test_layers, list) or not isinstance(test_overlays, list) or
+                ((test_layers or test_overlays) and name != ".github/release-tests/test_release_control.py")):
+            raise ValueError("Invalid independent compact test successor layers: " + name)
         prior_layer_digest = entry["after_sha256"]
+        production_digests = [prior_layer_digest]
         for layer in layers:
             if (not isinstance(layer, dict) or
                     layer.get("before_sha256") != prior_layer_digest or
@@ -163,8 +169,68 @@ def render(directory: Path) -> dict[str, str]:
                     not isinstance(layer.get("hunks"), list) or not layer["hunks"]):
                 raise ValueError("Invalid compact migration successor chain: " + name)
             prior_layer_digest = layer["after_sha256"]
+            production_digests.append(prior_layer_digest)
+        overlay_groups = []
+        for layer in test_layers:
+            if (not isinstance(layer, dict) or
+                    not isinstance(layer.get("after_sha256"), str) or
+                    len(layer["after_sha256"]) != 64 or
+                    any(char not in "0123456789abcdef" for char in layer["after_sha256"]) or
+                    not isinstance(layer.get("hunks"), list) or not layer["hunks"]):
+                raise ValueError("Invalid independent compact test successor chain: " + name)
+        if test_layers:
+            base = test_layers[0].get("before_sha256")
+            if base not in production_digests:
+                raise ValueError("Independent test overlay has an unknown production base: " + name)
+            previous = base
+            for layer in test_layers:
+                if layer.get("before_sha256") != previous:
+                    raise ValueError("Invalid independent compact test successor chain: " + name)
+                previous = layer["after_sha256"]
+            overlay_groups.append({"base_sha256": base, "layers": test_layers})
+        for group in test_overlays:
+            if not isinstance(group, dict) or group.get("base_sha256") not in production_digests:
+                raise ValueError("Independent test overlay has an unknown production base: " + name)
+            group_layers = group.get("layers")
+            if not isinstance(group_layers, list) or not group_layers:
+                raise ValueError("Invalid independent test overlay successor: " + name)
+            previous = group["base_sha256"]
+            for layer in group_layers:
+                if (not isinstance(layer, dict) or layer.get("before_sha256") != previous or
+                        not isinstance(layer.get("after_sha256"), str) or
+                        len(layer["after_sha256"]) != 64 or
+                        any(char not in "0123456789abcdef" for char in layer["after_sha256"]) or
+                        not isinstance(layer.get("hunks"), list) or not layer["hunks"]):
+                    raise ValueError("Invalid independent test overlay successor chain: " + name)
+                previous = layer["after_sha256"]
+            overlay_groups.append({"base_sha256": group["base_sha256"], "layers": group_layers})
+        applied_overlay = None
+        if before is not None:
+            matches = []
+            for group_index, group in enumerate(overlay_groups):
+                for index, layer in enumerate(group["layers"], 1):
+                    if identity == layer["after_sha256"]:
+                        matches.append((group_index, index))
+            if len(matches) > 1:
+                raise ValueError("Ambiguous independent test overlay state: " + name)
+            if matches:
+                group_index, applied_generation = matches[0]
+                source_before_overlay = before.decode("utf-8")
+                for layer in reversed(overlay_groups[group_index]["layers"][:applied_generation]):
+                    for hunk in reversed(layer["hunks"]):
+                        after_hunk = hunk.get("after")
+                        if not after_hunk or source_before_overlay.count(after_hunk) != 1:
+                            raise ValueError("Independent test successor cannot be reversed: " + name)
+                        source_before_overlay = source_before_overlay.replace(after_hunk, hunk["before"], 1)
+                before = source_before_overlay.encode("utf-8")
+                identity = digest(before)
+                if identity != overlay_groups[group_index]["base_sha256"]:
+                    raise ValueError("Independent test overlay preimage changed: " + name)
+                applied_overlay = (group_index, applied_generation)
         start_layer = 0
         if entry["before_sha256"] is None:
+            if test_layers or test_overlays:
+                raise ValueError("Independent test successors cannot extend additions: " + name)
             if identity is None:
                 states.add("original")
                 source_bytes = canonical_copy(entry)
@@ -187,7 +253,13 @@ def render(directory: Path) -> dict[str, str]:
             if layers:
                 successor_states.add(generation == len(layers))
             if generation == len(layers):
-                continue
+                latest_production = layers[-1]["after_sha256"] if layers else entry["after_sha256"]
+                matching_overlay = [i for i, group in enumerate(overlay_groups)
+                                    if group["base_sha256"] == latest_production]
+                if not matching_overlay or (applied_overlay and
+                        applied_overlay[0] == matching_overlay[0] and
+                        applied_overlay[1] == len(overlay_groups[matching_overlay[0]]["layers"])):
+                    continue
             source = before.decode("utf-8")
             start_layer = generation
         elif identity == entry["before_sha256"]:
@@ -218,12 +290,17 @@ def render(directory: Path) -> dict[str, str]:
             states.add("current")
             if layers:
                 successor_states.add(generation == len(layers))
-            if generation == len(layers):
-                continue
             source = before.decode("utf-8")
             start_layer = generation
             if digest(before) != (entry["after_sha256"] if generation == 0 else layers[generation - 1]["after_sha256"]):
                 raise ValueError("Compact migration successor preimage changed: " + name)
+            if generation == len(layers):
+                matching_overlay = [i for i, group in enumerate(overlay_groups)
+                                    if group["base_sha256"] == identity]
+                if not matching_overlay or (applied_overlay and
+                        applied_overlay[0] == matching_overlay[0] and
+                        applied_overlay[1] == len(overlay_groups[matching_overlay[0]]["layers"])):
+                    continue
 
         for layer in layers[start_layer:]:
             for hunk in layer["hunks"]:
@@ -232,6 +309,22 @@ def render(directory: Path) -> dict[str, str]:
                 source = source.replace(hunk["before"], hunk["after"], 1)
             if digest(source.encode("utf-8")) != layer["after_sha256"]:
                 raise ValueError("Compact migration successor postimage changed: " + name)
+        final_production = digest(source.encode("utf-8"))
+        matching_overlay = [i for i, group in enumerate(overlay_groups)
+                            if group["base_sha256"] == final_production]
+        if len(matching_overlay) > 1:
+            raise ValueError("Multiple independent test overlays target one production generation: " + name)
+        if matching_overlay:
+            group_index = matching_overlay[0]
+            overlay_start = (applied_overlay[1] if applied_overlay and applied_overlay[0] == group_index
+                             else 0)
+            for layer in overlay_groups[group_index]["layers"][overlay_start:]:
+                for hunk in layer["hunks"]:
+                    if not hunk.get("before") or source.count(hunk["before"]) != 1:
+                        raise ValueError("Independent test successor context changed: " + name)
+                    source = source.replace(hunk["before"], hunk["after"], 1)
+                if digest(source.encode("utf-8")) != layer["after_sha256"]:
+                    raise ValueError("Independent test successor postimage changed: " + name)
         after = source.encode("utf-8")
         if name.endswith(".py"):
             ast.parse(after, filename=name)

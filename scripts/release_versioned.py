@@ -288,6 +288,9 @@ def _read_verified_rc(
             if item["name"] == rc.MANIFEST:
                 continue
             payload = directory / (cast(str, item["name"]) if retained else "payload")
+            # Keep candidate transfers on the shared bounded supervisor; it
+            # retains PID/PGID ownership through deadline cleanup before reaping.
+            # If group signaling is denied, its error still surfaces after reap.
             identity = rc.download_asset(
                 gh, item["id"], payload,
                 expected=cast(rc.AssetIdentity, {
@@ -1118,6 +1121,10 @@ def publish_versioned(args: argparse.Namespace) -> dict[str, object]:
         def confirm_final_publisher_attempt() -> None:
             # The final boundary shares a short deadline with the tag GET, so
             # keep this to one exact attempt read without aggregate/jobs calls.
+            # The release-control caller invokes it immediately after the last
+            # tag GET and before its protected public PATCH.
+            # This callback is deliberately distinct from the full pre-tag
+            # publisher validation above; it closes only the last attempt race.
             current = gh.api(
                 f"actions/runs/{run['id']}/attempts/{run['run_attempt']}"
             )

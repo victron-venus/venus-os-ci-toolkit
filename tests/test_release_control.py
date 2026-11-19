@@ -12,10 +12,12 @@ import io
 import json
 import os
 import sys
+import struct
 
 # Subprocess calls below use argument vectors with shell=False.
 import subprocess  # nosec B404
 import tempfile
+import types
 import unittest
 import weakref
 import zipfile
@@ -617,7 +619,10 @@ class WholeReadRecoveryTests(unittest.TestCase):
                 patch.object(rc.time, "sleep"),
             ):
                 self.assertEqual(gh.api("releases/7"), {"id": 7})
-            self.assertEqual([call.kwargs["timeout"] for call in run.call_args_list], [4, 4])
+            timeouts = [call.kwargs["timeout"] for call in run.call_args_list]
+            self.assertEqual(len(timeouts), 2)
+            for timeout in timeouts:
+                self.assertAlmostEqual(timeout, 4)
         finally:
             rc._API_READ_DEADLINE.reset(token)
 
@@ -635,8 +640,12 @@ class WholeReadRecoveryTests(unittest.TestCase):
                 patch.object(rc.time, "sleep") as sleep,
             ):
                 self.assertEqual(gh.api("releases/7"), {"id": 7})
-            self.assertEqual([call.kwargs["timeout"] for call in run.call_args_list], [1.5, 1.5])
-            sleep.assert_called_once_with(1.5)
+            timeouts = [call.kwargs["timeout"] for call in run.call_args_list]
+            self.assertEqual(len(timeouts), 2)
+            for timeout in timeouts:
+                self.assertAlmostEqual(timeout, 1.5)
+            sleep.assert_called_once()
+            self.assertAlmostEqual(sleep.call_args.args[0], 1.5)
         finally:
             rc._API_READ_DEADLINE.reset(token)
 
@@ -693,6 +702,264 @@ class WholeReadRecoveryTests(unittest.TestCase):
 class AssetStreamCleanupTests(unittest.TestCase):
     """Ensure a timed-out streaming helper cannot leave pipe-holding descendants."""
 
+    def drain_status_events(self, statuses, eof=True):
+        events = rc.queue.Queue()
+        for frame in statuses:
+            events.put(("status", frame))
+        events.put(("stdout", None))
+        events.put(("stderr", None))
+        if eof:
+            events.put(("status", None))
+
+        class Output:
+            def __init__(self):
+                self.data = bytearray()
+
+            def check(self):
+                return None
+
+            def write(self, value):
+                self.data.extend(value)
+
+        output = Output()
+        launch = types.SimpleNamespace(process=object(), control_fd=-1)
+        with (
+            patch.object(rc, "_kill_owned_process", return_value=None),
+            patch.object(rc, "_close_asset_supervisor_control"),
+        ):
+            result = rc._drain_asset_stream(
+                events, output, ["gh"], rc.time.monotonic() + 5, launch,
+            )
+        return result, output.data
+
+    def test_asset_status_frame_accumulates_fragmented_reads(self):
+        frame = struct.pack("!4sBi", b"IVSP", 1, 7)
+        result, _output = self.drain_status_events((frame[:3], frame[3:]))
+        self.assertEqual(result, (b"", 7))
+
+    def test_asset_status_frame_rejects_oversized_duplicate_and_truncated(self):
+        frame = struct.pack("!4sBi", b"IVSP", 1, 0)
+        for label, chunks, expected in (
+            ("oversized", (frame + b"x",), "oversized status frame"),
+            ("duplicate", (frame, frame), "duplicate status"),
+            ("truncated", (frame[:4],), "without a complete status frame"),
+        ):
+            with self.subTest(label=label), self.assertRaisesRegex(rc.GitHubError, expected):
+                self.drain_status_events(chunks)
+
+    def test_asset_deadline_is_decided_before_reaping_observed_leader(self):
+        class Output:
+            def check(self):
+                return None
+
+        class Process:
+            wait_called = False
+
+            def wait(self, timeout=None):
+                self.wait_called = True
+                return 0
+
+        process = Process()
+        with (
+            patch.object(rc, "_process_has_exited", return_value=True) as observe,
+            patch.object(rc.time, "monotonic", side_effect=(0, 2)),
+        ):
+            with self.assertRaises(subprocess.TimeoutExpired):
+                rc._wait_for_asset_process(process, Output(), ["gh"], deadline=1)
+        observe.assert_called_once_with(process)
+        self.assertFalse(process.wait_called, "deadline-crossing decision reaped the leader")
+
+    @unittest.skipUnless(os.name == "posix", "process stream groups require POSIX")
+    def test_waitid_capability_is_checked_before_asset_process_launch(self):
+        with tempfile.TemporaryDirectory(prefix="release-stream-capability-") as temp:
+            destination = Path(temp) / "asset.bin"
+            with destination.open("w+b") as output_file:
+                writer = rc._AssetWriter(
+                    output_file, destination,
+                    {"size": 0, "sha256": hashlib.sha256(b"").hexdigest()},
+                    rc.DownloadBudget(0),
+                )
+                with (
+                    patch.object(rc, "_require_nonreaping_wait_support", side_effect=NotImplementedError),
+                    patch.object(rc.subprocess, "Popen") as popen,
+                ):
+                    with self.assertRaises(NotImplementedError):
+                        rc._stream_asset([sys.executable, "-c", "pass"], writer)
+                popen.assert_not_called()
+
+    @unittest.skipUnless(os.name == "posix", "process stream groups require POSIX")
+    def test_asset_supervisor_kills_group_before_reaping_wrapper(self):
+        with tempfile.TemporaryDirectory(prefix="release-stream-order-") as temp:
+            destination = Path(temp) / "asset.bin"
+            events = []
+            real_popen = rc.subprocess.Popen
+            real_waitid = rc.os.waitid
+            real_killpg = rc.os.killpg
+
+            def recording_popen(*args, **kwargs):
+                process = real_popen(*args, **kwargs)
+                wait = process.wait
+
+                def recording_wait(*wait_args, **wait_kwargs):
+                    events.append("reap")
+                    return wait(*wait_args, **wait_kwargs)
+
+                process.wait = recording_wait
+                return process
+
+            def observing_waitid(*args):
+                events.append("observe")
+                return real_waitid(*args)
+
+            def recording_killpg(*args):
+                events.append("killpg")
+                return real_killpg(*args)
+
+            with destination.open("w+b") as output_file:
+                writer = rc._AssetWriter(
+                    output_file, destination,
+                    {"size": 7, "sha256": hashlib.sha256(b"payload").hexdigest()},
+                    rc.DownloadBudget(7),
+                )
+                with (
+                    patch.object(rc.subprocess, "Popen", side_effect=recording_popen),
+                    patch.object(rc.os, "waitid", side_effect=observing_waitid),
+                    patch.object(rc.os, "killpg", side_effect=recording_killpg),
+                ):
+                    result = rc._stream_asset(
+                        [sys.executable, "-c", "import sys;sys.stdout.buffer.write(b'payload')"],
+                        writer, deadline=rc.time.monotonic() + 5,
+                    )
+            self.assertEqual(result.returncode, 0)
+            self.assertEqual(destination.read_bytes(), b"payload")
+            self.assertEqual(events, ["observe", "killpg", "reap"])
+
+    def test_exited_owned_leader_is_not_killed_after_group_permission_error(self):
+        class Process:
+            pid = 12345
+
+            def kill(self):
+                raise AssertionError("an exited leader must not be signaled by PID")
+
+        process = Process()
+        denied = PermissionError("test permission denial")
+        with (
+            patch.object(rc.os, "waitid", return_value=object()),
+            patch.object(rc.os, "killpg", side_effect=denied),
+        ):
+            self.assertIs(rc._terminate_asset_process_group(process), denied)
+
+    @unittest.skipUnless(os.name == "posix", "process stream groups require POSIX")
+    def test_group_signal_permission_error_kills_owned_leader_then_reaps(self):
+        with tempfile.TemporaryDirectory(prefix="release-stream-permission-") as temp:
+            destination = Path(temp) / "asset.bin"
+            command = [sys.executable, "-c", "import time; time.sleep(30)"]
+            events = []
+            processes = []
+            real_popen = rc.subprocess.Popen
+            real_waitid = rc.os.waitid
+
+            def recording_popen(*args, **kwargs):
+                process = real_popen(*args, **kwargs)
+                processes.append(process)
+                kill = process.kill
+                wait = process.wait
+
+                def recording_kill():
+                    events.append("leader-kill")
+                    return kill()
+
+                def recording_wait(*wait_args, **wait_kwargs):
+                    events.append("reap")
+                    return wait(*wait_args, **wait_kwargs)
+
+                process.kill = recording_kill
+                process.wait = recording_wait
+                return process
+
+            def observing_waitid(*args):
+                events.append("observe")
+                return real_waitid(*args)
+
+            def denied_killpg(*_args):
+                events.append("killpg-denied")
+                raise PermissionError("test permission denial")
+
+            with destination.open("w+b") as output_file:
+                writer = rc._AssetWriter(
+                    output_file, destination,
+                    {"size": 100, "sha256": "0" * 64}, rc.DownloadBudget(100),
+                )
+                with (
+                    patch.object(rc.subprocess, "Popen", side_effect=recording_popen),
+                    patch.object(rc.os, "waitid", side_effect=observing_waitid),
+                    patch.object(rc.os, "killpg", side_effect=denied_killpg),
+                    self.assertRaisesRegex(rc.GitHubError, "descendants may still be running"),
+                ):
+                    rc._stream_asset(command, writer, deadline=rc.time.monotonic() + 0.1)
+
+            self.assertEqual(events, [
+                "observe", "killpg-denied", "observe", "leader-kill", "reap",
+            ])
+            self.assertEqual(len(processes), 1)
+            self.assertIsNotNone(processes[0].returncode, "leader was not reaped")
+
+    def test_group_signal_permission_error_for_exited_leader_still_reaps(self):
+        class Pipe:
+            def close(self):
+                return None
+
+        class Process:
+            pid = 12345
+            stdout = Pipe()
+            stderr = Pipe()
+            returncode = None
+
+            def __init__(self):
+                self.wait_timeouts = []
+
+            def kill(self):
+                raise AssertionError("an exited leader must not be signaled by PID")
+
+            def wait(self, timeout=None):
+                self.wait_timeouts.append(timeout)
+                self.returncode = 0
+                return self.returncode
+
+        class Thread:
+            def __init__(self, *args, **kwargs):
+                self.ident = None
+
+            def start(self):
+                self.ident = 1
+
+            def join(self, timeout=None):
+                return None
+
+        class Output:
+            def check(self):
+                return None
+
+        process = Process()
+        launch = types.SimpleNamespace(
+            process=process, status_stream=Pipe(), control_fd=-1,
+        )
+        denied = PermissionError("test permission denial")
+        with (
+            patch.object(rc, "_require_nonreaping_wait_support"),
+            patch.object(rc, "_launch_supervised_process", return_value=launch),
+            patch.object(rc.threading, "Thread", Thread),
+            patch.object(rc, "_drain_asset_stream", side_effect=RuntimeError("stream failed")),
+            patch.object(rc, "_process_has_exited", return_value=True),
+            patch.object(rc.os, "killpg", side_effect=denied),
+            self.assertRaisesRegex(rc.GitHubError, "descendants may still be running") as raised,
+        ):
+            rc._stream_asset(["gh"], Output(), deadline=rc.time.monotonic() + 1)
+
+        self.assertEqual(process.wait_timeouts, [rc.CLEANUP_TIMEOUT_SECONDS])
+        self.assertEqual(process.returncode, 0, "the leader was not reaped")
+        self.assertIs(raised.exception.__cause__, denied, "original signal failure was obscured")
+
     @unittest.skipUnless(os.name == "posix", "stream process groups require POSIX")
     def test_timeout_kills_process_group_when_descendants_hold_or_close_pipes(self):
         cases = (
@@ -714,6 +981,30 @@ class AssetStreamCleanupTests(unittest.TestCase):
             with self.subTest(scenario=name), tempfile.TemporaryDirectory(prefix="release-stream-") as temp:
                 destination = Path(temp) / "asset.bin"
                 command = [sys.executable, "-c", script]
+                events = []
+                real_popen = rc.subprocess.Popen
+                real_waitid = rc.os.waitid
+                real_killpg = rc.os.killpg
+
+                def recording_popen(*args, **kwargs):
+                    process = real_popen(*args, **kwargs)
+                    wait = process.wait
+
+                    def recording_wait(*wait_args, **wait_kwargs):
+                        events.append("reap")
+                        return wait(*wait_args, **wait_kwargs)
+
+                    process.wait = recording_wait
+                    return process
+
+                def observing_waitid(*args):
+                    events.append("observe")
+                    return real_waitid(*args)
+
+                def recording_killpg(*args):
+                    events.append("killpg")
+                    return real_killpg(*args)
+
                 with destination.open("w+b") as output_file:
                     writer = rc._AssetWriter(
                         output_file, destination, {"size": 100, "sha256": "0" * 64},
@@ -721,12 +1012,17 @@ class AssetStreamCleanupTests(unittest.TestCase):
                     )
                     deadline = rc.time.monotonic() + 0.3
                     with (
-                        patch.object(rc.os, "killpg", wraps=rc.os.killpg) as kill_group,
+                        patch.object(rc.subprocess, "Popen", side_effect=recording_popen),
+                        patch.object(rc.os, "waitid", side_effect=observing_waitid),
+                        patch.object(rc.os, "killpg", side_effect=recording_killpg) as kill_group,
                         self.assertRaises(subprocess.TimeoutExpired),
                     ):
                         rc._stream_asset(command, writer, deadline=deadline)
                 kill_group.assert_called_once()
                 self.assertEqual(kill_group.call_args.args[1], rc.signal.SIGKILL)
+                kill_index = events.index("killpg")
+                self.assertIn("observe", events[:kill_index])
+                self.assertEqual(events[kill_index + 1:], ["reap"])
 
 
 class JobPaginationTests(unittest.TestCase):

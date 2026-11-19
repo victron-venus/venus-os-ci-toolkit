@@ -320,6 +320,139 @@
               "after": "            confirm_publish=confirm_active_publisher,\n            confirm_final_publish=confirm_final_publisher_attempt,\n        )\n"
             }
           ]
+        },
+        {
+          "before_sha256": "2a1b0719998fb8c97dca012f214a7b7f61e7cd17d38b36db2f3b5299533a1483",
+          "after_sha256": "0b1890a0cec5e592b30bd036db189b1d249d11ae404b74906bd6d7f0309e96a1",
+          "canonical_source_sha256": "4d9d1f5457f8afe21eb3de71c333629d46a707e6d6eba1fef7e27e44dd84a6cc",
+          "hunks": [
+            {
+              "before": "\nif __package__:\n    from .async_process import (\n        ProcessOutputLimit, ProcessResult, ProcessTimeout, resolve_executable, run_process,\n    )\nelse:\n    from async_process import (\n        ProcessOutputLimit, ProcessResult, ProcessTimeout, resolve_executable, run_process,\n    )\n\nWORKFLOW = \".github/workflows/release-pipeline.yml\"\n",
+              "after": "\nif __package__:\n    from .async_process import (\n        CLEANUP_TIMEOUT_SECONDS, ProcessOutputLimit, ProcessResult, ProcessTimeout,\n        _process_has_exited, _require_nonreaping_wait_support,\n        resolve_executable, run_process,\n    )\nelse:\n    from async_process import (\n        CLEANUP_TIMEOUT_SECONDS, ProcessOutputLimit, ProcessResult, ProcessTimeout,\n        _process_has_exited, _require_nonreaping_wait_support,\n        resolve_executable, run_process,\n    )\n\nWORKFLOW = \".github/workflows/release-pipeline.yml\"\n"
+            },
+            {
+              "before": "    process: subprocess.Popen[bytes], output: _AssetWriter,\n    command: list[str], deadline: float,\n) -> int:\n    \"\"\"Wait for the drained child while enforcing the same deadline and disk floor.\"\"\"\n    while True:\n        output.check()\n        remaining = deadline - time.monotonic()\n        if remaining <= 0:\n            raise subprocess.TimeoutExpired(command, ASSET_DOWNLOAD_TIMEOUT)\n        try:\n            returncode = process.wait(timeout=min(0.2, remaining))\n            if time.monotonic() > deadline:\n                raise subprocess.TimeoutExpired(command, ASSET_DOWNLOAD_TIMEOUT)\n            return returncode\n        except subprocess.TimeoutExpired:\n            if time.monotonic() >= deadline:\n                raise subprocess.TimeoutExpired(command, ASSET_DOWNLOAD_TIMEOUT)\n\n\ndef _stream_asset(command: list[str], output: _AssetWriter, *,\n",
+              "after": "    process: subprocess.Popen[bytes], output: _AssetWriter,\n    command: list[str], deadline: float,\n) -> int:\n    \"\"\"Observe the drained child without reaping until its deadline decision is made.\"\"\"\n    while True:\n        output.check()\n        remaining = deadline - time.monotonic()\n        if remaining <= 0:\n            raise subprocess.TimeoutExpired(command, ASSET_DOWNLOAD_TIMEOUT)\n        if _process_has_exited(process):\n            # Decide whether this completion met the shared deadline before\n            # wait() releases the PID that is also the isolated process-group ID.\n            output.check()\n            if time.monotonic() >= deadline:\n                raise subprocess.TimeoutExpired(command, ASSET_DOWNLOAD_TIMEOUT)\n            try:\n                return process.wait(timeout=CLEANUP_TIMEOUT_SECONDS)\n            except subprocess.TimeoutExpired as error:\n                raise GitHubError(\n                    \"Asset transfer process could not be reaped within five seconds\"\n                ) from error\n        time.sleep(min(0.05, remaining))\n\n\ndef _terminate_asset_process_group(\n    process: subprocess.Popen[bytes],\n) -> PermissionError | None:\n    \"\"\"Kill the owned group, falling back only to a still-live unreaped leader.\"\"\"\n    leader_exited = _process_has_exited(process)\n    try:\n        os.killpg(process.pid, signal.SIGKILL)\n    except ProcessLookupError:\n        # WNOWAIT retained the leader; an absent group needs no fallback signal.\n        return None\n    except PermissionError as error:\n        # A leader-only fallback cannot guarantee that descendants have stopped.\n        if not leader_exited and not _process_has_exited(process):\n            try:\n                process.kill()\n            except ProcessLookupError:\n                # The owned leader exited after the non-reaping observation.\n                pass\n            except PermissionError:\n                # Reap below, then report that group and leader termination failed.\n                pass\n        return error\n    return None\n\n\ndef _stream_asset(command: list[str], output: _AssetWriter, *,\n"
+            },
+            {
+              "before": "    output.check()\n    if time.monotonic() >= deadline:\n        raise subprocess.TimeoutExpired(command, ASSET_DOWNLOAD_TIMEOUT)\n    process = subprocess.Popen(\n        command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True,\n    )  # nosec B603\n",
+              "after": "    output.check()\n    if time.monotonic() >= deadline:\n        raise subprocess.TimeoutExpired(command, ASSET_DOWNLOAD_TIMEOUT)\n    _require_nonreaping_wait_support()\n    process = subprocess.Popen(\n        command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True,\n    )  # nosec B603\n"
+            },
+            {
+              "before": "        return subprocess.CompletedProcess(command, returncode, b\"\", stderr)\n    finally:\n        stopped.set()\n        # gh may leave helpers alive with inherited pipes. On any incomplete\n        # transfer, terminate the isolated process group before waiting for the\n        # leader or closing pipes, so descendants cannot outlive the deadline.\n        if not complete:\n            try:\n                os.killpg(process.pid, signal.SIGKILL)\n            except ProcessLookupError:\n                pass\n        try:\n            if process.poll() is None:\n                process.kill()\n            try:\n                process.wait(timeout=5)\n            except subprocess.TimeoutExpired as error:\n                raise GitHubError(\"Asset transfer process could not be reaped within five seconds\") from error\n        finally:\n            for thread in threads:\n",
+              "after": "        return subprocess.CompletedProcess(command, returncode, b\"\", stderr)\n    finally:\n        stopped.set()\n        group_signal_error: PermissionError | None = None\n        # gh may leave helpers alive with inherited pipes. On any incomplete\n        # transfer, validate that the unreaped leader still owns this PGID and\n        # terminate it before wait() can release the PID for reuse.\n        try:\n            if not complete:\n                group_signal_error = _terminate_asset_process_group(process)\n            try:\n                process.wait(timeout=CLEANUP_TIMEOUT_SECONDS)\n            except subprocess.TimeoutExpired as error:\n                if group_signal_error is not None:\n                    raise GitHubError(\n                        \"Asset process-group kill was denied and leader could not be reaped\"\n                    ) from group_signal_error\n                raise GitHubError(\"Asset transfer process could not be reaped within five seconds\") from error\n        finally:\n            for thread in threads:\n"
+            },
+            {
+              "before": "                    thread.join(timeout=1)\n            process.stdout.close()\n            process.stderr.close()\n\ndef json_bytes(value: object) -> bytes:\n    \"\"\"Encode deterministic UTF-8 JSON for manifests and request bodies.\"\"\"\n",
+              "after": "                    thread.join(timeout=1)\n            process.stdout.close()\n            process.stderr.close()\n        if group_signal_error is not None:\n            raise GitHubError(\n                \"Asset process-group kill was denied; descendants may still be running\"\n            ) from group_signal_error\n\ndef json_bytes(value: object) -> bytes:\n    \"\"\"Encode deterministic UTF-8 JSON for manifests and request bodies.\"\"\"\n"
+            }
+          ],
+          "canonical_fragments": [
+            "def _terminate_asset_process_group(",
+            "_require_nonreaping_wait_support()"
+          ]
+        },
+        {
+          "before_sha256": "0b1890a0cec5e592b30bd036db189b1d249d11ae404b74906bd6d7f0309e96a1",
+          "after_sha256": "fbec7231a12356eaebc845d68a78bead7852731fba07617e2a5ebe0c757270c4",
+          "canonical_source_sha256": "e2d4446bddf1d80bc8ba23cfac3cf2bbbdd63348d385a55d09d9bc70a522fe0e",
+          "hunks": [
+            {
+              "before": "    process: subprocess.Popen[bytes],\n) -> PermissionError | None:",
+              "after": "    process: subprocess.Popen[bytes],\n) -> OSError | None:"
+            },
+            {
+              "before": "    except PermissionError as error:\n",
+              "after": "    except OSError as error:\n"
+            },
+            {
+              "before": "        # A leader-only fallback cannot guarantee that descendants have stopped.\n",
+              "after": "        # A leader-only fallback cannot guarantee that descendants have stopped.\n        # Keep the original failure and bounded reap even when WNOWAIT says the\n        # leader exited; its PID must not be reused for a direct signal.\n"
+            },
+            {
+              "before": "            except PermissionError:\n",
+              "after": "            except OSError:\n"
+            },
+            {
+              "before": "                # Reap below, then report that group and leader termination failed.\n",
+              "after": "                # Reap below, then report that group termination failed.\n"
+            },
+            {
+              "before": "        group_signal_error: PermissionError | None = None",
+              "after": "        group_signal_error: OSError | None = None"
+            },
+            {
+              "before": "                        \"Asset process-group kill was denied and leader could not be reaped\"",
+              "after": "                        \"Asset process-group termination failed and leader could not be reaped\""
+            },
+            {
+              "before": "                \"Asset process-group kill was denied; descendants may still be running\"",
+              "after": "                \"Asset process-group termination failed; descendants may still be running\""
+            }
+          ],
+          "canonical_fragments": [
+            ") -> OSError | None:",
+            "except OSError as error:",
+            "# A leader-only fallback cannot guarantee that descendants have stopped.",
+            "except OSError:",
+            "# Reap below, then report that group termination failed.",
+            "group_signal_error: OSError | None = None",
+            "\"Asset process-group termination failed and leader could not be reaped\"",
+            "\"Asset process-group termination failed; descendants may still be running\""
+          ]
+        },
+        {
+          "before_sha256": "fbec7231a12356eaebc845d68a78bead7852731fba07617e2a5ebe0c757270c4",
+          "after_sha256": "fa7a785ea15bde5926cebc52ec6edcacf052b14d736d015fb93313dedbb619a7",
+          "hunks": [
+            {
+              "before": "\nimport argparse\nimport base64\nimport contextvars\nimport hashlib\nimport io\n",
+              "after": "\nimport argparse\nimport base64\nfrom contextlib import suppress\nimport contextvars\nimport hashlib\nimport io\n"
+            },
+            {
+              "before": "\nif __package__:\n    from .async_process import (\n        CLEANUP_TIMEOUT_SECONDS, ProcessOutputLimit, ProcessResult, ProcessTimeout,\n        _process_has_exited, _require_nonreaping_wait_support,\n        resolve_executable, run_process,\n    )\nelse:\n    from async_process import (\n        CLEANUP_TIMEOUT_SECONDS, ProcessOutputLimit, ProcessResult, ProcessTimeout,\n        _process_has_exited, _require_nonreaping_wait_support,\n        resolve_executable, run_process,\n    )\n",
+              "after": "\nif __package__:\n    from .async_process import (\n        CLEANUP_TIMEOUT_SECONDS, ProcessCleanupError, ProcessOutputLimit, ProcessResult, ProcessTimeout,\n        _decode_supervisor_status, _kill_owned_process, _launch_supervised_process,\n        _process_has_exited, _require_nonreaping_wait_support,\n        resolve_executable, run_process,\n    )\nelse:\n    from async_process import (\n        CLEANUP_TIMEOUT_SECONDS, ProcessCleanupError, ProcessOutputLimit, ProcessResult, ProcessTimeout,\n        _decode_supervisor_status, _kill_owned_process, _launch_supervised_process,\n        _process_has_exited, _require_nonreaping_wait_support,\n        resolve_executable, run_process,\n    )\n"
+            },
+            {
+              "before": "            continue\n\n\ndef _read_asset_pipe(\n    pipe: BinaryIO, kind: str, events: queue.Queue[AssetStreamEvent],\n    stopped: threading.Event,\n",
+              "after": "            continue\n\n\ndef _close_asset_supervisor_control(launch) -> None:\n    if launch.control_fd >= 0:\n        with suppress(OSError):\n            os.close(launch.control_fd)\n        launch.control_fd = -1\n\n\ndef _read_asset_pipe(\n    pipe: BinaryIO, kind: str, events: queue.Queue[AssetStreamEvent],\n    stopped: threading.Event,\n"
+            },
+            {
+              "before": "\ndef _drain_asset_stream(\n    events: queue.Queue[AssetStreamEvent], output: _AssetWriter,\n    command: list[str], deadline: float,\n) -> bytes:\n    \"\"\"Consume both pipes until EOF, bounding diagnostics and the shared deadline.\"\"\"\n    ended: set[str] = set()\n    stderr = bytearray()\n    while len(ended) != 2:\n        output.check()\n        remaining = deadline - time.monotonic()\n        if remaining <= 0:\n",
+              "after": "\ndef _drain_asset_stream(\n    events: queue.Queue[AssetStreamEvent], output: _AssetWriter,\n    command: list[str], deadline: float, launch,\n) -> tuple[bytes, int]:\n    \"\"\"Drain target status and inherited pipes, then kill the live supervisor.\"\"\"\n    ended: set[str] = set()\n    stderr = bytearray()\n    target_returncode: int | None = None\n    while len(ended) != 3:\n        output.check()\n        remaining = deadline - time.monotonic()\n        if remaining <= 0:\n"
+            },
+            {
+              "before": "        except queue.Empty:\n            continue\n        if value is None:\n            ended.add(kind)\n        elif isinstance(value, BaseException):\n            raise value\n        elif kind == \"stdout\":\n            output.write(value)\n        else:\n            stderr.extend(value[:max(0, 65536 - len(stderr))])\n    return bytes(stderr)\n\n\ndef _wait_for_asset_process(\n",
+              "after": "        except queue.Empty:\n            continue\n        if value is None:\n            if kind == \"status\" and target_returncode is None:\n                raise GitHubError(\"Asset supervisor exited without a complete status frame\")\n            ended.add(kind)\n        elif isinstance(value, BaseException):\n            raise value\n        elif kind == \"status\":\n            if target_returncode is not None:\n                raise GitHubError(\"Asset supervisor sent duplicate status\")\n            status, status_value = _decode_supervisor_status(value)\n            if status == \"error\":\n                raise OSError(status_value, \"Asset helper could not be started\")\n            group_error = _kill_owned_process(launch.process)\n            if group_error is not None:\n                _close_asset_supervisor_control(launch)\n                raise ProcessCleanupError(\n                    \"Asset supervisor process-group termination failed\"\n                ) from group_error\n            _close_asset_supervisor_control(launch)\n            target_returncode = status_value\n        elif kind == \"stdout\":\n            output.write(value)\n        else:\n            stderr.extend(value[:max(0, 65536 - len(stderr))])\n    if target_returncode is None:\n        raise GitHubError(\"Asset supervisor did not confirm target completion\")\n    return bytes(stderr), target_returncode\n\n\ndef _wait_for_asset_process(\n"
+            },
+            {
+              "before": "    if time.monotonic() >= deadline:\n        raise subprocess.TimeoutExpired(command, ASSET_DOWNLOAD_TIMEOUT)\n    _require_nonreaping_wait_support()\n    process = subprocess.Popen(\n        command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True,\n    )  # nosec B603\n    require(process.stdout is not None and process.stderr is not None, \"Missing transfer pipes\")\n    events: queue.Queue[AssetStreamEvent] = queue.Queue(maxsize=2)\n    stopped = threading.Event()\n    complete = False\n    threads = [threading.Thread(target=_read_asset_pipe,\n                                args=(pipe, kind, events, stopped), daemon=True)\n               for pipe, kind in [(process.stdout, \"stdout\"), (process.stderr, \"stderr\")]]\n    try:\n        for thread in threads:\n            thread.start()\n        stderr = _drain_asset_stream(events, output, command, deadline)\n        returncode = _wait_for_asset_process(process, output, command, deadline)\n        complete = True\n        return subprocess.CompletedProcess(command, returncode, b\"\", stderr)\n    finally:\n        stopped.set()\n        group_signal_error: OSError | None = None\n        # gh may leave helpers alive with inherited pipes. On any incomplete\n        # transfer, validate that the unreaped leader still owns this PGID and\n        # terminate it before wait() can release the PID for reuse.\n        try:\n            if not complete:\n                group_signal_error = _terminate_asset_process_group(process)\n            try:\n                process.wait(timeout=CLEANUP_TIMEOUT_SECONDS)\n            except subprocess.TimeoutExpired as error:\n                if group_signal_error is not None:\n                    raise GitHubError(\n                        \"Asset process-group termination failed and leader could not be reaped\"\n                    ) from group_signal_error\n                raise GitHubError(\"Asset transfer process could not be reaped within five seconds\") from error\n        finally:\n            for thread in threads:\n                if thread.ident is not None:\n                    thread.join(timeout=1)\n            process.stdout.close()\n            process.stderr.close()\n        if group_signal_error is not None:\n            raise GitHubError(\n                \"Asset process-group termination failed; descendants may still be running\"\n            ) from group_signal_error\n\ndef json_bytes(value: object) -> bytes:\n",
+              "after": "    if time.monotonic() >= deadline:\n        raise subprocess.TimeoutExpired(command, ASSET_DOWNLOAD_TIMEOUT)\n    _require_nonreaping_wait_support()\n    launch = _launch_supervised_process(tuple(command), env=None, cwd=None, input_enabled=False)\n    process = launch.process\n    require(process.stdout is not None and process.stderr is not None,\n            \"Missing supervised transfer pipes\")\n    events: queue.Queue[AssetStreamEvent] = queue.Queue(maxsize=2)\n    stopped = threading.Event()\n    complete = False\n    threads = [threading.Thread(target=_read_asset_pipe,\n                                args=(pipe, kind, events, stopped), daemon=True)\n               for pipe, kind in [\n                   (process.stdout, \"stdout\"), (process.stderr, \"stderr\"),\n                   (launch.status_stream, \"status\"),\n               ]]\n    try:\n        for thread in threads:\n            thread.start()\n        stderr, returncode = _drain_asset_stream(\n            events, output, command, deadline, launch,\n        )\n        complete = True\n        return subprocess.CompletedProcess(command, returncode, b\"\", stderr)\n    finally:\n        stopped.set()\n        group_signal_error: OSError | None = None\n        # On incomplete transfer, signal the still-owned supervisor group before\n        # reaping its live group leader; its target argv process is a child.\n        try:\n            if not complete:\n                group_signal_error = _terminate_asset_process_group(process)\n                _close_asset_supervisor_control(launch)\n            try:\n                process_status = process.wait(timeout=CLEANUP_TIMEOUT_SECONDS)\n            except subprocess.TimeoutExpired as error:\n                if group_signal_error is not None:\n                    raise GitHubError(\n                        \"Asset supervisor termination failed and leader could not be reaped\"\n                    ) from group_signal_error\n                raise GitHubError(\"Asset transfer process could not be reaped within five seconds\") from error\n            if complete and process_status != -signal.SIGKILL:\n                raise GitHubError(\n                    \"Asset supervisor did not exit from confirmed process-group cleanup\"\n                )\n        finally:\n            for thread in threads:\n                if thread.ident is not None:\n                    thread.join(timeout=1)\n            process.stdout.close()\n            process.stderr.close()\n            launch.status_stream.close()\n        if group_signal_error is not None:\n            raise GitHubError(\n                \"Asset supervisor process-group termination failed; descendants may still be running\"\n            ) from group_signal_error\n\ndef json_bytes(value: object) -> bytes:\n"
+            }
+          ],
+          "canonical_source_sha256": "d8de951f6c1acbc08c1062f0b50dcffe187dad176d29b27e6a74ba486335fbf0",
+          "canonical_fragments": [
+            "launch = _launch_supervised_process(tuple(command)"
+          ]
+        },
+        {
+          "before_sha256": "fa7a785ea15bde5926cebc52ec6edcacf052b14d736d015fb93313dedbb619a7",
+          "after_sha256": "26b689a6a20da68578c45294fb6ad77c7c723eedccc71c276d2ac3d8fb86b105",
+          "hunks": [
+            {
+              "before": "    ended: set[str] = set()\n    stderr = bytearray()\n    target_returncode: int | None = None\n    while len(ended) != 3:\n        output.check()\n        remaining = deadline - time.monotonic()\n",
+              "after": "    ended: set[str] = set()\n    stderr = bytearray()\n    target_returncode: int | None = None\n    status_buffer = bytearray()\n    while len(ended) != 3:\n        output.check()\n        remaining = deadline - time.monotonic()\n"
+            },
+            {
+              "before": "        except queue.Empty:\n            continue\n        if value is None:\n            if kind == \"status\" and target_returncode is None:\n                raise GitHubError(\"Asset supervisor exited without a complete status frame\")\n            ended.add(kind)\n        elif isinstance(value, BaseException):\n",
+              "after": "        except queue.Empty:\n            continue\n        if value is None:\n            if kind == \"status\" and (target_returncode is None or status_buffer):\n                raise GitHubError(\"Asset supervisor exited without a complete status frame\")\n            ended.add(kind)\n        elif isinstance(value, BaseException):\n"
+            },
+            {
+              "before": "        elif kind == \"status\":\n            if target_returncode is not None:\n                raise GitHubError(\"Asset supervisor sent duplicate status\")\n            status, status_value = _decode_supervisor_status(value)\n            if status == \"error\":\n                raise OSError(status_value, \"Asset helper could not be started\")\n            group_error = _kill_owned_process(launch.process)\n",
+              "after": "        elif kind == \"status\":\n            if target_returncode is not None:\n                raise GitHubError(\"Asset supervisor sent duplicate status\")\n            status_buffer.extend(value)\n            if len(status_buffer) > 9:\n                raise GitHubError(\"Asset supervisor sent an oversized status frame\")\n            if len(status_buffer) < 9:\n                continue\n            status, status_value = _decode_supervisor_status(bytes(status_buffer))\n            status_buffer.clear()\n            if status == \"error\":\n                raise OSError(status_value, \"Asset helper could not be started\")\n            group_error = _kill_owned_process(launch.process)\n"
+            }
+          ],
+          "canonical_source_sha256": "3b828d5528e4e4b6777af8dd581e8c3713a002956ae864e2a52a4076c89f5038"
         }
       ]
     },
@@ -479,6 +612,59 @@
               "after": "            confirm_publish=confirm_before_publish,\n            confirm_final_publish=confirm_final_publisher_attempt,\n        )\n"
             }
           ]
+        },
+        {
+          "before_sha256": "ee0b6efdd1a57e8afcd2232ec7ca6924d7c7d6eb5af5fbb2ef6b7ce707259e73",
+          "after_sha256": "a625119946c5e2f561e7c812cc40dde558d03b36701ad065b12873bb95b5ac85",
+          "canonical_source_sha256": "9239726eeb16ff0d334b886b25e1de94f336b4fe56a87c291b18f67392b09c93",
+          "hunks": [
+            {
+              "before": "            if item[\"name\"] == rc.MANIFEST:\n                continue\n            payload = directory / (cast(str, item[\"name\"]) if retained else \"payload\")\n            identity = rc.download_asset(\n                gh, item[\"id\"], payload,\n                expected=cast(rc.AssetIdentity, {\n",
+              "after": "            if item[\"name\"] == rc.MANIFEST:\n                continue\n            payload = directory / (cast(str, item[\"name\"]) if retained else \"payload\")\n            # Keep candidate transfers on the shared bounded supervisor; it\n            # retains PID/PGID ownership through deadline cleanup before reaping.\n            identity = rc.download_asset(\n                gh, item[\"id\"], payload,\n                expected=cast(rc.AssetIdentity, {\n"
+            }
+          ],
+          "canonical_fragments": [
+            "retains PID/PGID ownership through deadline cleanup before reaping."
+          ]
+        },
+        {
+          "before_sha256": "a625119946c5e2f561e7c812cc40dde558d03b36701ad065b12873bb95b5ac85",
+          "after_sha256": "b9020b75fa7b43f5e679b54f4bbf1def40e1772ffb398a0fc762e1103252b5fc",
+          "canonical_source_sha256": "a5559b466e5e85058ed8a193d46af472763b5b5dc01909de0eba30685de6b556",
+          "hunks": [
+            {
+              "before": "            # retains PID/PGID ownership through deadline cleanup before reaping.\n",
+              "after": "            # retains PID/PGID ownership through deadline cleanup before reaping.\n            # If group signaling is denied, its error still surfaces after reap.\n"
+            }
+          ],
+          "canonical_fragments": [
+            "# retains PID/PGID ownership through deadline cleanup before reaping."
+          ]
+        },
+        {
+          "before_sha256": "b9020b75fa7b43f5e679b54f4bbf1def40e1772ffb398a0fc762e1103252b5fc",
+          "after_sha256": "9ba2490a18c051bd4aafa2543e5e6fa04da69ad163d825493ff892a6a7a4fc8b",
+          "hunks": [
+            {
+              "before": "        def confirm_final_publisher_attempt() -> None:\n            # The final boundary shares a short deadline with the tag GET, so\n            # keep this to one exact attempt read without aggregate/jobs calls.\n            current = gh.api(\n                f\"actions/runs/{run['id']}/attempts/{run['run_attempt']}\"\n            )\n",
+              "after": "        def confirm_final_publisher_attempt() -> None:\n            # The final boundary shares a short deadline with the tag GET, so\n            # keep this to one exact attempt read without aggregate/jobs calls.\n            # The release-control caller invokes it immediately after the last\n            # tag GET and before its protected public PATCH.\n            current = gh.api(\n                f\"actions/runs/{run['id']}/attempts/{run['run_attempt']}\"\n            )\n"
+            }
+          ],
+          "canonical_source_sha256": "c8d7f718e00a5043896311f60805c452172c49e9dd148c17b1e50a5f8b98e088",
+          "canonical_fragments": [
+            "The release-control caller invokes it immediately after the last"
+          ]
+        },
+        {
+          "before_sha256": "9ba2490a18c051bd4aafa2543e5e6fa04da69ad163d825493ff892a6a7a4fc8b",
+          "after_sha256": "390de17f460930aaeab51c2358e48ac6207f4b44d35eae14d545e7805ad3efcf",
+          "hunks": [
+            {
+              "before": "            # keep this to one exact attempt read without aggregate/jobs calls.\n            # The release-control caller invokes it immediately after the last\n            # tag GET and before its protected public PATCH.\n            current = gh.api(\n                f\"actions/runs/{run['id']}/attempts/{run['run_attempt']}\"\n            )\n",
+              "after": "            # keep this to one exact attempt read without aggregate/jobs calls.\n            # The release-control caller invokes it immediately after the last\n            # tag GET and before its protected public PATCH.\n            # This callback is deliberately distinct from the full pre-tag\n            # publisher validation above; it closes only the last attempt race.\n            current = gh.api(\n                f\"actions/runs/{run['id']}/attempts/{run['run_attempt']}\"\n            )\n"
+            }
+          ],
+          "canonical_source_sha256": "77b551f0de5ec378edcf5f0a25f731f77e65ee08986d1ba824ed078e83439d24"
         }
       ]
     },
@@ -745,6 +931,129 @@
               "after": "self.assertEqual(len(observations), 3)  # Admission, full recheck and final attempt read."
             }
           ]
+        },
+        {
+          "before_sha256": "7b1a892252ff44ecebd2b24e5856cdf3e7847958086c19f9d2db6d2f8400c897",
+          "after_sha256": "545603e12f58f8383f53433634314f3a5b743e4e13887283c6da2833b102befb",
+          "canonical_source_sha256": "791b86b278e378d54611aaeb62b0ede8139647168f4b0737f3c0ff58da8c5e89",
+          "hunks": [
+            {
+              "before": "class AssetStreamCleanupTests(unittest.TestCase):\n    \"\"\"Ensure a timed-out streaming helper cannot leave pipe-holding descendants.\"\"\"\n\n    @unittest.skipUnless(os.name == \"posix\", \"stream process groups require POSIX\")\n    def test_timeout_kills_process_group_when_descendants_hold_or_close_pipes(self):\n        cases = (\n",
+              "after": "class AssetStreamCleanupTests(unittest.TestCase):\n    \"\"\"Ensure a timed-out streaming helper cannot leave pipe-holding descendants.\"\"\"\n\n    def test_asset_deadline_is_decided_before_reaping_observed_leader(self):\n        class Output:\n            def check(self):\n                return None\n\n        class Process:\n            wait_called = False\n\n            def wait(self, timeout=None):\n                self.wait_called = True\n                return 0\n\n        process = Process()\n        with (\n            patch.object(rc, \"_process_has_exited\", return_value=True) as observe,\n            patch.object(rc.time, \"monotonic\", side_effect=(0, 2)),\n        ):\n            with self.assertRaises(subprocess.TimeoutExpired):\n                rc._wait_for_asset_process(process, Output(), [\"gh\"], deadline=1)\n        observe.assert_called_once_with(process)\n        self.assertFalse(process.wait_called, \"deadline-crossing decision reaped the leader\")\n\n    @unittest.skipUnless(os.name == \"posix\", \"process stream groups require POSIX\")\n    def test_waitid_capability_is_checked_before_asset_process_launch(self):\n        with tempfile.TemporaryDirectory(prefix=\"release-stream-capability-\") as temp:\n            destination = Path(temp) / \"asset.bin\"\n            with destination.open(\"w+b\") as output_file:\n                writer = rc._AssetWriter(\n                    output_file, destination,\n                    {\"size\": 0, \"sha256\": hashlib.sha256(b\"\").hexdigest()},\n                    rc.DownloadBudget(0),\n                )\n                with (\n                    patch.object(rc, \"_require_nonreaping_wait_support\", side_effect=NotImplementedError),\n                    patch.object(rc.subprocess, \"Popen\") as popen,\n                ):\n                    with self.assertRaises(NotImplementedError):\n                        rc._stream_asset([sys.executable, \"-c\", \"pass\"], writer)\n                popen.assert_not_called()\n\n    def test_exited_owned_leader_is_not_killed_after_group_permission_error(self):\n        class Process:\n            pid = 12345\n\n            def kill(self):\n                raise AssertionError(\"an exited leader must not be signaled by PID\")\n\n        process = Process()\n        denied = PermissionError(\"test permission denial\")\n        with (\n            patch.object(rc.os, \"waitid\", return_value=object()),\n            patch.object(rc.os, \"killpg\", side_effect=denied),\n        ):\n            self.assertIs(rc._terminate_asset_process_group(process), denied)\n\n    @unittest.skipUnless(os.name == \"posix\", \"process stream groups require POSIX\")\n    def test_group_signal_permission_error_kills_owned_leader_then_reaps(self):\n        with tempfile.TemporaryDirectory(prefix=\"release-stream-permission-\") as temp:\n            destination = Path(temp) / \"asset.bin\"\n            command = [sys.executable, \"-c\", \"import time; time.sleep(30)\"]\n            events = []\n            processes = []\n            real_popen = rc.subprocess.Popen\n            real_waitid = rc.os.waitid\n\n            def recording_popen(*args, **kwargs):\n                process = real_popen(*args, **kwargs)\n                processes.append(process)\n                kill = process.kill\n                wait = process.wait\n\n                def recording_kill():\n                    events.append(\"leader-kill\")\n                    return kill()\n\n                def recording_wait(*wait_args, **wait_kwargs):\n                    events.append(\"reap\")\n                    return wait(*wait_args, **wait_kwargs)\n\n                process.kill = recording_kill\n                process.wait = recording_wait\n                return process\n\n            def observing_waitid(*args):\n                events.append(\"observe\")\n                return real_waitid(*args)\n\n            def denied_killpg(*_args):\n                events.append(\"killpg-denied\")\n                raise PermissionError(\"test permission denial\")\n\n            with destination.open(\"w+b\") as output_file:\n                writer = rc._AssetWriter(\n                    output_file, destination,\n                    {\"size\": 100, \"sha256\": \"0\" * 64}, rc.DownloadBudget(100),\n                )\n                with (\n                    patch.object(rc.subprocess, \"Popen\", side_effect=recording_popen),\n                    patch.object(rc.os, \"waitid\", side_effect=observing_waitid),\n                    patch.object(rc.os, \"killpg\", side_effect=denied_killpg),\n                    self.assertRaisesRegex(rc.GitHubError, \"descendants may still be running\"),\n                ):\n                    rc._stream_asset(command, writer, deadline=rc.time.monotonic() + 0.1)\n\n            self.assertEqual(events, [\n                \"observe\", \"killpg-denied\", \"observe\", \"leader-kill\", \"reap\",\n            ])\n            self.assertEqual(len(processes), 1)\n            self.assertIsNotNone(processes[0].returncode, \"leader was not reaped\")\n\n    @unittest.skipUnless(os.name == \"posix\", \"stream process groups require POSIX\")\n    def test_timeout_kills_process_group_when_descendants_hold_or_close_pipes(self):\n        cases = (\n"
+            },
+            {
+              "before": "            with self.subTest(scenario=name), tempfile.TemporaryDirectory(prefix=\"release-stream-\") as temp:\n                destination = Path(temp) / \"asset.bin\"\n                command = [sys.executable, \"-c\", script]\n                with destination.open(\"w+b\") as output_file:\n                    writer = rc._AssetWriter(\n                        output_file, destination, {\"size\": 100, \"sha256\": \"0\" * 64},\n",
+              "after": "            with self.subTest(scenario=name), tempfile.TemporaryDirectory(prefix=\"release-stream-\") as temp:\n                destination = Path(temp) / \"asset.bin\"\n                command = [sys.executable, \"-c\", script]\n                events = []\n                real_popen = rc.subprocess.Popen\n                real_waitid = rc.os.waitid\n                real_killpg = rc.os.killpg\n\n                def recording_popen(*args, **kwargs):\n                    process = real_popen(*args, **kwargs)\n                    wait = process.wait\n\n                    def recording_wait(*wait_args, **wait_kwargs):\n                        events.append(\"reap\")\n                        return wait(*wait_args, **wait_kwargs)\n\n                    process.wait = recording_wait\n                    return process\n\n                def observing_waitid(*args):\n                    events.append(\"observe\")\n                    return real_waitid(*args)\n\n                def recording_killpg(*args):\n                    events.append(\"killpg\")\n                    return real_killpg(*args)\n\n                with destination.open(\"w+b\") as output_file:\n                    writer = rc._AssetWriter(\n                        output_file, destination, {\"size\": 100, \"sha256\": \"0\" * 64},\n"
+            },
+            {
+              "before": "                    )\n                    deadline = rc.time.monotonic() + 0.3\n                    with (\n                        patch.object(rc.os, \"killpg\", wraps=rc.os.killpg) as kill_group,\n                        self.assertRaises(subprocess.TimeoutExpired),\n                    ):\n                        rc._stream_asset(command, writer, deadline=deadline)\n                kill_group.assert_called_once()\n                self.assertEqual(kill_group.call_args.args[1], rc.signal.SIGKILL)\n\n\nclass JobPaginationTests(unittest.TestCase):\n",
+              "after": "                    )\n                    deadline = rc.time.monotonic() + 0.3\n                    with (\n                        patch.object(rc.subprocess, \"Popen\", side_effect=recording_popen),\n                        patch.object(rc.os, \"waitid\", side_effect=observing_waitid),\n                        patch.object(rc.os, \"killpg\", side_effect=recording_killpg) as kill_group,\n                        self.assertRaises(subprocess.TimeoutExpired),\n                    ):\n                        rc._stream_asset(command, writer, deadline=deadline)\n                kill_group.assert_called_once()\n                self.assertEqual(kill_group.call_args.args[1], rc.signal.SIGKILL)\n                kill_index = events.index(\"killpg\")\n                self.assertIn(\"observe\", events[:kill_index])\n                self.assertEqual(events[kill_index + 1:], [\"reap\"])\n\n\nclass JobPaginationTests(unittest.TestCase):\n"
+            }
+          ],
+          "canonical_fragments": [
+            "def test_group_signal_permission_error_kills_owned_leader_then_reaps(self):",
+            "def test_exited_owned_leader_is_not_killed_after_group_permission_error(self):"
+          ]
+        },
+        {
+          "before_sha256": "545603e12f58f8383f53433634314f3a5b743e4e13887283c6da2833b102befb",
+          "after_sha256": "3c365daa78d3ec4da52fe48ebeac2cdfbbf006047ec4ae6b2121d310b558c230",
+          "canonical_source_sha256": "8f0695a867c86b435208276606e511a966936a4531a65a32085849d58ed28cb1",
+          "hunks": [
+            {
+              "before": "    @unittest.skipUnless(os.name == \"posix\", \"stream process groups require POSIX\")\n    def test_timeout_kills_process_group_when_descendants_hold_or_close_pipes(self):\n",
+              "after": "    def test_group_signal_permission_error_for_exited_leader_still_reaps(self):\n        class Pipe:\n            def close(self):\n                return None\n\n        class Process:\n            pid = 12345\n            stdout = Pipe()\n            stderr = Pipe()\n            returncode = None\n\n            def __init__(self):\n                self.wait_timeouts = []\n\n            def kill(self):\n                raise AssertionError(\"an exited leader must not be signaled by PID\")\n\n            def wait(self, timeout=None):\n                self.wait_timeouts.append(timeout)\n                self.returncode = 0\n                return self.returncode\n\n        class Thread:\n            def __init__(self, *args, **kwargs):\n                self.ident = None\n\n            def start(self):\n                self.ident = 1\n\n            def join(self, timeout=None):\n                return None\n\n        class Output:\n            def check(self):\n                return None\n\n        process = Process()\n        denied = PermissionError(\"test permission denial\")\n        with (\n            patch.object(rc, \"_require_nonreaping_wait_support\"),\n            patch.object(rc.subprocess, \"Popen\", return_value=process),\n            patch.object(rc.threading, \"Thread\", Thread),\n            patch.object(rc, \"_drain_asset_stream\", side_effect=RuntimeError(\"stream failed\")),\n            patch.object(rc, \"_process_has_exited\", return_value=True),\n            patch.object(rc.os, \"killpg\", side_effect=denied),\n            self.assertRaisesRegex(rc.GitHubError, \"descendants may still be running\") as raised,\n        ):\n            rc._stream_asset([\"gh\"], Output(), deadline=rc.time.monotonic() + 1)\n\n        self.assertEqual(process.wait_timeouts, [rc.CLEANUP_TIMEOUT_SECONDS])\n        self.assertEqual(process.returncode, 0, \"the leader was not reaped\")\n        self.assertIs(raised.exception.__cause__, denied, \"original signal failure was obscured\")\n\n    @unittest.skipUnless(os.name == \"posix\", \"stream process groups require POSIX\")\n    def test_timeout_kills_process_group_when_descendants_hold_or_close_pipes(self):\n"
+            }
+          ],
+          "canonical_fragments": [
+            "def test_group_signal_permission_error_for_exited_leader_still_reaps(self):"
+          ]
+        },
+        {
+          "before_sha256": "3c365daa78d3ec4da52fe48ebeac2cdfbbf006047ec4ae6b2121d310b558c230",
+          "after_sha256": "247afefefaf287865b67d3d94e7797eb0710107867a7d64e164ad718bf9942b1",
+          "hunks": [
+            {
+              "before": "# Subprocess calls below use argument vectors with shell=False.\nimport subprocess  # nosec B404\nimport tempfile\nimport unittest\nimport weakref\nimport zipfile\n",
+              "after": "# Subprocess calls below use argument vectors with shell=False.\nimport subprocess  # nosec B404\nimport tempfile\nimport types\nimport unittest\nimport weakref\nimport zipfile\n"
+            },
+            {
+              "before": "                        rc._stream_asset([sys.executable, \"-c\", \"pass\"], writer)\n                popen.assert_not_called()\n\n    def test_exited_owned_leader_is_not_killed_after_group_permission_error(self):\n        class Process:\n            pid = 12345\n",
+              "after": "                        rc._stream_asset([sys.executable, \"-c\", \"pass\"], writer)\n                popen.assert_not_called()\n\n    @unittest.skipUnless(os.name == \"posix\", \"process stream groups require POSIX\")\n    def test_asset_supervisor_kills_group_before_reaping_wrapper(self):\n        with tempfile.TemporaryDirectory(prefix=\"release-stream-order-\") as temp:\n            destination = Path(temp) / \"asset.bin\"\n            events = []\n            real_popen = rc.subprocess.Popen\n            real_waitid = rc.os.waitid\n            real_killpg = rc.os.killpg\n\n            def recording_popen(*args, **kwargs):\n                process = real_popen(*args, **kwargs)\n                wait = process.wait\n\n                def recording_wait(*wait_args, **wait_kwargs):\n                    events.append(\"reap\")\n                    return wait(*wait_args, **wait_kwargs)\n\n                process.wait = recording_wait\n                return process\n\n            def observing_waitid(*args):\n                events.append(\"observe\")\n                return real_waitid(*args)\n\n            def recording_killpg(*args):\n                events.append(\"killpg\")\n                return real_killpg(*args)\n\n            with destination.open(\"w+b\") as output_file:\n                writer = rc._AssetWriter(\n                    output_file, destination,\n                    {\"size\": 7, \"sha256\": hashlib.sha256(b\"payload\").hexdigest()},\n                    rc.DownloadBudget(7),\n                )\n                with (\n                    patch.object(rc.subprocess, \"Popen\", side_effect=recording_popen),\n                    patch.object(rc.os, \"waitid\", side_effect=observing_waitid),\n                    patch.object(rc.os, \"killpg\", side_effect=recording_killpg),\n                ):\n                    result = rc._stream_asset(\n                        [sys.executable, \"-c\", \"import sys;sys.stdout.buffer.write(b'payload')\"],\n                        writer, deadline=rc.time.monotonic() + 5,\n                    )\n            self.assertEqual(result.returncode, 0)\n            self.assertEqual(destination.read_bytes(), b\"payload\")\n            self.assertEqual(events, [\"observe\", \"killpg\", \"reap\"])\n\n    def test_exited_owned_leader_is_not_killed_after_group_permission_error(self):\n        class Process:\n            pid = 12345\n"
+            },
+            {
+              "before": "                return None\n\n        process = Process()\n        denied = PermissionError(\"test permission denial\")\n        with (\n            patch.object(rc, \"_require_nonreaping_wait_support\"),\n            patch.object(rc.subprocess, \"Popen\", return_value=process),\n            patch.object(rc.threading, \"Thread\", Thread),\n            patch.object(rc, \"_drain_asset_stream\", side_effect=RuntimeError(\"stream failed\")),\n            patch.object(rc, \"_process_has_exited\", return_value=True),\n",
+              "after": "                return None\n\n        process = Process()\n        launch = types.SimpleNamespace(\n            process=process, status_stream=Pipe(), control_fd=-1,\n        )\n        denied = PermissionError(\"test permission denial\")\n        with (\n            patch.object(rc, \"_require_nonreaping_wait_support\"),\n            patch.object(rc, \"_launch_supervised_process\", return_value=launch),\n            patch.object(rc.threading, \"Thread\", Thread),\n            patch.object(rc, \"_drain_asset_stream\", side_effect=RuntimeError(\"stream failed\")),\n            patch.object(rc, \"_process_has_exited\", return_value=True),\n"
+            }
+          ],
+          "canonical_source_sha256": "26c2332f5637c25c57f76e6dd4331ffda7b7e169a72c48e871000a454e1ea41d",
+          "canonical_fragments": [
+            "def test_asset_supervisor_kills_group_before_reaping_wrapper("
+          ]
+        },
+        {
+          "before_sha256": "247afefefaf287865b67d3d94e7797eb0710107867a7d64e164ad718bf9942b1",
+          "after_sha256": "a55b77e90b202c87a18761f6640d8bddc278391ca36e9e44bb98928d096ce199",
+          "hunks": [
+            {
+              "before": "import json\nimport os\nimport sys\n\n# Subprocess calls below use argument vectors with shell=False.\nimport subprocess  # nosec B404\n",
+              "after": "import json\nimport os\nimport sys\nimport struct\n\n# Subprocess calls below use argument vectors with shell=False.\nimport subprocess  # nosec B404\n"
+            },
+            {
+              "before": "\nclass AssetStreamCleanupTests(unittest.TestCase):\n    \"\"\"Ensure a timed-out streaming helper cannot leave pipe-holding descendants.\"\"\"\n\n    def test_asset_deadline_is_decided_before_reaping_observed_leader(self):\n        class Output:\n",
+              "after": "\nclass AssetStreamCleanupTests(unittest.TestCase):\n    \"\"\"Ensure a timed-out streaming helper cannot leave pipe-holding descendants.\"\"\"\n\n    def drain_status_events(self, statuses, eof=True):\n        events = rc.queue.Queue()\n        for frame in statuses:\n            events.put((\"status\", frame))\n        events.put((\"stdout\", None))\n        events.put((\"stderr\", None))\n        if eof:\n            events.put((\"status\", None))\n\n        class Output:\n            def __init__(self):\n                self.data = bytearray()\n\n            def check(self):\n                return None\n\n            def write(self, value):\n                self.data.extend(value)\n\n        output = Output()\n        launch = types.SimpleNamespace(process=object(), control_fd=-1)\n        with (\n            patch.object(rc, \"_kill_owned_process\", return_value=None),\n            patch.object(rc, \"_close_asset_supervisor_control\"),\n        ):\n            result = rc._drain_asset_stream(\n                events, output, [\"gh\"], rc.time.monotonic() + 5, launch,\n            )\n        return result, output.data\n\n    def test_asset_status_frame_accumulates_fragmented_reads(self):\n        frame = struct.pack(\"!4sBi\", b\"IVSP\", 1, 7)\n        result, _output = self.drain_status_events((frame[:3], frame[3:]))\n        self.assertEqual(result, (b\"\", 7))\n\n    def test_asset_status_frame_rejects_oversized_duplicate_and_truncated(self):\n        frame = struct.pack(\"!4sBi\", b\"IVSP\", 1, 0)\n        for label, chunks, expected in (\n            (\"oversized\", (frame + b\"x\",), \"oversized status frame\"),\n            (\"duplicate\", (frame, frame), \"duplicate status\"),\n            (\"truncated\", (frame[:4],), \"without a complete status frame\"),\n        ):\n            with self.subTest(label=label), self.assertRaisesRegex(rc.GitHubError, expected):\n                self.drain_status_events(chunks)\n\n    def test_asset_deadline_is_decided_before_reaping_observed_leader(self):\n        class Output:\n"
+            }
+          ],
+          "canonical_source_sha256": "d0f4f09cb271da5bdc89067626a374266a262e4dc4704938b443c492a74fdbb2"
+        }
+      ],
+      "test_only_successor_layers": [
+        {
+          "canonical_source_sha256": "331a318b5c70866ccffb61b4a2710012f7e4e1ceaf716a9b265b5f942d0d8c44",
+          "before_sha256": "247afefefaf287865b67d3d94e7797eb0710107867a7d64e164ad718bf9942b1",
+          "after_sha256": "e228b8d3065025a8a92c0a6e06d37c856a4d17deabd15ff02f2e374bb11b2982",
+          "hunks": [
+            {
+              "before": "            self.assertEqual([call.kwargs[\"timeout\"] for call in run.call_args_list], [4, 4])",
+              "after": "            timeouts = [call.kwargs[\"timeout\"] for call in run.call_args_list]\n            self.assertEqual(len(timeouts), 2)\n            for timeout in timeouts:\n                self.assertAlmostEqual(timeout, 4)",
+              "canonical_fragments": [
+                "            timeouts = [call.kwargs[\"timeout\"] for call in run.call_args_list]\n            self.assertEqual(len(timeouts), 2)\n            for timeout in timeouts:\n                self.assertAlmostEqual(timeout, 4)"
+              ]
+            },
+            {
+              "before": "            self.assertEqual([call.kwargs[\"timeout\"] for call in run.call_args_list], [1.5, 1.5])\n            sleep.assert_called_once_with(1.5)",
+              "after": "            timeouts = [call.kwargs[\"timeout\"] for call in run.call_args_list]\n            self.assertEqual(len(timeouts), 2)\n            for timeout in timeouts:\n                self.assertAlmostEqual(timeout, 1.5)\n            sleep.assert_called_once()\n            self.assertAlmostEqual(sleep.call_args.args[0], 1.5)",
+              "canonical_fragments": [
+                "            timeouts = [call.kwargs[\"timeout\"] for call in run.call_args_list]\n            self.assertEqual(len(timeouts), 2)\n            for timeout in timeouts:\n                self.assertAlmostEqual(timeout, 1.5)\n            sleep.assert_called_once()\n            self.assertAlmostEqual(sleep.call_args.args[0], 1.5)"
+              ]
+            }
+          ],
+          "canonical_fragments": [
+            "self.assertAlmostEqual(timeout, 4)",
+            "self.assertAlmostEqual(timeout, 1.5)"
+          ]
+        }
+      ],
+      "test_only_overlay_successors": [
+        {
+          "base_sha256": "a55b77e90b202c87a18761f6640d8bddc278391ca36e9e44bb98928d096ce199",
+          "layers": [
+            {
+              "before_sha256": "a55b77e90b202c87a18761f6640d8bddc278391ca36e9e44bb98928d096ce199",
+              "after_sha256": "f49bb2aebec6e0368bb88c4f973a96bdf0580cad978639981cc17565d4d64c2e",
+              "hunks": [
+                {
+                  "before": "                patch.object(rc.time, \"sleep\"),\n            ):\n                self.assertEqual(gh.api(\"releases/7\"), {\"id\": 7})\n            self.assertEqual([call.kwargs[\"timeout\"] for call in run.call_args_list], [4, 4])\n        finally:\n            rc._API_READ_DEADLINE.reset(token)\n\n",
+                  "after": "                patch.object(rc.time, \"sleep\"),\n            ):\n                self.assertEqual(gh.api(\"releases/7\"), {\"id\": 7})\n            timeouts = [call.kwargs[\"timeout\"] for call in run.call_args_list]\n            self.assertEqual(len(timeouts), 2)\n            for timeout in timeouts:\n                self.assertAlmostEqual(timeout, 4)\n        finally:\n            rc._API_READ_DEADLINE.reset(token)\n\n"
+                },
+                {
+                  "before": "                patch.object(rc.time, \"sleep\") as sleep,\n            ):\n                self.assertEqual(gh.api(\"releases/7\"), {\"id\": 7})\n            self.assertEqual([call.kwargs[\"timeout\"] for call in run.call_args_list], [1.5, 1.5])\n            sleep.assert_called_once_with(1.5)\n        finally:\n            rc._API_READ_DEADLINE.reset(token)\n\n",
+                  "after": "                patch.object(rc.time, \"sleep\") as sleep,\n            ):\n                self.assertEqual(gh.api(\"releases/7\"), {\"id\": 7})\n            timeouts = [call.kwargs[\"timeout\"] for call in run.call_args_list]\n            self.assertEqual(len(timeouts), 2)\n            for timeout in timeouts:\n                self.assertAlmostEqual(timeout, 1.5)\n            sleep.assert_called_once()\n            self.assertAlmostEqual(sleep.call_args.args[0], 1.5)\n        finally:\n            rc._API_READ_DEADLINE.reset(token)\n\n"
+                }
+              ],
+              "canonical_source_sha256": "d0f4f09cb271da5bdc89067626a374266a262e4dc4704938b443c492a74fdbb2"
+            }
+          ]
         }
       ]
     },
@@ -868,6 +1177,63 @@
               "after": "    def test_publisher_termination_during_final_tag_read_stops_before_public_release(self):\n        \"\"\"The exact-attempt callback catches termination after the final tag read.\"\"\"\n        plan = self.automatic_build()\n        api = self.gh.api\n        final_tag_reads = 0\n        tag_path = f\"git/ref/tags/{plan['tag']}\"\n\n        def terminate_during_final_tag_read(path, method=\"GET\", body=None):\n            nonlocal final_tag_reads\n            result = api(path, method, body)\n            draft = next((release for release in self.gh.releases.values()\n                          if release[\"tag_name\"] == plan[\"tag\"]), None)\n            if path == tag_path and draft and self.gh.assets[draft[\"id\"]]:\n                final_tag_reads += 1\n                if final_tag_reads == 1:\n                    # The tag GET succeeds, but the publisher ends before the\n                    # exact-attempt GET which immediately precedes the PATCH.\n                    self.gh.runs[99].update(status=\"completed\", conclusion=\"cancelled\")\n            return result\n\n        with patch.object(self.gh, \"api\", side_effect=terminate_during_final_tag_read):\n            with self.assertRaisesRegex(rc.ReleaseError, \"not active\"):\n                lifecycle.publish_versioned(self.args)\n\n        self.assertEqual(final_tag_reads, 1)\n        draft = next(release for release in self.gh.releases.values()\n                     if release[\"tag_name\"] == plan[\"tag\"])\n        self.assertTrue(draft[\"draft\"])\n        self.assertTrue(self.gh.assets[draft[\"id\"]])\n        self.assertFalse(any(method == \"PATCH\" for _, method, _ in self.gh.writes))\n"
             }
           ]
+        },
+        {
+          "before_sha256": "c74f42befa9744a0df51d149b3bb57bff025cd950cbd762a4040e38adcb19dee",
+          "after_sha256": "6ea945a8a915b1071c04954669b53f29320c00dd399e555f4debdb4e983a2030",
+          "canonical_source_sha256": "690cc261cd9827030023593f0b9a16688385a4870f6af719e8d211fe3ba49c33",
+          "hunks": [
+            {
+              "before": "        self.assertEqual(gh.downloads, [rc.MANIFEST, \"package.tar.gz\"])\n        self.assertEqual([asset[\"download_count\"] for asset in gh.assets[10]], [1, 1])\n        self.assertEqual(gh.writes, [])\n\n    def test_payloads_use_streaming_and_only_one_private_staged_file(self):\n        gh = legacy_tests.FakeGitHub()\n",
+              "after": "        self.assertEqual(gh.downloads, [rc.MANIFEST, \"package.tar.gz\"])\n        self.assertEqual([asset[\"download_count\"] for asset in gh.assets[10]], [1, 1])\n        self.assertEqual(gh.writes, [])\n\n    def test_candidate_payload_uses_the_shared_bounded_asset_supervisor(self):\n        gh = DownloadingGitHub()\n        download = rc.download_asset\n        asset_ids = []\n\n        def observe_download(client, asset_id, *args, **kwargs):\n            asset_ids.append(asset_id)\n            return download(client, asset_id, *args, **kwargs)\n\n        with patch.object(rc, \"download_asset\", side_effect=observe_download):\n            manifest, _parent = self.verify(gh)\n\n        self.assertEqual(manifest, legacy_tests.manifest())\n        self.assertEqual(asset_ids, [20])\n        self.assertEqual(gh.downloads, [rc.MANIFEST, \"package.tar.gz\"])\n\n    def test_payloads_use_streaming_and_only_one_private_staged_file(self):\n        gh = legacy_tests.FakeGitHub()\n"
+            }
+          ],
+          "canonical_fragments": [
+            "def test_candidate_payload_uses_the_shared_bounded_asset_supervisor(self):"
+          ]
+        },
+        {
+          "before_sha256": "6ea945a8a915b1071c04954669b53f29320c00dd399e555f4debdb4e983a2030",
+          "after_sha256": "cc4941b5f30eb8c72bd0672674354963319e01bf4b0ae14d2853dd640f4459d3",
+          "canonical_source_sha256": "fd0243beb618e4c18f1a6cfe33ac37129141b4209adac137b4a43d93efb8ef74",
+          "hunks": [
+            {
+              "before": "    def test_payloads_use_streaming_and_only_one_private_staged_file(self):\n",
+              "after": "    def test_candidate_supervisor_failure_aborts_verification_before_writes(self):\n        gh = DownloadingGitHub()\n        denied = rc.GitHubError(\"Asset process-group termination failed; descendants may still be running\")\n\n        with patch.object(rc, \"download_asset\", side_effect=denied):\n            with self.assertRaises(rc.GitHubError) as raised:\n                self.verify(gh)\n\n        self.assertIs(raised.exception, denied)\n        self.assertEqual(gh.writes, [])\n\n    def test_payloads_use_streaming_and_only_one_private_staged_file(self):\n"
+            }
+          ],
+          "canonical_fragments": [
+            "def test_candidate_supervisor_failure_aborts_verification_before_writes(self):"
+          ]
+        },
+        {
+          "before_sha256": "cc4941b5f30eb8c72bd0672674354963319e01bf4b0ae14d2853dd640f4459d3",
+          "after_sha256": "80f0ab757004cc8b51fea2364e498c293166b697a2450b251c8ff462706930a6",
+          "hunks": [
+            {
+              "before": "        plan = self.automatic_build()\n        api = self.gh.api\n        final_tag_reads = 0\n        tag_path = f\"git/ref/tags/{plan['tag']}\"\n\n        def terminate_during_final_tag_read(path, method=\"GET\", body=None):\n            nonlocal final_tag_reads\n            result = api(path, method, body)\n            draft = next((release for release in self.gh.releases.values()\n                          if release[\"tag_name\"] == plan[\"tag\"]), None)\n            if path == tag_path and draft and self.gh.assets[draft[\"id\"]]:\n                final_tag_reads += 1\n                if final_tag_reads == 1:\n                    # The tag GET succeeds, but the publisher ends before the\n                    # exact-attempt GET which immediately precedes the PATCH.\n                    self.gh.runs[99].update(status=\"completed\", conclusion=\"cancelled\")\n            return result\n\n        with patch.object(self.gh, \"api\", side_effect=terminate_during_final_tag_read):\n",
+              "after": "        plan = self.automatic_build()\n        api = self.gh.api\n        final_tag_reads = 0\n        final_boundary_events = []\n        tag_path = f\"git/ref/tags/{plan['tag']}\"\n\n        def terminate_during_final_tag_read(path, method=\"GET\", body=None):\n            nonlocal final_tag_reads\n            if final_boundary_events and path in {\n                \"actions/runs/99\", \"actions/runs/99/jobs\",\n            }:\n                final_boundary_events.append(\"aggregate\")\n            result = api(path, method, body)\n            draft = next((release for release in self.gh.releases.values()\n                          if release[\"tag_name\"] == plan[\"tag\"]), None)\n            if path == tag_path and draft and self.gh.assets[draft[\"id\"]]:\n                final_tag_reads += 1\n                if final_tag_reads == 1:\n                    final_boundary_events.append(\"tag\")\n                    # The tag GET succeeds, but the publisher ends before the\n                    # exact-attempt GET which immediately precedes the PATCH.\n                    self.gh.runs[99].update(status=\"completed\", conclusion=\"cancelled\")\n            elif path == \"actions/runs/99/attempts/1\" and final_boundary_events:\n                final_boundary_events.append(\"attempt\")\n            return result\n\n        with patch.object(self.gh, \"api\", side_effect=terminate_during_final_tag_read):\n"
+            },
+            {
+              "before": "                lifecycle.publish_versioned(self.args)\n\n        self.assertEqual(final_tag_reads, 1)\n        draft = next(release for release in self.gh.releases.values()\n                     if release[\"tag_name\"] == plan[\"tag\"])\n        self.assertTrue(draft[\"draft\"])\n",
+              "after": "                lifecycle.publish_versioned(self.args)\n\n        self.assertEqual(final_tag_reads, 1)\n        self.assertEqual(final_boundary_events, [\"tag\", \"attempt\"])\n        draft = next(release for release in self.gh.releases.values()\n                     if release[\"tag_name\"] == plan[\"tag\"])\n        self.assertTrue(draft[\"draft\"])\n"
+            }
+          ],
+          "canonical_source_sha256": "b51e8fd9d086e6aef69e7cdc7341d81945c5f0b883081b236d19c6c76c9a508b",
+          "canonical_fragments": [
+            "final_boundary_events, [\"tag\", \"attempt\"]"
+          ]
+        },
+        {
+          "before_sha256": "80f0ab757004cc8b51fea2364e498c293166b697a2450b251c8ff462706930a6",
+          "after_sha256": "e9a095866b2583defbc6c25634b3ced18f3b98edc7cd9baa0dfeb78b4d814d46",
+          "hunks": [
+            {
+              "before": "\n        self.assertEqual(final_tag_reads, 1)\n        self.assertEqual(final_boundary_events, [\"tag\", \"attempt\"])\n        draft = next(release for release in self.gh.releases.values()\n                     if release[\"tag_name\"] == plan[\"tag\"])\n        self.assertTrue(draft[\"draft\"])\n",
+              "after": "\n        self.assertEqual(final_tag_reads, 1)\n        self.assertEqual(final_boundary_events, [\"tag\", \"attempt\"])\n        self.assertNotIn(\"aggregate\", final_boundary_events,\n                         \"the post-tag publisher check must remain a single exact-attempt read\")\n        draft = next(release for release in self.gh.releases.values()\n                     if release[\"tag_name\"] == plan[\"tag\"])\n        self.assertTrue(draft[\"draft\"])\n"
+            }
+          ],
+          "canonical_source_sha256": "a367706d05aad0122f7642b8a8d720fa0f61aad098741348befe86e42408f2bf"
         }
       ]
     },
@@ -960,6 +1326,18 @@
       "source_sha256": "3cbcf881dc68ad3a0ec501f333cde13ee2ad7265b63d51ade59dfcaf68873f1f",
       "after_sha256": "8516dd7395b673b68a7294325987fa1c4c69a5e37b6ac7f8fad7156dd1b7964f",
       "addition": true
+    },
+    "scripts/async_process.py": {
+      "before_sha256": null,
+      "after_sha256": "29d9dd778cfc2bc492c25231b2c5b24b03e3eb7428d37d18274971c635f0e30e",
+      "source": "scripts/async_process.py",
+      "source_sha256": "698362252c09ffe2afb173a16ea4d4d74ec3880e6fa2ef0cd45e6f9d2374c0d0"
+    },
+    ".github/release-tests/test_async_process.py": {
+      "before_sha256": null,
+      "after_sha256": "0b7392ed41ca6e16aa49b6df76f2326ae8cb1f9e8a8b0428245823a23bce9a9f",
+      "source": "tests/test_async_process.py",
+      "source_sha256": "6aae273efd3de009e58ed8ed3831a17f45ba3bf45b4833ca34335ccd18e3f770"
     }
   }
 }

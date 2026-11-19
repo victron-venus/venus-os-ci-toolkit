@@ -35,11 +35,27 @@ The release process supervisor supports Linux with Python 3.12 or newer and
 macOS with Python 3.13 or newer. macOS Python 3.12 does not expose the
 `waitid(WNOWAIT)` capability needed to retain process-group identity during
 cleanup. Unsupported operating-system/runtime combinations fail closed before
-starting a process. The supervisor owns the child PID synchronously, captures
-stdout and stderr under one aggregate byte limit, and starts each command in a
-process group so timeout or cancellation can reap the group before returning.
-Leader exit is observed without reaping its PID until the pipes and process-group
-cleanup are finished. Windows browser checks do not invoke this helper.
+starting a process. The supervisor starts a fixed internal wrapper as the
+process-group leader and sends the target argv over a private bounded pipe, not
+the wrapper command line. It captures stdout and stderr under one aggregate
+byte limit. The wrapper stays alive after reporting the target exit status; the
+parent signals the group before draining inherited output pipes and reaping the
+wrapper, so a reused PID is never used as a process-group ID. Timeout,
+cancellation and output-limit cleanup use the same ordering. On ordinary target
+exit, the wrapper waits for and reaps the target before reporting its status. On
+timeout, cancellation or output-limit cleanup, the parent kills the still-live
+wrapper's owned process group; the target may consequently be reparented to
+init/launchd instead of being waitpid-reaped by the wrapper. Successful group
+signaling means the kernel accepted SIGKILL for at least one eligible member
+of the owned process group while the wrapper pinned its identity; it does not
+prove every group member exited. Bounded wrapper reap and pipe EOF bound the
+local call, not every descendant's lifetime. Processes that deliberately move
+into another group/session, cannot be signaled, or remain uninterruptible
+require an outer process/container cleanup boundary. A systemd
+`KillMode=control-group` boundary exists only when this helper runs inside that
+unit; otherwise the caller must provide an equivalent. A signal-permission
+failure or other unverified group-signal error fails closed and is not proof
+that descendants stopped. Windows browser checks do not invoke this helper.
 The caller's command timeout starts after `Popen` returns, so time spent inside
 the operating system's process-creation call is outside that deadline.
 

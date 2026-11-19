@@ -25,6 +25,116 @@ import oci_vulnerability as vulnerability  # noqa: E402
 import oci_header_disposition as headers  # noqa: E402
 
 
+NEW_HEADER_REVIEW_FILES = {
+    "CVE-2026-100081": ["drivers/net/xen-netback/interface.c", "drivers/net/xen-netback/xenbus.c"],
+    "CVE-2026-98890": ["drivers/net/wireless/marvell/libertas/tx.c"],
+    "CVE-2026-98993": ["fs/namespace.c", "include/linux/mount.h"],
+    "CVE-2026-98996": ["fs/pnode.c"],
+    "CVE-2026-98999": ["drivers/gpu/drm/xe/xe_bo.c"],
+    "CVE-2026-99002": ["drivers/gpu/drm/vmwgfx/vmwgfx_cursor_plane.c"],
+    "CVE-2026-99014": ["net/bluetooth/hci_core.c", "net/bluetooth/hci_sync.c"],
+    "CVE-2026-99027": ["drivers/net/team/team_core.c"],
+    "CVE-2026-99083": ["fs/smb/server/smb2pdu.c"],
+    "CVE-2026-99109": ["fs/smb/client/cifssmb.c"],
+    "CVE-2026-99110": ["fs/smb/client/cifssmb.c"],
+    "CVE-2026-99117": ["net/bridge/br_multicast.c"],
+    "CVE-2026-99126": ["drivers/s390/net/ctcm_mpc.c"],
+    "CVE-2026-99128": ["net/sctp/inqueue.c"],
+    "CVE-2026-99138": ["net/ipv4/tcp.c", "net/ipv4/tcp_dctcp.c"],
+    "CVE-2026-99147": ["drivers/gpu/drm/drm_exec.c", "include/drm/drm_exec.h"],
+    "CVE-2026-99152": ["drivers/scsi/libiscsi.c"],
+    "CVE-2026-99153": ["drivers/scsi/libiscsi.c"],
+    "CVE-2026-99154": ["drivers/scsi/libiscsi.c"],
+    "CVE-2026-99166": ["net/rds/rdma_transport.c"],
+    "CVE-2026-99167": ["net/sched/act_api.c"],
+    "CVE-2026-99203": ["fs/pipe.c"],
+    "CVE-2026-99212": ["net/rds/rdma_transport.c"],
+    "CVE-2026-99213": ["net/vmw_vsock/af_vsock.c"],
+    "CVE-2026-99218": ["fs/coredump.c"],
+    "CVE-2026-99227": ["io_uring/waitid.c"],
+    "CVE-2026-99231": ["io_uring/waitid.c"],
+    "CVE-2026-99236": ["kernel/trace/trace_events_filter.c",
+                       "tools/testing/selftests/ftrace/test.d/filter/event-filter-incomplete.tc"],
+    "CVE-2026-99239": ["net/bluetooth/l2cap_core.c", "net/bluetooth/l2cap_sock.c"],
+    "CVE-2026-99260": ["fs/ntfs/ea.c"],
+    "CVE-2026-99270": ["net/ipv4/inet_connection_sock.c"],
+    "CVE-2026-99272": ["fs/smb/client/smb2pdu.c"],
+    "CVE-2026-99274": ["fs/smb/client/smb2ops.c"],
+    "CVE-2026-99275": ["fs/smb/client/smb2misc.c", "fs/smb/client/smb2pdu.c"],
+    "CVE-2026-99282": ["net/sched/sch_teql.c"],
+    "CVE-2026-99284": ["net/core/skbuff.c"],
+    "CVE-2026-99287": ["drivers/net/xen-netback/netback.c"],
+    "CVE-2026-99288": ["net/ipv4/inet_connection_sock.c", "net/ipv4/inet_hashtables.c",
+                       "net/ipv4/syncookies.c", "net/ipv4/tcp_input.c",
+                       "net/ipv6/inet6_hashtables.c"],
+    "CVE-2026-99292": ["fs/smb/client/cifsacl.c"],
+    "CVE-2026-99295": ["fs/smb/client/transport.c"],
+    "CVE-2026-99302": ["drivers/nvme/target/rdma.c"],
+    "CVE-2026-99304": ["fs/ceph/snap.c"],
+    "CVE-2026-99306": ["fs/ceph/mdsmap.c"],
+    "CVE-2026-99310": ["fs/nfsd/nfs4state.c"],
+    "CVE-2026-99311": ["fs/udf/inode.c"],
+}
+
+
+def validate_new_header_review(review, policy, inventories):
+    """Fail closed if the exact reviewed CNA batch or package boundary drifts."""
+    batch = review["review_batches"][0]
+    headers.need(batch["finding_ids"] == sorted(NEW_HEADER_REVIEW_FILES),
+                 "Unexpected header review CVE set")
+    headers.need(set(review["records"]) == set(policy["cve_ids"]),
+                 "Header review records differ from finite policy")
+    headers.need(batch["referenced_stable_patch_count"] == 264
+                 and batch["exported_uapi_patch_hits"] == [],
+                 "Referenced stable patch review changed")
+    for arch in ("amd64", "arm64"):
+        package = policy["packages"][arch]
+        bound = batch["package_bindings"][arch]
+        headers.need(bound["version"] == package["version"]
+                     and bound["sha256"] == package["sha256"]
+                     and bound["files_sha256"] == package["files_sha256"]
+                     and bound["archive_inventory_sha256"] == package["archive_inventory_sha256"],
+                     "Header review package binding changed")
+        for cve, expected_paths in NEW_HEADER_REVIEW_FILES.items():
+            record = review["records"][cve]
+            headers.need(record["files"] == expected_paths,
+                         "Unknown or changed Linux CNA affected path")
+            for source_path in record["files"]:
+                headers.need("/uapi/" not in f"/{source_path}/"
+                             and not source_path.startswith("include/uapi/"),
+                             "Linux CNA affected path intersects exported UAPI")
+                headers.need(not source_path.startswith("arch/") or "/include/uapi/" not in source_path,
+                             "Linux CNA affected path intersects architecture UAPI")
+                headers.need(source_path not in inventories[arch],
+                             "Linux CNA affected source path is in exported package inventory")
+            headers.need(record["provider"] == "Linux"
+                         and record["state"] == "PUBLISHED"
+                         and re.fullmatch(r"[0-9a-f]{64}", record["sha256"]) is not None
+                         and record["url"] == (
+                             "https://raw.githubusercontent.com/CVEProject/cvelistV5/main/cves/2026/"
+                             + cve.rsplit("-", 1)[1][:-3] + "xxx/" + cve + ".json"),
+                         "Missing or unknown Linux CNA source binding")
+            headers.need(record["references"] and record["patches"],
+                         "Linux CNA stable patch provenance is missing")
+            reference_commits = {
+                match.group(1) for reference in record["references"]
+                if (match := re.fullmatch(r"https://git\.kernel\.org/stable/c/([0-9a-f]{40})", reference))
+            }
+            patch_commits = {
+                match.group(1) for patch_entry in record["patches"]
+                if (match := re.fullmatch(
+                    r"https://github\.com/gregkh/linux/commit/([0-9a-f]{40})\.patch", patch_entry["url"]))
+            }
+            headers.need(reference_commits == patch_commits,
+                         "Referenced stable patch set is incomplete or unknown")
+            for patch_entry in record["patches"]:
+                headers.need(re.fullmatch(r"[0-9a-f]{64}", patch_entry["sha256"]) is not None
+                             and patch_entry["url"].startswith("https://github.com/gregkh/linux/commit/")
+                             and patch_entry["url"].endswith(".patch")
+                             and all("/uapi/" not in f"/{p}/" for p in patch_entry["paths"]),
+                             "Unknown or UAPI-changing referenced stable patch")
+
+
 class DownloadTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
@@ -923,6 +1033,34 @@ class HeaderApplicabilityTests(unittest.TestCase):
             next(p for p in packages if p["name"] == "linux-libc-dev")[key] = value
             with self.subTest(key=key), self.assertRaises(ValueError):
                 headers.load_policy(target, self.manifest["header_disposition_sha256"], "amd64", packages)
+
+    def test_new_cna_batch_is_exact_and_absent_from_both_arch_header_inventories(self):
+        review = json.loads((build.INPUTS / "header-cve-evidence.json").read_text())
+        inventories = {
+            arch: {item["path"] for item in json.loads(
+                (build.INPUTS / f"linux-libc-dev-files-{arch}.json").read_text())}
+            for arch in ("amd64", "arm64")
+        }
+        for arch in ("amd64", "arm64"):
+            packages = json.loads((build.INPUTS / f"native-{arch}.json").read_text())["packages"]
+            policy, _, _ = headers.load_policy(
+                build.INPUTS, self.manifest["header_disposition_sha256"], arch, packages)
+            self.assertEqual(policy, self.policy)
+            validate_new_header_review(review, policy, inventories)
+
+        # Negative controls: neither an exported UAPI path nor an unreviewed
+        # source path can silently enter the exact, finite CNA batch.
+        for path in ("include/uapi/linux/example.h", "drivers/unknown/unreviewed.c"):
+            changed = copy.deepcopy(review)
+            changed["records"]["CVE-2026-99287"]["files"].append(path)
+            with self.subTest(path=path), self.assertRaisesRegex(ValueError, "affected path"):
+                validate_new_header_review(changed, self.policy, inventories)
+
+        changed_patch = copy.deepcopy(review)
+        changed_patch["records"]["CVE-2026-99287"]["patches"][0]["paths"].append(
+            "include/uapi/linux/example.h")
+        with self.assertRaisesRegex(ValueError, "UAPI-changing"):
+            validate_new_header_review(changed_patch, self.policy, inventories)
 
     def test_installed_exact_bytes_pass_and_changes_fail(self):
         path, files, owned, dirs = self.installed_fixture()
