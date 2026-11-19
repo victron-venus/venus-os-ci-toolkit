@@ -7,7 +7,6 @@ import os
 from pathlib import Path
 import signal
 import sys
-import subprocess
 import tempfile
 import threading
 import time
@@ -39,9 +38,9 @@ class AsyncProcessTests(unittest.TestCase):
                 return
             # kill(pid, 0) also succeeds for zombies. They cannot run or hold
             # pipes, so distinguish them before declaring leaked live work.
-            status = subprocess.run(
+            status = async_process.run_process(
                 ["/bin/ps", "-o", "stat=", "-p", str(pid)],
-                check=False, capture_output=True, text=True,
+                check=False, timeout=1, text=True,
             )
             if status.returncode != 0 or status.stdout.strip().startswith("Z"):
                 return
