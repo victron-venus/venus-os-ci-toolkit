@@ -14,8 +14,13 @@
     "go.mod": "b676ee5cd734a2366ff88d0bbe23c4be442df9b21116e5ca6ade0452b32aaa92",
     "go.sum": "4b10f5783608bfd60a488ac77bef645f2eb9104a64a79a0d083fb0e1f4e817ee"
   },
+  "oci_error_test_fix": {
+    "before_sha256": "2d070da80c42b6efbd59b9280556d914522e21515c7199fd89dd46123fa8ad18",
+    "after_sha256": "4ebac137435c9824a016d255beb64fe81db97f5e7011982d0b293d11269acebf"
+  },
   "updates": [
     "github.com/containerd/containerd/v2@v2.4.2",
+    "Retain the bounded-read rejection asserted by the compose OCI blob test; the fixed containerd reports the capacity error directly instead of a size-mismatch wrapper",
     "golang.org/x/net@v0.62.0",
     "OpenTelemetry root/SDK/trace1.47.0 via actual Go1.27.4 resolution; all changed selected ZIP+module sums verified, including log and SDK metric companions; fresh binary/image qualification required"
   ],
