@@ -76,15 +76,33 @@ NEW_HEADER_REVIEW_FILES = {
     "CVE-2026-99311": ["fs/udf/inode.c"],
 }
 
+# Extension batch: the two advisories published after the 45-ID review.
+HEADER_REVIEW_EXTENSION_FILES = {
+    "CVE-2026-99312": ["arch/x86/kvm/x86.c"],
+    "CVE-2026-99317": ["include/sound/hwdep.h", "sound/core/hwdep.c"],
+}
+
 
 def validate_new_header_review(review, policy, inventories):
     """Fail closed if the exact reviewed CNA batch or package boundary drifts."""
-    batch = review["review_batches"][0]
-    headers.need(batch["finding_ids"] == sorted(NEW_HEADER_REVIEW_FILES),
-                 "Unexpected header review CVE set")
+    batches = review["review_batches"]
+    headers.need(len(batches) == 2, "Unexpected header review batch count")
     headers.need(set(review["records"]) == set(policy["cve_ids"]),
                  "Header review records differ from finite policy")
-    headers.need(batch["referenced_stable_patch_count"] == 264
+    reviewed = [(batches[0], NEW_HEADER_REVIEW_FILES, 264),
+                (batches[1], HEADER_REVIEW_EXTENSION_FILES, 8)]
+    for batch, expected_files, patch_count in reviewed:
+        validate_header_batch(review, batch, expected_files, patch_count, policy, inventories)
+    headers.need(batches[1]["finding_ids"] == sorted(HEADER_REVIEW_EXTENSION_FILES)
+                 and batches[1]["gate_artifacts"]["amd64"]["artifact"] == "oci-source-evidence-amd64",
+                 "Extension review batch is not bound to its hosted evidence")
+
+
+def validate_header_batch(review, batch, expected_files, patch_count, policy, inventories):
+    """Apply one batch's exact CNA, patch and package-inventory invariants."""
+    headers.need(batch["finding_ids"] == sorted(expected_files),
+                 "Unexpected header review CVE set")
+    headers.need(batch["referenced_stable_patch_count"] == patch_count
                  and batch["exported_uapi_patch_hits"] == [],
                  "Referenced stable patch review changed")
     for arch in ("amd64", "arm64"):
@@ -95,7 +113,7 @@ def validate_new_header_review(review, policy, inventories):
                      and bound["files_sha256"] == package["files_sha256"]
                      and bound["archive_inventory_sha256"] == package["archive_inventory_sha256"],
                      "Header review package binding changed")
-        for cve, expected_paths in NEW_HEADER_REVIEW_FILES.items():
+        for cve, expected_paths in expected_files.items():
             record = review["records"][cve]
             headers.need(record["files"] == expected_paths,
                          "Unknown or changed Linux CNA affected path")
