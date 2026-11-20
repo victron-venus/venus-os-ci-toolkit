@@ -918,6 +918,21 @@ class BrowserCompatibilityTests(unittest.TestCase):
         self.assertEqual(recovery["timeout-minutes"], "3")
         self.assertEqual(recovery["if"], "${{ always() && inputs.browser-evidence-upload-retry && steps.evidence_snapshot.outcome == 'success' && steps.lock.outcome == 'success' }}")
 
+    def test_upload_recovery_waits_for_artifact_indexing_before_named_readback(self):
+        """An immediate read-back can outrun artifact indexing after upload."""
+        steps = WORKFLOW["jobs"]["browser"]["steps"]
+        ids = [step.get("id") for step in steps]
+        wait = next(step for step in steps if step.get("id") == "evidence_visibility")
+        self.assertLess(ids.index("evidence_visibility"), ids.index("evidence_readback"))
+        self.assertEqual(wait["timeout-minutes"], "2")
+        self.assertEqual(wait["env"]["EVIDENCE_ARTIFACT_NAME"],
+                         "${{ inputs.browser-evidence-prefix }}-${{ matrix.id }}-${{ github.run_attempt }}")
+        self.assertIn("steps.evidence_upload.outcome == 'success'", wait["if"])
+        self.assertIn("steps.evidence_upload_retry.outcome == 'success'", wait["if"])
+        self.assertIn("for attempt in $(seq 1 24)", wait["run"])
+        self.assertIn("sleep 2", wait["run"])
+        self.assertIn("never became visible", wait["run"])
+
     def test_upload_recovery_snapshots_and_reads_back_the_exact_hidden_tree(self):
         evidence = self.prepare_recovery()
         result = self.run_recovery("snapshot")

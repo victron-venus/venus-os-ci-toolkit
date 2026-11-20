@@ -755,6 +755,28 @@ jobs:
           overwrite: false
           if-no-files-found: error
           retention-days: ${{ job.status == 'success' && inputs.browser-release-channel == '' && inputs.browser-success-report-retention-days || 14 }}
+      - name: Wait for the uploaded evidence artifact to become visible
+        id: evidence_visibility
+        if: ${{ always() && inputs.browser-evidence-upload-retry && steps.evidence_snapshot.outcome == 'success' && steps.lock.outcome == 'success' && (steps.evidence_upload.outcome == 'success' || steps.evidence_upload_retry.outcome == 'success') }}
+        timeout-minutes: 2
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVIDENCE_ARTIFACT_NAME: ${{ inputs.browser-evidence-prefix }}-${{ matrix.id }}-${{ github.run_attempt }}
+        run: |
+          # Upload finalisation can precede artifact indexing, so an immediate
+          # read-back by name fails with "Artifact not found". Wait a bounded time
+          # for the exact name to appear; the read-back below stays exact.
+          for attempt in $(seq 1 24); do
+            visible=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?per_page=100" \
+              --jq "[.artifacts[] | select(.name == \"$EVIDENCE_ARTIFACT_NAME\")] | length" 2>/dev/null || true)
+            if [ "${visible:-0}" -ge 1 ]; then
+              sleep 2
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Uploaded browser evidence artifact never became visible to the artifacts API" >&2
+          exit 1
       - name: Read back browser evidence after optional upload recovery
         id: evidence_readback
         if: ${{ always() && inputs.browser-evidence-upload-retry && steps.evidence_snapshot.outcome == 'success' && steps.lock.outcome == 'success' }}
