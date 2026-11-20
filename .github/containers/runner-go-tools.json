@@ -79,10 +79,10 @@
         "go.sum": "c7958ca4e417c9da1dc013e51923633385fe1e7814f651cdc432719bb0607dd8"
       },
       "fixed_locks": {
-        "go.mod": "abd20dcb5491cf84407f6c7fd44871901e751c028df7bc5c69685d965375c165",
-        "go.sum": "af766cc7236f44bc4fe2b72b8d56a75c736128783e8af530fd33f7d9b556d49d"
+        "go.mod": "b676ee5cd734a2366ff88d0bbe23c4be442df9b21116e5ca6ade0452b32aaa92",
+        "go.sum": "4b10f5783608bfd60a488ac77bef645f2eb9104a64a79a0d083fb0e1f4e817ee"
       },
-      "downstream_version": "v5.6.1+victron.security.3"
+      "downstream_version": "v5.6.1+victron.security.4"
     }
   }
 }
