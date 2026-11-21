@@ -99,6 +99,8 @@ class BrowserCompatibilityTests(unittest.TestCase):
         for name, value in step["env"].items():
             if value == "${{ steps.evidence_readback.outcome }}":
                 env[name] = outcome
+            elif value == "${{ steps.evidence_readback_retry.outcome }}":
+                env[name] = "skipped"
             elif value == "${{ github.workspace }}":
                 env[name] = str(self.root)
             elif value == ".compatibility/${{ matrix.id }}":
@@ -916,22 +918,39 @@ class BrowserCompatibilityTests(unittest.TestCase):
         self.assertNotIn("run-id", recovery["with"])
         self.assertNotIn("github-token", recovery["with"])
         self.assertEqual(recovery["timeout-minutes"], "3")
+        self.assertEqual(recovery["continue-on-error"], "true")
         self.assertEqual(recovery["if"], "${{ always() && inputs.browser-evidence-upload-retry && steps.evidence_snapshot.outcome == 'success' && steps.lock.outcome == 'success' }}")
 
     def test_upload_recovery_waits_for_artifact_indexing_before_named_readback(self):
-        """An immediate read-back can outrun artifact indexing after upload."""
+        """An immediate read-back can outrun artifact indexing after upload.
+
+        The wait must not list artifacts over REST: that needs "actions: read",
+        which reusable-workflow callers are not required to grant.
+        """
         steps = WORKFLOW["jobs"]["browser"]["steps"]
         ids = [step.get("id") for step in steps]
-        wait = next(step for step in steps if step.get("id") == "evidence_visibility")
-        self.assertLess(ids.index("evidence_visibility"), ids.index("evidence_readback"))
-        self.assertEqual(wait["timeout-minutes"], "2")
-        self.assertEqual(wait["env"]["EVIDENCE_ARTIFACT_NAME"],
+        self.assertNotIn("evidence_visibility", ids)
+        self.assertLess(ids.index("evidence_readback"), ids.index("evidence_readback_wait"))
+        self.assertLess(ids.index("evidence_readback_wait"), ids.index("evidence_readback_retry"))
+        wait = next(step for step in steps if step.get("id") == "evidence_readback_wait")
+        self.assertEqual(wait["timeout-minutes"], "1")
+        self.assertIn("steps.evidence_readback.outcome == 'failure'", wait["if"])
+        self.assertIn("sleep 30", wait["run"])
+        retry = next(step for step in steps if step.get("id") == "evidence_readback_retry")
+        self.assertEqual(retry["uses"].split()[0], "actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333")
+        self.assertEqual(retry["with"]["name"],
                          "${{ inputs.browser-evidence-prefix }}-${{ matrix.id }}-${{ github.run_attempt }}")
-        self.assertIn("steps.evidence_upload.outcome == 'success'", wait["if"])
-        self.assertIn("steps.evidence_upload_retry.outcome == 'success'", wait["if"])
-        self.assertIn("for attempt in $(seq 1 24)", wait["run"])
-        self.assertIn("sleep 2", wait["run"])
-        self.assertIn("never became visible", wait["run"])
+        self.assertEqual(retry["with"]["path"], "${{ runner.temp }}/browser-evidence-readback-${{ matrix.id }}")
+        recovery = next(step for step in steps if step.get("id") == "evidence_readback")
+        self.assertEqual(recovery["with"], retry["with"])
+        for step in (recovery, retry):
+            self.assertEqual(step["continue-on-error"], "true")
+            self.assertNotIn("github-token", step["with"])
+            self.assertNotIn("run-id", step["with"])
+        self.assertEqual(WORKFLOW["permissions"], {"contents": "read"})
+        for job in WORKFLOW["jobs"].values():
+            self.assertNotIn("actions", job.get("permissions", {}))
+        self.assertFalse([step for step in steps if "gh api" in step.get("run", "")])
 
     def test_upload_recovery_snapshots_and_reads_back_the_exact_hidden_tree(self):
         evidence = self.prepare_recovery()

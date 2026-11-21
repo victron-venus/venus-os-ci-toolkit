@@ -755,31 +755,30 @@ jobs:
           overwrite: false
           if-no-files-found: error
           retention-days: ${{ job.status == 'success' && inputs.browser-release-channel == '' && inputs.browser-success-report-retention-days || 14 }}
-      - name: Wait for the uploaded evidence artifact to become visible
-        id: evidence_visibility
-        if: ${{ always() && inputs.browser-evidence-upload-retry && steps.evidence_snapshot.outcome == 'success' && steps.lock.outcome == 'success' && (steps.evidence_upload.outcome == 'success' || steps.evidence_upload_retry.outcome == 'success') }}
-        timeout-minutes: 2
-        env:
-          GH_TOKEN: ${{ github.token }}
-          EVIDENCE_ARTIFACT_NAME: ${{ inputs.browser-evidence-prefix }}-${{ matrix.id }}-${{ github.run_attempt }}
-        run: |
-          # Upload finalisation can precede artifact indexing, so an immediate
-          # read-back by name fails with "Artifact not found". Wait a bounded time
-          # for the exact name to appear; the read-back below stays exact.
-          for attempt in $(seq 1 24); do
-            visible=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/artifacts?per_page=100" \
-              --jq "[.artifacts[] | select(.name == \"$EVIDENCE_ARTIFACT_NAME\")] | length" 2>/dev/null || true)
-            if [ "${visible:-0}" -ge 1 ]; then
-              sleep 2
-              exit 0
-            fi
-            sleep 2
-          done
-          echo "Uploaded browser evidence artifact never became visible to the artifacts API" >&2
-          exit 1
       - name: Read back browser evidence after optional upload recovery
         id: evidence_readback
         if: ${{ always() && inputs.browser-evidence-upload-retry && steps.evidence_snapshot.outcome == 'success' && steps.lock.outcome == 'success' }}
+        continue-on-error: true
+        timeout-minutes: 3
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ inputs.browser-evidence-prefix }}-${{ matrix.id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/browser-evidence-readback-${{ matrix.id }}
+      - name: Wait for artifact indexing before the named read-back retry
+        id: evidence_readback_wait
+        if: ${{ always() && inputs.browser-evidence-upload-retry && steps.evidence_snapshot.outcome == 'success' && steps.lock.outcome == 'success' && steps.evidence_readback.outcome == 'failure' }}
+        timeout-minutes: 1
+        run: |
+          # Upload finalisation can precede artifact indexing, so an immediate
+          # read-back by name fails with "Artifact not found". Listing artifacts
+          # over REST needs "actions: read", which this reusable workflow must not
+          # request from its callers, so indexing is waited on by retrying only the
+          # named download. The read-back below still verifies exact bytes.
+          sleep 30
+      - name: Retry the named browser evidence read-back once
+        id: evidence_readback_retry
+        if: ${{ always() && inputs.browser-evidence-upload-retry && steps.evidence_snapshot.outcome == 'success' && steps.lock.outcome == 'success' && steps.evidence_readback.outcome == 'failure' }}
+        continue-on-error: true
         timeout-minutes: 3
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -790,6 +789,7 @@ jobs:
         timeout-minutes: 1
         env:
           EVIDENCE_READBACK_OUTCOME: ${{ steps.evidence_readback.outcome }}
+          EVIDENCE_READBACK_RETRY_OUTCOME: ${{ steps.evidence_readback_retry.outcome }}
           BROWSER_EVIDENCE_DIRECTORY: .compatibility/${{ matrix.id }}
           BROWSER_EVIDENCE_SNAPSHOT: ${{ runner.temp }}/browser-evidence-${{ matrix.id }}.json
           BROWSER_EVIDENCE_READBACK: ${{ runner.temp }}/browser-evidence-readback-${{ matrix.id }}
@@ -797,7 +797,7 @@ jobs:
           BROWSER_EVIDENCE_HELPER: ${{ runner.temp }}/browser-evidence-recovery-${{ matrix.id }}.cjs
           GITHUB_WORKSPACE: ${{ github.workspace }}
         run: |
-          if [[ "$EVIDENCE_READBACK_OUTCOME" != "success" ]]; then
+          if [[ "$EVIDENCE_READBACK_OUTCOME" != "success" && "$EVIDENCE_READBACK_RETRY_OUTCOME" != "success" ]]; then
             echo "Exact current-run browser evidence artifact could not be read back" >&2
             exit 1
           fi
