@@ -204,7 +204,8 @@ reviewed commit. Runtime and promotion still require their existing gates.
 ### Finite Linux header applicability
 
 The [reviewed policy](../.github/oci-tools/header-disposition.json) binds a finite
-set of 385 observed CVEs to Ubuntu 24.04 `linux-libc-dev` version `6.8.0-149.149`
+set of 432 observed CVEs (the original 385, a 45-ID extension and a 2-ID extension)
+to Ubuntu 24.04 `linux-libc-dev` version `6.8.0-149.149`
 after the explicit input revalidation below, with separate amd64/arm64 archive
 hashes, sizes, complete member inventories and
 installed-file hashes. It is **inactive while `reviewed` is false**. It is not a
@@ -218,6 +219,19 @@ implementations being absent from this userspace component. It relies on the
 published affected-component metadata and reviewed patches; it is not a new audit
 of all kernel code. The older [Canonical explanation](https://lists.ubuntu.com/archives/kernel-team/2024-February/148886.html)
 provides context, not the verdict for newer CVEs.
+
+The second extension reviewed the two HIGH advisories that reached the Ubuntu scanner
+database after the 45-ID batch: `CVE-2026-99312`
+([KVM x86 INIT MMU reset](https://www.cve.org/CVERecord?id=CVE-2026-99312), affected
+`arch/x86/kvm/x86.c`) and `CVE-2026-99317`
+([ALSA hwdep DSP load serialization](https://www.cve.org/CVERecord?id=CVE-2026-99317),
+affected `include/sound/hwdep.h` and `sound/core/hwdep.c`). Both raw CNA records are
+SHA-256 bound in the evidence file, and all eight referenced stable patches were
+fetched and hashed. None of the affected paths is a packaged exported header in
+either locked inventory, and no referenced patch changes `include/uapi` or
+`arch/*/include/uapi`, so these are kernel-implementation defects absent from this
+userspace component. The batch binds its own hosted gate artifacts, and any later
+CNA, patch or package drift requires a fresh review.
 
 One case, `CVE-2026-80668`, does touch an exported UAPI path. Its
 [upstream patch](https://github.com/torvalds/linux/commit/b8b09dc2bf35a00d4e0556b5d6308c7b917ebda2)

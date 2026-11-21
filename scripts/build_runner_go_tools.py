@@ -210,7 +210,8 @@ def install_locks(source, locks, spec):
             and binding["fixed_locks"] == spec["fixed_locks"]
             and binding.get("retained_namesgenerator") == spec.get("retained_namesgenerator")
             and binding.get("runtime_test_fix") == spec.get("runtime_test_fix")
-            and binding.get("idna_test_fix") == spec.get("idna_test_fix"),
+            and binding.get("idna_test_fix") == spec.get("idna_test_fix")
+            and binding.get("oci_error_test_fix") == spec.get("oci_error_test_fix"),
             "Lock preparation binding changed")
     for name in ("go.mod", "go.sum"):
         require(digest(source / name) == spec["original_locks"][name],
@@ -287,6 +288,34 @@ def verify_idna_test(source, spec):
     if fix is not None:
         require(digest(source / "policy/validate_test.go") == fix["after_sha256"],
                 "IDNA test changed during build")
+
+
+def fix_oci_error_test(source, spec):
+    """Retain the bounded-read rejection the compose OCI test asserts."""
+    fix = spec.get("oci_error_test_fix")
+    if fix is None:
+        return
+    require(spec["repository"] == "docker/compose", "Unexpected OCI error test owner")
+    path = source / "internal/oci/resolver_test.go"
+    require(path.is_file() and not path.is_symlink() and digest(path) == fix["before_sha256"],
+            "OCI error test source identity changed")
+    original = path.read_bytes()
+    before = b'\tassert.ErrorContains(t, err, "size mismatch")\n'
+    after = (b'\t// containerd 2.4.2 reports the bounded read itself instead of a\n'
+             b'\t// "size mismatch" wrapper; the read must still stop at the declared size.\n'
+             b'\tassert.ErrorContains(t, err, "read past expected size")\n')
+    require(original.count(before) == 1, "Expected one bounded-read assertion")
+    changed = original.replace(before, after)
+    require(hashlib.sha256(changed).hexdigest() == fix["after_sha256"],
+            "OCI error test result identity changed")
+    path.write_bytes(changed)
+
+
+def verify_oci_error_test(source, spec):
+    fix = spec.get("oci_error_test_fix")
+    if fix is not None:
+        require(digest(source / "internal/oci/resolver_test.go") == fix["after_sha256"],
+                "OCI error test changed during build")
 
 
 def retain_namesgenerator(source, spec):
@@ -515,6 +544,7 @@ def build(name, manifest, build_root=BUILD_ROOT, output=OUTPUT):
     retain_namesgenerator(source, spec)
     fix_runtime_test(source, spec)
     fix_idna_test(source, spec)
+    fix_oci_error_test(source, spec)
     tags = {"containerd": "urfave_cli_no_docs,osusergo,netgo,static_build", "compose": "e2e"}.get(name)
     tag_arguments = ["-tags", tags] if tags else []
     packages = test_packages(name, run(["go", "list", *tag_arguments, "./..."], source, capture=True).stdout.splitlines())
@@ -552,6 +582,7 @@ def build(name, manifest, build_root=BUILD_ROOT, output=OUTPUT):
         require(digest(source / lock) == spec["fixed_locks"][lock], "Build changed reviewed locks")
     verify_runtime_test(source, spec)
     verify_idna_test(source, spec)
+    verify_oci_error_test(source, spec)
     preserve_notices(source, output / "notices" / name, name, spec, commands,
                      architecture, test_command, output, unit_dependencies)
     for lock in ("go.mod", "go.sum"):
