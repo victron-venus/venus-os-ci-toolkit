@@ -38,7 +38,10 @@ retries that upload at most once if the first upload step fails. It then downloa
 the exact artifact name for the current workflow run and attempt and compares the
 complete file list, sizes and SHA-256 hashes with both the snapshot and the original
 evidence directory. The job remains failed if that read-back is missing, incomplete,
-or differs. The option does not retry tests or change the browser verdict contract.
+or differs. Upload finalisation can precede artifact indexing, so the job first waits
+for that exact name to appear in the run's artifacts API (bounded polling, about 50
+seconds) and only then downloads it; a name that never appears still fails the job.
+The option does not retry tests or change the browser verdict contract.
 
 The recovery path rejects symlinks, hard-linked or special files, empty trees,
 concurrent source changes, more than 4,096 files, 8,192 total files/directories,
