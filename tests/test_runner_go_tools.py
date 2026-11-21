@@ -191,6 +191,7 @@ class RunnerGoToolTests(unittest.TestCase):
             self.assertEqual(origin.get('retained_namesgenerator'), spec.get('retained_namesgenerator'))
             self.assertEqual(origin.get('runtime_test_fix'), spec.get('runtime_test_fix'))
             self.assertEqual(origin.get('idna_test_fix'), spec.get('idna_test_fix'))
+            self.assertEqual(origin.get('oci_error_test_fix'), spec.get('oci_error_test_fix'))
             for lock in ('go.mod', 'go.sum'):
                 self.assertEqual(TOOLS.digest(folder / lock), spec['fixed_locks'][lock])
             self.assertIn('golang.org/x/net v0.62.0', (folder / 'go.mod').read_text())
@@ -322,6 +323,60 @@ class RunnerGoToolTests(unittest.TestCase):
         spec['idna_test_fix']['before_sha256'] = '0' * 64
         with self.assertRaisesRegex(ValueError, 'Lock preparation binding'):
             TOOLS.install_locks(self.root, TOOLS.LOCKS / 'buildx', spec)
+
+    def oci_error_fixture(self):
+        path = self.root / 'internal/oci/resolver_test.go'
+        path.parent.mkdir(parents=True)
+        before = (b'package oci\n\nfunc TestGetBlob_RejectsSizeMismatch(t *testing.T) {\n'
+                  b'\t_, err = GetBlob(t.Context(), resolver, ref, spec.Descriptor{})\n'
+                  b'\tassert.ErrorContains(t, err, "size mismatch")\n}\n')
+        path.write_bytes(before)
+        after = before.replace(
+            b'\tassert.ErrorContains(t, err, "size mismatch")\n',
+            b'\t// containerd 2.4.2 reports the bounded read itself instead of a\n'
+            b'\t// "size mismatch" wrapper; the read must still stop at the declared size.\n'
+            b'\tassert.ErrorContains(t, err, "read past expected size")\n')
+        spec = {'repository': 'docker/compose', 'oci_error_test_fix': {
+            'before_sha256': hashlib.sha256(before).hexdigest(),
+            'after_sha256': hashlib.sha256(after).hexdigest()}}
+        return path, spec, before, after
+
+    def test_oci_error_correction_keeps_the_bounded_read_assertion(self):
+        path, spec, _, after = self.oci_error_fixture()
+        TOOLS.fix_oci_error_test(self.root, spec)
+        self.assertEqual(path.read_bytes(), after)
+        self.assertIn(b'assert.ErrorContains(t, err, "read past expected size")', after)
+        self.assertNotIn(b'assert.ErrorContains(t, err, "size mismatch")', after)
+        TOOLS.verify_oci_error_test(self.root, spec)
+        path.write_bytes(after + b'// drift')
+        with self.assertRaisesRegex(ValueError, 'changed during build'):
+            TOOLS.verify_oci_error_test(self.root, spec)
+
+    def test_oci_error_correction_rejects_wrong_source_result_owner_and_links(self):
+        path, spec, before, _ = self.oci_error_fixture()
+        spec['oci_error_test_fix']['after_sha256'] = '0' * 64
+        with self.assertRaisesRegex(ValueError, 'result identity'):
+            TOOLS.fix_oci_error_test(self.root, spec)
+        self.assertEqual(path.read_bytes(), before)
+        path.write_bytes(before + b'// drift')
+        with self.assertRaisesRegex(ValueError, 'source identity'):
+            TOOLS.fix_oci_error_test(self.root, spec)
+        path.unlink()
+        target = self.root / 'oci-target'
+        target.write_bytes(before)
+        path.symlink_to(target)
+        with self.assertRaisesRegex(ValueError, 'source identity'):
+            TOOLS.fix_oci_error_test(self.root, spec)
+        spec['repository'] = 'docker/buildx'
+        with self.assertRaisesRegex(ValueError, 'test owner'):
+            TOOLS.fix_oci_error_test(self.root, spec)
+        self.assertEqual(target.read_bytes(), before)
+
+    def test_oci_error_correction_is_bound_to_original_source_record(self):
+        spec = copy.deepcopy(self.manifest['components']['compose'])
+        spec['oci_error_test_fix']['before_sha256'] = '0' * 64
+        with self.assertRaisesRegex(ValueError, 'Lock preparation binding'):
+            TOOLS.install_locks(self.root, TOOLS.LOCKS / 'compose', spec)
 
     def retained_fixture(self):
         source = self.root / 'source'

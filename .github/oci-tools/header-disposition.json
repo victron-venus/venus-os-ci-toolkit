@@ -430,7 +430,9 @@
     "CVE-2026-99304",
     "CVE-2026-99306",
     "CVE-2026-99310",
-    "CVE-2026-99311"
+    "CVE-2026-99311",
+    "CVE-2026-99312",
+    "CVE-2026-99317"
   ],
   "distro": {
     "Family": "ubuntu",
@@ -578,14 +580,14 @@
     }
   },
   "reason": "The exact reviewed CVE defects occur in kernel implementation absent from this userspace component. This does not clear linked native libraries or the booted kernel, and does not claim that headers cannot contain executable inline code.",
-  "review_evidence": "2d4866f6669bb4ae1c28e99e0914145cba5fa9882c3d3d2a7df92bc97cd50f1b",
+  "review_evidence": "782185dcc8e8cc98698b50599c4bf06c399a1d7ffe1797300c1d569ea6a20627",
   "reviewed": true,
   "schema": 1,
   "review_batch": {
-    "id": "oci-native-trivy-header-applicability-44459215189",
-    "finding_count": 45,
-    "source_commit": "8ac6821813f4a151212a88db16e467339c274e42",
-    "review_evidence_sha256": "2d4866f6669bb4ae1c28e99e0914145cba5fa9882c3d3d2a7df92bc97cd50f1b",
+    "id": "oci-native-trivy-header-applicability-44835640626",
+    "finding_count": 2,
+    "source_commit": "82055a618472441131644b33b669b99728687df4",
+    "review_evidence_sha256": "782185dcc8e8cc98698b50599c4bf06c399a1d7ffe1797300c1d569ea6a20627",
     "package_scope": "linux-libc-dev 6.8.0-149.149, amd64 and arm64; exact package and inventory bindings remain in packages."
   }
 }
