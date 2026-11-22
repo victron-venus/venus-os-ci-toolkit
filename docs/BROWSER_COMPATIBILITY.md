@@ -38,19 +38,22 @@ retries that upload at most once if the first upload step fails. It then downloa
 the exact artifact name for the current workflow run and attempt and compares the
 complete file list, sizes and SHA-256 hashes with both the snapshot and the original
 evidence directory. The job remains failed if that read-back is missing, incomplete,
-or differs. Upload finalisation can precede artifact indexing, so the job first waits
-for that exact name to appear in the run's artifacts API (bounded polling, about 50
-seconds) and only then downloads it; a name that never appears still fails the job.
-The option does not retry tests or change the browser verdict contract.
+or differs. Upload finalisation can precede artifact indexing, so a failed read-back
+is not repeated immediately: the job pauses for 30 seconds and then repeats the same
+exact-name download once. It does not poll the run's artifacts API, because listing
+artifacts needs `actions: read`, which this reusable workflow does not request from
+its callers; an artifact that never becomes downloadable still fails the job. The
+option does not retry tests or change the browser verdict contract.
 
 The recovery path rejects symlinks, hard-linked or special files, empty trees,
 concurrent source changes, more than 4,096 files, 8,192 total files/directories,
 more than 512 MiB, a snapshot over 4 MiB, and directory nesting deeper than 32
-levels. Snapshot and read-back checks have five-minute limits; each upload attempt
-has an eight-minute limit when recovery is enabled. It does not overwrite or delete
-an artifact. Leave the option off unless a caller needs to tolerate a transient
-upload-service failure; default workflow behavior and artifact retention remain
-unchanged.
+levels. With recovery enabled, the helper and snapshot steps each have a one-minute
+limit, each upload attempt has three minutes instead of the ordinary 35, each
+read-back download has three minutes, and the indexing pause and the final exact
+requirement each have one minute. It does not overwrite or delete an artifact. Leave
+the option off unless a caller needs to tolerate a transient upload-service failure;
+default workflow behavior and artifact retention remain unchanged.
 
 ```yaml
 with:
