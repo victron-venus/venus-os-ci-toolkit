@@ -90,14 +90,18 @@ class BrowserCompatibilityTests(unittest.TestCase):
             cwd=self.root, env=self.env, capture_output=True, text=True, check=False,
         )
 
-    def run_final_evidence_check(self, outcome):
+    def run_final_evidence_check(self, outcome, upload_outcome="success", upload_retry_outcome="success"):
         step = next(
             step for step in WORKFLOW["jobs"]["browser"]["steps"]
             if step.get("name") == "Require exact browser evidence read-back"
         )
         env = self.env.copy()
         for name, value in step["env"].items():
-            if value == "${{ steps.evidence_readback.outcome }}":
+            if value == "${{ steps.evidence_upload.outcome }}":
+                env[name] = upload_outcome
+            elif value == "${{ steps.evidence_upload_retry.outcome }}":
+                env[name] = upload_retry_outcome
+            elif value == "${{ steps.evidence_readback.outcome }}":
                 env[name] = outcome
             elif value == "${{ steps.evidence_readback_retry.outcome }}":
                 env[name] = "skipped"
@@ -1104,6 +1108,103 @@ class BrowserCompatibilityTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("could not be read back", result.stderr)
 
+    def test_upload_recovery_preserves_evidence_when_the_snapshot_fails(self):
+        """A permanent snapshot failure must not cancel the immutable upload."""
+        steps = WORKFLOW["jobs"]["browser"]["steps"]
+        by_id = {step.get("id"): step for step in steps}
+        self.assertEqual(by_id["evidence_upload"]["if"],
+                         "${{ always() && steps.lock.outcome == 'success' }}")
+        self.assertEqual(by_id["evidence_upload_retry"]["if"],
+                         "${{ always() && inputs.browser-evidence-upload-retry && steps.lock.outcome == 'success' && steps.evidence_upload.outcome == 'failure' }}")
+        for name in ("evidence_readback", "evidence_readback_wait", "evidence_readback_retry"):
+            self.assertIn("steps.evidence_snapshot.outcome == 'success'", by_id[name]["if"])
+
+        order = [step.get("id") for step in steps if step.get("id")]
+        self.assertLess(order.index("evidence_upload"), order.index("evidence_snapshot_failure"))
+        self.assertLess(order.index("evidence_upload_retry"), order.index("evidence_snapshot_failure"))
+        failure = by_id["evidence_snapshot_failure"]
+        self.assertEqual(failure["timeout-minutes"], "1")
+        self.assertEqual(
+            failure["if"],
+            "${{ always() && inputs.browser-evidence-upload-retry && steps.lock.outcome == 'success' && steps.evidence_snapshot.outcome != 'success' }}",
+        )
+
+        def run(upload, retry):
+            return subprocess.run(
+                ["bash", "-e", "-o", "pipefail", "-c", failure["run"]],
+                env=self.env | {"EVIDENCE_SNAPSHOT_OUTCOME": "failure",
+                                "EVIDENCE_UPLOAD_OUTCOME": upload,
+                                "EVIDENCE_UPLOAD_RETRY_OUTCOME": retry},
+                capture_output=True, text=True, check=False,
+            )
+
+        preserved = run("success", "skipped")
+        self.assertEqual(preserved.returncode, 1)
+        self.assertIn("recovery snapshot did not succeed (failure)", preserved.stderr)
+        self.assertIn("preserved without exact verification", preserved.stderr)
+        lost = run("failure", "failure")
+        self.assertEqual(lost.returncode, 1)
+        self.assertIn("no artifact was preserved", lost.stderr)
+
+    def test_upload_recovery_reports_the_actual_failure_cause(self):
+        self.prepare_recovery()
+        self.assertEqual(self.run_recovery("snapshot").returncode, 0)
+        upload_failed = self.run_final_evidence_check(
+            "failure", upload_outcome="failure", upload_retry_outcome="failure"
+        )
+        self.assertNotEqual(upload_failed.returncode, 0)
+        self.assertIn("upload failed twice", upload_failed.stderr)
+        readback_failed = self.run_final_evidence_check("failure")
+        self.assertNotEqual(readback_failed.returncode, 0)
+        self.assertIn("could not be read back by its exact name", readback_failed.stderr)
+
+    def test_upload_recovery_summary_lists_outcomes_and_the_cause(self):
+        step = next(step for step in WORKFLOW["jobs"]["browser"]["steps"]
+                    if step.get("id") == "evidence_recovery_summary")
+        self.assertEqual(
+            step["if"],
+            "${{ always() && inputs.browser-evidence-upload-retry && steps.lock.outcome == 'success' }}",
+        )
+        self.assertEqual(step["timeout-minutes"], "1")
+        cases = (
+            ({"EVIDENCE_SNAPSHOT_OUTCOME": "failure", "EVIDENCE_UPLOAD_OUTCOME": "success",
+              "EVIDENCE_UPLOAD_RETRY_OUTCOME": "skipped", "EVIDENCE_READBACK_OUTCOME": "skipped",
+              "EVIDENCE_READBACK_RETRY_OUTCOME": "skipped", "EVIDENCE_VERIFIED": ""},
+             "the recovery snapshot was unavailable (failure); evidence preservation depended on the upload alone"),
+            ({"EVIDENCE_SNAPSHOT_OUTCOME": "success", "EVIDENCE_UPLOAD_OUTCOME": "failure",
+              "EVIDENCE_UPLOAD_RETRY_OUTCOME": "failure", "EVIDENCE_READBACK_OUTCOME": "failure",
+              "EVIDENCE_READBACK_RETRY_OUTCOME": "failure", "EVIDENCE_VERIFIED": ""},
+             "both immutable upload attempts failed; no current-run artifact exists to verify"),
+            ({"EVIDENCE_SNAPSHOT_OUTCOME": "success", "EVIDENCE_UPLOAD_OUTCOME": "success",
+              "EVIDENCE_UPLOAD_RETRY_OUTCOME": "skipped", "EVIDENCE_READBACK_OUTCOME": "failure",
+              "EVIDENCE_READBACK_RETRY_OUTCOME": "failure", "EVIDENCE_VERIFIED": ""},
+             "the uploaded artifact could not be read back by its exact name after the indexing pause"),
+            ({"EVIDENCE_SNAPSHOT_OUTCOME": "success", "EVIDENCE_UPLOAD_OUTCOME": "success",
+              "EVIDENCE_UPLOAD_RETRY_OUTCOME": "skipped", "EVIDENCE_READBACK_OUTCOME": "success",
+              "EVIDENCE_READBACK_RETRY_OUTCOME": "skipped", "EVIDENCE_VERIFIED": ""},
+             "the downloaded artifact did not match the snapshotted evidence"),
+            ({"EVIDENCE_SNAPSHOT_OUTCOME": "success", "EVIDENCE_UPLOAD_OUTCOME": "success",
+              "EVIDENCE_UPLOAD_RETRY_OUTCOME": "skipped", "EVIDENCE_READBACK_OUTCOME": "success",
+              "EVIDENCE_READBACK_RETRY_OUTCOME": "skipped", "EVIDENCE_VERIFIED": "true"},
+             "the exact evidence read-back verified"),
+        )
+        for outcomes, cause in cases:
+            with self.subTest(cause=cause):
+                summary = self.root / "recovery-summary.md"
+                summary.write_text("")
+                result = subprocess.run(
+                    ["bash", "-e", "-o", "pipefail", "-c", step["run"]],
+                    env=self.env | outcomes | {"GITHUB_STEP_SUMMARY": str(summary)},
+                    capture_output=True, text=True, check=False,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn(cause, result.stdout)
+                text = summary.read_text()
+                for row in ("| Snapshot |", "| Upload |", "| Upload retry |",
+                            "| Read-back |", "| Read-back retry |"):
+                    self.assertIn(row, text)
+                self.assertIn(f"Cause: {cause}", text)
+
     def test_successful_report_retention_is_bounded_before_browser_jobs(self):
         definition = WORKFLOW["on"]["workflow_call"]["inputs"]["browser-success-report-retention-days"]
         self.assertEqual(definition["type"], "number")
@@ -1142,7 +1243,7 @@ class BrowserCompatibilityTests(unittest.TestCase):
         self.assertEqual(json.loads(result.stdout), [
             days if status == "success" and channel == "" else 14
             for status, channel, days in cases])
-        self.assertEqual(upload["if"], "${{ always() && steps.lock.outcome == 'success' && (inputs.browser-evidence-upload-retry != true || steps.evidence_snapshot.outcome == 'success') }}")
+        self.assertEqual(upload["if"], "${{ always() && steps.lock.outcome == 'success' }}")
         verdict = next(step for step in WORKFLOW["jobs"]["browser-verdict"]["steps"]
                        if step.get("uses", "").startswith("actions/upload-artifact@"))
         self.assertEqual(verdict["with"]["retention-days"], "14")
