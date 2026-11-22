@@ -714,8 +714,12 @@ jobs:
           }
           const command = process.argv[2];
           if (command === 'snapshot') snapshot();
+          else if (command === 'check') {
+            const inventory = collect(evidenceRoot());
+            console.log(`Evidence tree is uploadable (${inventory.fileCount} files, ${inventory.totalBytes} bytes)`);
+          }
           else if (command === 'verify') verify();
-          else fail('expected snapshot or verify command');
+          else fail('expected snapshot, check or verify command');
           NODE
       - name: Snapshot browser evidence for optional upload recovery
         id: evidence_snapshot
@@ -729,12 +733,28 @@ jobs:
           BROWSER_EVIDENCE_HELPER: ${{ runner.temp }}/browser-evidence-recovery-${{ matrix.id }}.cjs
           GITHUB_WORKSPACE: ${{ github.workspace }}
         run: node "$BROWSER_EVIDENCE_HELPER" snapshot
+      - name: Recheck the evidence tree before uploading without a snapshot
+        id: evidence_tree_check
+        # The snapshot is also the tree validator, and the upload action follows
+        # directory symlinks. When the snapshot fails, this recheck keeps the link,
+        # hard-link, special-file and bounds rejection between the tree and the
+        # upload instead of publishing files reached through a link.
+        if: ${{ always() && inputs.browser-evidence-upload-retry && steps.evidence_helper.outcome == 'success' && steps.lock.outcome == 'success' && steps.evidence_snapshot.outcome != 'success' }}
+        continue-on-error: true
+        timeout-minutes: 1
+        env:
+          BROWSER_EVIDENCE_DIRECTORY: .compatibility/${{ matrix.id }}
+          BROWSER_EVIDENCE_TARGET_ID: ${{ matrix.id }}
+          BROWSER_EVIDENCE_HELPER: ${{ runner.temp }}/browser-evidence-recovery-${{ matrix.id }}.cjs
+          GITHUB_WORKSPACE: ${{ github.workspace }}
+        run: node "$BROWSER_EVIDENCE_HELPER" check
       - name: Preserve browser versions and synthetic failure diagnostics
         id: evidence_upload
         # Recovery snapshots can fail permanently (unsupported tree, size limit),
-        # so the upload must never depend on the snapshot: evidence is preserved
-        # first and an unavailable snapshot fails the job afterwards.
-        if: ${{ always() && steps.lock.outcome == 'success' }}
+        # so the upload must not depend on the snapshot alone: evidence is preserved
+        # after the safe-tree recheck and an unavailable snapshot fails the job
+        # afterwards.
+        if: ${{ always() && steps.lock.outcome == 'success' && (inputs.browser-evidence-upload-retry != true || steps.evidence_snapshot.outcome == 'success' || steps.evidence_tree_check.outcome == 'success') }}
         continue-on-error: ${{ inputs.browser-evidence-upload-retry }}
         timeout-minutes: ${{ inputs.browser-evidence-upload-retry && 3 || 35 }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -803,12 +823,12 @@ jobs:
           BROWSER_EVIDENCE_HELPER: ${{ runner.temp }}/browser-evidence-recovery-${{ matrix.id }}.cjs
           GITHUB_WORKSPACE: ${{ github.workspace }}
         run: |
-          if [[ "$EVIDENCE_UPLOAD_OUTCOME" != "success" && "$EVIDENCE_UPLOAD_RETRY_OUTCOME" != "success" ]]; then
-            echo "Browser evidence upload failed twice; no current-run artifact exists to verify" >&2
-            exit 1
-          fi
           if [[ "$EVIDENCE_READBACK_OUTCOME" != "success" && "$EVIDENCE_READBACK_RETRY_OUTCOME" != "success" ]]; then
-            echo "Uploaded browser evidence artifact could not be read back by its exact name after the indexing pause" >&2
+            if [[ "$EVIDENCE_UPLOAD_OUTCOME" != "success" && "$EVIDENCE_UPLOAD_RETRY_OUTCOME" != "success" ]]; then
+              echo "Both browser evidence upload attempts reported failure and no current-run artifact could be read back by its exact name after the indexing pause" >&2
+            else
+              echo "Uploaded browser evidence artifact could not be read back by its exact name after the indexing pause" >&2
+            fi
             exit 1
           fi
           node "$BROWSER_EVIDENCE_HELPER" verify
@@ -819,11 +839,14 @@ jobs:
         timeout-minutes: 1
         env:
           EVIDENCE_SNAPSHOT_OUTCOME: ${{ steps.evidence_snapshot.outcome }}
+          EVIDENCE_TREE_CHECK_OUTCOME: ${{ steps.evidence_tree_check.outcome }}
           EVIDENCE_UPLOAD_OUTCOME: ${{ steps.evidence_upload.outcome }}
           EVIDENCE_UPLOAD_RETRY_OUTCOME: ${{ steps.evidence_upload_retry.outcome }}
         run: |
           echo "Browser evidence recovery snapshot did not succeed ($EVIDENCE_SNAPSHOT_OUTCOME)" >&2
-          if [[ "$EVIDENCE_UPLOAD_OUTCOME" == "success" || "$EVIDENCE_UPLOAD_RETRY_OUTCOME" == "success" ]]; then
+          if [[ "$EVIDENCE_TREE_CHECK_OUTCOME" != "success" ]]; then
+            echo "The evidence tree did not pass the link and bounds check (${EVIDENCE_TREE_CHECK_OUTCOME}), so it was not uploaded" >&2
+          elif [[ "$EVIDENCE_UPLOAD_OUTCOME" == "success" || "$EVIDENCE_UPLOAD_RETRY_OUTCOME" == "success" ]]; then
             echo "The immutable evidence upload ran and is preserved without exact verification" >&2
           else
             echo "The immutable evidence upload also failed, so no artifact was preserved" >&2
@@ -835,16 +858,17 @@ jobs:
         timeout-minutes: 1
         env:
           EVIDENCE_SNAPSHOT_OUTCOME: ${{ steps.evidence_snapshot.outcome }}
+          EVIDENCE_TREE_CHECK_OUTCOME: ${{ steps.evidence_tree_check.outcome }}
           EVIDENCE_UPLOAD_OUTCOME: ${{ steps.evidence_upload.outcome }}
           EVIDENCE_UPLOAD_RETRY_OUTCOME: ${{ steps.evidence_upload_retry.outcome }}
           EVIDENCE_READBACK_OUTCOME: ${{ steps.evidence_readback.outcome }}
           EVIDENCE_READBACK_RETRY_OUTCOME: ${{ steps.evidence_readback_retry.outcome }}
           EVIDENCE_VERIFIED: ${{ steps.evidence_verify.outputs.verified }}
         run: |
-          if [[ "$EVIDENCE_SNAPSHOT_OUTCOME" != "success" ]]; then
+          if [[ "$EVIDENCE_SNAPSHOT_OUTCOME" != "success" && "$EVIDENCE_TREE_CHECK_OUTCOME" != "success" ]]; then
+            cause="the recovery snapshot was unavailable (${EVIDENCE_SNAPSHOT_OUTCOME}) and the evidence tree did not pass the link and bounds check, so nothing was uploaded"
+          elif [[ "$EVIDENCE_SNAPSHOT_OUTCOME" != "success" ]]; then
             cause="the recovery snapshot was unavailable (${EVIDENCE_SNAPSHOT_OUTCOME}); evidence preservation depended on the upload alone"
-          elif [[ "$EVIDENCE_UPLOAD_OUTCOME" != "success" && "$EVIDENCE_UPLOAD_RETRY_OUTCOME" != "success" ]]; then
-            cause="both immutable upload attempts failed; no current-run artifact exists to verify"
           elif [[ "$EVIDENCE_READBACK_OUTCOME" != "success" && "$EVIDENCE_READBACK_RETRY_OUTCOME" != "success" ]]; then
             cause="the uploaded artifact could not be read back by its exact name after the indexing pause"
           elif [[ "$EVIDENCE_VERIFIED" != "true" ]]; then

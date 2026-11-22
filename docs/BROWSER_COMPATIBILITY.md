@@ -39,27 +39,32 @@ the exact artifact name for the current workflow run and attempt and compares th
 complete file list, sizes and SHA-256 hashes with both the snapshot and the original
 evidence directory. The job remains failed if that read-back is missing, incomplete,
 or differs. A snapshot that cannot be taken (an unsupported tree or an exceeded
-limit) never suppresses the upload: the immutable upload still runs, the read-back
-steps are skipped, and the job fails afterwards with an explicit message that the
-evidence was preserved without exact verification. Upload finalisation can precede
-artifact indexing, so a failed read-back is not repeated immediately: the job pauses
-for 30 seconds and then repeats the same exact-name download once. It does not poll
-the run's artifacts API, because listing artifacts needs `actions: read`, which this
-reusable workflow does not request from its callers; an artifact that never becomes
-downloadable still fails the job. The option does not retry tests or change the
-browser verdict contract.
+limit) does not by itself suppress the upload: the job rechecks the same tree for
+symlinks, hard-linked or special files, an empty result and the file and byte bounds,
+uploads it when that check passes, and fails afterwards with an explicit message that
+says whether the evidence was preserved without exact verification or was not uploaded.
+The upload action follows directory symlinks, so this recheck is what keeps a rejected
+tree from being published. Upload finalisation can precede indexing and can finish an
+artifact whose step still reports failure, so the read-back is attempted even when both
+upload attempts failed; only an artifact that stays missing or differs fails the job.
+A failed read-back is not repeated immediately: the job pauses for 30 seconds and then
+repeats the same exact-name download once. It does not poll the run's artifacts API,
+because listing artifacts needs `actions: read`, which this reusable workflow does not
+request from its callers; an artifact that never becomes downloadable still fails the
+job. The option does not retry tests or change the browser verdict contract.
 
 The recovery path rejects symlinks, hard-linked or special files, empty trees,
 concurrent source changes, more than 4,096 files, 8,192 total files/directories,
 more than 512 MiB, a snapshot over 4 MiB, and directory nesting deeper than 32
-levels. With recovery enabled, the helper and snapshot steps each have a one-minute
-limit, each upload attempt has three minutes instead of the ordinary 35, each
+levels. With recovery enabled, the helper, snapshot and tree-recheck steps each have a
+one-minute limit, each upload attempt has three minutes instead of the ordinary 35, each
 read-back download has three minutes, and the indexing pause and the final exact
 requirement each have one minute. It does not overwrite or delete an artifact. The
 recovery steps also publish a job summary that lists the outcome of the snapshot,
 both upload attempts and both read-back attempts, together with the identified cause
-(upload failed twice, an artifact not downloadable by its exact name after the pause,
-downloaded bytes that differ from the snapshot, or an unavailable snapshot). Leave
+(an unavailable snapshot or tree recheck, an artifact not downloadable by its exact
+name after the pause, downloaded bytes that differ from the snapshot, or a verified
+read-back). Leave
 the option off unless a caller needs to tolerate a transient upload-service failure;
 default workflow behavior and artifact retention remain unchanged.
 
