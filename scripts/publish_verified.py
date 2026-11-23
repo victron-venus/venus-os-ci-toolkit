@@ -61,6 +61,8 @@ ROOT = Path(__file__).resolve().parents[1]
 DOCKER_TRANSPORT = "docker://"
 DOCKER_HUB_HOSTS = {"docker.io", "index.docker.io", "registry-1.docker.io"}
 DOCKER_HUB_SERVER = "https://index.docker.io/v1/"
+DOCKER_CREDENTIAL_HELPER = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
+DOCKER_CREDENTIAL_TIMEOUT = 30
 
 
 def _read_stable_release(gh, tag):
@@ -199,13 +201,18 @@ def verified_publication_config(policy, manifest, field):
     return original
 
 
+def home_directory():
+    """Return the operator's home directory, honouring HOME on every platform."""
+    return Path(os.environ.get("HOME") or Path.home())
+
+
 def docker_config():
     """Return the operator's docker client configuration when it is readable."""
     configured = os.environ.get("DOCKER_CONFIG")
     path = (
         Path(configured) / "config.json"
         if configured
-        else Path.home() / ".docker" / "config.json"
+        else home_directory() / ".docker" / "config.json"
     )
     try:
         config = json.loads(path.read_text())
@@ -214,12 +221,59 @@ def docker_config():
     return config if isinstance(config, dict) else {}
 
 
-def docker_helper_credentials(helper, server):
+def skopeo_auth_paths():
+    """Return the auth files skopeo searches before the docker client config."""
+    home = home_directory()
+    if sys.platform == "linux":
+        runtime = os.environ.get("XDG_RUNTIME_DIR")
+        primary = (
+            Path(runtime) / "containers" / "auth.json"
+            if runtime
+            else Path("/run") / "containers" / str(os.getuid()) / "auth.json"
+        )
+    else:
+        primary = home / ".config" / "containers" / "auth.json"
+    configured = Path(os.environ.get("XDG_CONFIG_HOME") or home / ".config")
+    return [primary, configured / "containers" / "auth.json"]
+
+
+def normalised_registry(key):
+    """Compare one auth key with the registry names containers/image accepts."""
+    stripped = key.removeprefix("http://").removeprefix("https://")
+    if stripped != key:
+        stripped = stripped.split("/", 1)[0]
+    return (
+        "index.docker.io"
+        if stripped in {"docker.io", "registry-1.docker.io"}
+        else stripped
+    )
+
+
+def skopeo_login_present(host):
+    """Report whether skopeo's own auth files already carry a login for a host."""
+    keys = {normalised_registry(host)}
+    for path in skopeo_auth_paths():
+        try:
+            stored = json.loads(path.read_text())
+        except (OSError, ValueError):
+            continue
+        auths = stored.get("auths") if isinstance(stored, dict) else None
+        if isinstance(auths, dict) and any(
+            isinstance(auths[key], dict)
+            and (auths[key].get("auth") or auths[key].get("identitytoken"))
+            and normalised_registry(key) in keys
+            for key in auths
+        ):
+            return True
+    return False
+
+
+def docker_helper_credentials(helper, server, host):
     """Resolve one registry login through a docker credential helper."""
     require(
-        isinstance(helper, str)
-        and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", helper),
-        "Invalid docker credential helper name",
+        isinstance(helper, str) and DOCKER_CREDENTIAL_HELPER.fullmatch(helper),
+        f"Invalid docker credential helper name {helper!r} for {host}; "
+        "correct credHelpers in the docker client configuration",
     )
     try:
         result = subprocess.run(  # nosec B603, B607
@@ -228,8 +282,9 @@ def docker_helper_credentials(helper, server):
             capture_output=True,
             text=True,
             check=False,
+            timeout=DOCKER_CREDENTIAL_TIMEOUT,
         )
-    except OSError:
+    except (OSError, subprocess.TimeoutExpired):
         return None
     if result.returncode != 0:
         return None
@@ -257,6 +312,9 @@ def registry_auth_entries(images):
     missing = []
     for host in sorted({image.split("/", 1)[0] for image in images}):
         server = DOCKER_HUB_SERVER if host in DOCKER_HUB_HOSTS else host
+        if skopeo_login_present(host):
+            # Skopeo searches its own auth files before the docker client config.
+            continue
         if any(
             isinstance(auths.get(key), dict)
             and (auths[key].get("auth") or auths[key].get("identitytoken"))
@@ -264,17 +322,25 @@ def registry_auth_entries(images):
         ):
             # The docker client configuration already carries this login.
             continue
-        helper = helpers.get(host) or store
-        credential = docker_helper_credentials(helper, server) if helper else None
-        if credential is None and helper:
-            credential = docker_helper_credentials(helper, host)
+        # Docker keys a Hub login by registry URL, so prefer that helper entry.
+        helper = helpers.get(server) or helpers.get(host) or store
+        credential = (
+            docker_helper_credentials(helper, server, host) if helper else None
+        )
+        if credential is None and helper and server != host:
+            credential = docker_helper_credentials(helper, host, host)
         if credential is None:
             missing.append(host)
             continue
         username, secret = credential
-        resolved[server] = {
-            "auth": base64.b64encode(f"{username}:{secret}".encode()).decode()
-        }
+        if username == "<token>":
+            # Docker reports an OAuth refresh token in its username field; keep
+            # an empty basic pair so containers/image reaches identitytoken.
+            resolved[server] = {"auth": "Og==", "identitytoken": secret}
+        else:
+            resolved[server] = {
+                "auth": base64.b64encode(f"{username}:{secret}".encode()).decode()
+            }
     require(
         not missing,
         "No registry credentials for " + ", ".join(missing)
@@ -283,33 +349,32 @@ def registry_auth_entries(images):
     return auths, resolved
 
 
+def registry_environment(overrides):
+    """Return the child environment for one skopeo operation, if it differs."""
+    return {**os.environ, **overrides} if overrides else None
+
+
 @contextmanager
 def registry_credentials(images):
     """Expose docker login credentials to skopeo before any payload download."""
     # Operator-provided skopeo auth file already covers every registry.
     if os.environ.get("REGISTRY_AUTH_FILE"):
-        yield
+        yield {}
         return
     auths, resolved = registry_auth_entries(images)
     if not resolved:
-        yield
+        yield {}
         return
     with tempfile.TemporaryDirectory(prefix="registry-auth-") as temporary:
         path = Path(temporary) / "config.json"
-        path.write_text(json.dumps({"auths": {**auths, **resolved}}))
-        path.chmod(0o600)
-        previous = os.environ.get("DOCKER_CONFIG")
-        os.environ["DOCKER_CONFIG"] = temporary
-        try:
-            yield
-        finally:
-            if previous is None:
-                os.environ.pop("DOCKER_CONFIG", None)
-            else:
-                os.environ["DOCKER_CONFIG"] = previous
+        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(descriptor, "w") as handle:
+            json.dump({"auths": {**auths, **resolved}}, handle)
+        # Skopeo reads $DOCKER_CONFIG/config.json after its own auth files.
+        yield {"DOCKER_CONFIG": temporary}
 
 
-def require_unpublished_version(image, version):
+def require_unpublished_version(image, version, environment=None):
     """Fail closed unless registry inventory proves the version is unpublished."""
     # The caller validates the registry destination; skopeo receives one transport argument.
     check = subprocess.run(  # nosec B603, B607
@@ -317,6 +382,7 @@ def require_unpublished_version(image, version):
         capture_output=True,
         text=True,
         check=False,
+        env=registry_environment(environment),
     )
     if check.returncode == 0:
         require(
@@ -349,7 +415,7 @@ def image_copy_command(archive, image, tag):
     ]
 
 
-def container_commands(policy, manifest, directory, latest):
+def container_commands(policy, manifest, directory, latest, environment=None):
     """Preflight all original destinations, then order version and latest copies."""
     mapping = verified_publication_config(policy, manifest, "container_assets")
     require(mapping, "No container archive mapping in .release-policy.json")
@@ -364,7 +430,7 @@ def container_commands(policy, manifest, directory, latest):
             f"Invalid configured image destination: {image}",
         )
         # Never overwrite an existing version tag, even on retries.
-        require_unpublished_version(image, manifest["version"])
+        require_unpublished_version(image, manifest["version"], environment)
         commands.append(
             image_copy_command(directory / name, image, manifest["version"])
         )
@@ -423,13 +489,13 @@ def main():
             else []
         )
         # Fail on missing logins before the multi-hundred-megabyte verification.
-        with registry_credentials(images):
+        with registry_credentials(images) as registry_env:
             with tempfile.TemporaryDirectory(prefix="verified-publication-") as temp:
                 directory = Path(temp)
                 manifest = verified_assets(gh, args.tag, directory)
                 if args.target == "containers":
                     commands = container_commands(
-                        policy, manifest, directory, args.latest
+                        policy, manifest, directory, args.latest, registry_env
                     )
                 else:
                     commands = pypi_commands(policy, manifest, directory)
@@ -447,8 +513,13 @@ def main():
                 )
                 if args.execute:
                     for command in commands:
-                        # Commands come only from the verified builders above.
-                        subprocess.run(command, check=True)  # nosec B603
+                        # Commands come only from the verified builders above;
+                        # the resolved credentials stay scoped to skopeo.
+                        subprocess.run(  # nosec B603
+                            command,
+                            check=True,
+                            env=registry_environment(registry_env),
+                        )
         return 0
     except (
         ReleaseError,
