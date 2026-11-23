@@ -697,6 +697,14 @@ class RegistryCredentialTests(unittest.TestCase):
         return path
 
     @staticmethod
+    def skopeo_auth_document(directory, document):
+        """Store one complete auth document where skopeo reads it first."""
+        path = Path(directory) / ".config" / "containers" / "auth.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(document))
+        return path
+
+    @staticmethod
     def materialized(overrides):
         """Read the credential file the publisher hands to skopeo."""
         path = Path(overrides["DOCKER_CONFIG"]) / "config.json"
@@ -782,6 +790,83 @@ class RegistryCredentialTests(unittest.TestCase):
                 ["docker.io/alvit/ottplay-foss"]
             ) as overrides:
                 self.assertEqual(overrides, {})
+        run.assert_not_called()
+
+    def test_docker_namespace_login_covers_its_own_repository(self):
+        """containers/image accepts a repository or namespace key for one image."""
+        with (
+            tempfile.TemporaryDirectory() as config_dir,
+            self.docker_environment(
+                config_dir,
+                {"auths": {"ghcr.io/owner": {"auth": "b3duZXI6c2VjcmV0"}}},
+            ),
+            mock.patch.object(publisher.subprocess, "run") as run,
+        ):
+            with publisher.registry_credentials(
+                ["ghcr.io/owner/image"]
+            ) as overrides:
+                self.assertEqual(overrides, {})
+                self.assertEqual(os.environ["DOCKER_CONFIG"], config_dir)
+        run.assert_not_called()
+
+    def test_unrelated_namespace_login_does_not_cover_the_destination(self):
+        """A credential scoped to another namespace is not a login."""
+        with (
+            tempfile.TemporaryDirectory() as config_dir,
+            self.docker_environment(
+                config_dir,
+                {"auths": {"ghcr.io/other": {"auth": "b3duZXI6c2VjcmV0"}}},
+            ),
+            mock.patch.object(publisher.subprocess, "run") as run,
+            self.assertRaisesRegex(
+                ReleaseError, "No registry credentials for ghcr.io"
+            ),
+        ):
+            with publisher.registry_credentials(["ghcr.io/owner/image"]):
+                pass
+        run.assert_not_called()
+
+    def test_skopeo_auth_helper_is_accepted_without_a_docker_login(self):
+        """A helper configured in skopeo's auth file resolves that login."""
+        queries = []
+
+        def helper(command, **kwargs):
+            queries.append((command, kwargs.get("input")))
+            return subprocess.CompletedProcess(
+                command, 0, '{"Username":"alvit","Secret":"hunter2"}', ""
+            )
+
+        with (
+            tempfile.TemporaryDirectory() as config_dir,
+            self.docker_environment(config_dir, {"auths": {}}),
+            mock.patch.object(publisher.subprocess, "run", side_effect=helper),
+        ):
+            self.skopeo_auth_document(
+                config_dir, {"credHelpers": {"ghcr.io/owner": "pass"}}
+            )
+            with publisher.registry_credentials(
+                ["ghcr.io/owner/image"]
+            ) as overrides:
+                self.assertEqual(overrides, {})
+        self.assertEqual(
+            queries, [(["docker-credential-pass", "get"], "ghcr.io/owner")]
+        )
+
+    def test_skopeo_helper_for_another_namespace_is_not_a_login(self):
+        """A skopeo helper scoped to another namespace does not cover the image."""
+        with (
+            tempfile.TemporaryDirectory() as config_dir,
+            self.docker_environment(config_dir, {"auths": {}}),
+            mock.patch.object(publisher.subprocess, "run") as run,
+            self.assertRaisesRegex(
+                ReleaseError, "No registry credentials for ghcr.io"
+            ),
+        ):
+            self.skopeo_auth_document(
+                config_dir, {"credHelpers": {"ghcr.io/other": "pass"}}
+            )
+            with publisher.registry_credentials(["ghcr.io/owner/image"]):
+                pass
         run.assert_not_called()
 
     def test_skopeo_login_does_not_mask_another_missing_registry(self):

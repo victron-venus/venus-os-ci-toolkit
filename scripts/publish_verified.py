@@ -237,43 +237,103 @@ def skopeo_auth_paths():
     return [primary, configured / "containers" / "auth.json"]
 
 
-def normalised_registry(key):
-    """Compare one auth key with the registry names containers/image accepts."""
+def normalised_auth_key(key):
+    """Canonicalise one auth key, keeping the repository path it narrows to."""
     stripped = key.removeprefix("http://").removeprefix("https://")
     if stripped != key:
+        # A URL key names only the registry; any path there is legacy.
         stripped = stripped.split("/", 1)[0]
-    return (
-        "index.docker.io"
-        if stripped in {"docker.io", "registry-1.docker.io"}
-        else stripped
+    host, _, path = stripped.partition("/")
+    if host in DOCKER_HUB_HOSTS:
+        host = "index.docker.io"
+    return host + ("/" + path.rstrip("/") if path else "")
+
+
+def normalised_registry(key):
+    """Compare one auth key with the registry names containers/image accepts."""
+    return normalised_auth_key(key).split("/", 1)[0]
+
+
+def destination_auth_keys(image):
+    """Return the auth keys containers/image checks, most specific first."""
+    parts = image.split("/")
+    keys = [normalised_auth_key(parts[0])]
+    for part in parts[1:]:
+        keys.append(keys[-1] + "/" + part)
+    keys.reverse()
+    return keys
+
+
+def inline_login_present(document, image):
+    """Report whether an auth document stores a login for one destination."""
+    auths = document.get("auths") if isinstance(document, dict) else None
+    if not isinstance(auths, dict):
+        return False
+    entries = {
+        normalised_auth_key(key): value
+        for key, value in auths.items()
+        if isinstance(value, dict)
+    }
+    return any(
+        entries.get(key)
+        and (entries[key].get("auth") or entries[key].get("identitytoken"))
+        for key in destination_auth_keys(image)
     )
 
 
-def skopeo_login_present(host):
-    """Report whether skopeo's own auth files already carry a login for a host."""
-    keys = {normalised_registry(host)}
+def configured_helpers(document, image):
+    """Return each configured helper and its lookup key for one destination."""
+    if not isinstance(document, dict):
+        return []
+    helpers = document.get("credHelpers")
+    entries = {}
+    if isinstance(helpers, dict):
+        entries = {
+            normalised_auth_key(key): (value, key) for key, value in helpers.items()
+        }
+    matches = [entries[key] for key in destination_auth_keys(image) if key in entries]
+    if matches:
+        return matches
+    store = document.get("credsStore")
+    if isinstance(store, str) and store:
+        host = image.split("/", 1)[0]
+        server = (
+            DOCKER_HUB_SERVER
+            if normalised_registry(host) == "index.docker.io"
+            else host
+        )
+        return [(store, server)]
+    return []
+
+
+def skopeo_login_present(image):
+    """Report whether skopeo's own auth files resolve a login for an image."""
     for path in skopeo_auth_paths():
         try:
             stored = json.loads(path.read_text())
         except (OSError, ValueError):
             continue
-        auths = stored.get("auths") if isinstance(stored, dict) else None
-        if isinstance(auths, dict) and any(
-            isinstance(auths[key], dict)
-            and (auths[key].get("auth") or auths[key].get("identitytoken"))
-            and normalised_registry(key) in keys
-            for key in auths
-        ):
+        if not isinstance(stored, dict):
+            continue
+        if inline_login_present(stored, image):
             return True
+        host = image.split("/", 1)[0]
+        for helper, server in configured_helpers(stored, image):
+            if docker_helper_credentials(
+                helper, server, host, "skopeo's containers auth file"
+            ) is not None:
+                return True
     return False
 
 
-def docker_helper_credentials(helper, server, host):
+def docker_helper_credentials(
+    helper, server, host, where="the docker client configuration"
+):
     """Resolve one registry login through a docker credential helper."""
     require(
         isinstance(helper, str) and DOCKER_CREDENTIAL_HELPER.fullmatch(helper),
         f"Invalid docker credential helper name {helper!r} for {host}; "
-        "correct credHelpers in the docker client configuration",
+        f"correct credHelpers in {where}",
     )
     try:
         result = subprocess.run(  # nosec B603, B607
@@ -304,31 +364,26 @@ def registry_auth_entries(images):
     config = docker_config()
     auths = config.get("auths")
     auths = auths if isinstance(auths, dict) else {}
-    helpers = config.get("credHelpers")
-    helpers = helpers if isinstance(helpers, dict) else {}
-    store = config.get("credsStore")
-    store = store if isinstance(store, str) else None
     resolved = {}
     missing = []
-    for host in sorted({image.split("/", 1)[0] for image in images}):
+    for image in sorted(set(images)):
+        host = image.split("/", 1)[0]
         server = DOCKER_HUB_SERVER if host in DOCKER_HUB_HOSTS else host
-        if skopeo_login_present(host):
+        if skopeo_login_present(image):
             # Skopeo searches its own auth files before the docker client config.
             continue
-        if any(
-            isinstance(auths.get(key), dict)
-            and (auths[key].get("auth") or auths[key].get("identitytoken"))
-            for key in (server, host)
-        ):
+        if inline_login_present(config, image):
             # The docker client configuration already carries this login.
             continue
-        # Docker keys a Hub login by registry URL, so prefer that helper entry.
-        helper = helpers.get(server) or helpers.get(host) or store
-        credential = (
-            docker_helper_credentials(helper, server, host) if helper else None
-        )
-        if credential is None and helper and server != host:
-            credential = docker_helper_credentials(helper, host, host)
+        # A helper keyed for this destination wins over the global store.
+        credential = None
+        helpers = configured_helpers(config, image)
+        for helper, key in helpers:
+            credential = docker_helper_credentials(helper, key, host)
+            if credential is not None:
+                break
+        if credential is None and helpers and helpers[0][1] != host:
+            credential = docker_helper_credentials(helpers[0][0], host, host)
         if credential is None:
             missing.append(host)
             continue
@@ -343,7 +398,7 @@ def registry_auth_entries(images):
             }
     require(
         not missing,
-        "No registry credentials for " + ", ".join(missing)
+        "No registry credentials for " + ", ".join(sorted(set(missing)))
         + "; run docker login for that registry and retry",
     )
     return auths, resolved
