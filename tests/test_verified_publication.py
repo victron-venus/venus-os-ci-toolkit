@@ -826,30 +826,72 @@ class RegistryCredentialTests(unittest.TestCase):
                 pass
         run.assert_not_called()
 
-    def test_skopeo_auth_helper_is_accepted_without_a_docker_login(self):
-        """A helper configured in skopeo's auth file resolves that login."""
-        queries = []
+    def test_skopeo_auth_helper_credential_reaches_skopeo(self):
+        """A helper answer in skopeo's own auth file is passed to its commands."""
+        cases = {
+            "credHelpers": {"credHelpers": {"ghcr.io/owner": "pass"}},
+            "credsStore": {"credsStore": "pass"},
+        }
+        for name, document in cases.items():
+            queries = []
+
+            def helper(command, **kwargs):
+                queries.append((command, kwargs.get("input")))
+                return subprocess.CompletedProcess(
+                    command, 0, '{"Username":"alvit","Secret":"hunter2"}', ""
+                )
+
+            expected = "ghcr.io/owner" if name == "credHelpers" else "ghcr.io"
+            with (
+                self.subTest(name=name),
+                tempfile.TemporaryDirectory() as config_dir,
+                self.docker_environment(config_dir, {"auths": {}}),
+                mock.patch.object(publisher.subprocess, "run", side_effect=helper),
+            ):
+                self.skopeo_auth_document(config_dir, document)
+                with publisher.registry_credentials(
+                    ["ghcr.io/owner/image"]
+                ) as overrides:
+                    _, config = self.materialized(overrides)
+                    entry = config["auths"][expected]["auth"]
+                    self.assertEqual(
+                        base64.b64decode(entry).decode(), "alvit:hunter2"
+                    )
+            self.assertEqual(
+                queries, [(["docker-credential-pass", "get"], expected)]
+            )
+
+    def test_namespace_helpers_keep_their_own_destination(self):
+        """Two namespace helpers on one registry must not overwrite each other."""
 
         def helper(command, **kwargs):
-            queries.append((command, kwargs.get("input")))
+            owner = kwargs.get("input", "").rsplit("/", 1)[-1]
             return subprocess.CompletedProcess(
-                command, 0, '{"Username":"alvit","Secret":"hunter2"}', ""
+                command,
+                0,
+                json.dumps({"Username": owner, "Secret": owner + "-secret"}),
+                "",
             )
 
         with (
             tempfile.TemporaryDirectory() as config_dir,
-            self.docker_environment(config_dir, {"auths": {}}),
+            self.docker_environment(
+                config_dir,
+                {"credHelpers": {"ghcr.io/alpha": "pass", "ghcr.io/beta": "pass"}},
+            ),
             mock.patch.object(publisher.subprocess, "run", side_effect=helper),
         ):
-            self.skopeo_auth_document(
-                config_dir, {"credHelpers": {"ghcr.io/owner": "pass"}}
-            )
             with publisher.registry_credentials(
-                ["ghcr.io/owner/image"]
+                ["ghcr.io/alpha/image", "ghcr.io/beta/image"]
             ) as overrides:
-                self.assertEqual(overrides, {})
+                _, config = self.materialized(overrides)
         self.assertEqual(
-            queries, [(["docker-credential-pass", "get"], "ghcr.io/owner")]
+            base64.b64decode(config["auths"]["ghcr.io/alpha"]["auth"]).decode(),
+            "alpha:alpha-secret",
+        )
+        self.assertEqual(
+            base64.b64decode(config["auths"]["ghcr.io/beta"]["auth"]).decode(),
+            "beta:beta-secret",
         )
 
     def test_skopeo_helper_for_another_namespace_is_not_a_login(self):

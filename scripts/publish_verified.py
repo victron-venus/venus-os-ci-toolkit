@@ -306,8 +306,30 @@ def configured_helpers(document, image):
     return []
 
 
-def skopeo_login_present(image):
-    """Report whether skopeo's own auth files resolve a login for an image."""
+def registry_entry(credential):
+    """Encode one resolved credential the way containers/image expects it."""
+    username, secret = credential
+    if username == "<token>":
+        # Docker reports an OAuth refresh token in its username field; keep
+        # an empty basic pair so containers/image reaches identitytoken.
+        return {"auth": "Og==", "identitytoken": secret}
+    return {"auth": base64.b64encode(f"{username}:{secret}".encode()).decode()}
+
+
+def resolved_key(query, server):
+    """Keep a namespace-scoped helper answer from widening to its registry."""
+    return query if "/" in normalised_auth_key(query) else server
+
+
+def skopeo_login(image):
+    """Return the login skopeo's own auth files carry for one image.
+
+    The first value reports whether a file covers the destination. Helper-backed
+    answers keep the credential and the key it belongs to, so the publisher can
+    pass them on; inline answers are read by skopeo directly.
+    """
+    host = image.split("/", 1)[0]
+    server = DOCKER_HUB_SERVER if host in DOCKER_HUB_HOSTS else host
     for path in skopeo_auth_paths():
         try:
             stored = json.loads(path.read_text())
@@ -316,14 +338,14 @@ def skopeo_login_present(image):
         if not isinstance(stored, dict):
             continue
         if inline_login_present(stored, image):
-            return True
-        host = image.split("/", 1)[0]
-        for helper, server in configured_helpers(stored, image):
-            if docker_helper_credentials(
-                helper, server, host, "skopeo's containers auth file"
-            ) is not None:
-                return True
-    return False
+            return True, None, server
+        for helper, query in configured_helpers(stored, image):
+            credential = docker_helper_credentials(
+                helper, query, host, "skopeo's containers auth file"
+            )
+            if credential is not None:
+                return True, credential, resolved_key(query, server)
+    return False, None, server
 
 
 def docker_helper_credentials(
@@ -369,33 +391,31 @@ def registry_auth_entries(images):
     for image in sorted(set(images)):
         host = image.split("/", 1)[0]
         server = DOCKER_HUB_SERVER if host in DOCKER_HUB_HOSTS else host
-        if skopeo_login_present(image):
-            # Skopeo searches its own auth files before the docker client config.
+        found, credential, owner = skopeo_login(image)
+        if found:
+            # Skopeo searches its own auth files first; a helper answer there
+            # still needs to reach the config the skopeo commands receive.
+            if credential is not None:
+                resolved[owner] = registry_entry(credential)
             continue
         if inline_login_present(config, image):
             # The docker client configuration already carries this login.
             continue
         # A helper keyed for this destination wins over the global store.
         credential = None
+        owner = server
         helpers = configured_helpers(config, image)
-        for helper, key in helpers:
-            credential = docker_helper_credentials(helper, key, host)
+        for helper, query in helpers:
+            credential = docker_helper_credentials(helper, query, host)
             if credential is not None:
+                owner = resolved_key(query, server)
                 break
         if credential is None and helpers and helpers[0][1] != host:
             credential = docker_helper_credentials(helpers[0][0], host, host)
         if credential is None:
             missing.append(host)
             continue
-        username, secret = credential
-        if username == "<token>":
-            # Docker reports an OAuth refresh token in its username field; keep
-            # an empty basic pair so containers/image reaches identitytoken.
-            resolved[server] = {"auth": "Og==", "identitytoken": secret}
-        else:
-            resolved[server] = {
-                "auth": base64.b64encode(f"{username}:{secret}".encode()).decode()
-            }
+        resolved[owner] = registry_entry(credential)
     require(
         not missing,
         "No registry credentials for " + ", ".join(sorted(set(missing)))
