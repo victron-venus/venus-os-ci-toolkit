@@ -1876,7 +1876,7 @@
       "after_sha256": "02686290d12598906a2cb859fddb7a178f124bc7ed0094e43af1a8d2c4b33ade",
       "canonical_source": "tests/test_verified_publication.py",
       "canonical_base_sha256": "e127c93962ba0fbbe28967d69fb40cd83223bcba76b6c35d5de9c0b0b99f83be",
-      "canonical_source_sha256": "a36f035a251eb64cf01df74aadec0bb415d1bb09b4dca1128441a41c7f35badb",
+      "canonical_source_sha256": "231839c922c3380a63adf6d26b73329c50c73fecb7a40a3adfb2f242580bded8",
       "hunks": [
         {
           "before": "        self.assertFalse(self.output.exists())\n\n\nif __name__ == \"__main__\":\n    unittest.main()\n",

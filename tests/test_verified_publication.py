@@ -950,7 +950,7 @@ class RegistryCredentialTests(unittest.TestCase):
             with publisher.registry_credentials(
                 ["ghcr.io/owner/image"]
             ) as overrides:
-                result = subprocess.run(
+                result = subprocess.run(  # nosec B603, B607
                     ["skopeo", "login", "--get-login", "ghcr.io"],
                     capture_output=True,
                     text=True,
