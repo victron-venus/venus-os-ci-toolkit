@@ -56,6 +56,16 @@ def receipt_step(upload):
     }
 
 
+def reject_shell_override(workflow, jobs):
+    """Reject shell overrides that could replace an audited run command."""
+    scopes = [workflow.get("defaults")]
+    scopes.extend(job.get("defaults") for job in jobs)
+    if any(isinstance(scope, dict) and scope.get("run") for scope in scopes) or any(
+        "shell" in step for job in jobs for step in job.get("steps", [])
+    ):
+        raise ValueError("Automatic push admission overrides the run shell")
+
+
 def validate_workflow(policy, workflow):
     """Admission never skips authenticated preparation or changes the forced scope."""
     validate_paths(policy["change_scope"]["automatic_release_test_paths"])
@@ -74,6 +84,7 @@ def validate_workflow(policy, workflow):
     ]
     if len(classifiers) != 1 or len(receipts) != 1 or len(metadata) != 1:
         raise ValueError("Missing or duplicate automatic push admission")
+    reject_shell_override(workflow, [scope, prepare])
     expected = receipt_step(receipts[0].get("uses", ""))
     # Workflow contracts use BaseLoader; normalize its scalar representation.
     expected["with"]["include-hidden-files"] = "true"

@@ -52,6 +52,59 @@ def record(
     return f":{old_mode} {new_mode} {old_hash} {new_hash} {status}\0{path}\0".encode()
 
 
+class WorkflowShellTests(unittest.TestCase):
+    """Reject shell overrides that would replace the audited run commands."""
+
+    @staticmethod
+    def workflow():
+        return {
+            "jobs": {
+                "scope": {"steps": [{"id": "scope"}]},
+                "prepare": {
+                    "steps": [
+                        {"id": "metadata"},
+                        {
+                            "name": "Retain test-only push admission",
+                            "uses": f"actions/upload-artifact@{BASE}",
+                        },
+                    ]
+                },
+            }
+        }
+
+    def test_every_shell_scope_is_rejected(self):
+        mutations = {
+            "workflow": lambda workflow: workflow.update(
+                defaults={"run": {"shell": "bash -c true {0}"}}
+            ),
+            "job": lambda workflow: workflow["jobs"]["prepare"].update(
+                defaults={"run": {"shell": "bash -c true {0}"}}
+            ),
+            "step": lambda workflow: workflow["jobs"]["prepare"]["steps"][0].update(
+                shell="bash -c true {0}"
+            ),
+        }
+        for name, mutate in mutations.items():
+            with self.subTest(scope=name):
+                workflow = self.workflow()
+                mutate(workflow)
+                with self.assertRaisesRegex(ValueError, "overrides the run shell"):
+                    SCOPE.reject_shell_override(
+                        workflow,
+                        [workflow["jobs"]["scope"], workflow["jobs"]["prepare"]],
+                    )
+
+    def test_reviewed_workflow_enforces_the_shell_guard(self):
+        workflow = self.workflow()
+        workflow["jobs"]["prepare"]["defaults"] = {
+            "run": {"shell": "bash -c true {0}"}
+        }
+        with self.assertRaisesRegex(ValueError, "overrides the run shell"):
+            SCOPE.validate_workflow(
+                {"change_scope": {"automatic_release_test_paths": PATHS}}, workflow
+            )
+
+
 class ClassifierTests(unittest.TestCase):
     def test_helper_supports_existing_package_import_callers(self):
         result = subprocess.run(
