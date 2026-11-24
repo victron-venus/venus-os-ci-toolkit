@@ -2580,6 +2580,19 @@ python3 scripts/publish_verified.py containers --tag v1.2.3
 python3 scripts/publish_verified.py containers --tag v1.2.3 --execute --latest
 ```
 
+Each mapped destination needs a usable login before the payload verification
+downloads anything; otherwise the run stops with
+`No registry credentials for <host>; run docker login for that registry and retry`.
+`docker login` is enough: `credsStore` and `credHelpers` entries are resolved
+through the matching `docker-credential-*` helper, including the
+`https://index.docker.io/v1/` key Docker uses for Docker Hub, and a helper that
+reports an OAuth refresh token as the `<token>` username keeps its identity-token
+semantics. A `skopeo login` found in skopeo's own auth files is accepted without
+a docker login. Setting `REGISTRY_AUTH_FILE` is the operator override: the tool
+then contributes no credentials of its own. The generated credential file is
+created with `0600` permissions and passed only to the skopeo commands, so the
+shell's `DOCKER_CONFIG` is left untouched.
+
 If publication partially fails, inspect the existing immutable version tags before
 retrying. The tool refuses to overwrite them. Never rebuild an image for stable.
 """

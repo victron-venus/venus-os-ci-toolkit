@@ -1,13 +1,16 @@
 """Offline contracts for stable assets, registry publication and image identity."""
 
+import base64
 import io
 import json
 import os
+import shutil
 # Only mocked publication calls and subprocess exception fixtures are used here.
 import subprocess  # nosec B404
 import sys
 import tempfile
 import unittest
+from contextlib import contextmanager
 from pathlib import Path
 from unittest import mock
 
@@ -157,6 +160,25 @@ class RegistryPublicationTests(unittest.TestCase):
             "repository": "owner/repo",
             "container_assets": {"image.oci.tar": "ghcr.io/owner/image"},
         }
+        # Publication now preflights registry logins before verification.
+        self.docker = tempfile.TemporaryDirectory()
+        self.addCleanup(self.docker.cleanup)
+        self.write_docker_config(
+            Path(self.docker.name),
+            {"auths": {"ghcr.io": {"auth": "b3duZXI6c2VjcmV0"}}},
+        )
+        environment = mock.patch.dict(
+            os.environ, {"DOCKER_CONFIG": self.docker.name}
+        )
+        environment.start()
+        self.addCleanup(environment.stop)
+        # The patch restores any value the running shell exports.
+        os.environ.pop("REGISTRY_AUTH_FILE", None)
+
+    @staticmethod
+    def write_docker_config(directory, data):
+        """Write one docker client configuration for credential preflight tests."""
+        (directory / "config.json").write_text(json.dumps(data))
 
     @staticmethod
     def assets(_gh, _tag, directory):
@@ -644,6 +666,466 @@ class VerifiedImageOutputTests(unittest.TestCase):
         self.resolution.assert_not_called()
         self.assertFalse(self.output.exists())
 
+
+
+class RegistryCredentialTests(unittest.TestCase):
+    """Pass docker login credentials to skopeo, which ignores docker credHelpers."""
+
+    @contextmanager
+    def docker_environment(self, directory, data):
+        """Point the docker client configuration at a disposable directory."""
+        directory = Path(directory)
+        (directory / "config.json").write_text(json.dumps(data))
+        with mock.patch.dict(
+            os.environ,
+            {
+                "DOCKER_CONFIG": str(directory),
+                "HOME": str(directory),
+                "XDG_CONFIG_HOME": str(directory / ".config"),
+                "XDG_RUNTIME_DIR": str(directory / "run"),
+            },
+        ):
+            os.environ.pop("REGISTRY_AUTH_FILE", None)
+            yield
+
+    @staticmethod
+    def skopeo_auth_file(directory, host, value):
+        """Store one login where skopeo reads it before the docker config."""
+        path = Path(directory) / ".config" / "containers" / "auth.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"auths": {host: value}}))
+        return path
+
+    @staticmethod
+    def skopeo_auth_document(directory, document):
+        """Store one complete auth document where skopeo reads it first."""
+        path = Path(directory) / ".config" / "containers" / "auth.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(document))
+        return path
+
+    @staticmethod
+    def materialized(overrides):
+        """Read the credential file the publisher hands to skopeo."""
+        path = Path(overrides["DOCKER_CONFIG"]) / "config.json"
+        return path, json.loads(path.read_text())
+
+    @staticmethod
+    def helper_result(username, secret):
+        """Return a credential helper answer with the docker helper JSON shape."""
+
+        def helper(command, **_kwargs):
+            return subprocess.CompletedProcess(
+                command,
+                0,
+                json.dumps({"Username": username, "Secret": secret}),
+                "",
+            )
+
+        return helper
+
+    def test_creds_store_login_is_materialized_for_skopeo(self):
+        """A helper-backed docker login becomes a private skopeo auth file."""
+        calls = []
+
+        def helper(command, **kwargs):
+            calls.append((command, kwargs.get("input")))
+            return subprocess.CompletedProcess(
+                command, 0, '{"Username":"alvit","Secret":"hunter2"}', ""
+            )
+
+        with (
+            tempfile.TemporaryDirectory() as config_dir,
+            self.docker_environment(config_dir, {"credsStore": "osxkeychain"}),
+            mock.patch.object(publisher.subprocess, "run", side_effect=helper),
+        ):
+            with publisher.registry_credentials(
+                ["docker.io/alvit/ottplay-foss"]
+            ) as overrides:
+                path, config = self.materialized(overrides)
+                entry = config["auths"][publisher.DOCKER_HUB_SERVER]["auth"]
+                self.assertEqual(
+                    base64.b64decode(entry).decode(), "alvit:hunter2"
+                )
+                self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+            self.assertFalse(Path(overrides["DOCKER_CONFIG"]).exists())
+            self.assertEqual(os.environ["DOCKER_CONFIG"], config_dir)
+        self.assertEqual(
+            calls,
+            [(["docker-credential-osxkeychain", "get"],
+              publisher.DOCKER_HUB_SERVER)],
+        )
+        self.assertNotIn("hunter2", " ".join(calls[0][0]))
+
+    def test_plain_docker_login_config_is_left_to_skopeo(self):
+        """Credentials already in the client config need no rewrite."""
+        with (
+            tempfile.TemporaryDirectory() as config_dir,
+            self.docker_environment(
+                config_dir,
+                {"auths": {"ghcr.io": {"auth": "b3duZXI6c2VjcmV0"}}},
+            ),
+            mock.patch.object(publisher.subprocess, "run") as run,
+        ):
+            with publisher.registry_credentials(
+                ["ghcr.io/owner/image"]
+            ) as overrides:
+                self.assertEqual(overrides, {})
+                self.assertEqual(os.environ["DOCKER_CONFIG"], config_dir)
+        run.assert_not_called()
+
+    def test_skopeo_login_alone_satisfies_the_preflight(self):
+        """A destination logged in with skopeo must not demand a docker login."""
+        with (
+            tempfile.TemporaryDirectory() as config_dir,
+            self.docker_environment(config_dir, {"auths": {}}),
+            mock.patch.object(publisher.subprocess, "run") as run,
+        ):
+            self.skopeo_auth_file(
+                config_dir,
+                "https://index.docker.io/v1/",
+                {"auth": "b3duZXI6c2VjcmV0"},
+            )
+            with publisher.registry_credentials(
+                ["docker.io/alvit/ottplay-foss"]
+            ) as overrides:
+                self.assertEqual(overrides, {})
+        run.assert_not_called()
+
+    def test_docker_namespace_login_covers_its_own_repository(self):
+        """containers/image accepts a repository or namespace key for one image."""
+        with (
+            tempfile.TemporaryDirectory() as config_dir,
+            self.docker_environment(
+                config_dir,
+                {"auths": {"ghcr.io/owner": {"auth": "b3duZXI6c2VjcmV0"}}},
+            ),
+            mock.patch.object(publisher.subprocess, "run") as run,
+        ):
+            with publisher.registry_credentials(
+                ["ghcr.io/owner/image"]
+            ) as overrides:
+                self.assertEqual(overrides, {})
+                self.assertEqual(os.environ["DOCKER_CONFIG"], config_dir)
+        run.assert_not_called()
+
+    def test_unrelated_namespace_login_does_not_cover_the_destination(self):
+        """A credential scoped to another namespace is not a login."""
+        with (
+            tempfile.TemporaryDirectory() as config_dir,
+            self.docker_environment(
+                config_dir,
+                {"auths": {"ghcr.io/other": {"auth": "b3duZXI6c2VjcmV0"}}},
+            ),
+            mock.patch.object(publisher.subprocess, "run") as run,
+            self.assertRaisesRegex(
+                ReleaseError, "No registry credentials for ghcr.io"
+            ),
+        ):
+            with publisher.registry_credentials(["ghcr.io/owner/image"]):
+                pass
+        run.assert_not_called()
+
+    def test_skopeo_auth_helper_credential_reaches_skopeo(self):
+        """A helper answer in skopeo's own auth file is passed to its commands."""
+        cases = {
+            "credHelpers": {"credHelpers": {"ghcr.io/owner": "pass"}},
+            "credsStore": {"credsStore": "pass"},
+        }
+        for name, document in cases.items():
+            queries = []
+
+            def helper(command, **kwargs):
+                queries.append((command, kwargs.get("input")))
+                return subprocess.CompletedProcess(
+                    command, 0, '{"Username":"alvit","Secret":"hunter2"}', ""
+                )
+
+            expected = "ghcr.io/owner" if name == "credHelpers" else "ghcr.io"
+            with (
+                self.subTest(name=name),
+                tempfile.TemporaryDirectory() as config_dir,
+                self.docker_environment(config_dir, {"auths": {}}),
+                mock.patch.object(publisher.subprocess, "run", side_effect=helper),
+            ):
+                self.skopeo_auth_document(config_dir, document)
+                with publisher.registry_credentials(
+                    ["ghcr.io/owner/image"]
+                ) as overrides:
+                    _, config = self.materialized(overrides)
+                    entry = config["auths"][expected]["auth"]
+                    self.assertEqual(
+                        base64.b64decode(entry).decode(), "alvit:hunter2"
+                    )
+            self.assertEqual(
+                queries, [(["docker-credential-pass", "get"], expected)]
+            )
+
+    def test_namespace_helpers_keep_their_own_destination(self):
+        """Two namespace helpers on one registry must not overwrite each other."""
+
+        def helper(command, **kwargs):
+            owner = kwargs.get("input", "").rsplit("/", 1)[-1]
+            return subprocess.CompletedProcess(
+                command,
+                0,
+                json.dumps({"Username": owner, "Secret": owner + "-secret"}),
+                "",
+            )
+
+        with (
+            tempfile.TemporaryDirectory() as config_dir,
+            self.docker_environment(
+                config_dir,
+                {"credHelpers": {"ghcr.io/alpha": "pass", "ghcr.io/beta": "pass"}},
+            ),
+            mock.patch.object(publisher.subprocess, "run", side_effect=helper),
+        ):
+            with publisher.registry_credentials(
+                ["ghcr.io/alpha/image", "ghcr.io/beta/image"]
+            ) as overrides:
+                _, config = self.materialized(overrides)
+        self.assertEqual(
+            base64.b64decode(config["auths"]["ghcr.io/alpha"]["auth"]).decode(),
+            "alpha:alpha-secret",
+        )
+        self.assertEqual(
+            base64.b64decode(config["auths"]["ghcr.io/beta"]["auth"]).decode(),
+            "beta:beta-secret",
+        )
+
+    def test_skopeo_helper_for_another_namespace_is_not_a_login(self):
+        """A skopeo helper scoped to another namespace does not cover the image."""
+        with (
+            tempfile.TemporaryDirectory() as config_dir,
+            self.docker_environment(config_dir, {"auths": {}}),
+            mock.patch.object(publisher.subprocess, "run") as run,
+            self.assertRaisesRegex(
+                ReleaseError, "No registry credentials for ghcr.io"
+            ),
+        ):
+            self.skopeo_auth_document(
+                config_dir, {"credHelpers": {"ghcr.io/other": "pass"}}
+            )
+            with publisher.registry_credentials(["ghcr.io/owner/image"]):
+                pass
+        run.assert_not_called()
+
+    def test_skopeo_login_does_not_mask_another_missing_registry(self):
+        """Every destination still has to resolve its own login."""
+        with (
+            tempfile.TemporaryDirectory() as config_dir,
+            self.docker_environment(config_dir, {"auths": {}}),
+            mock.patch.object(publisher.subprocess, "run"),
+            self.assertRaisesRegex(
+                ReleaseError, "No registry credentials for ghcr.io"
+            ),
+        ):
+            self.skopeo_auth_file(
+                config_dir, "docker.io", {"auth": "b3duZXI6c2VjcmV0"}
+            )
+            with publisher.registry_credentials(
+                ["docker.io/alvit/ottplay-foss", "ghcr.io/owner/image"]
+            ):
+                pass
+
+    def test_docker_hub_helper_uses_the_canonical_server_key(self):
+        """Docker keys a Hub login by registry URL, not by the image host."""
+        calls = []
+
+        def helper(command, **kwargs):
+            calls.append((command, kwargs.get("input")))
+            return subprocess.CompletedProcess(
+                command, 0, '{"Username":"alvit","Secret":"hunter2"}', ""
+            )
+
+        with (
+            tempfile.TemporaryDirectory() as config_dir,
+            self.docker_environment(
+                config_dir,
+                {
+                    "credHelpers": {publisher.DOCKER_HUB_SERVER: "desktop"},
+                    "credsStore": "fallback-store",
+                },
+            ),
+            mock.patch.object(publisher.subprocess, "run", side_effect=helper),
+        ):
+            with publisher.registry_credentials(
+                ["docker.io/alvit/ottplay-foss"]
+            ) as overrides:
+                _, config = self.materialized(overrides)
+                entry = config["auths"][publisher.DOCKER_HUB_SERVER]["auth"]
+                self.assertEqual(
+                    base64.b64decode(entry).decode(), "alvit:hunter2"
+                )
+        self.assertEqual(
+            calls,
+            [(["docker-credential-desktop", "get"],
+              publisher.DOCKER_HUB_SERVER)],
+        )
+
+    def test_helper_query_falls_back_to_the_image_host(self):
+        """A helper keyed for the host still answers when the URL query misses."""
+        queries = []
+
+        def helper(command, **kwargs):
+            queries.append(kwargs.get("input"))
+            if kwargs.get("input") == publisher.DOCKER_HUB_SERVER:
+                return subprocess.CompletedProcess(
+                    command, 1, "", "credentials not found"
+                )
+            return subprocess.CompletedProcess(
+                command, 0, '{"Username":"alvit","Secret":"hunter2"}', ""
+            )
+
+        with (
+            tempfile.TemporaryDirectory() as config_dir,
+            self.docker_environment(config_dir, {"credsStore": "pass"}),
+            mock.patch.object(publisher.subprocess, "run", side_effect=helper),
+        ):
+            with publisher.registry_credentials(
+                ["docker.io/alvit/ottplay-foss"]
+            ):
+                pass
+        self.assertEqual(queries, [publisher.DOCKER_HUB_SERVER, "docker.io"])
+
+    def test_identity_token_helper_result_keeps_its_token_semantics(self):
+        """A '<token>' username is an OAuth refresh token, not a password."""
+        with (
+            tempfile.TemporaryDirectory() as config_dir,
+            self.docker_environment(config_dir, {"credsStore": "pass"}),
+            mock.patch.object(
+                publisher.subprocess,
+                "run",
+                side_effect=self.helper_result("<token>", "refresh-token"),
+            ),
+        ):
+            with publisher.registry_credentials(
+                ["ghcr.io/owner/image"]
+            ) as overrides:
+                _, config = self.materialized(overrides)
+                entry = config["auths"]["ghcr.io"]
+        # containers/image returns identitytoken only after a colon-bearing auth.
+        self.assertEqual(entry["identitytoken"], "refresh-token")
+        self.assertEqual(base64.b64decode(entry["auth"]), b":")
+
+    def test_unusable_helper_results_require_a_login_before_any_download(self):
+        """Broken or hung helpers report the login, not an anonymous push."""
+        cases = {
+            "nonzero exit": subprocess.CompletedProcess([], 1, "", "not logged in"),
+            "invalid json": subprocess.CompletedProcess([], 0, "not json", ""),
+            "empty secret": subprocess.CompletedProcess(
+                [], 0, '{"Username":"alvit","Secret":""}', ""
+            ),
+            "missing helper": OSError("no credential helper"),
+            "hung helper": subprocess.TimeoutExpired(
+                ["docker-credential-pass", "get"],
+                publisher.DOCKER_CREDENTIAL_TIMEOUT,
+            ),
+        }
+        for name, result in cases.items():
+            with (
+                self.subTest(name=name),
+                tempfile.TemporaryDirectory() as config_dir,
+                self.docker_environment(config_dir, {"credsStore": "pass"}),
+            ):
+                helper = (
+                    mock.patch.object(
+                        publisher.subprocess, "run", side_effect=result
+                    )
+                    if isinstance(result, BaseException)
+                    else mock.patch.object(
+                        publisher.subprocess, "run", return_value=result
+                    )
+                )
+                with (
+                    helper,
+                    self.assertRaisesRegex(ReleaseError, "run docker login"),
+                ):
+                    with publisher.registry_credentials(
+                        ["ghcr.io/owner/image"]
+                    ):
+                        pass
+
+    def test_invalid_helper_name_reports_the_registry_and_value(self):
+        """A malformed credHelpers entry names the entry to fix."""
+        with (
+            tempfile.TemporaryDirectory() as config_dir,
+            self.docker_environment(
+                config_dir, {"credHelpers": {"ghcr.io": "not a helper"}}
+            ),
+            self.assertRaisesRegex(
+                ReleaseError,
+                "Invalid docker credential helper name 'not a helper' for ghcr.io",
+            ),
+        ):
+            with publisher.registry_credentials(["ghcr.io/owner/image"]):
+                pass
+
+    @unittest.skipUnless(shutil.which("skopeo"), "skopeo is not installed")
+    def test_skopeo_finds_the_materialized_login_itself(self):
+        """Skopeo's own lookup must find the login the publisher passes it."""
+        with (
+            tempfile.TemporaryDirectory() as config_dir,
+            self.docker_environment(config_dir, {"credsStore": "pass"}),
+            mock.patch.object(
+                publisher,
+                "docker_helper_credentials",
+                return_value=("alvit", "hunter2"),
+            ),
+        ):
+            with publisher.registry_credentials(
+                ["ghcr.io/owner/image"]
+            ) as overrides:
+                result = subprocess.run(  # nosec B603, B607
+                    ["skopeo", "login", "--get-login", "ghcr.io"],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    env={**os.environ, **overrides},
+                )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), "alvit")
+
+    def test_missing_login_fails_before_downloading_payloads(self):
+        """An absent registry login is reported before verified payload bytes."""
+        with (
+            tempfile.TemporaryDirectory() as temp,
+            tempfile.TemporaryDirectory() as config_dir,
+        ):
+            root = Path(temp)
+            (root / ".release-policy.json").write_text(
+                json.dumps(
+                    {
+                        "repository": "owner/repo",
+                        "container_assets": {
+                            "image.oci.tar": "ghcr.io/owner/image"
+                        },
+                    }
+                )
+            )
+            with (
+                self.docker_environment(config_dir, {"auths": {}}),
+                mock.patch.object(publisher, "ROOT", root),
+                mock.patch.object(publisher, "verified_assets") as assets,
+                mock.patch.object(publisher.subprocess, "run") as run,
+                mock.patch.object(
+                    sys,
+                    "argv",
+                    [
+                        "publish_verified.py",
+                        "containers",
+                        "--tag",
+                        "v1.2.3",
+                        "--execute",
+                    ],
+                ),
+                mock.patch("sys.stderr", new_callable=io.StringIO) as errors,
+            ):
+                self.assertEqual(publisher.main(), 1)
+            assets.assert_not_called()
+            run.assert_not_called()
+            self.assertIn("docker login", errors.getvalue())
 
 
 class CompactPublicationTests(unittest.TestCase):
