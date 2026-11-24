@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.1.17] - Unreleased
+
+### Changed
+
+- release: use docker credential helpers when publishing containers (#518).
+- preserve evidence when the recovery snapshot fails (#516).
+- describe evidence recovery waits and limits as implemented (#515).
+- Wait for evidence artifacts to be indexed before the named read-back (#512).
+- Refresh the coherent Ubuntu glibc lock for native OCI builds (#509).
+- harden release deadlines and consumer migration (#508).
+- clarify final publication read boundary.
+- retry streamed asset HTTP 5xx responses.
+- fix release runtime compatibility across Linux and macOS.
+- preserve verified release migration layers.
+
+### Upgrade
+
+Consumers receive the downloader fix through an explicit reviewed source update. Full current-toolkit adoption retains its qualified Go 1.27.3 runtime; a targeted backport to an older qualified runtime must record that adaptation and pass its own checks. Publishing this source release does not update consumer pins, credentials or deployed runners.
+
+### Security
+
+Download retries apply only to read-only archive GET requests; release-creation writes still occur once. Exact source, tag, ledger, manifest and checksum checks remain required, together with the existing HTTPS/FIPS and archive-size bounds. This release adds no credentials or repository permissions and does not change deployed runners.
+
 ## [0.1.16] - 2026-11-05
 
 ### Fixed
