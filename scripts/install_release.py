@@ -606,7 +606,7 @@ def validation_job(policy, directory, filename, oidc):
     return {"uses": f"./.github/workflows/{filename}", "permissions": permissions}
 
 
-def workflow_contract_job(directory):
+def workflow_contract_job(directory, policy=None):
     """Run the toolkit's own contracts or the consumer's vendored contract suite."""
     is_toolkit = directory is not None and directory.resolve() == ROOT.resolve()
     workflow_test_command = (
@@ -647,6 +647,7 @@ def workflow_contract_job(directory):
             "-p 'test_change_scope_runbook.py' -v",
         })
     configure_python_preflight(job, directory)
+    consumer_docs_validation(job, directory, consumer_checks_policy(policy or {}))
     return job
 
 
@@ -722,7 +723,144 @@ def release_contract_job(policy, directory):
             "uses": ACTION_REFS["astral-sh/setup-uv"],
             "with": {"version": "0.13.4"},
         })
+    consumer_release_cli_retries(job, directory, consumer_checks_policy(policy))
     return job
+
+
+def is_consumer(directory):
+    """Distinguish a rendered consumer from the canonical toolkit repository."""
+    return directory is not None and directory.resolve() != ROOT.resolve()
+
+
+def consumer_path(value, label):
+    """Require one exact repository-relative file path, never a glob or ref."""
+    if (
+        not isinstance(value, str)
+        or not re.fullmatch(r"[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*", value)
+        or any(part in {"", ".", ".."} for part in value.split("/"))
+    ):
+        raise ValueError(f"{label} must be an exact safe relative path")
+    return value
+
+
+def consumer_checks_policy(policy):
+    """Validate optional consumer-owned tests instead of assuming one layout."""
+    config = policy.get("consumer_checks")
+    if config is None:
+        return {}
+    if not isinstance(config, dict) or set(config) - {"documentation", "release_cli_retry"}:
+        raise ValueError(
+            "consumer_checks must contain only documentation and release_cli_retry"
+        )
+    result = {}
+    documentation = config.get("documentation")
+    if documentation is not None:
+        if not isinstance(documentation, dict) or set(documentation) != {"prepare", "test"}:
+            raise ValueError("consumer_checks.documentation needs exact prepare and test")
+        selected = {
+            key: consumer_path(documentation[key], "consumer_checks.documentation." + key)
+            for key in ("prepare", "test")
+        }
+        if selected["prepare"] == selected["test"]:
+            raise ValueError("consumer_checks.documentation paths must differ")
+        result["documentation"] = selected
+    retries = config.get("release_cli_retry")
+    if retries is not None:
+        if not isinstance(retries, dict) or set(retries) != {"files"}:
+            raise ValueError("consumer_checks.release_cli_retry needs its exact files list")
+        names = retries["files"]
+        if not isinstance(names, list) or not names:
+            raise ValueError("consumer_checks.release_cli_retry.files must be a nonempty list")
+        selected = [
+            consumer_path(name, "consumer_checks.release_cli_retry.files")
+            for name in names
+        ]
+        if len(selected) != len(set(selected)):
+            raise ValueError("consumer_checks.release_cli_retry.files must be unique")
+        if sum(name.endswith("_test.go") for name in selected) != 1:
+            raise ValueError(
+                "consumer_checks.release_cli_retry.files needs exactly one _test.go"
+            )
+        result["release_cli_retry"] = {"files": selected}
+    if "documentation" in result and policy.get("single_entry_ci") is not True:
+        raise ValueError(
+            "consumer_checks.documentation requires single_entry_ci; "
+            "workflow-contracts is not generated"
+        )
+    if "release_cli_retry" in result and policy.get("mode", "release") != "release":
+        raise ValueError(
+            "consumer_checks.release_cli_retry requires mode=release; "
+            "release-contracts is not generated"
+        )
+    return result
+
+
+def require_consumer_files(directory, paths, label):
+    """Fail closed when a reviewed declaration names an absent consumer file."""
+    missing = [path for path in paths if not (directory / path).is_file()]
+    if missing:
+        raise ValueError(f"{label} declares missing files: " + ", ".join(missing))
+
+
+def consumer_docs_validation(job, directory, config):
+    """Run the declared locked documentation compiler inside its contract job.
+
+    The shared job cannot know which consumer documents exist, so the consumer
+    names both files in .release-policy.json and the steps follow that review.
+    """
+    documentation = config.get("documentation")
+    if not is_consumer(directory) or documentation is None:
+        return
+    prepare, test = documentation["prepare"], documentation["test"]
+    require_consumer_files(directory, (prepare, test), "consumer_checks.documentation")
+    job["steps"].extend([
+        {
+            "name": "Set up Node for the existing documentation validator",
+            "uses": ACTION_REFS["actions/setup-node"],
+            # Root package metadata must not select a cache for these dependencies.
+            "with": {"node-version": "22", "package-manager-cache": False},
+        },
+        {
+            "name": "Validate documentation with the locked compiler",
+            "run": (
+                'node ' + prepare + ' "$RUNNER_TEMP/docs-validation"\n'
+                'npm ci --ignore-scripts --no-audit --no-fund '
+                '--prefix "$RUNNER_TEMP/docs-validation"\n'
+                'NODE_PATH="$RUNNER_TEMP/docs-validation/node_modules" node '
+                + test + '\n'
+            ),
+        },
+    ])
+
+
+def consumer_release_cli_retries(job, directory, config):
+    """Exercise the declared vendored release CLI download retries under Go."""
+    retries = config.get("release_cli_retry")
+    if not is_consumer(directory) or retries is None:
+        return
+    files = retries["files"]
+    require_consumer_files(directory, files, "consumer_checks.release_cli_retry")
+    job["steps"].extend([
+        {
+            "uses": ACTION_REFS["actions/setup-go"],
+            "with": {"go-version": "1.27.4", "cache": False},
+        },
+        {
+            "name": "Test bounded release CLI download retries",
+            "timeout-minutes": 3,
+            "env": {
+                "GOTOOLCHAIN": "local",
+                "GO111MODULE": "off",
+                "GOWORK": "off",
+                "GOENV": "off",
+                "CGO_ENABLED": "0",
+                "GODEBUG": "fips140=on",
+                "GOMAXPROCS": "2",
+                "GOFLAGS": "-p=2",
+            },
+            "run": "go test -v -count=1 -timeout=60s " + " ".join(files),
+        },
+    ])
 
 
 def quality(policy, directory=None, *, release_profile=False):
@@ -740,7 +878,7 @@ def quality(policy, directory=None, *, release_profile=False):
         if filename in config["always_validate_workflows"]:
             always.add(f"check-{i}")
     if policy.get("single_entry_ci"):
-        jobs["workflow-contracts"] = workflow_contract_job(directory)
+        jobs["workflow-contracts"] = workflow_contract_job(directory, policy)
         if len(always) > 1:
             always.add("workflow-contracts")
     if policy.get("mode", "release") == "release":
@@ -1406,6 +1544,7 @@ def validate_policy(directory: Path, policy: dict) -> None:
     coverage_policy(policy)
     publication_token_env(policy)
     scope_policy(policy)
+    consumer_checks_policy(policy)
     if policy.get("versioning"):
         # Legacy consumers do not vendor the optional version modules.
         # pylint: disable-next=import-outside-toplevel

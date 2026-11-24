@@ -43,6 +43,133 @@ def rendered(data):
     return yaml.safe_load(installer.dump(data))
 
 
+class ConsumerOwnedContractStepTests(unittest.TestCase):
+    """Consumer-owned checks follow the reviewed policy, not one repository layout."""
+
+    DOCS = "Validate documentation with the locked compiler"
+    RETRIES = "Test bounded release CLI download retries"
+    DOCS_FILES = {"prepare": "tools/render-docs.cjs", "test": "test/docs.cjs"}
+    RETRY_FILES = {"files": ["cli/download.go", "cli/download_test.go"]}
+
+    @staticmethod
+    def render(directory, consumer_checks=None):
+        config = policy()
+        if consumer_checks is not None:
+            config["consumer_checks"] = consumer_checks
+        return rendered({
+            "jobs": {
+                "contracts": installer.workflow_contract_job(directory, config),
+                "release": installer.release_contract_job(config, directory),
+            }
+        })["jobs"]
+
+    @staticmethod
+    def touch(root, *paths):
+        for path in paths:
+            target = root / path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text("")
+
+    @staticmethod
+    def names(job):
+        return [step.get("name") for step in job["steps"]]
+
+    def test_declared_consumer_files_enable_docs_and_release_cli_checks(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            self.touch(root, *self.DOCS_FILES.values(), *self.RETRY_FILES["files"])
+            jobs = self.render(root, {"documentation": self.DOCS_FILES,
+                                      "release_cli_retry": self.RETRY_FILES})
+        docs = [s for s in jobs["contracts"]["steps"] if s.get("name") == self.DOCS]
+        retries = [s for s in jobs["release"]["steps"] if s.get("name") == self.RETRIES]
+        self.assertEqual(len(docs), 1)
+        self.assertEqual(len(retries), 1)
+        self.assertIn("node tools/render-docs.cjs", docs[0]["run"])
+        self.assertTrue(docs[0]["run"].endswith("node test/docs.cjs\n"))
+        self.assertIn(
+            'NODE_PATH="$RUNNER_TEMP/docs-validation/node_modules"', docs[0]["run"]
+        )
+        self.assertIn(
+            "-timeout=60s cli/download.go cli/download_test.go", retries[0]["run"]
+        )
+        for job, action in (("contracts", "actions/setup-node"),
+                            ("release", "actions/setup-go")):
+            uses = [
+                step["uses"] for step in jobs[job]["steps"]
+                if step.get("uses", "").startswith(action + "@")
+            ]
+            self.assertEqual(len(uses), 1)
+            self.assertRegex(uses[0], r"^" + action + r"@[0-9a-f]{40}$")
+        node = next(
+            step for step in jobs["contracts"]["steps"]
+            if step.get("uses", "").startswith("actions/setup-node@")
+        )
+        self.assertIs(node["with"]["package-manager-cache"], False)
+
+    def test_committed_files_without_a_declaration_add_nothing(self):
+        """A consumer layout alone must never select these optional steps."""
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            self.touch(root, "scripts/prepare-docs-validation.cjs",
+                       "tests/test_readme_docs.cjs", "scripts/download_release_gh.go",
+                       "scripts/download_release_gh_test.go")
+            jobs = self.render(root)
+        self.assertNotIn(self.DOCS, self.names(jobs["contracts"]))
+        self.assertNotIn(self.RETRIES, self.names(jobs["release"]))
+
+    def test_declared_consumer_file_must_exist(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            self.touch(root, *self.RETRY_FILES["files"])
+            with self.assertRaisesRegex(ValueError, "declares missing files.*tools/render-docs"):
+                self.render(root, {"documentation": self.DOCS_FILES})
+            self.touch(root, *self.DOCS_FILES.values())
+            missing = {"files": ["cli/download.go", "cli/download_test.go"]}
+            (root / "cli/download_test.go").unlink()
+            with self.assertRaisesRegex(ValueError, "declares missing files.*download_test"):
+                self.render(root, {"release_cli_retry": missing})
+
+    def test_canonical_toolkit_never_runs_consumer_checks(self):
+        jobs = self.render(ROOT, {"documentation": self.DOCS_FILES,
+                                  "release_cli_retry": self.RETRY_FILES})
+        self.assertNotIn(self.DOCS, self.names(jobs["contracts"]))
+        self.assertNotIn(self.RETRIES, self.names(jobs["release"]))
+
+    def test_declarations_for_absent_jobs_are_rejected(self):
+        """A check must not be declared when its shared job is not generated."""
+        cases = (
+            (policy(single_entry_ci=False,
+                    consumer_checks={"documentation": self.DOCS_FILES}),
+             "single_entry_ci"),
+            (policy(mode="validation-only",
+                    consumer_checks={"release_cli_retry": self.RETRY_FILES}),
+             "mode=release"),
+        )
+        for config, message in cases:
+            with self.subTest(message=message):
+                with self.assertRaisesRegex(ValueError, message):
+                    installer.consumer_checks_policy(config)
+
+    def test_invalid_declarations_are_rejected(self):
+        """Unknown keys, unsafe paths and malformed file lists fail review."""
+        cases = (
+            ({"unknown": self.DOCS_FILES}, "only documentation"),
+            ({"documentation": {"prepare": "docs.cjs"}}, "prepare and test"),
+            ({"documentation": {"prepare": "a.cjs", "test": "a.cjs"}}, "must differ"),
+            ({"documentation": {"prepare": "/a.cjs", "test": "b.cjs"}}, "safe relative"),
+            ({"documentation": {"prepare": "a/../a.cjs", "test": "b.cjs"}}, "safe relative"),
+            ({"documentation": {"prepare": "a/*.cjs", "test": "b.cjs"}}, "safe relative"),
+            ({"release_cli_retry": {"files": []}}, "nonempty list"),
+            ({"release_cli_retry": {"files": ["cli/download.go"]}}, "one _test.go"),
+            ({"release_cli_retry": {"files": ["a_test.go", "a_test.go"]}}, "must be unique"),
+            ({"release_cli_retry": {"files": ["a.go"], "extra": []}}, "files list"),
+        )
+        for consumer_checks, message in cases:
+            with self.subTest(consumer_checks=consumer_checks):
+                with self.assertRaisesRegex(ValueError, message):
+                    installer.consumer_checks_policy(policy(consumer_checks=consumer_checks))
+
+
 def job_runs(job, needs, *, ancestor_results=(), workflow_cancelled=False, value_only=False, **context):
     """Evaluate only rendered job conditions; fail on unsupported expression syntax.
 

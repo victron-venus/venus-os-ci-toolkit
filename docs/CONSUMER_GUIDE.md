@@ -98,6 +98,41 @@ caller to Quality gate. Only that caller receives OIDC; test validators need no
 OIDC allowlist entry. Python and Go already produce reports. Other languages must
 first collect a real report in their existing test job.
 
+### Consumer-owned contract tests
+
+A consumer may already own contract tests that the generated
+`workflow-contracts` and `release-contracts` jobs should run. Name their exact
+repository-relative files in `.release-policy.json`; the generator emits the
+steps only for that declaration and never assumes a particular consumer layout.
+
+```json
+"consumer_checks": {
+  "documentation": {
+    "prepare": "scripts/prepare-docs-validation.cjs",
+    "test": "tests/test_readme_docs.cjs"
+  },
+  "release_cli_retry": {
+    "files": ["scripts/download_release_gh.go", "scripts/download_release_gh_test.go"]
+  }
+}
+```
+
+`documentation` selects a Node step that runs the declared preparation script in
+a temporary directory, installs that directory's lock with `npm ci`, and then
+runs the declared test with `NODE_PATH` pointing at the installed modules. That
+step also disables setup-node's automatic package-manager cache, because the
+declared dependencies live only in the temporary directory.
+`release_cli_retry` selects a Go step that runs the declared files with a
+bounded timeout, so the list must contain exactly one `*_test.go` file.
+
+Both entries are optional and independent. Every declared path must be an exact
+safe relative path that still exists when the workflows are rendered: a missing
+file fails rendering instead of silently dropping the check. `documentation`
+requires `single_entry_ci`, and `release_cli_retry` requires `mode=release`,
+because those settings decide whether the containing jobs exist. The canonical
+toolkit ignores this section, and a consumer that declares nothing gains no
+extra steps even if it happens to commit files with the same names.
+
 ### Supported Consumer Workflow Files
 
 | Consumer workflow file | Toolkit workflow called | Notes |
