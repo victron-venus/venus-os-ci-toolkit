@@ -80,6 +80,14 @@ are still verified, and an earlier attempt of another run or a later attempt of
 this one never qualifies. Re-run all jobs when a fresh build of every input is
 required.
 
+To verify a partial restart end to end, dispatch a disposable nightly, cancel the
+pipeline run as soon as its `candidate` job starts, then run `gh run rerun --failed`.
+The new attempt runs only that job: the `candidate` download log names
+`release-assets*-run-<run_id>-attempt-<earlier attempt>`, and the published
+`release-inputs-package.json` still records that attempt in `producer.run_attempt`.
+Delete the check release afterwards with
+`gh release delete <tag> --cleanup-tag --yes`.
+
 The release CLI has no force-publish, replace-tag or skip-checks option. A later
 policy edit cannot retroactively qualify an older RC. Build artifact retention is declared by
 each build adapter (currently 14 or 30 days across the fleet);
