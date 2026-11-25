@@ -2075,8 +2075,13 @@ def _execution_timestamp(value: object, label: str) -> datetime:
 
 
 def _require_job_steps(job: JSONObject, start: datetime, end: datetime,
-                       boundary: datetime) -> None:
-    """Require an executed step list contained in its job's reported interval."""
+                       boundary: datetime | None) -> None:
+    """Require an executed step list contained in its job's reported interval.
+
+    ``boundary`` is the attempt the steps must reach. It is ``None`` for an
+    execution an earlier attempt recorded, where the exact record match already
+    supplies that attempt, so the job interval bounds the steps on its own.
+    """
     steps = job.get("steps")
     require(isinstance(steps, list) and bool(steps), "Successful job lacks execution steps")
     require(all(isinstance(step, dict) for step in steps), "Malformed job execution step")
@@ -2091,7 +2096,8 @@ def _require_job_steps(job: JSONObject, start: datetime, end: datetime,
         setup_boundary = (step is steps[0] and type(step.get("number")) is int
                           and step["number"] == 1 and step.get("name") == "Set up job"
                           and 0 < (start - step_start).total_seconds() <= 1
-                          and boundary <= step_start and start <= step_end <= end)
+                          and (boundary is None or boundary <= step_start)
+                          and start <= step_end <= end)
         require(start <= step_start <= step_end <= end or setup_boundary,
                 "Executed step lies outside the current job interval")
 
@@ -2130,7 +2136,7 @@ def _earlier_attempt_jobs(
             job for job in reported
             if isinstance(job, dict)
             and job.get("head_sha") == sha
-            and job.get("run_attempt") == earlier
+            and job_attempt_matches(job, earlier)
             and job.get("status") == "completed"
             and job.get("conclusion") == "success"
         )
@@ -2176,7 +2182,8 @@ def require_current_attempt_jobs(
                 "Successful job predates the current release attempt")
         start = _execution_timestamp(job.get("started_at"), "job start")
         end = _execution_timestamp(job.get("completed_at"), "job completion")
-        _require_job_steps(job, start, end, boundary)
+        # Its own attempt, not this one, bounds the recorded step timestamps.
+        _require_job_steps(job, start, end, None)
     return detail
 
 

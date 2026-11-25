@@ -4364,6 +4364,25 @@ class CurrentAttemptFreshnessTests(unittest.TestCase):
         self.check()
         self.gh.pages.assert_called_once_with('actions/runs/123/attempts/1/jobs', 'jobs')
 
+    def test_copied_success_accepts_a_record_without_attempt_number(self):
+        recorded = self.recorded_job()
+        del recorded['run_attempt']
+        self.job.update(started_at=recorded['started_at'], completed_at=recorded['completed_at'],
+                        steps=deepcopy(recorded['steps']))
+        self.gh.pages.return_value = [recorded]
+        self.check()
+
+    def test_copied_success_keeps_its_own_setup_timestamp_skew(self):
+        recorded = self.recorded_job(steps=[
+            {'name': 'Set up job', 'number': 1, 'status': 'completed', 'conclusion': 'success',
+             'started_at': '2026-11-03T01:00:59Z', 'completed_at': '2026-11-03T01:01:00Z'},
+            {'name': 'Check', 'number': 2, 'status': 'completed', 'conclusion': 'success',
+             'started_at': '2026-11-03T01:02:00Z', 'completed_at': '2026-11-03T01:04:00Z'}])
+        self.job.update(started_at=recorded['started_at'], completed_at=recorded['completed_at'],
+                        steps=deepcopy(recorded['steps']))
+        self.gh.pages.return_value = [recorded]
+        self.check()
+
     def test_copied_success_must_match_its_recorded_steps_exactly(self):
         recorded = self.recorded_job()
         self.job.update(started_at=recorded['started_at'], completed_at=recorded['completed_at'],

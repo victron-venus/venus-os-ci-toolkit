@@ -108,7 +108,8 @@ def collect_every_attempts(workflow: dict, pattern: str) -> bool:
     A failed-only rerun executes only the failed jobs, so the uploads of the
     jobs that succeeded stay in an earlier attempt of the same run. The
     collector still keeps one attempt per artifact and the publisher still
-    verifies repository, run, source and plan.
+    verifies repository, run, source and plan. A name selector becomes a
+    pattern selector: the download action only globs patterns.
     """
     changed = False
     for job in workflow.get("jobs", {}).values():
@@ -125,8 +126,16 @@ def collect_every_attempts(workflow: dict, pattern: str) -> bool:
                 if not isinstance(value, str) or not value.startswith(pattern.removesuffix("*")):
                     continue
                 scoped = all_attempts_name(value)
-                if scoped != value:
-                    changed = True
+                if scoped == value:
+                    continue
+                changed = True
+                if key == "name":
+                    # `name` is an exact lookup in the download action; each
+                    # attempt needs its own directory, so only a pattern works.
+                    del options["name"]
+                    options["pattern"] = scoped
+                    options["merge-multiple"] = False
+                else:
                     options[key] = scoped
     return changed
 

@@ -2255,7 +2255,11 @@ def attempt_scoped_build_adapters(directory: Path, policy: dict, *, exclusive=Fa
 
 
 def render_release_attempts(directory: Path) -> dict[str, str]:
-    """Migrate existing artifact edges without replacing pins or release tooling."""
+    """Migrate existing artifact edges without replacing pins or release tooling.
+
+    Each collector keeps its exact attempt: the retained runtime may still flatten
+    one attempt, while merging attempts needs the regenerated collector.
+    """
     policy = json.loads((directory / POLICY_FILE).read_text(encoding="utf-8"))
     release_attempt_migration.policy_supported(policy)
     name = WORKFLOWS + "/" + RELEASE_PIPELINE_NAME
@@ -2270,8 +2274,6 @@ def render_release_attempts(directory: Path) -> dict[str, str]:
     files = attempt_scoped_build_adapters(directory, policy, exclusive=True)
     changed = release_attempt_workflow.scope(
         workflow, policy.get("artifact_pattern", "release-assets*"))
-    changed = release_attempt_workflow.collect_every_attempts(
-        workflow, policy.get("artifact_pattern", "release-assets*")) or changed
     if changed:
         output = io.StringIO()
         editor.dump(workflow, output)

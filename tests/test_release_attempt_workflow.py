@@ -87,6 +87,8 @@ class AttemptWorkflowTests(unittest.TestCase):
                     "pattern": "release-assets*" + attempts.SUFFIX, "path": ".release-download"}},
                 {"uses": "actions/download-artifact@pinned", "with": {
                     "name": "${{ needs.prepare.outputs.plan_artifact }}", "path": "."}},
+                {"uses": "actions/download-artifact@pinned", "with": {
+                    "name": "release-assets-linux" + attempts.SUFFIX, "path": ".linux"}},
                 {"run": "python3 scripts/release.py collect .release-download .release-assets"},
             ]},
             "build": {"steps": [
@@ -99,6 +101,11 @@ class AttemptWorkflowTests(unittest.TestCase):
         self.assertEqual(collected[0]["with"]["pattern"], "release-assets*" + attempts.RUN_SELECTOR)
         self.assertEqual(collected[1]["with"]["name"],
                          "${{ needs.prepare.outputs.plan_artifact }}")
+        # The download action only globs patterns, so a name becomes a pattern
+        # that keeps every attempt in its own directory.
+        self.assertEqual(collected[2]["with"], {
+            "path": ".linux", "pattern": "release-assets-linux" + attempts.RUN_SELECTOR,
+            "merge-multiple": False})
         # Build intermediates keep the exact attempt: only the collector merges.
         self.assertEqual(workflow["jobs"]["build"]["steps"][0]["with"]["pattern"],
                          "native-*" + attempts.SUFFIX)

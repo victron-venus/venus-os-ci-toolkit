@@ -143,9 +143,10 @@ class ReleaseAttemptMigrationTests(unittest.TestCase):
         self.build["jobs"]["package"]["steps"][-1]["with"]["name"] = "packages-linux"
         self.write()
         result = self.render()
-        # The publisher collects every attempt of the run; the producer upload
-        # name stays bound to the exact attempt that wrote it.
-        self.assertIn("packages*" + RUN_SELECTOR, result[migration.PIPELINE])
+        # The retained runtime only flattens one attempt, so the narrow migration
+        # keeps the collector on this attempt; the producer name stays bound too.
+        self.assertIn("packages*" + SUFFIX, result[migration.PIPELINE])
+        self.assertNotIn("packages*" + RUN_SELECTOR, result[migration.PIPELINE])
         self.assertIn("packages-linux" + SUFFIX, result[migration.BUILD.removeprefix("./")])
 
     def test_unmanaged_pipeline_is_rejected(self):
