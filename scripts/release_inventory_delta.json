@@ -27,15 +27,23 @@
     "scripts/version_receipt.py": {
       "hunks": [
         {
-          "before": "    return results\n\n\ndef validate_input_fields(\n    files: list[dict[str, object]], policy: dict[str, object], plan: dict[str, object]\n) -> None:\n",
-          "after": "    return results\n\n\ndef verify_required_build_receipts(\n    receipts: list[dict[str, object]], policy: dict[str, object],\n) -> None:\n    \"\"\"Require the source-declared package/signature set after RC evidence is split.\"\"\"\n    required = version_plan.required_build_receipts(cast(dict[str, object], policy[\"versioning\"]))\n    if required is None:\n        return\n    names = [cast(str, item[\"name\"]) for item in receipts]\n    if len(set(names)) != len(names):\n        raise ValueError(\"Duplicate authenticated build receipts\")\n    if set(names) != set(required):\n        raise ValueError(\n            \"Build receipt inventory differs from source policy: \"\n            f\"missing={sorted(set(required) - set(names))}, \"\n            f\"unexpected={sorted(set(names) - set(required))}\"\n        )\n\n\ndef validate_input_fields(\n    files: list[dict[str, object]], policy: dict[str, object], plan: dict[str, object]\n) -> None:\n"
+          "before": ") -> None:\n    \"\"\"Reject missing, malformed or mismatched package execution identity.\"\"\"\n    producer = receipt.get(\"producer\")\n",
+          "after": ") -> None:\n    \"\"\"Reject missing, malformed or mismatched package execution identity.\n\n    A failed-only rerun re-executes only the publisher, so a package keeps the\n    attempt that actually produced it. Any attempt of the same repository, run\n    and source is accepted; another run, source or a later attempt is not.\n    \"\"\"\n    producer = receipt.get(\"producer\")\n"
+        },
+        {
+          "before": "    )\n    if checked != expected:\n        raise ValueError(\"Receipt belongs to a different package producer attempt\")\n",
+          "after": "    )\n    same_run = (\n        checked[\"repository\"] == expected[\"repository\"]\n        and checked[\"run_id\"] == expected[\"run_id\"]\n        and checked[\"source_sha\"] == expected[\"source_sha\"]\n        and cast(int, checked[\"run_attempt\"]) <= cast(int, expected[\"run_attempt\"])\n    )\n    if not same_run:\n        raise ValueError(\"Receipt belongs to a different package producer attempt\")\n"
+        },
+        {
+          "before": "\ndef validate_input_fields(\n",
+          "after": "\ndef verify_required_build_receipts(\n    receipts: list[dict[str, object]], policy: dict[str, object],\n) -> None:\n    \"\"\"Require the source-declared package/signature set after RC evidence is split.\"\"\"\n    required = version_plan.required_build_receipts(cast(dict[str, object], policy[\"versioning\"]))\n    if required is None:\n        return\n    names = [cast(str, item[\"name\"]) for item in receipts]\n    if len(set(names)) != len(names):\n        raise ValueError(\"Duplicate authenticated build receipts\")\n    if set(names) != set(required):\n        raise ValueError(\n            \"Build receipt inventory differs from source policy: \"\n            f\"missing={sorted(set(required) - set(names))}, \"\n            f\"unexpected={sorted(set(names) - set(required))}\"\n        )\n\n\ndef validate_input_fields(\n"
         }
       ],
       "original_to_current": {
-        "4f273af2376ffe0de1ec1b064365badbbebf5b2718233817d12ead988d941e81": "72a3fcd5621024a0d7d0954cc9c2897f24277944a33fa69524bb23af020585c0"
+        "4f273af2376ffe0de1ec1b064365badbbebf5b2718233817d12ead988d941e81": "0e8659d77ac700d5e6dabc5a08b5a25b3db215ccbc191b41fc3558c7ec6abc48"
       },
       "current": [
-        "72a3fcd5621024a0d7d0954cc9c2897f24277944a33fa69524bb23af020585c0"
+        "0e8659d77ac700d5e6dabc5a08b5a25b3db215ccbc191b41fc3558c7ec6abc48"
       ]
     },
     "scripts/release_versioned.py": {
