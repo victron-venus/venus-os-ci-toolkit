@@ -4,6 +4,7 @@
 
 ### Changed
 
+- release: publish a failed-only rerun from the earlier attempts of its own run: the collector keeps each artifact's newest attempt, package and fuzz receipts may come from an attempt at or before the current one, and a recorded successful job may be reported unchanged.
 - release: use docker credential helpers when publishing containers (#518).
 - preserve evidence when the recovery snapshot fails (#516).
 - describe evidence recovery waits and limits as implemented (#515).

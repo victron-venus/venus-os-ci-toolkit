@@ -6,15 +6,30 @@ import fnmatch
 import re
 
 SUFFIX = "-run-${{ github.run_id }}-attempt-${{ github.run_attempt }}"
+RUN_SELECTOR = "-run-${{ github.run_id }}-attempt-*"
 PLAN_NAMES = {
     "inputs.release_plan_artifact", "inputs.release-plan-artifact",
     "needs.prepare.outputs.plan_artifact", "steps.metadata.outputs.plan_artifact",
 }
 
 
+def unscoped(value: str) -> str:
+    """Strip the attempt identity a generated name already carries."""
+    for suffix in (RUN_SELECTOR, SUFFIX):
+        value = value.removesuffix(suffix)
+    return value
+
+
+def all_attempts_name(value: str) -> str:
+    """Select one artifact across every attempt of this workflow run."""
+    if value.endswith(RUN_SELECTOR):
+        return value
+    return unscoped(value) + RUN_SELECTOR
+
+
 def scoped_name(value: str) -> str:
     """Add the exact attempt suffix once, preserving matrix target selectors."""
-    return value if value.endswith(SUFFIX) else value + SUFFIX
+    return value if value.endswith((SUFFIX, RUN_SELECTOR)) else value + SUFFIX
 
 
 def producer_selectors(workflow: dict) -> set[str]:
@@ -27,7 +42,7 @@ def producer_selectors(workflow: dict) -> set[str]:
             name = step.get("with", {}).get("name")
             if not isinstance(name, str) or not name:
                 raise ValueError("Release build uploads require explicit artifact names")
-            selector = re.sub(r"\$\{\{.*?\}\}", "*", name.removesuffix(SUFFIX))
+            selector = re.sub(r"\$\{\{.*?\}\}", "*", unscoped(name))
             if not selector.strip("*"):
                 raise ValueError("Release build artifact names require a literal component")
             selectors.add(selector)
@@ -36,7 +51,7 @@ def producer_selectors(workflow: dict) -> set[str]:
 
 def overlaps(value: str, selector: str) -> bool:
     """Conservatively include intersecting globs rather than miss an input edge."""
-    value = re.sub(r"\$\{\{.*?\}\}", "*", value.removesuffix(SUFFIX))
+    value = re.sub(r"\$\{\{.*?\}\}", "*", unscoped(value))
     if fnmatch.fnmatchcase(value, selector) or fnmatch.fnmatchcase(selector, value):
         return True
     # Compatible fixed ends are an over-approximation for glob intersections.
@@ -85,6 +100,35 @@ def scope_selector(value: object, selectors: set[str]) -> object:
     if isinstance(value, str) and any(overlaps(value, selector) for selector in selectors):
         return scoped_name(value)
     return value
+
+
+def collect_every_attempts(workflow: dict, pattern: str) -> bool:
+    """Let a publisher collect each artifact from its newest attempt of this run.
+
+    A failed-only rerun executes only the failed jobs, so the uploads of the
+    jobs that succeeded stay in an earlier attempt of the same run. The
+    collector still keeps one attempt per artifact and the publisher still
+    verifies repository, run, source and plan.
+    """
+    changed = False
+    for job in workflow.get("jobs", {}).values():
+        steps = job.get("steps", [])
+        if not any(re.search(r"scripts/release\.py collect\b", str(step.get("run", "")))
+                   for step in steps):
+            continue
+        for step in steps:
+            if step.get("uses", "").split("@", 1)[0] != "actions/download-artifact":
+                continue
+            options = step.get("with", {})
+            for key in ("name", "pattern"):
+                value = options.get(key)
+                if not isinstance(value, str) or not value.startswith(pattern.removesuffix("*")):
+                    continue
+                scoped = all_attempts_name(value)
+                if scoped != value:
+                    changed = True
+                    options[key] = scoped
+    return changed
 
 
 def scope(workflow: dict, pattern: str, producers: set[str] | None = None) -> bool:

@@ -1470,6 +1470,8 @@ def release(policy):
     release_closed_workflow.apply(workflow, policy, ACTION_REFS)
     release_gh_workflow.apply(workflow, ACTION_REFS)
     release_attempt_workflow.scope(workflow, policy.get("artifact_pattern", "release-assets*"))
+    release_attempt_workflow.collect_every_attempts(
+        workflow, policy.get("artifact_pattern", "release-assets*"))
     return workflow
 
 
@@ -2266,7 +2268,11 @@ def render_release_attempts(directory: Path) -> dict[str, str]:
     workflow = editor.load(source)
     release_attempt_migration.pipeline_supported(workflow, policy, ROOT, WorkflowLoader)
     files = attempt_scoped_build_adapters(directory, policy, exclusive=True)
-    if release_attempt_workflow.scope(workflow, policy.get("artifact_pattern", "release-assets*")):
+    changed = release_attempt_workflow.scope(
+        workflow, policy.get("artifact_pattern", "release-assets*"))
+    changed = release_attempt_workflow.collect_every_attempts(
+        workflow, policy.get("artifact_pattern", "release-assets*")) or changed
+    if changed:
         output = io.StringIO()
         editor.dump(workflow, output)
         files[name] = output.getvalue()

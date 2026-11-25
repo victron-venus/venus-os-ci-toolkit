@@ -16,7 +16,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 import install_release
 import release as release_client
-from release_attempt_workflow import SUFFIX
+from release_attempt_workflow import RUN_SELECTOR, SUFFIX
 import version_plan
 import version_receipt
 
@@ -145,7 +145,8 @@ class AttemptSelectionTests(unittest.TestCase):
                 self.artifact(platform, attempt)
         before = {path.relative_to(self.inventory): path.read_bytes()
                   for path in self.inventory.rglob("*") if path.is_file()}
-        self.assertEqual(len(self.collect(2)), 2)
+        # Both attempts of the run are downloaded; the collector keeps the newest.
+        self.assertEqual(len(self.collect(2)), 4)
         for platform in ("a", "b"):
             payload = json.loads((self.assets / f"package-{platform}.json").read_text())
             self.assertEqual(payload["attempt"], 2)
@@ -161,7 +162,8 @@ class AttemptSelectionTests(unittest.TestCase):
         native_path = ".github/workflows/release-native.yml"
         (self.root / ".release-policy.json").write_text(json.dumps(self.policy), encoding="utf-8")
         # Start with a real generated consumer, before attempt suffixes were adopted.
-        old_pipeline = install_release.dump(install_release.release(self.policy)).replace(SUFFIX, "")
+        old_pipeline = install_release.dump(install_release.release(self.policy))
+        old_pipeline = old_pipeline.replace(RUN_SELECTOR, "").replace(SUFFIX, "")
         (self.root / pipeline_path).write_text(old_pipeline, encoding="utf-8")
         build = {"on": {"workflow_call": {}}, "jobs": {
             "native": {"uses": "./" + native_path},
@@ -220,7 +222,7 @@ class AttemptSelectionTests(unittest.TestCase):
                                 and "pattern" in step.get("with", {}))
                 self.assertIs(download["merge-multiple"], False)
                 self.download_pattern = download["pattern"]
-                self.assertEqual(len(self.collect(2)), 2)
+                self.assertEqual(len(self.collect(2)), 4)
                 self.assertEqual(len(self.verify_receipts(2)), 2)
                 self.assertEqual(len(version_receipt.verify_declared_artifacts(
                     self.assets, self.policy, self.plan)), 2)
@@ -230,21 +232,30 @@ class AttemptSelectionTests(unittest.TestCase):
                 shutil.rmtree(self.root / ".release-download")
         self.assertEqual(len(list(native_inventory.iterdir())), 4)
 
-    def test_failed_job_only_rerun_cannot_fill_empty_current_set_from_old_attempt(self):
-        for platform in ("a", "b"):
-            self.artifact(platform, 1)
-        self.assertEqual(self.materialize(2), [])
+    def test_failed_job_only_rerun_publishes_the_prior_attempt_packages(self):
+        earlier = [self.artifact(platform, 1) for platform in ("a", "b")]
+        # Re-running only the failed jobs downloads the earlier attempt's uploads.
+        self.assertEqual(sorted(self.materialize(2)), sorted(earlier))
         with patch.object(release_client, "ROOT", self.root):
-            with self.assertRaisesRegex(ValueError, "No build assets were downloaded"):
-                release_client.collect_assets()
-        self.assertFalse(self.assets.exists())
+            release_client.collect_assets()
+        self.assertEqual(len(self.verify_receipts(2)), 2)
+        self.assertEqual(len(version_receipt.verify_declared_artifacts(
+            self.assets, self.policy, self.plan)), 2)
+        self.assertEqual(json.loads((self.assets / "package-a.json").read_text())["attempt"], 1)
 
-    def test_partial_rerun_requires_missing_declared_package_not_old_platform(self):
+    def test_rerun_keeps_each_artifacts_newest_attempt(self):
         for platform in ("a", "b"):
             self.artifact(platform, 1)
-        current = self.artifact("a", 2)
-        self.assertEqual(self.collect(2), [current])
-        self.assertFalse((self.assets / "package-b.json").exists())
+        self.artifact("a", 2)
+        self.assertEqual(len(self.collect(2)), 3)
+        self.assertEqual(json.loads((self.assets / "package-a.json").read_text())["attempt"], 2)
+        self.assertEqual(json.loads((self.assets / "package-b.json").read_text())["attempt"], 1)
+        self.assertEqual(len(self.verify_receipts(2)), 2)
+
+    def test_declared_package_missing_from_every_attempt_still_fails(self):
+        for attempt in (1, 2):
+            self.artifact("a", attempt)
+        self.assertEqual(len(self.collect(2)), 2)
         # Receipts cover the actual subset; only policy declarations require B.
         self.assertEqual(len(self.verify_receipts(2)), 1)
         with self.assertRaisesRegex(ValueError, "metadata target is missing: package-b.json"):
@@ -257,13 +268,18 @@ class AttemptSelectionTests(unittest.TestCase):
         path = self.assets / "release-inputs-a.json"
         original = path.read_text(encoding="utf-8")
         for field, value in (("repository", "other/project"), ("run_id", 124),
-                             ("run_attempt", 1), ("source_sha", "b" * 40)):
+                             ("run_attempt", 3), ("source_sha", "b" * 40)):
             with self.subTest(field=field):
                 stale = json.loads(original)
                 stale["producer"][field] = value
                 path.write_text(json.dumps(stale), encoding="utf-8")
                 with self.assertRaisesRegex(ValueError, "different package producer attempt"):
                     self.verify_receipts(2)
+        # The earlier attempt of this same run is what a failed-only rerun keeps.
+        earlier = json.loads(original)
+        earlier["producer"]["run_attempt"] = 1
+        path.write_text(json.dumps(earlier), encoding="utf-8")
+        self.assertEqual(len(self.verify_receipts(2)), 2)
 
     def test_duplicate_current_payloads_remain_ambiguous_even_with_identical_bytes(self):
         original = self.artifact("a", 2)

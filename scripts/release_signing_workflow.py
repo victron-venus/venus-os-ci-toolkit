@@ -70,8 +70,8 @@ def apply(workflow: dict, policy: dict, pins: dict) -> None:
                 "pattern": policy.get("artifact_pattern", "release-assets*"),
                 "path": ".release-download", "merge-multiple": False}},
             {"name": "Collect original build assets", "run": (
-                "# A retried signing job must not ingest its own previous output.\n"
-                'rm -rf ".release-download/release-assets-signature-run-$GITHUB_RUN_ID-attempt-$GITHUB_RUN_ATTEMPT"\n'
+                "# A retried signing job must not ingest any attempt's signature output.\n"
+                'rm -rf ".release-download/release-assets-signature-run-$GITHUB_RUN_ID-attempt-"*\n'
                 "python3 scripts/release.py collect .release-download .release-assets\n")},
             {"name": "Verify build receipts and inventory reviewed source", "run":
              'python3 scripts/release_signing.py prepare .release-assets --source-sha "$GITHUB_SHA"'},
