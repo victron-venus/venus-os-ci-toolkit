@@ -222,7 +222,11 @@ class AttemptSelectionTests(unittest.TestCase):
                                 and "pattern" in step.get("with", {}))
                 self.assertIs(download["merge-multiple"], False)
                 self.download_pattern = download["pattern"]
-                self.assertEqual(len(self.collect(2)), 4)
+                # The retained runtime flattens one attempt, so the narrow
+                # migration keeps this attempt and never merges the earlier one.
+                self.assertEqual(self.download_pattern,
+                                 self.policy.get("artifact_pattern", "release-assets*") + SUFFIX)
+                self.assertEqual(len(self.collect(2)), 2)
                 self.assertEqual(len(self.verify_receipts(2)), 2)
                 self.assertEqual(len(version_receipt.verify_declared_artifacts(
                     self.assets, self.policy, self.plan)), 2)
