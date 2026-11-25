@@ -66,18 +66,50 @@ class AttemptWorkflowTests(unittest.TestCase):
         self.assertEqual(scoped[2:], steps[2:])
         self.assertFalse(attempts.scope(workflow, "release-assets*"))
 
-    def test_versioned_publishers_and_signer_select_current_attempt(self):
+    def test_versioned_publishers_collect_every_attempt_of_the_run(self):
         policy = {"repository": "example/project", "mode": "release", "sign_releases": True,
                   "versioning": {"schema": 1}, "validation_workflows": ["ci.yml"]}
         jobs = install_release.release(policy)["jobs"]
         for name in ("candidate", "final", "sign"):
             downloads = [step["with"] for step in jobs[name]["steps"]
                          if step.get("uses", "").startswith("actions/download-artifact@")]
-            self.assertIn({"pattern": "release-assets*" + attempts.SUFFIX,
+            self.assertIn({"pattern": "release-assets*" + attempts.RUN_SELECTOR,
                            "path": ".release-download", "merge-multiple": False}, downloads)
         sign_upload = next(step["with"] for step in jobs["sign"]["steps"]
                            if step.get("uses", "").startswith("actions/upload-artifact@"))
+        # Uploads stay attempt-scoped so a newer attempt always owns its bytes.
         self.assertEqual(sign_upload["name"], "release-assets-signature" + attempts.SUFFIX)
+
+    def test_collection_accepts_earlier_attempts_only_for_the_collector(self):
+        workflow = {"jobs": {
+            "collect": {"steps": [
+                {"uses": "actions/download-artifact@pinned", "with": {
+                    "pattern": "release-assets*" + attempts.SUFFIX, "path": ".release-download"}},
+                {"uses": "actions/download-artifact@pinned", "with": {
+                    "name": "${{ needs.prepare.outputs.plan_artifact }}", "path": "."}},
+                {"uses": "actions/download-artifact@pinned", "with": {
+                    "name": "release-assets-linux" + attempts.SUFFIX, "path": ".linux"}},
+                {"run": "python3 scripts/release.py collect .release-download .release-assets"},
+            ]},
+            "build": {"steps": [
+                {"uses": "actions/download-artifact@pinned", "with": {
+                    "pattern": "native-*" + attempts.SUFFIX}},
+            ]},
+        }}
+        self.assertTrue(attempts.collect_every_attempts(workflow, "release-assets*"))
+        collected = workflow["jobs"]["collect"]["steps"]
+        self.assertEqual(collected[0]["with"]["pattern"], "release-assets*" + attempts.RUN_SELECTOR)
+        self.assertEqual(collected[1]["with"]["name"],
+                         "${{ needs.prepare.outputs.plan_artifact }}")
+        # The download action only globs patterns, so a name becomes a pattern
+        # that keeps every attempt in its own directory.
+        self.assertEqual(collected[2]["with"], {
+            "path": ".linux", "pattern": "release-assets-linux" + attempts.RUN_SELECTOR,
+            "merge-multiple": False})
+        # Build intermediates keep the exact attempt: only the collector merges.
+        self.assertEqual(workflow["jobs"]["build"]["steps"][0]["with"]["pattern"],
+                         "native-*" + attempts.SUFFIX)
+        self.assertFalse(attempts.collect_every_attempts(workflow, "release-assets*"))
 
     def test_nested_build_adapters_are_scoped_without_touching_candidate_ids(self):
         with tempfile.TemporaryDirectory() as temporary:

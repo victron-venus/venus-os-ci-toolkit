@@ -11,7 +11,9 @@ import subprocess  # nosec B404
 
 import yaml
 
-from release_attempt_workflow import SUFFIX, producer_selectors, scope_selector, separate_download_identity
+from release_attempt_workflow import (
+    RUN_SELECTOR, SUFFIX, producer_selectors, scope_selector, separate_download_identity,
+)
 
 TOOLKIT = "victron-venus/venus-os-ci-toolkit"
 PIPELINE = ".github/workflows/release-pipeline.yml"
@@ -183,7 +185,11 @@ def pipeline_supported(workflow: dict, policy: dict, toolkit: Path, loader: type
         collectors = [step.get("with", {}) for step in jobs[name].get("steps", [])
                       if step.get("uses", "").split("@", 1)[0] == "actions/download-artifact"
                       and step.get("with", {}).get("path") == ".release-download"]
-        if (len(collectors) != 1 or collectors[0].get("pattern") not in {pattern, pattern + SUFFIX}
+        # The collector may still preselect one attempt or already span the run's
+        # attempts; both are reviewed states of this migration.
+        if (len(collectors) != 1
+                or collectors[0].get("pattern") not in {
+                    pattern, pattern + SUFFIX, pattern + RUN_SELECTOR}
                 or collectors[0].get("merge-multiple") is not False):
             raise ValueError("Saved package collector does not match the release artifact policy: " + name)
     for job in jobs.values():

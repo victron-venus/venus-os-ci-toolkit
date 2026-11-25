@@ -1470,6 +1470,8 @@ def release(policy):
     release_closed_workflow.apply(workflow, policy, ACTION_REFS)
     release_gh_workflow.apply(workflow, ACTION_REFS)
     release_attempt_workflow.scope(workflow, policy.get("artifact_pattern", "release-assets*"))
+    release_attempt_workflow.collect_every_attempts(
+        workflow, policy.get("artifact_pattern", "release-assets*"))
     return workflow
 
 
@@ -2253,7 +2255,11 @@ def attempt_scoped_build_adapters(directory: Path, policy: dict, *, exclusive=Fa
 
 
 def render_release_attempts(directory: Path) -> dict[str, str]:
-    """Migrate existing artifact edges without replacing pins or release tooling."""
+    """Migrate existing artifact edges without replacing pins or release tooling.
+
+    Each collector keeps its exact attempt: the retained runtime may still flatten
+    one attempt, while merging attempts needs the regenerated collector.
+    """
     policy = json.loads((directory / POLICY_FILE).read_text(encoding="utf-8"))
     release_attempt_migration.policy_supported(policy)
     name = WORKFLOWS + "/" + RELEASE_PIPELINE_NAME
@@ -2266,7 +2272,9 @@ def render_release_attempts(directory: Path) -> dict[str, str]:
     workflow = editor.load(source)
     release_attempt_migration.pipeline_supported(workflow, policy, ROOT, WorkflowLoader)
     files = attempt_scoped_build_adapters(directory, policy, exclusive=True)
-    if release_attempt_workflow.scope(workflow, policy.get("artifact_pattern", "release-assets*")):
+    changed = release_attempt_workflow.scope(
+        workflow, policy.get("artifact_pattern", "release-assets*"))
+    if changed:
         output = io.StringIO()
         editor.dump(workflow, output)
         files[name] = output.getvalue()

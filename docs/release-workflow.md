@@ -109,18 +109,21 @@ never update stable/latest. All required platforms must build before publication
 `release-manifest.json` records source SHA, workflow/run attempt and every payload
 SHA-256. The manifest is also saved in immutable Actions evidence for 90 days.
 Versioned Actions packages also record their producer repository, run ID, attempt
-and source in every receipt; publication requires the current verified run identity.
-The installer scopes build, signing and collection artifact names to that attempt.
+and source in every receipt; publication requires the verified run identity and
+accepts an attempt at or before the current one of that same run.
+The installer scopes build artifact names to the attempt and lets the publisher
+collect each artifact from its newest attempt of the same run.
 ID-selected candidate downloads require a separate consumer check of receipt
 producer identity and payload digest; the name-scoping helper does not verify them.
-**Re-run failed jobs** can retain successful checks and packages from an older
-attempt, so it is insufficient when publication requires fresh inputs from the
-current attempt. Before publication starts, read back the release ledger and
-existing tags and releases. If the reservation is still eligible, its build
-number is above the publication floor, and the candidate tag is absent, use
-**Re-run all jobs** on the same run only when the allocator and release policy
-permit it. Recreate every required input in the same attempt; older packages
-must not fill missing current builds.
+**Re-run failed jobs** re-executes only the failed jobs, so it publishes the
+packages, receipts and successful jobs an earlier attempt of the same run
+produced. Before publication starts, read back the release ledger and existing
+tags and releases. If the reservation is still eligible, its build number is
+above the publication floor, and the candidate tag is absent, a failed-only
+rerun of that run may publish. Another run, another source revision or a later
+attempt of the same run never qualifies. Use **Re-run all jobs** on the same run
+only when the allocator and release policy permit it and a fresh build of every
+input is required.
 
 Once the publication floor has consumed the build number, use a policy-authorized
 new workflow run and reservation. If publication started or its external result
@@ -337,14 +340,15 @@ or missing local object stops before writes, without falling back to a fetch.
 Workflow files and policy text are read and written as UTF-8 on every platform.
 
 Every ordinary release artifact name now ends in
-`-run-<run_id>-attempt-<run_attempt>`. A full same-run retry can retain previous
-attempts without mixing their payloads. Before publication starts, use
-**Re-run all jobs** only if the allocator and release policy permit reuse of that
-reservation, so every required producer creates inputs for the same new attempt.
-Re-running only a failed job can leave no current inputs, or an incomplete set;
-older packages must not fill those gaps. Once publication starts, or its result
-is partial or uncertain, inspect existing tags, releases and assets before a
-policy-authorized new run. Never reset the ledger or overwrite published assets.
+`-run-<run_id>-attempt-<run_attempt>`. The publisher collects each artifact from
+its newest attempt of the same run, so a full same-run retry keeps its newest
+payloads and a failed-only retry completes them with earlier attempts' uploads,
+receipts and recorded successful jobs. Attempts are never mixed across runs or
+source revisions. Before publication starts, use **Re-run all jobs** only if the
+allocator and release policy permit reuse of that reservation and every input
+must be rebuilt. Once publication starts, or its result is partial or uncertain,
+inspect existing tags, releases and assets before a policy-authorized new run.
+Never reset the ledger or overwrite published assets.
 See [publication-phase retry rules](VERSIONING.md#package-identity-across-reruns).
 Duplicate payload names remain errors, even when their bytes match.
 
@@ -384,12 +388,13 @@ The generated header and detached-provenance requirement are preserved.
 
 After migration, run a fresh, complete build of all required package producers in
 one workflow attempt. The publisher verifies the independently supplied repository,
-run ID, attempt and source SHA against every package receipt. Pre-migration receipts
+run ID and source SHA against every package receipt, and accepts a receipt from any
+attempt at or before the current one of that same run. Pre-migration receipts
 without producer identity cannot qualify fresh package publication through this
 migrated publisher. Existing historical promotion and retained-evidence validation
-remain separate and unchanged. A failed-job-only retry cannot
-fill missing current-attempt packages from an earlier attempt; regenerate the full
-coherent package set instead. Existing release approval and acceptance policies
+remain separate and unchanged. A failed-job-only retry publishes the packages an
+earlier attempt produced; rebuild only a package whose receipt is missing or whose
+bytes changed. Existing release approval and acceptance policies
 still apply.
 
 Offline creation and inspection remain supported without an Actions identity, but

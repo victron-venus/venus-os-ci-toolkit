@@ -74,6 +74,14 @@ Explicit beta/RC requests still reject an occupied base; nightlies are unchanged
    qualification at the RC's source revision, retained evidence and every asset.
    Missing or expired evidence requires a new RC.
 
+A failed-only rerun (`gh run rerun --failed`) publishes from the previous attempt
+of the same run. Each artifact is collected from its newest attempt of that run,
+so the packages, receipts and successful jobs an earlier attempt produced can
+complete the current one. The run, source commit, version plan and repository
+are still verified, and an earlier attempt of another run or a later attempt of
+this one never qualifies. Re-run all jobs when a fresh build of every input is
+required.
+
 The release CLI has no force-publish, replace-tag or skip-checks option. A later
 policy edit cannot retroactively qualify an older RC. Build artifact retention is declared by
 each build adapter (currently 14 or 30 days across the fleet);

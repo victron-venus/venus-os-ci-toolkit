@@ -23,6 +23,7 @@ VERSION = re.compile(r"(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\Z", re.ASC
 RC = re.compile(
     r"v((?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*))-rc\.([1-9]\d*)\Z", re.ASCII
 )
+UPLOAD = re.compile(r"(?P<artifact>.+)-attempt-(?P<attempt>[1-9]\d*)\Z", re.ASCII)
 
 
 def run(*args: str, capture: bool = False) -> str:
@@ -237,25 +238,62 @@ def package(args: argparse.Namespace, config: dict) -> None:
     run("bash", script, version, args.channel)
 
 
+def download_attempt(entry: Path) -> tuple[str, int] | None:
+    """Identify an artifact directory that carries its workflow attempt number."""
+    matched = UPLOAD.fullmatch(entry.name) if entry.is_dir() else None
+    return (matched["artifact"], int(matched["attempt"])) if matched else None
+
+
+def downloaded_entries(source: Path) -> list[Path]:
+    """Keep each downloaded artifact's newest attempt of this workflow run.
+
+    A failed-only rerun executes only the failed jobs, so the uploads of the jobs
+    that succeeded stay in an earlier attempt. Older attempts of the same
+    artifact never contribute bytes to the newest one. A single artifact is
+    extracted directly into the download root instead of its own directory.
+    """
+    chosen: dict[str, tuple[int, Path]] = {}
+    direct: list[Path] = []
+    for entry in sorted(source.iterdir(), key=lambda path: path.name):
+        if entry.is_symlink():
+            raise ValueError(f"Symlink asset: {entry}")
+        attempt = download_attempt(entry)
+        if attempt is None:
+            direct.append(entry)
+            continue
+        artifact, number = attempt
+        if artifact not in chosen or number > chosen[artifact][0]:
+            chosen[artifact] = (number, entry)
+    return [*direct, *(path for _, path in chosen.values())]
+
+
 def collect_assets() -> None:
     """Flatten downloaded CI artifacts using only fixed repository directories."""
     source = ROOT / ".release-download"
     destination = ROOT / ".release-assets"
-    if source.is_symlink() or not source.is_dir() or destination.is_symlink():
+    if source.is_symlink() or destination.is_symlink():
         raise ValueError(
             "Artifact directories must be real directories inside the checkout"
         )
+    if not source.is_dir():
+        raise ValueError(
+            "No build artifacts were downloaded for this run; the uploads expired "
+            "or never happened, so re-run all jobs"
+        )
     files = []
     seen = set()
-    for file in source.rglob("*"):
-        if file.is_symlink():
-            raise ValueError(f"Symlink asset: {file}")
-        if not file.is_file():
-            continue
-        if file.name.casefold() in seen:
-            raise ValueError(f"Duplicate asset basename across platforms: {file.name}")
-        seen.add(file.name.casefold())
-        files.append(file)
+    for entry in downloaded_entries(source):
+        for file in entry.rglob("*") if entry.is_dir() else (entry,):
+            if file.is_symlink():
+                raise ValueError(f"Symlink asset: {file}")
+            if not file.is_file():
+                continue
+            if file.name.casefold() in seen:
+                raise ValueError(
+                    f"Duplicate asset basename across platforms: {file.name}"
+                )
+            seen.add(file.name.casefold())
+            files.append(file)
     if not files:
         raise ValueError("No build assets were downloaded")
     destination.mkdir(exist_ok=False)

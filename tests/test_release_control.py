@@ -4344,6 +4344,65 @@ class CurrentAttemptFreshnessTests(unittest.TestCase):
         with self.assertRaisesRegex(rc.ReleaseError, 'predates'):
             self.check()
 
+    def recorded_job(self, **changes):
+        """The attempt-1 record Actions copies unchanged into the next attempt."""
+        recorded = {'name': 'checks / CI gate', 'head_sha': SHA, 'run_attempt': 1,
+                    'status': 'completed', 'conclusion': 'success',
+                    'started_at': '2026-11-03T01:01:00Z',
+                    'completed_at': '2026-11-03T01:05:00Z',
+                    'steps': [{'name': 'Check', 'status': 'completed', 'conclusion': 'success',
+                               'started_at': '2026-11-03T01:02:00Z',
+                               'completed_at': '2026-11-03T01:04:00Z'}]}
+        recorded.update(changes)
+        return recorded
+
+    def test_failed_only_rerun_accepts_the_execution_it_reports_unchanged(self):
+        recorded = self.recorded_job()
+        self.job.update(started_at=recorded['started_at'], completed_at=recorded['completed_at'],
+                        steps=deepcopy(recorded['steps']))
+        self.gh.pages.return_value = [recorded]
+        self.check()
+        self.gh.pages.assert_called_once_with('actions/runs/123/attempts/1/jobs', 'jobs')
+
+    def test_copied_success_accepts_a_record_without_attempt_number(self):
+        recorded = self.recorded_job()
+        del recorded['run_attempt']
+        self.job.update(started_at=recorded['started_at'], completed_at=recorded['completed_at'],
+                        steps=deepcopy(recorded['steps']))
+        self.gh.pages.return_value = [recorded]
+        self.check()
+
+    def test_copied_success_keeps_its_own_setup_timestamp_skew(self):
+        recorded = self.recorded_job(steps=[
+            {'name': 'Set up job', 'number': 1, 'status': 'completed', 'conclusion': 'success',
+             'started_at': '2026-11-03T01:00:59Z', 'completed_at': '2026-11-03T01:01:00Z'},
+            {'name': 'Check', 'number': 2, 'status': 'completed', 'conclusion': 'success',
+             'started_at': '2026-11-03T01:02:00Z', 'completed_at': '2026-11-03T01:04:00Z'}])
+        self.job.update(started_at=recorded['started_at'], completed_at=recorded['completed_at'],
+                        steps=deepcopy(recorded['steps']))
+        self.gh.pages.return_value = [recorded]
+        self.check()
+
+    def test_copied_success_must_match_its_recorded_steps_exactly(self):
+        recorded = self.recorded_job()
+        self.job.update(started_at=recorded['started_at'], completed_at=recorded['completed_at'],
+                        steps=[{**recorded['steps'][0], 'name': 'Run checks'}])
+        self.gh.pages.return_value = [recorded]
+        with self.assertRaisesRegex(rc.ReleaseError, 'predates'):
+            self.check()
+
+    def test_unrecorded_earlier_success_and_foreign_attempts_are_not_accepted(self):
+        recorded = self.recorded_job()
+        self.job.update(started_at=recorded['started_at'], completed_at=recorded['completed_at'],
+                        steps=deepcopy(recorded['steps']))
+        for reported in ([], [self.recorded_job(run_attempt=2)],
+                         [self.recorded_job(head_sha='b' * 40)],
+                         [self.recorded_job(conclusion='failure')], 'not a list'):
+            with self.subTest(reported=reported):
+                self.gh.pages.return_value = reported
+                with self.assertRaisesRegex(rc.ReleaseError, 'predates'):
+                    self.check()
+
     def test_old_steps_cannot_hide_under_new_job_timestamps(self):
         self.job['steps'][0].update(started_at='2026-11-03T01:01:00Z', completed_at='2026-11-03T01:05:00Z')
         with self.assertRaisesRegex(rc.ReleaseError, 'outside'):

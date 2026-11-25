@@ -805,16 +805,13 @@ class LifecycleTests(unittest.TestCase):  # pylint: disable=too-many-public-meth
                            "started_at": "2026-09-12T02:01:30Z", "completed_at": "2026-09-12T02:02:30Z",
                        }])
 
-    def test_partial_rerun_rejects_prior_attempt_package_before_publication(self):
+    def test_partial_rerun_publishes_the_prior_attempt_package(self):
         lifecycle.prepare(self.args)
         self.build_current()
         self.fresh_attempt()
-        ledger = copy.deepcopy(self.gh.ledger)
-        with self.assertRaisesRegex(ValueError, "different package producer attempt"):
-            lifecycle.publish_versioned(self.args)
-        self.assertEqual(self.gh.writes, [])
-        self.assertEqual(self.gh.ledger, ledger)
-        self.assertFalse(rc.EVIDENCE.exists())
+        result = lifecycle.publish_versioned(self.args)
+        self.assertEqual(result["status"], "published")
+        self.assertEqual(json.loads(rc.EVIDENCE.read_bytes())["run_attempt"], 2)
 
     def test_complete_current_attempt_packages_publish_normally(self):
         """A full retry rebuilds packages without allocating another version."""
@@ -892,7 +889,7 @@ class LifecycleTests(unittest.TestCase):  # pylint: disable=too-many-public-meth
         self.assertEqual(self.gh.ledger, ledger)
         self.assertFalse(rc.EVIDENCE.exists())
 
-    def test_mixed_attempt_receipts_fail_before_publication(self):
+    def test_mixed_attempts_of_the_same_run_publish(self):
         self.require_build_receipts(["release-inputs-linux.json", "release-inputs-windows.json"])
         lifecycle.prepare(self.args)
         self.build_current()
@@ -907,15 +904,11 @@ class LifecycleTests(unittest.TestCase):  # pylint: disable=too-many-public-meth
         (attempt_two / "release-inputs-windows.json").write_bytes(
             previous_assets["release-inputs-windows.json"]
         )
-        writes = copy.deepcopy(self.gh.writes)
-        ledger = copy.deepcopy(self.gh.ledger)
-        allocations = copy.deepcopy(self.gh.ledger_writes)
-        with self.assertRaisesRegex(ValueError, "different package producer attempt"):
-            lifecycle.publish_versioned(self.args)
-        self.assertEqual(self.gh.writes, writes)
-        self.assertEqual(self.gh.ledger, ledger)
-        self.assertEqual(self.gh.ledger_writes, allocations)
-        self.assertFalse(rc.EVIDENCE.exists())
+        # Both packages still belong to this run and source revision, so a
+        # failed-only rerun publishes the rebuilt and the retained one together.
+        result = lifecycle.publish_versioned(self.args)
+        self.assertEqual(result["status"], "published")
+        self.assertEqual(json.loads(rc.EVIDENCE.read_bytes())["run_attempt"], 2)
 
 
     def test_complete_declared_attempt_two_rebuild_publishes(self):
@@ -950,9 +943,9 @@ class LifecycleTests(unittest.TestCase):  # pylint: disable=too-many-public-meth
         self.assertEqual(self.gh.ledger, ledger)
         self.assertFalse(rc.EVIDENCE.exists())
 
-    def test_complete_receipt_names_do_not_authorize_a_previous_attempt(self):
+    def test_complete_receipt_names_publish_the_previous_attempt_package(self):
         self.require_build_receipts(["release-inputs-linux.json"])
-        self.test_partial_rerun_rejects_prior_attempt_package_before_publication()
+        self.test_partial_rerun_publishes_the_prior_attempt_package()
 
     def test_validation_receipt_cannot_satisfy_required_build_inventory(self):
         policy = {"versioning": {"required_build_receipts": ["release-inputs-linux.json"]}}

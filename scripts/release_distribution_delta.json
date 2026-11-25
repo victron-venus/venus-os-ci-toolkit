@@ -14,7 +14,7 @@
       "after_sha256": "8e1b089ed1e1196238c7a55818a08c3acca5eb1ddfb159d9cd8588a215eaa50a",
       "canonical_source": "scripts/release_control.py",
       "canonical_base_sha256": "04e45e71a262544086de4d2f29ab83ed08fc4ed96916b16cd559659d3db9303b",
-      "canonical_source_sha256": "77f706133cff291db3b9e731f138f3bb7da6d8ee41ca27755e6cbac0682b5ee9",
+      "canonical_source_sha256": "47a34bc4fb91812b567243a43d0bd889c567a4660d3ae707f854ba36161ef0b2",
       "hunks": [
         {
           "before": "        raise ReleaseError(str(error)) from error\n\n\ndef require_release_policy(policy: object, repo: str, qualified: bool) -> None:\n    \"\"\"Check policy identity, release mode, and required eligibility blockers.\"\"\"\n    require(isinstance(policy, dict), \"Source release policy must be an object\")\n",
@@ -687,6 +687,53 @@
           "canonical_fragments": [
             "            confirm_tag()\n        require(time.monotonic() < deadline"
           ]
+        },
+        {
+          "before_sha256": "37f6d876962b1b9867c412da76d3104d4465c710278d3cc4025a8d4ad6519425",
+          "after_sha256": "53d0d2ce6ae90bdf534fa421dd6af1ae5fad30bed8d7f56d1fa54aa64909e654",
+          "hunks": [
+            {
+              "before": "\ndef _require_fresh_job_timing(job: JSONObject, boundary: datetime) -> None:\n    \"\"\"A cloned success is not proof that its job or steps executed this attempt.\"\"\"\n    start = _execution_timestamp(job.get(\"started_at\"), \"job start\")\n    end = _execution_timestamp(job.get(\"completed_at\"), \"job completion\")\n    require(boundary <= start <= end, \"Successful job predates the current release attempt\")\n    steps = job.get(\"steps\")\n",
+              "after": "\ndef _require_job_steps(job: JSONObject, start: datetime, end: datetime,\n                       boundary: datetime | None) -> None:\n    \"\"\"Require an executed step list contained in its job's reported interval.\n\n    ``boundary`` is the attempt the steps must reach. It is ``None`` for an\n    execution an earlier attempt recorded, where the exact record match already\n    supplies that attempt, so the job interval bounds the steps on its own.\n    \"\"\"\n    steps = job.get(\"steps\")\n"
+            },
+            {
+              "before": "                          and 0 < (start - step_start).total_seconds() <= 1\n                          and boundary <= step_start and start <= step_end <= end)\n        require(start <= step_start <= step_end <= end or setup_boundary,\n                \"Executed step lies outside the current job interval\")\n\n",
+              "after": "                          and 0 < (start - step_start).total_seconds() <= 1\n                          and (boundary is None or boundary <= step_start)\n                          and start <= step_end <= end)\n        require(start <= step_start <= step_end <= end or setup_boundary,\n                \"Executed step lies outside the current job interval\")\n\n\ndef _require_fresh_job_timing(job: JSONObject, boundary: datetime) -> None:\n    \"\"\"A cloned success is not proof that its job or steps executed this attempt.\"\"\"\n    start = _execution_timestamp(job.get(\"started_at\"), \"job start\")\n    end = _execution_timestamp(job.get(\"completed_at\"), \"job completion\")\n    require(boundary <= start <= end, \"Successful job predates the current release attempt\")\n    _require_job_steps(job, start, end, boundary)\n\n\ndef _same_execution(job: JSONObject, recorded: JSONObject) -> bool:\n    \"\"\"Match the execution record Actions copies unchanged into a later attempt.\"\"\"\n    keys = (\"name\", \"head_sha\", \"started_at\", \"completed_at\", \"steps\")\n    return all(job.get(key) == recorded.get(key) for key in keys)\n\n\ndef _earlier_attempt_jobs(\n    gh: GitHub, run_id: int, sha: str, attempt: int\n) -> list[JSONObject]:\n    \"\"\"Read earlier attempts' successful executions of this same run.\n\n    Unreadable or unrelated attempt data authorizes nothing: the caller then\n    rejects the predating job rather than accepting an unverifiable success.\n    \"\"\"\n    recorded: list[JSONObject] = []\n    for earlier in range(1, attempt):\n        try:\n            reported = gh.pages(f\"actions/runs/{run_id}/attempts/{earlier}/jobs\", \"jobs\")\n        except (ReleaseError, ValueError, OSError, KeyError):\n            continue\n        if not isinstance(reported, list):\n            continue\n        recorded.extend(\n            job for job in reported\n            if isinstance(job, dict)\n            and job.get(\"head_sha\") == sha\n            and job_attempt_matches(job, earlier)\n            and job.get(\"status\") == \"completed\"\n            and job.get(\"conclusion\") == \"success\"\n        )\n    return recorded\n\n"
+            },
+            {
+              "before": "    boundary = _execution_timestamp(detail.get(\"run_started_at\"), \"release attempt start\")\n    for job in jobs:\n",
+              "after": "    boundary = _execution_timestamp(detail.get(\"run_started_at\"), \"release attempt start\")\n    earlier: list[JSONObject] | None = None\n    for job in jobs:\n"
+            },
+            {
+              "before": "                \"Successful job differs from the current release attempt\")\n        _require_fresh_job_timing(job, boundary)\n    return detail\n",
+              "after": "                \"Successful job differs from the current release attempt\")\n        if _execution_timestamp(job.get(\"started_at\"), \"job start\") >= boundary:\n            _require_fresh_job_timing(job, boundary)\n            continue\n        # Re-running only failed jobs leaves successful producers in place. Actions\n        # reports them again under this attempt number with their original clocks,\n        # so accept exactly the execution the earlier attempt recorded, never an\n        # arbitrary stale success.\n        if earlier is None:\n            earlier = _earlier_attempt_jobs(gh, run_id, sha, attempt)\n        require(any(_same_execution(job, recorded) for recorded in earlier),\n                \"Successful job predates the current release attempt\")\n        start = _execution_timestamp(job.get(\"started_at\"), \"job start\")\n        end = _execution_timestamp(job.get(\"completed_at\"), \"job completion\")\n        # Its own attempt, not this one, bounds the recorded step timestamps.\n        _require_job_steps(job, start, end, None)\n    return detail\n"
+            }
+          ],
+          "canonical_source_before_sha256": "29b185657aa5f47f562043bd6dbf0e796549d68848e1d884e4d895623ff024a4",
+          "canonical_source_sha256": "47a34bc4fb91812b567243a43d0bd889c567a4660d3ae707f854ba36161ef0b2",
+          "source_hunks": [
+            {
+              "before": "\ndef _require_fresh_job_timing(job: JSONObject, boundary: datetime) -> None:\n    \"\"\"A cloned success is not proof that its job or steps executed this attempt.\"\"\"\n    start = _execution_timestamp(job.get(\"started_at\"), \"job start\")\n    end = _execution_timestamp(job.get(\"completed_at\"), \"job completion\")\n    require(boundary <= start <= end, \"Successful job predates the current release attempt\")\n    steps = job.get(\"steps\")\n",
+              "after": "\ndef _require_job_steps(job: JSONObject, start: datetime, end: datetime,\n                       boundary: datetime | None) -> None:\n    \"\"\"Require an executed step list contained in its job's reported interval.\n\n    ``boundary`` is the attempt the steps must reach. It is ``None`` for an\n    execution an earlier attempt recorded, where the exact record match already\n    supplies that attempt, so the job interval bounds the steps on its own.\n    \"\"\"\n    steps = job.get(\"steps\")\n"
+            },
+            {
+              "before": "                          and 0 < (start - step_start).total_seconds() <= 1\n                          and boundary <= step_start and start <= step_end <= end)\n        require(start <= step_start <= step_end <= end or setup_boundary,\n                \"Executed step lies outside the current job interval\")\n\n",
+              "after": "                          and 0 < (start - step_start).total_seconds() <= 1\n                          and (boundary is None or boundary <= step_start)\n                          and start <= step_end <= end)\n        require(start <= step_start <= step_end <= end or setup_boundary,\n                \"Executed step lies outside the current job interval\")\n\n\ndef _require_fresh_job_timing(job: JSONObject, boundary: datetime) -> None:\n    \"\"\"A cloned success is not proof that its job or steps executed this attempt.\"\"\"\n    start = _execution_timestamp(job.get(\"started_at\"), \"job start\")\n    end = _execution_timestamp(job.get(\"completed_at\"), \"job completion\")\n    require(boundary <= start <= end, \"Successful job predates the current release attempt\")\n    _require_job_steps(job, start, end, boundary)\n\n\ndef _same_execution(job: JSONObject, recorded: JSONObject) -> bool:\n    \"\"\"Match the execution record Actions copies unchanged into a later attempt.\"\"\"\n    keys = (\"name\", \"head_sha\", \"started_at\", \"completed_at\", \"steps\")\n    return all(job.get(key) == recorded.get(key) for key in keys)\n\n\ndef _earlier_attempt_jobs(\n    gh: GitHub, run_id: int, sha: str, attempt: int\n) -> list[JSONObject]:\n    \"\"\"Read earlier attempts' successful executions of this same run.\n\n    Unreadable or unrelated attempt data authorizes nothing: the caller then\n    rejects the predating job rather than accepting an unverifiable success.\n    \"\"\"\n    recorded: list[JSONObject] = []\n    for earlier in range(1, attempt):\n        try:\n            reported = gh.pages(f\"actions/runs/{run_id}/attempts/{earlier}/jobs\", \"jobs\")\n        except (ReleaseError, ValueError, OSError, KeyError):\n            continue\n        if not isinstance(reported, list):\n            continue\n        recorded.extend(\n            job for job in reported\n            if isinstance(job, dict)\n            and job.get(\"head_sha\") == sha\n            and job_attempt_matches(job, earlier)\n            and job.get(\"status\") == \"completed\"\n            and job.get(\"conclusion\") == \"success\"\n        )\n    return recorded\n\n"
+            },
+            {
+              "before": "    boundary = _execution_timestamp(detail.get(\"run_started_at\"), \"release attempt start\")\n    for job in jobs:\n",
+              "after": "    boundary = _execution_timestamp(detail.get(\"run_started_at\"), \"release attempt start\")\n    earlier: list[JSONObject] | None = None\n    for job in jobs:\n"
+            },
+            {
+              "before": "                \"Successful job differs from the current release attempt\")\n        _require_fresh_job_timing(job, boundary)\n    return detail\n",
+              "after": "                \"Successful job differs from the current release attempt\")\n        if _execution_timestamp(job.get(\"started_at\"), \"job start\") >= boundary:\n            _require_fresh_job_timing(job, boundary)\n            continue\n        # Re-running only failed jobs leaves successful producers in place. Actions\n        # reports them again under this attempt number with their original clocks,\n        # so accept exactly the execution the earlier attempt recorded, never an\n        # arbitrary stale success.\n        if earlier is None:\n            earlier = _earlier_attempt_jobs(gh, run_id, sha, attempt)\n        require(any(_same_execution(job, recorded) for recorded in earlier),\n                \"Successful job predates the current release attempt\")\n        start = _execution_timestamp(job.get(\"started_at\"), \"job start\")\n        end = _execution_timestamp(job.get(\"completed_at\"), \"job completion\")\n        # Its own attempt, not this one, bounds the recorded step timestamps.\n        _require_job_steps(job, start, end, None)\n    return detail\n"
+            }
+          ],
+          "canonical_fragments": [
+            "def _require_job_steps(job: JSONObject, start: datetime, end: datetime,",
+            "boundary: datetime | None) -> None:",
+            "\"\"\"Require an executed step list contained in its job's reported interval."
+          ]
         }
       ]
     },
@@ -1060,7 +1107,7 @@
       "after_sha256": "dcb7a679eedd325b4c9333afaced2279875583adb7ec0b5ad36e3be0e1ad9d9c",
       "canonical_source": "tests/test_release_control.py",
       "canonical_base_sha256": "c7e79c6e776530cb2eb9383307980fc02f0cacc9f7fa55e9d97eac146ecda705",
-      "canonical_source_sha256": "488501d1cea7664c7a93df7a70ee9359944f0edb175e70b04ef43642ef3d9c20",
+      "canonical_source_sha256": "b8737be9259d4a0d109f6ce58a7ba48257bdb0010077c51b96a423415cac724b",
       "hunks": [
         {
           "before": "        with self.assertRaisesRegex(rc.ReleaseError, 'outside'):\n            self.check()\n\n    def test_intentional_skips_and_unfinished_publisher_do_not_need_clocks(self):\n        self.job['steps'].append({'conclusion': 'skipped'})\n        self.job['steps'].append({'conclusion': 'failure', 'status': 'completed'})\n",
@@ -1592,6 +1639,29 @@
                 "    def _publish_package(self, client, *,",
                 "    def test_final_exact_publisher_read_after_tag_blocks_patch_if_terminal(self):"
               ]
+            },
+            {
+              "before_sha256": "9a4e781810c45ee28d7f8cf11ece47294fda98a175c79659922ae3fd53aed00e",
+              "after_sha256": "e8d8b0ad225f3ad3d41df55fe51be4aa409e5988aa2afbc0e5daa10ce71e480d",
+              "hunks": [
+                {
+                  "before": "\n    def test_old_steps_cannot_hide_under_new_job_timestamps(self):\n",
+                  "after": "\n    def recorded_job(self, **changes):\n        \"\"\"The attempt-1 record Actions copies unchanged into the next attempt.\"\"\"\n        recorded = {'name': 'checks / CI gate', 'head_sha': SHA, 'run_attempt': 1,\n                    'status': 'completed', 'conclusion': 'success',\n                    'started_at': '2026-11-03T01:01:00Z',\n                    'completed_at': '2026-11-03T01:05:00Z',\n                    'steps': [{'name': 'Check', 'status': 'completed', 'conclusion': 'success',\n                               'started_at': '2026-11-03T01:02:00Z',\n                               'completed_at': '2026-11-03T01:04:00Z'}]}\n        recorded.update(changes)\n        return recorded\n\n    def test_failed_only_rerun_accepts_the_execution_it_reports_unchanged(self):\n        recorded = self.recorded_job()\n        self.job.update(started_at=recorded['started_at'], completed_at=recorded['completed_at'],\n                        steps=deepcopy(recorded['steps']))\n        self.gh.pages.return_value = [recorded]\n        self.check()\n        self.gh.pages.assert_called_once_with('actions/runs/123/attempts/1/jobs', 'jobs')\n\n    def test_copied_success_accepts_a_record_without_attempt_number(self):\n        recorded = self.recorded_job()\n        del recorded['run_attempt']\n        self.job.update(started_at=recorded['started_at'], completed_at=recorded['completed_at'],\n                        steps=deepcopy(recorded['steps']))\n        self.gh.pages.return_value = [recorded]\n        self.check()\n\n    def test_copied_success_keeps_its_own_setup_timestamp_skew(self):\n        recorded = self.recorded_job(steps=[\n            {'name': 'Set up job', 'number': 1, 'status': 'completed', 'conclusion': 'success',\n             'started_at': '2026-11-03T01:00:59Z', 'completed_at': '2026-11-03T01:01:00Z'},\n            {'name': 'Check', 'number': 2, 'status': 'completed', 'conclusion': 'success',\n             'started_at': '2026-11-03T01:02:00Z', 'completed_at': '2026-11-03T01:04:00Z'}])\n        self.job.update(started_at=recorded['started_at'], completed_at=recorded['completed_at'],\n                        steps=deepcopy(recorded['steps']))\n        self.gh.pages.return_value = [recorded]\n        self.check()\n\n    def test_copied_success_must_match_its_recorded_steps_exactly(self):\n        recorded = self.recorded_job()\n        self.job.update(started_at=recorded['started_at'], completed_at=recorded['completed_at'],\n                        steps=[{**recorded['steps'][0], 'name': 'Run checks'}])\n        self.gh.pages.return_value = [recorded]\n        with self.assertRaisesRegex(rc.ReleaseError, 'predates'):\n            self.check()\n\n    def test_unrecorded_earlier_success_and_foreign_attempts_are_not_accepted(self):\n        recorded = self.recorded_job()\n        self.job.update(started_at=recorded['started_at'], completed_at=recorded['completed_at'],\n                        steps=deepcopy(recorded['steps']))\n        for reported in ([], [self.recorded_job(run_attempt=2)],\n                         [self.recorded_job(head_sha='b' * 40)],\n                         [self.recorded_job(conclusion='failure')], 'not a list'):\n            with self.subTest(reported=reported):\n                self.gh.pages.return_value = reported\n                with self.assertRaisesRegex(rc.ReleaseError, 'predates'):\n                    self.check()\n\n    def test_old_steps_cannot_hide_under_new_job_timestamps(self):\n"
+                }
+              ],
+              "canonical_source_before_sha256": "91eda55f35fb1beb4621aa633cbc4ad88d01cd230db7883cd927559f3cda9075",
+              "canonical_source_sha256": "b8737be9259d4a0d109f6ce58a7ba48257bdb0010077c51b96a423415cac724b",
+              "source_hunks": [
+                {
+                  "before": "\n    def test_old_steps_cannot_hide_under_new_job_timestamps(self):\n",
+                  "after": "\n    def recorded_job(self, **changes):\n        \"\"\"The attempt-1 record Actions copies unchanged into the next attempt.\"\"\"\n        recorded = {'name': 'checks / CI gate', 'head_sha': SHA, 'run_attempt': 1,\n                    'status': 'completed', 'conclusion': 'success',\n                    'started_at': '2026-11-03T01:01:00Z',\n                    'completed_at': '2026-11-03T01:05:00Z',\n                    'steps': [{'name': 'Check', 'status': 'completed', 'conclusion': 'success',\n                               'started_at': '2026-11-03T01:02:00Z',\n                               'completed_at': '2026-11-03T01:04:00Z'}]}\n        recorded.update(changes)\n        return recorded\n\n    def test_failed_only_rerun_accepts_the_execution_it_reports_unchanged(self):\n        recorded = self.recorded_job()\n        self.job.update(started_at=recorded['started_at'], completed_at=recorded['completed_at'],\n                        steps=deepcopy(recorded['steps']))\n        self.gh.pages.return_value = [recorded]\n        self.check()\n        self.gh.pages.assert_called_once_with('actions/runs/123/attempts/1/jobs', 'jobs')\n\n    def test_copied_success_accepts_a_record_without_attempt_number(self):\n        recorded = self.recorded_job()\n        del recorded['run_attempt']\n        self.job.update(started_at=recorded['started_at'], completed_at=recorded['completed_at'],\n                        steps=deepcopy(recorded['steps']))\n        self.gh.pages.return_value = [recorded]\n        self.check()\n\n    def test_copied_success_keeps_its_own_setup_timestamp_skew(self):\n        recorded = self.recorded_job(steps=[\n            {'name': 'Set up job', 'number': 1, 'status': 'completed', 'conclusion': 'success',\n             'started_at': '2026-11-03T01:00:59Z', 'completed_at': '2026-11-03T01:01:00Z'},\n            {'name': 'Check', 'number': 2, 'status': 'completed', 'conclusion': 'success',\n             'started_at': '2026-11-03T01:02:00Z', 'completed_at': '2026-11-03T01:04:00Z'}])\n        self.job.update(started_at=recorded['started_at'], completed_at=recorded['completed_at'],\n                        steps=deepcopy(recorded['steps']))\n        self.gh.pages.return_value = [recorded]\n        self.check()\n\n    def test_copied_success_must_match_its_recorded_steps_exactly(self):\n        recorded = self.recorded_job()\n        self.job.update(started_at=recorded['started_at'], completed_at=recorded['completed_at'],\n                        steps=[{**recorded['steps'][0], 'name': 'Run checks'}])\n        self.gh.pages.return_value = [recorded]\n        with self.assertRaisesRegex(rc.ReleaseError, 'predates'):\n            self.check()\n\n    def test_unrecorded_earlier_success_and_foreign_attempts_are_not_accepted(self):\n        recorded = self.recorded_job()\n        self.job.update(started_at=recorded['started_at'], completed_at=recorded['completed_at'],\n                        steps=deepcopy(recorded['steps']))\n        for reported in ([], [self.recorded_job(run_attempt=2)],\n                         [self.recorded_job(head_sha='b' * 40)],\n                         [self.recorded_job(conclusion='failure')], 'not a list'):\n            with self.subTest(reported=reported):\n                self.gh.pages.return_value = reported\n                with self.assertRaisesRegex(rc.ReleaseError, 'predates'):\n                    self.check()\n\n    def test_old_steps_cannot_hide_under_new_job_timestamps(self):\n"
+                }
+              ],
+              "canonical_fragments": [
+                "def recorded_job(self, **changes):",
+                "\"\"\"The attempt-1 record Actions copies unchanged into the next attempt.\"\"\"",
+                "recorded = {'name': 'checks / CI gate', 'head_sha': SHA, 'run_attempt': 1,"
+              ]
             }
           ]
         }
@@ -1602,7 +1672,7 @@
       "after_sha256": "de281d7e7d8b45bf615fb178bf3e2a59c0471628e46aa4c497afd63abafe9ede",
       "canonical_source": "tests/test_versioned_release.py",
       "canonical_base_sha256": "e48da6fbd58b42b76b35523f568ff123c613e966e227d256cb332e607240dedd",
-      "canonical_source_sha256": "2c05b534dbe1e26354b1d37564e13c5d46b7790330a0d7bd9f1eb627060b833a",
+      "canonical_source_sha256": "7c4b6c85d2e70f4c78549559f3d4f226882dcaa8061693d2cb78d3fa25b0dca9",
       "hunks": [
         {
           "before": "        with self.assertRaisesRegex(rc.ReleaseError, \"Only release candidates\"):\n            rc.validate_manifest(encoded, REPO, \"v1.2.3\")\n\n    def test_final_build_rejects_legacy_rc_before_allocating(self):\n        self.start_run(\"stable\", 100, legacy_tests.RC_TAG)\n        # Model the real migration: legacy RC exists at old source SHA, while the\n",
@@ -1868,6 +1938,61 @@
           "canonical_fragments": [
             "def test_automatic_beta_rechecks_source_after_final_tag_read"
           ]
+        },
+        {
+          "before_sha256": "e1f482668f9f9717e8db1a8a5fc470d929eb8db31bce71835fff3e879df5e5f0",
+          "after_sha256": "6963e5fbfbf22dfde0dca45c7f91828f322ca6fbb09fe4c8e865695c995711ab",
+          "hunks": [
+            {
+              "before": "\n    def test_partial_rerun_rejects_prior_attempt_package_before_publication(self):\n        lifecycle.prepare(self.args)\n",
+              "after": "\n    def test_partial_rerun_publishes_the_prior_attempt_package(self):\n        lifecycle.prepare(self.args)\n"
+            },
+            {
+              "before": "        self.fresh_attempt()\n        ledger = copy.deepcopy(self.gh.ledger)\n        with self.assertRaisesRegex(ValueError, \"different package producer attempt\"):\n            lifecycle.publish_versioned(self.args)\n        self.assertEqual(self.gh.writes, [])\n        self.assertEqual(self.gh.ledger, ledger)\n        self.assertFalse(rc.EVIDENCE.exists())\n\n",
+              "after": "        self.fresh_attempt()\n        result = lifecycle.publish_versioned(self.args)\n        self.assertEqual(result[\"status\"], \"published\")\n        self.assertEqual(json.loads(rc.EVIDENCE.read_bytes())[\"run_attempt\"], 2)\n\n"
+            },
+            {
+              "before": "\n    def test_mixed_attempt_receipts_fail_before_publication(self):\n        self.require_build_receipts([\"release-inputs-linux.json\", \"release-inputs-windows.json\"])\n",
+              "after": "\n    def test_mixed_attempts_of_the_same_run_publish(self):\n        self.require_build_receipts([\"release-inputs-linux.json\", \"release-inputs-windows.json\"])\n"
+            },
+            {
+              "before": "        )\n        writes = copy.deepcopy(self.gh.writes)\n        ledger = copy.deepcopy(self.gh.ledger)\n        allocations = copy.deepcopy(self.gh.ledger_writes)\n        with self.assertRaisesRegex(ValueError, \"different package producer attempt\"):\n            lifecycle.publish_versioned(self.args)\n        self.assertEqual(self.gh.writes, writes)\n        self.assertEqual(self.gh.ledger, ledger)\n        self.assertEqual(self.gh.ledger_writes, allocations)\n        self.assertFalse(rc.EVIDENCE.exists())\n\n",
+              "after": "        )\n        # Both packages still belong to this run and source revision, so a\n        # failed-only rerun publishes the rebuilt and the retained one together.\n        result = lifecycle.publish_versioned(self.args)\n        self.assertEqual(result[\"status\"], \"published\")\n        self.assertEqual(json.loads(rc.EVIDENCE.read_bytes())[\"run_attempt\"], 2)\n\n"
+            },
+            {
+              "before": "\n    def test_complete_receipt_names_do_not_authorize_a_previous_attempt(self):\n        self.require_build_receipts([\"release-inputs-linux.json\"])\n        self.test_partial_rerun_rejects_prior_attempt_package_before_publication()\n\n",
+              "after": "\n    def test_complete_receipt_names_publish_the_previous_attempt_package(self):\n        self.require_build_receipts([\"release-inputs-linux.json\"])\n        self.test_partial_rerun_publishes_the_prior_attempt_package()\n\n"
+            }
+          ],
+          "canonical_source_before_sha256": "5e732ad1e67081c41ad15857ed1ba2593bb229aaf57524a67aa189b0646630f8",
+          "canonical_source_sha256": "7c4b6c85d2e70f4c78549559f3d4f226882dcaa8061693d2cb78d3fa25b0dca9",
+          "source_hunks": [
+            {
+              "before": "\n    def test_partial_rerun_rejects_prior_attempt_package_before_publication(self):\n        lifecycle.prepare(self.args)\n",
+              "after": "\n    def test_partial_rerun_publishes_the_prior_attempt_package(self):\n        lifecycle.prepare(self.args)\n"
+            },
+            {
+              "before": "        self.fresh_attempt()\n        ledger = copy.deepcopy(self.gh.ledger)\n        with self.assertRaisesRegex(ValueError, \"different package producer attempt\"):\n            lifecycle.publish_versioned(self.args)\n        self.assertEqual(self.gh.writes, [])\n        self.assertEqual(self.gh.ledger, ledger)\n        self.assertFalse(rc.EVIDENCE.exists())\n\n",
+              "after": "        self.fresh_attempt()\n        result = lifecycle.publish_versioned(self.args)\n        self.assertEqual(result[\"status\"], \"published\")\n        self.assertEqual(json.loads(rc.EVIDENCE.read_bytes())[\"run_attempt\"], 2)\n\n"
+            },
+            {
+              "before": "\n    def test_mixed_attempt_receipts_fail_before_publication(self):\n        self.require_build_receipts([\"release-inputs-linux.json\", \"release-inputs-windows.json\"])\n",
+              "after": "\n    def test_mixed_attempts_of_the_same_run_publish(self):\n        self.require_build_receipts([\"release-inputs-linux.json\", \"release-inputs-windows.json\"])\n"
+            },
+            {
+              "before": "        )\n        writes = copy.deepcopy(self.gh.writes)\n        ledger = copy.deepcopy(self.gh.ledger)\n        allocations = copy.deepcopy(self.gh.ledger_writes)\n        with self.assertRaisesRegex(ValueError, \"different package producer attempt\"):\n            lifecycle.publish_versioned(self.args)\n        self.assertEqual(self.gh.writes, writes)\n        self.assertEqual(self.gh.ledger, ledger)\n        self.assertEqual(self.gh.ledger_writes, allocations)\n        self.assertFalse(rc.EVIDENCE.exists())\n\n",
+              "after": "        )\n        # Both packages still belong to this run and source revision, so a\n        # failed-only rerun publishes the rebuilt and the retained one together.\n        result = lifecycle.publish_versioned(self.args)\n        self.assertEqual(result[\"status\"], \"published\")\n        self.assertEqual(json.loads(rc.EVIDENCE.read_bytes())[\"run_attempt\"], 2)\n\n"
+            },
+            {
+              "before": "\n    def test_complete_receipt_names_do_not_authorize_a_previous_attempt(self):\n        self.require_build_receipts([\"release-inputs-linux.json\"])\n        self.test_partial_rerun_rejects_prior_attempt_package_before_publication()\n\n",
+              "after": "\n    def test_complete_receipt_names_publish_the_previous_attempt_package(self):\n        self.require_build_receipts([\"release-inputs-linux.json\"])\n        self.test_partial_rerun_publishes_the_prior_attempt_package()\n\n"
+            }
+          ],
+          "canonical_fragments": [
+            "def test_partial_rerun_publishes_the_prior_attempt_package(self):",
+            "def test_mixed_attempts_of_the_same_run_publish(self):",
+            "# Both packages still belong to this run and source revision, so a"
+          ]
         }
       ]
     },
@@ -1894,7 +2019,7 @@
       "after_sha256": "8d9576bd62cfeaaebe4dfde00e7bb512c875136c630b7bfdf2148dd00d2f9144",
       "canonical_source": "docs/release-workflow.md",
       "canonical_base_sha256": "1473f61d92e79cdf1ab99363ae6fab5373d23341bf5ddc3a2a0b63cfbbe880a0",
-      "canonical_source_sha256": "aa5b099145f561f25179e7f47e81887ae5b69e51242221dd9b5dc9be9f9f4812",
+      "canonical_source_sha256": "284e322b4a013eda4c77e1dc6c6d94d6d1dbf091a12517509ae69a8d04426829",
       "hunks": [
         {
           "before": "Stable `vX.Y.Z` copies the tested RC bytes without rebuilding. No override or\nforce-tag option exists. Expired/missing evidence requires a new RC. A partial\nupload remains an unpublished draft; inspect it before any manual recovery.\n\nAssets are uploaded to the draft's known release ID, using one bounded request\nper file. Publication does not repeat a tag lookup for each upload: a draft may\n",
@@ -1907,7 +2032,7 @@
       "after_sha256": "70e34d4d7674c8bd3dadc0a911560bbcfa229b7892ab7d9c67e4d9b093472aff",
       "canonical_source": "docs/VERSIONING.md",
       "canonical_base_sha256": "edfee8b89783fe94b362c6525a148c5ea208dce49e1ca7db77148145e9e57079",
-      "canonical_source_sha256": "70e34d4d7674c8bd3dadc0a911560bbcfa229b7892ab7d9c67e4d9b093472aff",
+      "canonical_source_sha256": "8a734a33fa7e6fc5f6b21a7d6ba6fef10d3667d42982667d8861ccb65178d7d2",
       "hunks": [
         {
           "before": "offline; external stable assignment and build origin are distinct. Full beta\nversions may be embedded because beta is not directly promoted.\n\n`final-build` builds final-version packages from the accepted RC's exact source\ncommit, including the dependency locks and recipe. The RC must match the current\ndefault-branch HEAD; create a new RC after code, policy or workflow changes.\n",
