@@ -96,7 +96,7 @@ on:
         type: string
         default: 'browser-compatibility'
       browser-success-report-retention-days:
-        description: 'Retention for successful ordinary browser reports (1..14 days); failures and release qualification retain 14 days'
+        description: 'Retention for ordinary browser reports in any status (1..14 days); release qualification retains 14 days'
         type: number
         default: 14
       browser-artifact-id:
@@ -524,7 +524,7 @@ jobs:
           path: ${{ inputs.working-directory }}/.compatibility/${{ matrix.id }}/
           include-hidden-files: true
           if-no-files-found: error
-          retention-days: ${{ job.status == 'success' && inputs.browser-release-channel == '' && inputs.browser-success-report-retention-days || 14 }}
+          retention-days: ${{ inputs.browser-release-channel == '' && inputs.browser-success-report-retention-days || 14 }}
   browser-gate:
     name: Verify selected browser scope
     needs: [change-scope, browser-plan, browser]

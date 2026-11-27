@@ -672,11 +672,14 @@ class BrowserCompatibilityTests(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0)
                 self.assertFalse((self.root / "output").exists())
 
-    def test_only_successful_ordinary_reports_use_shorter_retention(self):
+    def test_ordinary_reports_use_bounded_retention_regardless_of_status(self):
         upload = next(step for step in WORKFLOW["jobs"]["browser"]["steps"]
                       if step.get("uses", "").startswith("actions/upload-artifact@"))
         expression = upload["with"]["retention-days"]
         self.assertTrue(expression.startswith("${{ ") and expression.endswith(" }}"))
+        # A failed or cancelled target must not outlive its caller's ordinary
+        # retention: failure evidence is sized for triage, not for weeks of quota.
+        self.assertNotIn("job.status", expression)
         expression = expression[4:-3]
         # Execute the workflow's actual scalar expression; these operators have
         # the same short-circuit behavior for our string and positive-number inputs.
@@ -693,7 +696,7 @@ class BrowserCompatibilityTests(unittest.TestCase):
                                 text=True, check=False)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(json.loads(result.stdout), [
-            days if status == "success" and channel == "" else 14
+            days if channel == "" else 14
             for status, channel, days in cases])
         self.assertEqual(upload["if"], "${{ always() && steps.lock.outcome == 'success' }}")
         verdict = next(step for step in WORKFLOW["jobs"]["browser-verdict"]["steps"]

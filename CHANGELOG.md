@@ -4,6 +4,7 @@
 
 ### Fixed
 
+- Apply the caller's ordinary browser report retention to failed and cancelled targets as well. A failed target no longer always retains its evidence for 14 days, so repeated failures cannot exhaust the account's shared artifact quota; the default stays 14 days and release qualification still retains reports for 14 days.
 - Allow the reusable browser scope gate ten minutes for a cold Node 22 tool-cache download on private runners. Preserve the pinned runtime, coverage assertions and browser-test timeout.
 
 ## [0.1.15] - 2026-11-04
