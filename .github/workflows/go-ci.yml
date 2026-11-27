@@ -81,7 +81,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup Go
-        uses: victron-venus/venus-os-ci-toolkit/actions/setup-go@4b041db3d7ce951732c102e2195c7d0178c401bb # main
+        uses: victron-venus/venus-os-ci-toolkit/actions/setup-go@0ef5d19a724a3910985fae1a6ec86cd7a5c92cf7 # main
         with:
           go-version: ${{ inputs.go-version }}
           golangci-lint-major: ${{ inputs.golangci-lint-major }}
