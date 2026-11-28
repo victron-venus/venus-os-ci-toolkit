@@ -3,6 +3,7 @@
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -12,6 +13,15 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 STEPS = yaml.safe_load((ROOT / '.github/workflows/terraform-ci.yml').read_text())['jobs']['ci']['steps']
+
+
+def gnu_sha256sum() -> bool:
+    """Whether `sha256sum --check` resolves to GNU coreutils, as the step assumes."""
+    binary = shutil.which('sha256sum')
+    if not binary:
+        return False
+    version = subprocess.run([binary, '--version'], capture_output=True, text=True, check=False)
+    return 'GNU coreutils' in version.stdout
 
 
 def step_script(name):
@@ -42,6 +52,7 @@ class TFLintContracts(unittest.TestCase):
                     if not succeeds:
                         self.assertIn('does not match', result.stderr)
 
+    @unittest.skipUnless(gnu_sha256sum(), 'the checksum step requires GNU sha256sum --check')
     def test_corrupt_download_is_rejected_before_extraction(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

@@ -1662,6 +1662,54 @@
                 "\"\"\"The attempt-1 record Actions copies unchanged into the next attempt.\"\"\"",
                 "recorded = {'name': 'checks / CI gate', 'head_sha': SHA, 'run_attempt': 1,"
               ]
+            },
+            {
+              "before_sha256": "e8d8b0ad225f3ad3d41df55fe51be4aa409e5988aa2afbc0e5daa10ce71e480d",
+              "after_sha256": "0e60678c2afd862dd6ff2245bbddcbf55d875dc37ff640368317e3353f8053d1",
+              "hunks": [
+                {
+                  "before": "sys.path.insert(0, str(ROOT / \"scripts\"))\nasync_process_module = importlib.import_module(\"async_process\")\nSPEC = importlib.util.spec_from_file_location(\"release_control\", ROOT / \"scripts/release_control.py\")\nrc = importlib.util.module_from_spec(SPEC)\n",
+                  "after": "sys.path.insert(0, str(ROOT / \"scripts\"))\nasync_process_module = importlib.import_module(\"async_process\")\n\n\ndef release_runner_supported() -> bool:\n    \"\"\"Whether the supervised release runner may start on this host.\"\"\"\n    try:\n        async_process_module._require_supported_runtime()\n    except NotImplementedError:\n        return False\n    return True\n\n\nRELEASE_PROCESS_RUNNER = unittest.skipUnless(\n    release_runner_supported(),\n    \"release process runner requires Linux Python 3.12+ or macOS Python 3.13+ with waitid(WNOWAIT)\",\n)\nSPEC = importlib.util.spec_from_file_location(\"release_control\", ROOT / \"scripts/release_control.py\")\nrc = importlib.util.module_from_spec(SPEC)\n"
+                },
+                {
+                  "before": "\n\nclass AssetStreamCleanupTests(unittest.TestCase):\n    \"\"\"Ensure a timed-out streaming helper cannot leave pipe-holding descendants.\"\"\"\n",
+                  "after": "\n\n@RELEASE_PROCESS_RUNNER\nclass AssetStreamCleanupTests(unittest.TestCase):\n    \"\"\"Ensure a timed-out streaming helper cannot leave pipe-holding descendants.\"\"\"\n"
+                },
+                {
+                  "before": "        self.assertEqual(command.call_count, len(paths) + 2)\n\n    @unittest.skipUnless(os.name == \"posix\", \"the supervised asset downloader requires POSIX\")\n    def test_download_asset_resolves_and_runs_real_gh_from_path(self):\n",
+                  "after": "        self.assertEqual(command.call_count, len(paths) + 2)\n\n    @RELEASE_PROCESS_RUNNER\n    @unittest.skipUnless(os.name == \"posix\", \"the supervised asset downloader requires POSIX\")\n    def test_download_asset_resolves_and_runs_real_gh_from_path(self):\n"
+                },
+                {
+                  "before": "            )\n\n    @unittest.skipUnless(os.name == \"posix\", \"the supervised asset downloader requires POSIX\")\n    def test_download_asset_real_gh_timeout_is_not_retried(self):\n",
+                  "after": "            )\n\n    @RELEASE_PROCESS_RUNNER\n    @unittest.skipUnless(os.name == \"posix\", \"the supervised asset downloader requires POSIX\")\n    def test_download_asset_real_gh_timeout_is_not_retried(self):\n"
+                }
+              ],
+              "canonical_source_before_sha256": "b8737be9259d4a0d109f6ce58a7ba48257bdb0010077c51b96a423415cac724b",
+              "canonical_source_sha256": "3613a37b6d2ff82c3e825b6f653de970e581dc40f1bd0c7345893a06e76dd179",
+              "source_hunks": [
+                {
+                  "before": "sys.path.insert(0, str(ROOT / \"scripts\"))\nasync_process_module = importlib.import_module(\"async_process\")\nSPEC = importlib.util.spec_from_file_location(\"release_control\", ROOT / \"scripts/release_control.py\")\nrc = importlib.util.module_from_spec(SPEC)\n",
+                  "after": "sys.path.insert(0, str(ROOT / \"scripts\"))\nasync_process_module = importlib.import_module(\"async_process\")\n\n\ndef release_runner_supported() -> bool:\n    \"\"\"Whether the supervised release runner may start on this host.\"\"\"\n    try:\n        async_process_module._require_supported_runtime()\n    except NotImplementedError:\n        return False\n    return True\n\n\nRELEASE_PROCESS_RUNNER = unittest.skipUnless(\n    release_runner_supported(),\n    \"release process runner requires Linux Python 3.12+ or macOS Python 3.13+ with waitid(WNOWAIT)\",\n)\nSPEC = importlib.util.spec_from_file_location(\"release_control\", ROOT / \"scripts/release_control.py\")\nrc = importlib.util.module_from_spec(SPEC)\n"
+                },
+                {
+                  "before": "\n\nclass AssetStreamCleanupTests(unittest.TestCase):\n    \"\"\"Ensure a timed-out streaming helper cannot leave pipe-holding descendants.\"\"\"\n",
+                  "after": "\n\n@RELEASE_PROCESS_RUNNER\nclass AssetStreamCleanupTests(unittest.TestCase):\n    \"\"\"Ensure a timed-out streaming helper cannot leave pipe-holding descendants.\"\"\"\n"
+                },
+                {
+                  "before": "        self.assertEqual(command.call_count, len(paths) + 2)\n\n    @unittest.skipUnless(os.name == \"posix\", \"the supervised asset downloader requires POSIX\")\n    def test_download_asset_resolves_and_runs_real_gh_from_path(self):\n",
+                  "after": "        self.assertEqual(command.call_count, len(paths) + 2)\n\n    @RELEASE_PROCESS_RUNNER\n    @unittest.skipUnless(os.name == \"posix\", \"the supervised asset downloader requires POSIX\")\n    def test_download_asset_resolves_and_runs_real_gh_from_path(self):\n"
+                },
+                {
+                  "before": "            )\n\n    @unittest.skipUnless(os.name == \"posix\", \"the supervised asset downloader requires POSIX\")\n    def test_download_asset_real_gh_timeout_is_not_retried(self):\n",
+                  "after": "            )\n\n    @RELEASE_PROCESS_RUNNER\n    @unittest.skipUnless(os.name == \"posix\", \"the supervised asset downloader requires POSIX\")\n    def test_download_asset_real_gh_timeout_is_not_retried(self):\n"
+                }
+              ],
+              "canonical_fragments": [
+                "sys.path.insert(0, str(ROOT / \"scripts\"))\nasync_process_module = importlib.import_module(\"async_process\")\n\n\ndef release_runner_supported() -> bool:\n    \"\"\"Whether the supervised release runner may start on this host.\"\"\"\n    try:\n        async_process_module._require_supported_runtime()\n    except NotImplementedError:\n        return False\n    return True\n\n\nRELEASE_PROCESS_RUNNER = unittest.skipUnless(\n    release_runner_supported(),\n    \"release process runner requires Linux Python 3.12+ or macOS Python 3.13+ with waitid(WNOWAIT)\",\n)\nSPEC = importlib.util.spec_from_file_location(\"release_control\", ROOT / \"scripts/release_control.py\")\nrc = importlib.util.module_from_spec(SPEC)\n",
+                "\n\n@RELEASE_PROCESS_RUNNER\nclass AssetStreamCleanupTests(unittest.TestCase):\n    \"\"\"Ensure a timed-out streaming helper cannot leave pipe-holding descendants.\"\"\"\n",
+                "        self.assertEqual(command.call_count, len(paths) + 2)\n\n    @RELEASE_PROCESS_RUNNER\n    @unittest.skipUnless(os.name == \"posix\", \"the supervised asset downloader requires POSIX\")\n    def test_download_asset_resolves_and_runs_real_gh_from_path(self):\n",
+                "            )\n\n    @RELEASE_PROCESS_RUNNER\n    @unittest.skipUnless(os.name == \"posix\", \"the supervised asset downloader requires POSIX\")\n    def test_download_asset_real_gh_timeout_is_not_retried(self):\n"
+              ]
             }
           ]
         }
@@ -2354,6 +2402,30 @@
             {
               "before": "            self.assertTrue(selector.closed)\n            self.assertEqual(raised.exception.timeout, 0.25)\n        finally:\n            os.close(read_fd)\n",
               "after": "            self.assertTrue(selector.closed)\n            self.assertEqual(raised.exception.timeout, 0.25)\n        finally:\n            os.close(read_fd)\n            os.close(write_fd)\n\n    def test_config_writer_keeps_handshake_cap_when_caller_deadline_is_later(self):\n        class WaitingSelector:\n            def register(self, _fileobj, _events):\n                pass\n\n            def select(self, timeout):\n                self.timeout = timeout\n                return []\n\n            def close(self):\n                pass\n\n        selector = WaitingSelector()\n        read_fd, write_fd = os.pipe()\n        try:\n            with (\n                patch.object(async_process.selectors, \"DefaultSelector\", return_value=selector),\n                patch.object(async_process.time, \"monotonic\", return_value=10.0),\n                self.assertRaises(async_process.ProcessCleanupError),\n            ):\n                async_process._write_supervisor_config(\n                    write_fd, (sys.executable, \"-c\", \"pass\"), {}, \"/\",\n                    deadline=20.0, timeout=10.0,\n                )\n            self.assertEqual(selector.timeout, async_process.CLEANUP_TIMEOUT_SECONDS)\n        finally:\n            os.close(read_fd)\n"
+            }
+          ]
+        },
+        {
+          "before_sha256": "a040dc6a16fc99d1a946495c4955ff6409ed9381c18856c161bb3f2c168375c3",
+          "after_sha256": "6c696200b3b287380327540116b2a73fea8353bb570f69c44271b1c571344112",
+          "canonical_source_before_sha256": "ca30d0423322f06f4bf06257878f935cc95a04a1f09ed48cddd2ad7c2636dd6e",
+          "canonical_source_sha256": "9417edd1c1a1d5081b65343e1ac2515937e39c0292e96ea612a1a998434f4805",
+          "source_hunks": [
+            {
+              "before": "sys.path.insert(0, str(Path(__file__).resolve().parents[1] / \"scripts\"))\nimport async_process\n\n\nasync def cancel_test_task(task, timeout=5):",
+              "after": "sys.path.insert(0, str(Path(__file__).resolve().parents[1] / \"scripts\"))\nimport async_process\n\n\ndef release_runner_supported() -> bool:\n    \"\"\"Whether the supervised release runner may start on this host.\"\"\"\n    try:\n        async_process._require_supported_runtime()\n    except NotImplementedError:\n        return False\n    return True\n\n\nRELEASE_PROCESS_RUNNER = unittest.skipUnless(\n    release_runner_supported(),\n    \"release process runner requires Linux Python 3.12+ or macOS Python 3.13+ with waitid(WNOWAIT)\",\n)\n\n\nasync def cancel_test_task(task, timeout=5):"
+            },
+            {
+              "before": "class AsyncProcessTests(unittest.TestCase):",
+              "after": "@RELEASE_PROCESS_RUNNER\nclass AsyncProcessTests(unittest.TestCase):"
+            },
+            {
+              "before": "@unittest.skipUnless(os.name == \"posix\", \"process-group cleanup is POSIX-specific\")\nclass AsyncCancellationTests(unittest.IsolatedAsyncioTestCase):",
+              "after": "@RELEASE_PROCESS_RUNNER\n@unittest.skipUnless(os.name == \"posix\", \"process-group cleanup is POSIX-specific\")\nclass AsyncCancellationTests(unittest.IsolatedAsyncioTestCase):"
+            },
+            {
+              "before": "class AsyncRunnerShutdownTests(unittest.TestCase):",
+              "after": "@RELEASE_PROCESS_RUNNER\nclass AsyncRunnerShutdownTests(unittest.TestCase):"
             }
           ]
         }

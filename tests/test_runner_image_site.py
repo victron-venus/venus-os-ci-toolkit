@@ -106,6 +106,30 @@ class SiteImages(unittest.TestCase):
                 self.derive(ca_path=invalid, ca_sha=digest)
         self.assertFalse(self.child.exists())
 
+    def test_ca_constraints_are_read_when_openssl_lacks_extension_output(self):
+        # LibreSSL, the default openssl on macOS, has no `x509 -ext`.
+        certificate = self.root / 'synthetic-ca.pem'
+        certificate.write_bytes(self.ca_raw)
+
+        def run(argv, **kwargs):
+            if '-ext' in argv:
+                return subprocess.CompletedProcess(argv, 1, b'', b'unknown option -ext')
+            return subprocess.CompletedProcess(
+                argv, 0, b'            X509v3 Basic Constraints: critical\n                CA:TRUE\n', b'')
+
+        with mock.patch.object(site.subprocess, 'run', side_effect=run) as patched:
+            constraints = site.basic_constraints(certificate)
+        self.assertIn(b'CA:TRUE', constraints)
+        self.assertEqual([call.args[0][-1] for call in patched.call_args_list],
+                         ['basicConstraints', '-text'])
+
+    def test_ca_constraints_are_unavailable_when_openssl_cannot_report_them(self):
+        certificate = self.root / 'synthetic-ca.pem'
+        certificate.write_bytes(self.ca_raw)
+        with mock.patch.object(site.subprocess, 'run',
+                               return_value=subprocess.CompletedProcess(['openssl'], 1, b'', b'no')):
+            self.assertIsNone(site.basic_constraints(certificate))
+
     def test_leaf_is_not_accepted_as_ca(self):
         cert, key = self.root / 'leaf.pem', self.root / 'leaf.key'
         subprocess.run(['openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-nodes',
