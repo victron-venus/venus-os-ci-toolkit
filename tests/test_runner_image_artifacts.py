@@ -1947,8 +1947,10 @@ class RunnerArtifactsTests(unittest.TestCase):
                 else:
                     self.assertEqual([record['component'], current_hash, record['rule_id']],
                                      build.SCAN_POLICY['advisories'][record['id']])
-                    self.assertEqual(record['packages'],
-                                     [build.SCAN_POLICY['identities'][record['component']]['package_id']])
+                    # A review records the package version it actually reviewed; a later
+                    # identity re-pin changes the policy pin, not that historical record.
+                    self.assertEqual([entry.partition('@')[0] for entry in record['packages']],
+                                     [build.SCAN_POLICY['identities'][record['component']]['package']])
                     rationale = applicability[record['id']]
                     self.assertEqual(record['unchanged_applicability_basis'], rationale['rationale'])
                     self.assertIn(rationale['source_document']['url'], record['source_documents'])

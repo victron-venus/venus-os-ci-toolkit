@@ -5,12 +5,12 @@
   "fixed_library_prerequisite": "Every accepted image must contain the source-bound libbpf1 backport and matching library, package, ABI and ordinary-userspace smoke provenance, even if the scanner reports no libbpf finding.",
   "header_provenance": {
     "package": "linux-libc-dev",
-    "version": "6.8.0-147.147",
+    "version": "6.8.0-151.151",
     "architecture": "amd64",
     "regular_files": 990,
     "package_entries": 1042,
-    "canonical_inventory_sha256": "ff5df311395966f35d8be4265422da233af4abcb5b89ce923f0257b300f3dbe6",
-    "official_deb_sha256": "fec8e4a308c03cd98dace67370a8d5a8031c36741796065c9f6e3f9548ab0cd2",
+    "canonical_inventory_sha256": "93d2275e42c9a071560f81902f3e538fec561312cf992d306031fb71ce181b8e",
+    "official_deb_sha256": "badd744a9dc7e43c53975ac08d88e23dd13223f2334637c25fd9b9e9bb5d236d",
     "signing_fingerprint": "F6ECB3762474EDA9D21B7022871920D1991BC93C",
     "chain": "Ubuntu signed InRelease -> Packages.xz -> binary .deb -> all installed regular-file paths, sizes, modes and SHA256. The final image must match this inventory anew.",
     "selected_sanitized_header_sha256": "f96c03a170825a42f0a417efe70d77f05dd4265d7855eb05ba8024a58cc938f8"
@@ -19,7 +19,7 @@
     {
       "id": "CVE-2022-50240",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2022/50xxx/CVE-2022-50240.json",
         "sha256": "a9efe408f15503529c18ce9ac53d37b390d441e220c8825c3d146411259c6bda",
@@ -39,7 +39,7 @@
     {
       "id": "CVE-2024-35948",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2024/35xxx/CVE-2024-35948.json",
         "sha256": "1f2a55edd517bc6f82a67e6ef3804884a6dc9eadf6720eec87a04ce5e95474bd",
@@ -58,7 +58,7 @@
     {
       "id": "CVE-2024-38581",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2024/38xxx/CVE-2024-38581.json",
         "sha256": "7f154cdb80b2257464d4e49d4ecb291cbf6bea207971ecf4845f5b6ebdcc62d1",
@@ -76,7 +76,7 @@
     {
       "id": "CVE-2024-40954",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2024/40xxx/CVE-2024-40954.json",
         "sha256": "f5e911c025f4faf8b715ed595e00895c846d3b8c9ec02b4db82d68b7845ca9c6",
@@ -94,7 +94,7 @@
     {
       "id": "CVE-2024-44964",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2024/44xxx/CVE-2024-44964.json",
         "sha256": "946469bc2002df11327eea7858a4886b2d6814c1e76c1a6baf3d121d363ddf15",
@@ -112,7 +112,7 @@
     {
       "id": "CVE-2024-46742",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2024/46xxx/CVE-2024-46742.json",
         "sha256": "13893020e471aca2624c9c3391a14affdc3b3ab0ea3ec7c2e6834d8facd4b0a7",
@@ -131,7 +131,7 @@
     {
       "id": "CVE-2024-46833",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2024/46xxx/CVE-2024-46833.json",
         "sha256": "7d72f258a1599d9ae3f066f603c3b454a5a623fcbe51b907c42d74076747d668",
@@ -149,7 +149,7 @@
     {
       "id": "CVE-2024-52560",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2024/52xxx/CVE-2024-52560.json",
         "sha256": "04c0a4ede4f949661f68dc95b1ef3e8b3487dec21d4fe8b947735337d83c6c4b",
@@ -170,7 +170,7 @@
     {
       "id": "CVE-2024-56591",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2024/56xxx/CVE-2024-56591.json",
         "sha256": "943228d709df699298adf0fd19d58794fcee9576273435c1e7798930722b1565",
@@ -188,7 +188,7 @@
     {
       "id": "CVE-2024-57857",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2024/57xxx/CVE-2024-57857.json",
         "sha256": "6c46eaa287d19c4788d755bf8570ec5871f34ebc4be53e8f331b1b4f7837b050",
@@ -209,7 +209,7 @@
     {
       "id": "CVE-2024-58098",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2024/58xxx/CVE-2024-58098.json",
         "sha256": "20ebf319ae0472179509bab20345fc9cbee9fd637d352105cbbbfa55e54f8786",
@@ -228,7 +228,7 @@
     {
       "id": "CVE-2024-58100",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2024/58xxx/CVE-2024-58100.json",
         "sha256": "43db164b12b1953c9ff418e17ff8da5e58689e7eebc3e1f8ac2526cdc00a915a",
@@ -247,7 +247,7 @@
     {
       "id": "CVE-2025-22043",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2025/22xxx/CVE-2025-22043.json",
         "sha256": "e2afafe4fdedcf9bdb0b9b5a825275dab5bd52079a6025b4f9b310eb29457a69",
@@ -265,7 +265,7 @@
     {
       "id": "CVE-2025-37743",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2025/37xxx/CVE-2025-37743.json",
         "sha256": "8eedd29217b498419668253df8e03c53bd847a7d02bf424169cb538a6b0b85e5",
@@ -284,7 +284,7 @@
     {
       "id": "CVE-2025-37776",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2025/37xxx/CVE-2025-37776.json",
         "sha256": "3ae29c6305cd8620cb16b90e7e4cc3a82c5bf7fd4b5a0bc978d5602e110fb8cc",
@@ -303,7 +303,7 @@
     {
       "id": "CVE-2025-37906",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2025/37xxx/CVE-2025-37906.json",
         "sha256": "f39616a2ab89690a958cb9d9ee408c09bbe0354778e69e67f36847f1a7e3b330",
@@ -321,7 +321,7 @@
     {
       "id": "CVE-2025-38204",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2025/38xxx/CVE-2025-38204.json",
         "sha256": "17431902c5edd49cea8e61d6bdfbc91b90afe3cf22659fa7e69a0290107127b8",
@@ -339,7 +339,7 @@
     {
       "id": "CVE-2025-38717",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2025/38xxx/CVE-2025-38717.json",
         "sha256": "2a5eb1dbbdd2d929209d1f83e97975d3386e823725d8ea72ca6e76b392b398c5",
@@ -358,7 +358,7 @@
     {
       "id": "CVE-2025-39933",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2025/39xxx/CVE-2025-39933.json",
         "sha256": "b55522d484e27a3c819d35169fa4815b3db7976fc07f0fc82d58203c837a5032",
@@ -376,7 +376,7 @@
     {
       "id": "CVE-2025-40025",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2025/40xxx/CVE-2025-40025.json",
         "sha256": "e69fce88be9e7364d7f5d35a67bc633ab9fcafe06d8244f00175a32fcab79c99",
@@ -398,7 +398,7 @@
     {
       "id": "CVE-2025-40064",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2025/40xxx/CVE-2025-40064.json",
         "sha256": "fffe2e06f72cbda4abab2c1ce8c9d488dfa7a1f82f8fb75ece3bb4eccd358305",
@@ -416,7 +416,7 @@
     {
       "id": "CVE-2025-40074",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2025/40xxx/CVE-2025-40074.json",
         "sha256": "29c66bf7c9a707c3b684cdedabc2a209c4a531b1be89c3ac21d2d43783f589af",
@@ -437,7 +437,7 @@
     {
       "id": "CVE-2025-40075",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2025/40xxx/CVE-2025-40075.json",
         "sha256": "5db64c1994e97b2190f9f4098ec17089b27851d1e8b97717f4d2867e0db6f393",
@@ -464,7 +464,7 @@
     {
       "id": "CVE-2025-40139",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2025/40xxx/CVE-2025-40139.json",
         "sha256": "c20c92755a8db29991a287b7461be6e30abe338f831610e00efc770f8a02ac81",
@@ -482,7 +482,7 @@
     {
       "id": "CVE-2025-40158",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2025/40xxx/CVE-2025-40158.json",
         "sha256": "e270851daef22e0a7f24baf37d28e17b5b6ae6003ef9f5ae06f80ef5d0a2cf59",
@@ -500,7 +500,7 @@
     {
       "id": "CVE-2025-40168",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2025/40xxx/CVE-2025-40168.json",
         "sha256": "eb81b05cb32abce570f7b40adcfcaa3ecc04350b0ba2f2f7fcb48dcad0f38d3a",
@@ -518,7 +518,7 @@
     {
       "id": "CVE-2025-40170",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2025/40xxx/CVE-2025-40170.json",
         "sha256": "e6e5fea2dede70e4826952680d3cadcb62b751dc0952fc3713c74f482b4c05ec",
@@ -539,7 +539,7 @@
     {
       "id": "CVE-2025-40190",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2025/40xxx/CVE-2025-40190.json",
         "sha256": "7788f374f4838ddd052b6d684da23ef5f7457b34e084c3aa33dc754560de986a",
@@ -557,7 +557,7 @@
     {
       "id": "CVE-2025-40274",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2025/40xxx/CVE-2025-40274.json",
         "sha256": "d7a2f187975659d57f8801de474824aa4632ce111dbb77e9f19cfdff51bb0832",
@@ -575,7 +575,7 @@
     {
       "id": "CVE-2025-40344",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2025/40xxx/CVE-2025-40344.json",
         "sha256": "580aa70c2034a1e32522df200fe52f49c3844bde9b0da8ff86e23988c7cce45e",
@@ -593,7 +593,7 @@
     {
       "id": "CVE-2025-68251",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2025/68xxx/CVE-2025-68251.json",
         "sha256": "cd0212f7e7eb8111e4e619e7f03a621e7c338c5d9ac4b296a74e1ed50308abb9",
@@ -611,7 +611,7 @@
     {
       "id": "CVE-2025-68304",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2025/68xxx/CVE-2025-68304.json",
         "sha256": "880df8736ee3126a98b2b7bf603f845b9aed003a247bfb0de8e0ce90159195b3",
@@ -633,7 +633,7 @@
     {
       "id": "CVE-2025-68360",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2025/68xxx/CVE-2025-68360.json",
         "sha256": "fe7bf3048c7720b16e871173780f8b8d137eb161438efdae6084167b2dfa3461",
@@ -654,7 +654,7 @@
     {
       "id": "CVE-2025-68729",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2025/68xxx/CVE-2025-68729.json",
         "sha256": "1a5132dfc1fa824d4c61244a336e76b729c49180614126d0b4d10d97b407bcc6",
@@ -673,7 +673,7 @@
     {
       "id": "CVE-2025-68730",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2025/68xxx/CVE-2025-68730.json",
         "sha256": "881f917751a965934f11907e3de31d849be52209b2cc23b46c1ade814144aab3",
@@ -691,7 +691,7 @@
     {
       "id": "CVE-2025-68745",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2025/68xxx/CVE-2025-68745.json",
         "sha256": "18244adc60624e2b3db11878896f9caabbb87bf0f9ac50e842819d90640de1e2",
@@ -711,7 +711,7 @@
     {
       "id": "CVE-2025-71073",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2025/71xxx/CVE-2025-71073.json",
         "sha256": "71f9fd9499178fe2e845da31928c194635ef97de66b48c8227367ce45f18cf88",
@@ -729,7 +729,7 @@
     {
       "id": "CVE-2025-71074",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2025/71xxx/CVE-2025-71074.json",
         "sha256": "2d02d54cd9a940bfa18a837d6495224102da73e1c0b2de701ee558a2074b39e1",
@@ -747,7 +747,7 @@
     {
       "id": "CVE-2025-71202",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2025/71xxx/CVE-2025-71202.json",
         "sha256": "4dcea577e35a7412f222b410188a87ebf3a6399dde8f5dbc0474271377084442",
@@ -771,7 +771,7 @@
     {
       "id": "CVE-2025-71315",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2025/71xxx/CVE-2025-71315.json",
         "sha256": "dd9a2d363274a3a2ee1916125b6bcdcd9a9eada133bd3b104406a358f4350d7a",
@@ -790,7 +790,7 @@
     {
       "id": "CVE-2026-100074",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/100xxx/CVE-2026-100074.json",
         "sha256": "8504fc8f65ee88b1da81b7779c2cda0f3b58fc3c44217f506f7486c72af26b6b",
@@ -817,7 +817,7 @@
     {
       "id": "CVE-2026-23208",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/23xxx/CVE-2026-23208.json",
         "sha256": "5fa2dd7c522992baae3b16f5ab5b3442a772e8cd3fd62e31afbe54eb23921f40",
@@ -835,7 +835,7 @@
     {
       "id": "CVE-2026-23239",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/23xxx/CVE-2026-23239.json",
         "sha256": "2f68b57b4ae024a442bcd1c64a5f23670f94e694522bbdc683933d50dbd10654",
@@ -853,7 +853,7 @@
     {
       "id": "CVE-2026-23240",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/23xxx/CVE-2026-23240.json",
         "sha256": "a97945aae0b1edc39ebaedd80c43730d194c715595f913e8d75c6e4a93b233ee",
@@ -871,7 +871,7 @@
     {
       "id": "CVE-2026-23265",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/23xxx/CVE-2026-23265.json",
         "sha256": "552fe67dd81ff2415794c845d73d98c9b218c7689f871f6091ee40ba927cfc49",
@@ -892,7 +892,7 @@
     {
       "id": "CVE-2026-23377",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/23xxx/CVE-2026-23377.json",
         "sha256": "bda5f25f72b7971457cd8b1b3db51ce4aeaf7d81d47d1630586c11089fd2f356",
@@ -910,7 +910,7 @@
     {
       "id": "CVE-2026-23385",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/23xxx/CVE-2026-23385.json",
         "sha256": "98ce4fc25c3ea196386d10729a1c6820cdea2a8b9a15c389f070df870534c228",
@@ -932,7 +932,7 @@
     {
       "id": "CVE-2026-23393",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/23xxx/CVE-2026-23393.json",
         "sha256": "06e2ce94e5c5a48645325aa6ca93f21ff88939759649ab2f5eb563b2d77cb0d3",
@@ -950,7 +950,7 @@
     {
       "id": "CVE-2026-31410",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/31xxx/CVE-2026-31410.json",
         "sha256": "2810827b108ff80dbcdcfd9794e092a6108bea1c077f6ecbe4e50a609277ef7c",
@@ -968,7 +968,7 @@
     {
       "id": "CVE-2026-31536",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/31xxx/CVE-2026-31536.json",
         "sha256": "68b637da3bdca9fa511635c186fa8e95ab9d69a155d960acf862344f9655bf96",
@@ -986,7 +986,7 @@
     {
       "id": "CVE-2026-31692",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/31xxx/CVE-2026-31692.json",
         "sha256": "d0999b275241771b12fa0913ef65c5959373545667234d4f9ff18547ba26528d",
@@ -1004,7 +1004,7 @@
     {
       "id": "CVE-2026-43009",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/43xxx/CVE-2026-43009.json",
         "sha256": "b2c20b9be270f07f262b4e95b2b034e32413d8d4c7e8f3257c3817561c82670f",
@@ -1022,7 +1022,7 @@
     {
       "id": "CVE-2026-43034",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/43xxx/CVE-2026-43034.json",
         "sha256": "7fa564a98f05913b72492ac4586cb8ced4095aae634dce16053393663299680e",
@@ -1040,7 +1040,7 @@
     {
       "id": "CVE-2026-43042",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/43xxx/CVE-2026-43042.json",
         "sha256": "7341047cb0a4b9b875ada960db21baf7c3a3b0676238787875485dc877e3c82a",
@@ -1059,7 +1059,7 @@
     {
       "id": "CVE-2026-43048",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/43xxx/CVE-2026-43048.json",
         "sha256": "09a4a28f1f8748f23f16b1a8d1e58c3eb22e7e152de4c80987a8c7b61e78210b",
@@ -1077,7 +1077,7 @@
     {
       "id": "CVE-2026-43213",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/43xxx/CVE-2026-43213.json",
         "sha256": "326381c69d6f29f290d83940b0b7f48be47d85d27a8aca4f496235594d6ea945",
@@ -1095,7 +1095,7 @@
     {
       "id": "CVE-2026-43263",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/43xxx/CVE-2026-43263.json",
         "sha256": "644a630fb6cb05815a01f3bba7e099c09a66079e35e496b6ddbd989ab1d143ea",
@@ -1118,7 +1118,7 @@
     {
       "id": "CVE-2026-43379",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/43xxx/CVE-2026-43379.json",
         "sha256": "7dd4b6087443df37de602f4ab70fd7ed2cf4bb4b2a76d1d48ab9acb3ef21c109",
@@ -1136,7 +1136,7 @@
     {
       "id": "CVE-2026-43464",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/43xxx/CVE-2026-43464.json",
         "sha256": "535d9035bbafa05fdaade54436cc1a6656cafa79ade5514d2aa30679c949221e",
@@ -1154,7 +1154,7 @@
     {
       "id": "CVE-2026-45940",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/45xxx/CVE-2026-45940.json",
         "sha256": "db9cccf489473f0aa3809f2b7155124032c0e758784ad380e1dbe92d8bd0c86d",
@@ -1172,7 +1172,7 @@
     {
       "id": "CVE-2026-46181",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/46xxx/CVE-2026-46181.json",
         "sha256": "12cf6ad7cb7c63a9dcaffa91366b255e606a5ec5f71198374f4d0aff625b5d0d",
@@ -1190,7 +1190,7 @@
     {
       "id": "CVE-2026-46330",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/46xxx/CVE-2026-46330.json",
         "sha256": "8eafd6a54320a38b82802a54866d050d050ca03099e50f4ecab583ef5ae42a67",
@@ -1225,7 +1225,7 @@
     {
       "id": "CVE-2026-52946",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/52xxx/CVE-2026-52946.json",
         "sha256": "b607cb1229596c1c118bd844e5a84f8e21b19943824129eb7b4b7a18d613759c",
@@ -1243,7 +1243,7 @@
     {
       "id": "CVE-2026-52991",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/52xxx/CVE-2026-52991.json",
         "sha256": "ec9ce69fd86d4dcc49e64a9ba63f773231ee5feeb5666a6370b5b17eef637b8e",
@@ -1261,7 +1261,7 @@
     {
       "id": "CVE-2026-53024",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/53xxx/CVE-2026-53024.json",
         "sha256": "82ea05da798018d2d7bc390f7683173b50507b72a18a9cf6601b0c86e70d9f94",
@@ -1279,7 +1279,7 @@
     {
       "id": "CVE-2026-53178",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/53xxx/CVE-2026-53178.json",
         "sha256": "9892c1aeb22a9cc6357f8f68f31ec1828e249e05102f269589229468bfd27a12",
@@ -1297,7 +1297,7 @@
     {
       "id": "CVE-2026-53250",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/53xxx/CVE-2026-53250.json",
         "sha256": "ebe5ebf827225b360b69939b23894880364e52aa9b25a07f5f3c425243ace7ba",
@@ -1315,7 +1315,7 @@
     {
       "id": "CVE-2026-53281",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/53xxx/CVE-2026-53281.json",
         "sha256": "ae51769b9efdaa6bdff61bad316c24cc2495b8334c882023f66271ccd8c8f763",
@@ -1333,7 +1333,7 @@
     {
       "id": "CVE-2026-53377",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/53xxx/CVE-2026-53377.json",
         "sha256": "4ff99c12fb491dfe7aeac4864247c482ca35f322c36af2145bc1553bfceb15c4",
@@ -1351,7 +1351,7 @@
     {
       "id": "CVE-2026-53401",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/53xxx/CVE-2026-53401.json",
         "sha256": "6921a1fdbd1292c90494cb5e0ccba4dc9a7bcb60819f4bbcb7760ac5a431eb30",
@@ -1369,7 +1369,7 @@
     {
       "id": "CVE-2026-63819",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/63xxx/CVE-2026-63819.json",
         "sha256": "cde9005a9f2b0eeca41ebba80a25a3e2a702b69667e46b57a067ced21142aa97",
@@ -1388,7 +1388,7 @@
     {
       "id": "CVE-2026-63825",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/63xxx/CVE-2026-63825.json",
         "sha256": "bb4530be37fbc92b5edb6e15c42c5d52e1fb3b5e69bcba22f42ee6e03cebe6ab",
@@ -1412,7 +1412,7 @@
     {
       "id": "CVE-2026-63879",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/63xxx/CVE-2026-63879.json",
         "sha256": "d08d45a42780fc4da95bbd38a84015b9ee737fa3de7c90079c4e6a2afc661464",
@@ -1430,7 +1430,7 @@
     {
       "id": "CVE-2026-64036",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/64xxx/CVE-2026-64036.json",
         "sha256": "1b992d374189bc2448b07f10688e0fa26a76639be129db16f474711c714862a5",
@@ -1451,7 +1451,7 @@
     {
       "id": "CVE-2026-64052",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/64xxx/CVE-2026-64052.json",
         "sha256": "8b30cd49e256794e1c02b46ff3d0eb59edfc2f0a449c9b53353733b3ca47048f",
@@ -1469,7 +1469,7 @@
     {
       "id": "CVE-2026-64077",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/64xxx/CVE-2026-64077.json",
         "sha256": "465e24a26781d0e9838c742dda7c71e83ce8fa29de770d99a7fb7522ac502474",
@@ -1490,7 +1490,7 @@
     {
       "id": "CVE-2026-64078",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/64xxx/CVE-2026-64078.json",
         "sha256": "ea72a7e0f2e0bd28a60136a628ece54902da277ace06d5907207b6295f49e54a",
@@ -1514,7 +1514,7 @@
     {
       "id": "CVE-2026-64523",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/64xxx/CVE-2026-64523.json",
         "sha256": "caebf76bb2f303766f0801e6baebb7377d51797e0025a9245ff04891cf819e08",
@@ -1534,7 +1534,7 @@
     {
       "id": "CVE-2026-68081",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/68xxx/CVE-2026-68081.json",
         "sha256": "3ee723b94c16671c4db4944a101681fb63fcd5c3d832af457043866331fb7d42",
@@ -1552,7 +1552,7 @@
     {
       "id": "CVE-2026-68103",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/68xxx/CVE-2026-68103.json",
         "sha256": "1da44bac6aa887df2721b04083977d3f50f5046fa1dc68b9ab97ee2be2d0a0e2",
@@ -1570,7 +1570,7 @@
     {
       "id": "CVE-2026-68152",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/68xxx/CVE-2026-68152.json",
         "sha256": "65a6fa025b411a2021d99a38bc1bf6e15ad436e91c3901309962ad574df3349f",
@@ -1588,7 +1588,7 @@
     {
       "id": "CVE-2026-68198",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/68xxx/CVE-2026-68198.json",
         "sha256": "92e047421d792bd82d32becbf7292079c1e335b54e4a24ecc869bcfe8478c5be",
@@ -1606,7 +1606,7 @@
     {
       "id": "CVE-2026-68245",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/68xxx/CVE-2026-68245.json",
         "sha256": "75a9b3018064133e2261b7d4d8fd60eccc2a025be1ddf0d4c2287a95c01e8eb7",
@@ -1624,7 +1624,7 @@
     {
       "id": "CVE-2026-68257",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/68xxx/CVE-2026-68257.json",
         "sha256": "ca27337c3e79378e80307a16a556ee5bce3a4869ebab3cfe45297aac2778d550",
@@ -1642,7 +1642,7 @@
     {
       "id": "CVE-2026-68323",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/68xxx/CVE-2026-68323.json",
         "sha256": "6b476ab44bf80890552964f02895f7abcbd92f02220dffd90eb2e24b7af9cca3",
@@ -1660,7 +1660,7 @@
     {
       "id": "CVE-2026-68401",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/68xxx/CVE-2026-68401.json",
         "sha256": "90ec929f5636c92915b602325be740e8fde2151e8df738239a3047d926c61d82",
@@ -1678,7 +1678,7 @@
     {
       "id": "CVE-2026-68404",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/68xxx/CVE-2026-68404.json",
         "sha256": "325b91c3ee3bdd6cb004a840d5e385025e932f7ca853c95e9bc8ce0c88c57c10",
@@ -1700,7 +1700,7 @@
     {
       "id": "CVE-2026-68409",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/68xxx/CVE-2026-68409.json",
         "sha256": "8fdf9493f6ef6770111eefa6a36abbcc2b13b050bf4ff44f8a1606aff3d8bf3a",
@@ -1718,7 +1718,7 @@
     {
       "id": "CVE-2026-68426",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/68xxx/CVE-2026-68426.json",
         "sha256": "fcae61300f2969181953ae31e1fd88927019b6c974fb084ecbe1481831f0433b",
@@ -1736,7 +1736,7 @@
     {
       "id": "CVE-2026-68447",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/68xxx/CVE-2026-68447.json",
         "sha256": "c4d854d0a9fcda8d1c4e825be3331cac28493b65d7b6ac7e93c87e7cca177c04",
@@ -1755,7 +1755,7 @@
     {
       "id": "CVE-2026-68451",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/68xxx/CVE-2026-68451.json",
         "sha256": "393f101075c0f3ce856daf8f1db523be18769ff9d9f2903489312783ebe6a9b6",
@@ -1773,7 +1773,7 @@
     {
       "id": "CVE-2026-68470",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/68xxx/CVE-2026-68470.json",
         "sha256": "598f8fbe361bc5b49d944a5a5740fb2e808a4050944b33d1ad3d9d79dd489096",
@@ -1792,7 +1792,7 @@
     {
       "id": "CVE-2026-68471",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/68xxx/CVE-2026-68471.json",
         "sha256": "d3a0f02f139ee92fbd3f77fecca7dbc9c9fdea86111e6e8a8ddb16270016d02c",
@@ -1819,7 +1819,7 @@
     {
       "id": "CVE-2026-72111",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/72xxx/CVE-2026-72111.json",
         "sha256": "f37302b58759785197bdd352d5640590f243c7243a9562d665acd13a82b0b18a",
@@ -1837,7 +1837,7 @@
     {
       "id": "CVE-2026-72162",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/72xxx/CVE-2026-72162.json",
         "sha256": "1ac70c9c1347e3aa3e4d5bdd5a6dc6c73082fcdab706edd17cdfe658e62efce1",
@@ -1855,7 +1855,7 @@
     {
       "id": "CVE-2026-72198",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/72xxx/CVE-2026-72198.json",
         "sha256": "ca0ab48fd92aa6a630e541aa98f143e4cef597ec5341ac2e13a46dc12c0d0839",
@@ -1873,7 +1873,7 @@
     {
       "id": "CVE-2026-72288",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/72xxx/CVE-2026-72288.json",
         "sha256": "80cc7be052bc628924fb0e443468fe81c1e578001af2177049136d5ffc148be6",
@@ -1891,7 +1891,7 @@
     {
       "id": "CVE-2026-72375",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/72xxx/CVE-2026-72375.json",
         "sha256": "c0a358c964e87bd59f537ff4e94353c35b599a2b40f6f11ea7cf4d4e974720d4",
@@ -1910,7 +1910,7 @@
     {
       "id": "CVE-2026-72380",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/72xxx/CVE-2026-72380.json",
         "sha256": "c9289a6bf094375ece49b98582569fedecd0d8c86995e5245ae6684cc2729ef8",
@@ -1928,7 +1928,7 @@
     {
       "id": "CVE-2026-72383",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/72xxx/CVE-2026-72383.json",
         "sha256": "d5e98658fd3f2f08d4efff88a156cf62e41ca5c8120e249ae15a7b9ab7306ef6",
@@ -1946,7 +1946,7 @@
     {
       "id": "CVE-2026-72413",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/72xxx/CVE-2026-72413.json",
         "sha256": "51c40883cc5dec9ea061a0dc5f46951d340a176e1128135a500c70b92ac9c822",
@@ -1964,7 +1964,7 @@
     {
       "id": "CVE-2026-72423",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/72xxx/CVE-2026-72423.json",
         "sha256": "46a7d06743b95bf08c95a02a1823ca2d4304f55108de13ad570a61efdbfe8a11",
@@ -1982,7 +1982,7 @@
     {
       "id": "CVE-2026-72472",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/72xxx/CVE-2026-72472.json",
         "sha256": "d7424755ec886ac08693df9e4dc92670432449efcbd22adee01953941ffc422c",
@@ -2002,7 +2002,7 @@
     {
       "id": "CVE-2026-72493",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/72xxx/CVE-2026-72493.json",
         "sha256": "efc941115dae4c64371fb9f2699f46635542040a39d2d30278bea37af8fb11a4",
@@ -2020,7 +2020,7 @@
     {
       "id": "CVE-2026-72494",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/72xxx/CVE-2026-72494.json",
         "sha256": "fdee70ceb4238c30aca01457239d75bd4cfe75db7603d94c48bf0b3ad3821c4f",
@@ -2040,7 +2040,7 @@
     {
       "id": "CVE-2026-74257",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/74xxx/CVE-2026-74257.json",
         "sha256": "d8ae5bd03546f39c189b9268e8f3c89ba9fe36b7a6b5be16ad4cbbd99f4833b8",
@@ -2058,7 +2058,7 @@
     {
       "id": "CVE-2026-74268",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/74xxx/CVE-2026-74268.json",
         "sha256": "3307a7af384c00ef5515a6e610b39482430ce2c12844fb4f47e43682340dbc33",
@@ -2077,7 +2077,7 @@
     {
       "id": "CVE-2026-74269",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/74xxx/CVE-2026-74269.json",
         "sha256": "be5671be339948349dc654389b8e2bc20d1ee46c2a5ed970ba412f713846693c",
@@ -2096,7 +2096,7 @@
     {
       "id": "CVE-2026-74314",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/74xxx/CVE-2026-74314.json",
         "sha256": "bc3d48a2a1133a59b6ef8743a72bc9becacb069202ffd52cad3b7d0e0d0881c6",
@@ -2127,7 +2127,7 @@
     {
       "id": "CVE-2026-74317",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/74xxx/CVE-2026-74317.json",
         "sha256": "8eca324daa5efc31f4ba5c6c689afc1e66e8d95efd9cb9e65de77b8aafddbb49",
@@ -2145,7 +2145,7 @@
     {
       "id": "CVE-2026-74334",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/74xxx/CVE-2026-74334.json",
         "sha256": "87521b7aea121d4e00b5cff59dbbf6d7f6372bae65cecb80e116357814617060",
@@ -2167,7 +2167,7 @@
     {
       "id": "CVE-2026-74344",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/74xxx/CVE-2026-74344.json",
         "sha256": "91c8ec88b05628b6ba3207daf3c789916e1dff0c8171ba5cb12f4bd12125f05e",
@@ -2185,7 +2185,7 @@
     {
       "id": "CVE-2026-74347",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/74xxx/CVE-2026-74347.json",
         "sha256": "2f877f34867c0db2dd45b7ff12e5a284dc16612997256ced1089f76f91e703e7",
@@ -2208,7 +2208,7 @@
     {
       "id": "CVE-2026-74350",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/74xxx/CVE-2026-74350.json",
         "sha256": "84a603b5d8ef9724297fafd373b3e3a6ddaa7befb03dbda36a516732faf5bd27",
@@ -2226,7 +2226,7 @@
     {
       "id": "CVE-2026-74385",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/74xxx/CVE-2026-74385.json",
         "sha256": "fe35302c831ca93dc97c3cb53932d9c7477cd2ad8fb490a5a295aedae868bb73",
@@ -2244,7 +2244,7 @@
     {
       "id": "CVE-2026-74388",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/74xxx/CVE-2026-74388.json",
         "sha256": "4f1177b785c08228e6f190a2f77cb2d38a32135158d08d3ae8f13c8eaf5634fc",
@@ -2267,7 +2267,7 @@
     {
       "id": "CVE-2026-74446",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/74xxx/CVE-2026-74446.json",
         "sha256": "405cd8b8ca877e015affb4fc8150dd3ae1be1378467dc1da3e2e0b3903216cf9",
@@ -2285,7 +2285,7 @@
     {
       "id": "CVE-2026-74454",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/74xxx/CVE-2026-74454.json",
         "sha256": "5f5e3bbe859fa85f068daabbeaede458d215e4d12496fc2b3440f6af64f079bd",
@@ -2303,7 +2303,7 @@
     {
       "id": "CVE-2026-74465",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/74xxx/CVE-2026-74465.json",
         "sha256": "1bdb16af45fb52fb3a344475d2acdcc992fd04af6c225300858ab7cb6e97f3a8",
@@ -2321,7 +2321,7 @@
     {
       "id": "CVE-2026-74470",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/74xxx/CVE-2026-74470.json",
         "sha256": "f625db3ffad192c48a678683cb9df3268551723d8f719b436db8ebb6755debb0",
@@ -2339,7 +2339,7 @@
     {
       "id": "CVE-2026-74506",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/74xxx/CVE-2026-74506.json",
         "sha256": "c5ca6f2c7bc327993403a5cac102eac68f281b39f7ef6c71aa53b2344d1b4809",
@@ -2357,7 +2357,7 @@
     {
       "id": "CVE-2026-74510",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/74xxx/CVE-2026-74510.json",
         "sha256": "ba7bf8584acfa06f3b094c1719c9d503fea4ecabda326a257e6457317209dc4d",
@@ -2375,7 +2375,7 @@
     {
       "id": "CVE-2026-74522",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/74xxx/CVE-2026-74522.json",
         "sha256": "0dd54f5912fe5ab2e2c37758743d1af71e9c888d784dcf214cffc590585268a7",
@@ -2393,7 +2393,7 @@
     {
       "id": "CVE-2026-74530",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/74xxx/CVE-2026-74530.json",
         "sha256": "005e9698042cbfa292e6aad3d056d661664fa495dfe951ea156237953ed3ce59",
@@ -2411,7 +2411,7 @@
     {
       "id": "CVE-2026-74533",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/74xxx/CVE-2026-74533.json",
         "sha256": "0f489ff88b700319971b0ac199ba590f76a71311136d737f50ddbcfd715e674a",
@@ -2431,7 +2431,7 @@
     {
       "id": "CVE-2026-74534",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/74xxx/CVE-2026-74534.json",
         "sha256": "83f49953e4bd127719fa63f67764795b1558ecfcdece399f52625e531d98c3f9",
@@ -2449,7 +2449,7 @@
     {
       "id": "CVE-2026-74535",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/74xxx/CVE-2026-74535.json",
         "sha256": "ceecbccc2b42d769413bd4ee811f237ede88cd0609d5f4d34b9efb2994fe53d4",
@@ -2467,7 +2467,7 @@
     {
       "id": "CVE-2026-74537",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/74xxx/CVE-2026-74537.json",
         "sha256": "aaf8de24006a69ad7e776b26e205f57cc3260d8a5d39d86df4747af53fff971b",
@@ -2485,7 +2485,7 @@
     {
       "id": "CVE-2026-74565",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/74xxx/CVE-2026-74565.json",
         "sha256": "edd4e58e88575d718649a2bb17b2d5f0deb6f3e51716f8007240401b7ebacba3",
@@ -2504,7 +2504,7 @@
     {
       "id": "CVE-2026-74578",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/74xxx/CVE-2026-74578.json",
         "sha256": "0b7f3fb861d70111737832b4fc1eda9bf01871a6e35d35458bce1c152e8d8f66",
@@ -2522,7 +2522,7 @@
     {
       "id": "CVE-2026-74677",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/74xxx/CVE-2026-74677.json",
         "sha256": "ac3cd18b98bba0097822eaa8aebeee23e69b40b4163ec21195a6e0dc89bdb2d6",
@@ -2540,7 +2540,7 @@
     {
       "id": "CVE-2026-74684",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/74xxx/CVE-2026-74684.json",
         "sha256": "6abc05d99e74846054ab5d5fc6bfad63f8a895d5502f19f7063089f1549b26c1",
@@ -2558,7 +2558,7 @@
     {
       "id": "CVE-2026-74700",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/74xxx/CVE-2026-74700.json",
         "sha256": "b6dd181aa8ccb8dfe483de4c18a0384d849850963d95d3db1401729c994de2a4",
@@ -2576,7 +2576,7 @@
     {
       "id": "CVE-2026-74714",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/74xxx/CVE-2026-74714.json",
         "sha256": "ef49c37fc717748921c21acb5eab8999682a77f82770cb21d1b8fcacf91297fc",
@@ -2594,7 +2594,7 @@
     {
       "id": "CVE-2026-74715",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/74xxx/CVE-2026-74715.json",
         "sha256": "1298ec20ebaaa2541c4968f12606e406706b34454c0b7f419a3cb570b6ae7da1",
@@ -2612,7 +2612,7 @@
     {
       "id": "CVE-2026-74723",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/74xxx/CVE-2026-74723.json",
         "sha256": "29a05f0c252f7eca3017fb4c4ddbdb0a98397977414d3f12868a63a47d913914",
@@ -2630,7 +2630,7 @@
     {
       "id": "CVE-2026-74724",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/74xxx/CVE-2026-74724.json",
         "sha256": "26356737fd6f40b2a8015d9d0458a5accfafcea969f66e0115a862112a4a5339",
@@ -2650,7 +2650,7 @@
     {
       "id": "CVE-2026-74744",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/74xxx/CVE-2026-74744.json",
         "sha256": "96f5f299095fc0be5c90009843b7aa2712783a3f0d1e6728a9f39fc7ea920842",
@@ -2668,7 +2668,7 @@
     {
       "id": "CVE-2026-74752",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/74xxx/CVE-2026-74752.json",
         "sha256": "7dcb9d1aaf2bc764afc44716151f349ab70c12e45a9fbcf0ecb86cff11fc85c9",
@@ -2705,7 +2705,7 @@
     {
       "id": "CVE-2026-80551",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/80xxx/CVE-2026-80551.json",
         "sha256": "512dd1f5850750e6530800a19a17c3486443e16a5affbaea403ff8835f051b59",
@@ -2724,7 +2724,7 @@
     {
       "id": "CVE-2026-80554",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/80xxx/CVE-2026-80554.json",
         "sha256": "a166c6ca7b5895e2e97f4ad066315b7e2f979f2a55fce311c91c89ff9f70aeed",
@@ -2743,7 +2743,7 @@
     {
       "id": "CVE-2026-80631",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/80xxx/CVE-2026-80631.json",
         "sha256": "0d9db13e64728ec48874bfb8210384c9a969df9a59dae7e376e42a1ff6c5f12e",
@@ -2761,7 +2761,7 @@
     {
       "id": "CVE-2026-80634",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/80xxx/CVE-2026-80634.json",
         "sha256": "7d9998c1782f98a86809e17abd5399d8016c280d4ecbb1e7931fe5136f46a2af",
@@ -2779,7 +2779,7 @@
     {
       "id": "CVE-2026-80668",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/80xxx/CVE-2026-80668.json",
         "sha256": "cedd5eb121b5c88ba65a0a32989a5b9f06bf76c25db15978493abfbd73dceec6",
@@ -2810,7 +2810,7 @@
     {
       "id": "CVE-2026-80671",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/80xxx/CVE-2026-80671.json",
         "sha256": "727018a771d2d242f6c5694ce167a8123fe75eca87f2a7f82d8d1d4abc8f7eae",
@@ -2837,7 +2837,7 @@
     {
       "id": "CVE-2026-80681",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/80xxx/CVE-2026-80681.json",
         "sha256": "6add3efdc25c55c519e3c1f0083ac64181e148dd868cc5cf379babf1f8e40278",
@@ -2855,7 +2855,7 @@
     {
       "id": "CVE-2026-80691",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/80xxx/CVE-2026-80691.json",
         "sha256": "1090b5a147a4a918293ce075f406c5abe25cf29e362d9cd0df53c79e0411b01f",
@@ -2873,7 +2873,7 @@
     {
       "id": "CVE-2026-80692",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/80xxx/CVE-2026-80692.json",
         "sha256": "72d309b90458e0b63de850a87e7f2d4f764b871398544159d74c6066916a89ee",
@@ -2891,7 +2891,7 @@
     {
       "id": "CVE-2026-80693",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/80xxx/CVE-2026-80693.json",
         "sha256": "ba04d9d240f5b851687565d2424eb9893779c2b672e2f270ba2ab85714e2532a",
@@ -2912,7 +2912,7 @@
     {
       "id": "CVE-2026-80700",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/80xxx/CVE-2026-80700.json",
         "sha256": "6324cf5d0cc75a8b10795ac4994f061b60e15cc6deea5653d7732a805f989e75",
@@ -2930,7 +2930,7 @@
     {
       "id": "CVE-2026-80702",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/80xxx/CVE-2026-80702.json",
         "sha256": "98c20168369a8912fbcb2730666213e1ef72f1ad2bd7ba840a200ee8b0e6d5a9",
@@ -2948,7 +2948,7 @@
     {
       "id": "CVE-2026-80710",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/80xxx/CVE-2026-80710.json",
         "sha256": "415ff1b405da938276f3764ed470f4b9b87dbf6b0b6eab5f8bceef67a090c7f6",
@@ -2966,7 +2966,7 @@
     {
       "id": "CVE-2026-80714",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/80xxx/CVE-2026-80714.json",
         "sha256": "eba3a5edeab28cc7e39b84d220780b2ad0390a15e8ec34177a433805af83ebe9",
@@ -2984,7 +2984,7 @@
     {
       "id": "CVE-2026-80716",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/80xxx/CVE-2026-80716.json",
         "sha256": "187f6400604ddd06afbc72dc0ae581913d3d23506f343f2417127cdb12393adf",
@@ -3002,7 +3002,7 @@
     {
       "id": "CVE-2026-80718",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/80xxx/CVE-2026-80718.json",
         "sha256": "c70d551e9ae7de87c7792556383f2a3679444569ca3196f6be5dd32a08210926",
@@ -3020,7 +3020,7 @@
     {
       "id": "CVE-2026-80721",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/80xxx/CVE-2026-80721.json",
         "sha256": "4a3d92f26041a3a6f2b15d1f779ae53506da9385f38c76663b4f2249f2704897",
@@ -3038,7 +3038,7 @@
     {
       "id": "CVE-2026-80725",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/80xxx/CVE-2026-80725.json",
         "sha256": "95cccf43ea14e4db5a8788025d11f8a343e166e2e07c06c15a42245b2e4e1768",
@@ -3056,7 +3056,7 @@
     {
       "id": "CVE-2026-80837",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/80xxx/CVE-2026-80837.json",
         "sha256": "82125737da927930170404282ad10f6094e01e17f4395a2ddf71693369da88e8",
@@ -3074,7 +3074,7 @@
     {
       "id": "CVE-2026-80841",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/80xxx/CVE-2026-80841.json",
         "sha256": "0ce21315ec3d154b18aba91d04ad866bc1c55c60dd1ea5ba7bbdde81a183b726",
@@ -3092,7 +3092,7 @@
     {
       "id": "CVE-2026-80852",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/80xxx/CVE-2026-80852.json",
         "sha256": "a53a304a118ed5a2344e3101493724164c2e9b1feb002f4edcb8b5c940fef13f",
@@ -3110,7 +3110,7 @@
     {
       "id": "CVE-2026-80864",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/80xxx/CVE-2026-80864.json",
         "sha256": "8b96f3bc687fe77955ad3d54dfcad98890dee6b094d6af19f47ead5f177b99a7",
@@ -3128,7 +3128,7 @@
     {
       "id": "CVE-2026-80891",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/80xxx/CVE-2026-80891.json",
         "sha256": "28a77ccfb74c149b440189445c9dc77dca1fe6ce5c3aca60e1ea5fadc32a210b",
@@ -3146,7 +3146,7 @@
     {
       "id": "CVE-2026-80905",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/80xxx/CVE-2026-80905.json",
         "sha256": "ce509a38e86915cdd6c455280966647069dfa12f85762145f6b70e0d7da020fe",
@@ -3164,7 +3164,7 @@
     {
       "id": "CVE-2026-80937",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/80xxx/CVE-2026-80937.json",
         "sha256": "62cdf9bd3b1de8496650fce5637b15ad2f62a1793a2fa5fb53b82a733309d539",
@@ -3182,7 +3182,7 @@
     {
       "id": "CVE-2026-80980",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/80xxx/CVE-2026-80980.json",
         "sha256": "6c5e5a02aba9b8558ac8ba359f4094165a849e551228cc25d7822f402545e22e",
@@ -3200,7 +3200,7 @@
     {
       "id": "CVE-2026-80982",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/80xxx/CVE-2026-80982.json",
         "sha256": "b350efa0420992b06ae9b3765bad8a9a74d08dee3e9f79b7c24aad2f9e5927f1",
@@ -3218,7 +3218,7 @@
     {
       "id": "CVE-2026-80991",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/80xxx/CVE-2026-80991.json",
         "sha256": "be4f821e218950f0f532216915904cf9c3582bdde0d1b84d6147bb1fc646e400",
@@ -3238,7 +3238,7 @@
     {
       "id": "CVE-2026-89448",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/89xxx/CVE-2026-89448.json",
         "sha256": "e4600e90f3ed10f2ddba6dcd655c475d427f9cfc714d520ba4ae6f64f85914f6",
@@ -3258,7 +3258,7 @@
     {
       "id": "CVE-2026-89481",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/89xxx/CVE-2026-89481.json",
         "sha256": "34927c89475c3890e6aa48b150f8e9cba55a8a7645a09c4972e3fc7f1c7c02b7",
@@ -3276,7 +3276,7 @@
     {
       "id": "CVE-2026-89492",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/89xxx/CVE-2026-89492.json",
         "sha256": "b8dec19c9cb0600d75bbba073e55aa6aeecdac509aea539f703d9ef893291450",
@@ -3294,7 +3294,7 @@
     {
       "id": "CVE-2026-89520",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/89xxx/CVE-2026-89520.json",
         "sha256": "8544095a7757f4d699c0272dfc08cbb12d4e9ab243150494a3aba3aec5a2609b",
@@ -3313,7 +3313,7 @@
     {
       "id": "CVE-2026-89526",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/89xxx/CVE-2026-89526.json",
         "sha256": "31c5bef6cdf25b6c53b66b84c7a35aec5beb72273a0b996916f2d622d25cbced",
@@ -3331,7 +3331,7 @@
     {
       "id": "CVE-2026-89528",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/89xxx/CVE-2026-89528.json",
         "sha256": "b5631d392cd1890b0f83909dd4b5a4d1269bf1dd91c3b2c07b41ddba6a86d0c9",
@@ -3349,7 +3349,7 @@
     {
       "id": "CVE-2026-89530",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/89xxx/CVE-2026-89530.json",
         "sha256": "68ec8f47a67f4759b649dc0230b906b4bb12b317b80a65cbc184788afb80ca4d",
@@ -3367,7 +3367,7 @@
     {
       "id": "CVE-2026-89531",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/89xxx/CVE-2026-89531.json",
         "sha256": "f24d531413dc05af4adc33947293611e5108eb0e086ab94b7714b4c27849bcda",
@@ -3385,7 +3385,7 @@
     {
       "id": "CVE-2026-89537",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/89xxx/CVE-2026-89537.json",
         "sha256": "1e433b12ad093270b2163af9e64b731b6e161d3f5917f7ed1fd08849dae0970a",
@@ -3403,7 +3403,7 @@
     {
       "id": "CVE-2026-89544",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/89xxx/CVE-2026-89544.json",
         "sha256": "18e3505aa9da9fd013c321965b34cd913499a8a92d046355fcf8d808c0c34706",
@@ -3421,7 +3421,7 @@
     {
       "id": "CVE-2026-89550",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/89xxx/CVE-2026-89550.json",
         "sha256": "7e1a7549deb338191ae2e2ebdf3da25bcb1d0d358f5338c2129735cbe2b68f00",
@@ -3439,7 +3439,7 @@
     {
       "id": "CVE-2026-89564",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/89xxx/CVE-2026-89564.json",
         "sha256": "70258784d7bb4392eae7779ca2ca5aeefe1472bfb97e0f7fde82fce289b5e79a",
@@ -3458,7 +3458,7 @@
     {
       "id": "CVE-2026-89565",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/89xxx/CVE-2026-89565.json",
         "sha256": "e4c386944cc334ba48e2925edf30c87412de249ab2d39b760a3258b1457977c9",
@@ -3476,7 +3476,7 @@
     {
       "id": "CVE-2026-89580",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/89xxx/CVE-2026-89580.json",
         "sha256": "cc5c8203bbee7493f4b626089cb6db59f648b1ea24e1b6093a47d4339c5de4cb",
@@ -3494,7 +3494,7 @@
     {
       "id": "CVE-2026-89622",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/89xxx/CVE-2026-89622.json",
         "sha256": "f9fba700ea0ed64583af9bb9956bd5f7e1c02b5d2bd761c13de9feeb1fd17f2e",
@@ -3512,7 +3512,7 @@
     {
       "id": "CVE-2026-89631",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/89xxx/CVE-2026-89631.json",
         "sha256": "a037994dd6078a58987828be81a307bfe4bb5d096e9be79f2c113b67e5c97fd2",
@@ -3531,7 +3531,7 @@
     {
       "id": "CVE-2026-89633",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/89xxx/CVE-2026-89633.json",
         "sha256": "d1be0999525ddb11d6cb24d9b6d443fef5f92cf7682d18cd1da82137ae652106",
@@ -3549,7 +3549,7 @@
     {
       "id": "CVE-2026-89637",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/89xxx/CVE-2026-89637.json",
         "sha256": "01e4d03a5ad52e2ed1b6bfdf72b823021f55a093548822aeeda70909150d3644",
@@ -3567,7 +3567,7 @@
     {
       "id": "CVE-2026-89638",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/89xxx/CVE-2026-89638.json",
         "sha256": "2dfaa033966589198d94349852110a1b7b8c4155f5cc0129993fe46f299dd786",
@@ -3585,7 +3585,7 @@
     {
       "id": "CVE-2026-89652",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/89xxx/CVE-2026-89652.json",
         "sha256": "3e59848897b6eadbac044653570f180c08ce418066a62ce5db6fca6c2d5b7fad",
@@ -3603,7 +3603,7 @@
     {
       "id": "CVE-2026-89659",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/89xxx/CVE-2026-89659.json",
         "sha256": "bc636ece6aa604adcdb9dab371e3b2cc958c5cd4b9f1562357dafd3d0abb4862",
@@ -3622,7 +3622,7 @@
     {
       "id": "CVE-2026-89675",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/89xxx/CVE-2026-89675.json",
         "sha256": "703cf00c3e85e5c41d1d9aee02425dc40179e7dbf3f62fc29375549be20158f1",
@@ -3640,7 +3640,7 @@
     {
       "id": "CVE-2026-89676",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/89xxx/CVE-2026-89676.json",
         "sha256": "0ba3d1e973b10eb4d2b2a89d76b514e6eece45018934d95f1482f7810069caa4",
@@ -3658,7 +3658,7 @@
     {
       "id": "CVE-2026-89680",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/89xxx/CVE-2026-89680.json",
         "sha256": "4bfbea1bb7f62f251f720ad7355c52ab023d3be0846283a7da5b9c7930ab8dd2",
@@ -3676,7 +3676,7 @@
     {
       "id": "CVE-2026-89685",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/89xxx/CVE-2026-89685.json",
         "sha256": "7d7875195922cb068c4d582d2124aaae69a2953892b2d046687c5dda5cb6468f",
@@ -3695,7 +3695,7 @@
     {
       "id": "CVE-2026-89707",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/89xxx/CVE-2026-89707.json",
         "sha256": "fefe476e976ecdbd24a68538b589c5a41902101a492754d4444999aa483943af",
@@ -3713,7 +3713,7 @@
     {
       "id": "CVE-2026-89708",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/89xxx/CVE-2026-89708.json",
         "sha256": "534db3f2421d5edcc344de4efa4d2e1114bd5c35650c1f5421df405145ca3c5f",
@@ -3734,7 +3734,7 @@
     {
       "id": "CVE-2026-89788",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/89xxx/CVE-2026-89788.json",
         "sha256": "f5e94245443c56947e42db4398d36016d95265a7160fbe899aba800e8392512e",
@@ -3753,7 +3753,7 @@
     {
       "id": "CVE-2026-89803",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/89xxx/CVE-2026-89803.json",
         "sha256": "905d8a0cf50c37bb33744ff330de147c76d547cb7ae2c67a2384593379cb6a5f",
@@ -3771,7 +3771,7 @@
     {
       "id": "CVE-2026-89810",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/89xxx/CVE-2026-89810.json",
         "sha256": "2eddd5a5a77569bcc3e26f26fb5a30b46e4da3e8f44193d87082bec4bbfc7ec9",
@@ -3789,7 +3789,7 @@
     {
       "id": "CVE-2026-89837",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/89xxx/CVE-2026-89837.json",
         "sha256": "747f0e83d83bd63a8236002b5cce1b0c44012fbdb83e3800be2f04468bb70717",
@@ -3807,7 +3807,7 @@
     {
       "id": "CVE-2026-89913",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/89xxx/CVE-2026-89913.json",
         "sha256": "863e3abf780c3953bdb9dda080073ad0905c10963a9c36b0b9bd8200b9660203",
@@ -3825,7 +3825,7 @@
     {
       "id": "CVE-2026-89922",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/89xxx/CVE-2026-89922.json",
         "sha256": "e47b7db683b863642b5628ae312cd1cbb8469758255565bb76137c3595704164",
@@ -3843,7 +3843,7 @@
     {
       "id": "CVE-2026-90003",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/90xxx/CVE-2026-90003.json",
         "sha256": "9ca9f262d4de0f5f51097ccef134d294fed9032a293c371e7ee99ead1ca9d1da",
@@ -3861,7 +3861,7 @@
     {
       "id": "CVE-2026-90037",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/90xxx/CVE-2026-90037.json",
         "sha256": "e8dd320109f575adb06ab478b0bc25646e69d73b9fe6c9e34529f5eb750b8838",
@@ -3879,7 +3879,7 @@
     {
       "id": "CVE-2026-90048",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/90xxx/CVE-2026-90048.json",
         "sha256": "e7a9f225f6c83ba111b0feb81df563dfc5de124c5e14ce9657f44cc72b9d09bb",
@@ -3897,7 +3897,7 @@
     {
       "id": "CVE-2026-90057",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/90xxx/CVE-2026-90057.json",
         "sha256": "1b4dbc25a0f18e119fdaf8beb969ea9429f951a3ed38d83a04e837e709a73f5c",
@@ -3915,7 +3915,7 @@
     {
       "id": "CVE-2026-90092",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/90xxx/CVE-2026-90092.json",
         "sha256": "f61ebe760b8c5df4d509f697f17188e7d2eaccd0ced52706d28bb7eb407e1705",
@@ -3933,7 +3933,7 @@
     {
       "id": "CVE-2026-90093",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/90xxx/CVE-2026-90093.json",
         "sha256": "56021cb78a5033e3061209f56d3219ed83d8c827a58978faae93a584eaff5c5f",
@@ -3951,7 +3951,7 @@
     {
       "id": "CVE-2026-90104",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/90xxx/CVE-2026-90104.json",
         "sha256": "d007851e06682655a29b0def033a6322b3f0407367ebb444ff851e66cc2a76dd",
@@ -3969,7 +3969,7 @@
     {
       "id": "CVE-2026-90108",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/90xxx/CVE-2026-90108.json",
         "sha256": "c90717300e993cb4b8f2bb40d3edfda4c71bf720aa1626cf513492b3185e8976",
@@ -3987,7 +3987,7 @@
     {
       "id": "CVE-2026-90111",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/90xxx/CVE-2026-90111.json",
         "sha256": "7321bf6be9fec5e6a4781bfb5cb99c9c7b8d9bb4f3490820b854f4b7ef88d31b",
@@ -4005,7 +4005,7 @@
     {
       "id": "CVE-2026-90148",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/90xxx/CVE-2026-90148.json",
         "sha256": "f938227f8ea5ab50f8afd1c70d486f9d2fd110831d347a5d06fdabce6f0a07e4",
@@ -4023,7 +4023,7 @@
     {
       "id": "CVE-2026-90149",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/90xxx/CVE-2026-90149.json",
         "sha256": "af48b7394efb200542f706dcfda50b0286b569dbef30fa3105874f6f0ab8b17f",
@@ -4042,7 +4042,7 @@
     {
       "id": "CVE-2026-90150",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/90xxx/CVE-2026-90150.json",
         "sha256": "975b4434c3f83a8f7258fc4685570b2a1a37c0e7ebb5d4be4101b82a2d0cdb3c",
@@ -4060,7 +4060,7 @@
     {
       "id": "CVE-2026-90152",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/90xxx/CVE-2026-90152.json",
         "sha256": "c9a096d39cd2e8cc880de7e47d784dea39e7123e9e1be7f6947892973fa155bf",
@@ -4078,7 +4078,7 @@
     {
       "id": "CVE-2026-90155",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/90xxx/CVE-2026-90155.json",
         "sha256": "c88bcea25021a07affc8e2c7449e543b9cc1a56944500a5bb1751b0006da1f1c",
@@ -4097,7 +4097,7 @@
     {
       "id": "CVE-2026-90161",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/90xxx/CVE-2026-90161.json",
         "sha256": "c20e20cc66e93e81dfec9c34232cec4b8dedf6d30b53a3b399a21ab498666dfd",
@@ -4116,7 +4116,7 @@
     {
       "id": "CVE-2026-90162",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/90xxx/CVE-2026-90162.json",
         "sha256": "92f536eea35dfb49d63223d3ff5a9ddf6654cebdaeebb2cdeca4e4cab4049fb9",
@@ -4134,7 +4134,7 @@
     {
       "id": "CVE-2026-90167",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/90xxx/CVE-2026-90167.json",
         "sha256": "eb0cfaea69bf871e7a9323aefb916515c2a1af4a3aaa262351e50ed510e898cd",
@@ -4154,7 +4154,7 @@
     {
       "id": "CVE-2026-90169",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/90xxx/CVE-2026-90169.json",
         "sha256": "bd66f9d1ce4b42d832cea52d98f9d17ef6b3d41aca499c15456bb5442c69cb6c",
@@ -4175,7 +4175,7 @@
     {
       "id": "CVE-2026-90199",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/90xxx/CVE-2026-90199.json",
         "sha256": "fc530b542c992e897762ed1038c4aa51a17fbeb780ef348eb376ca75660fee6f",
@@ -4193,7 +4193,7 @@
     {
       "id": "CVE-2026-90200",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/90xxx/CVE-2026-90200.json",
         "sha256": "820a590dde28de068102204fae64e91246de63ac96cb2b6998c9e6869dd48d4f",
@@ -4211,7 +4211,7 @@
     {
       "id": "CVE-2026-90204",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/90xxx/CVE-2026-90204.json",
         "sha256": "0500528ced5a10f1e7d18dd10abc6091ca4eec11876a3adf964879dc4efd03bc",
@@ -4229,7 +4229,7 @@
     {
       "id": "CVE-2026-90205",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/90xxx/CVE-2026-90205.json",
         "sha256": "b028fcdb0e9f066eef52a2d2e3e7c91fea2d50dd998fe576e084bfe610cee8f0",
@@ -4247,7 +4247,7 @@
     {
       "id": "CVE-2026-90217",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/90xxx/CVE-2026-90217.json",
         "sha256": "503c9c57b760f6383e5a968200854034376dff244f6d02f2def108e608661104",
@@ -4265,7 +4265,7 @@
     {
       "id": "CVE-2026-90227",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/90xxx/CVE-2026-90227.json",
         "sha256": "176654be5bf47747a8bcbaf8e0ee46c0f0c0909353a54883b0d98109f0acd9c2",
@@ -4283,7 +4283,7 @@
     {
       "id": "CVE-2026-90237",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/90xxx/CVE-2026-90237.json",
         "sha256": "5d0be9829336f769a919395c7f0dbdfb619619f7020d59759747ac4290345cea",
@@ -4303,7 +4303,7 @@
     {
       "id": "CVE-2026-90256",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/90xxx/CVE-2026-90256.json",
         "sha256": "c1585873d1614ab021653ad2a18087a85c26f8dc50e89d843916671776ac0c2e",
@@ -4321,7 +4321,7 @@
     {
       "id": "CVE-2026-90313",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/90xxx/CVE-2026-90313.json",
         "sha256": "969d521c4f672eecf9ce895406f60cf1aa6308cb65cc99ef7d9716cabbe7bfc6",
@@ -4339,7 +4339,7 @@
     {
       "id": "CVE-2026-90317",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/90xxx/CVE-2026-90317.json",
         "sha256": "ac54a0db122fd277cfcee45d974f24e219ff49eab94494755d50aa406d34349a",
@@ -4357,7 +4357,7 @@
     {
       "id": "CVE-2026-90320",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/90xxx/CVE-2026-90320.json",
         "sha256": "745a42a649250704c206aff7b6e70eb167f45e2fa477e21dcb8c323163bff666",
@@ -4375,7 +4375,7 @@
     {
       "id": "CVE-2026-90321",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/90xxx/CVE-2026-90321.json",
         "sha256": "59bffe628554ffec4a5332816d7104823745c8913ade49c701caf251430ec221",
@@ -4395,7 +4395,7 @@
     {
       "id": "CVE-2026-90324",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/90xxx/CVE-2026-90324.json",
         "sha256": "3c6d84c9a4fdfea1d28ac59be5cb1216f537a55029274299e548c566cb0716b9",
@@ -4413,7 +4413,7 @@
     {
       "id": "CVE-2026-90343",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/90xxx/CVE-2026-90343.json",
         "sha256": "2a5d9b3958f0970b8a947303df1057238c6275234bc1e91e1c81e9565810cd18",
@@ -4431,7 +4431,7 @@
     {
       "id": "CVE-2026-90375",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/90xxx/CVE-2026-90375.json",
         "sha256": "7bd1e2decf73441efe43e28116eeaf558cf9eb242def2588576479f4930058ac",
@@ -4449,7 +4449,7 @@
     {
       "id": "CVE-2026-90380",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/90xxx/CVE-2026-90380.json",
         "sha256": "f9b704e952f67f875e74801747bb26c42fdd1c1e40957271d55192592710deb6",
@@ -4467,7 +4467,7 @@
     {
       "id": "CVE-2026-90392",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/90xxx/CVE-2026-90392.json",
         "sha256": "7ac46ca963461db464cb7120afd6e7d676702cedac777083af2e13178c5dabe8",
@@ -4485,7 +4485,7 @@
     {
       "id": "CVE-2026-90398",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/90xxx/CVE-2026-90398.json",
         "sha256": "d19075cd4b8434ed28aa51992c56075a349bc010e018c24582785aa9dc3bcfca",
@@ -4503,7 +4503,7 @@
     {
       "id": "CVE-2026-90417",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/90xxx/CVE-2026-90417.json",
         "sha256": "cb68e740e8c881f2822e1b58cd7271853727bba7cf223063e914da3ac4f05a52",
@@ -4521,7 +4521,7 @@
     {
       "id": "CVE-2026-92499",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/92xxx/CVE-2026-92499.json",
         "sha256": "3b46c3771758353b0be08e3ba0e8fa63f80cbd2339f5abe1dd2fabd166987160",
@@ -4539,7 +4539,7 @@
     {
       "id": "CVE-2026-92507",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/92xxx/CVE-2026-92507.json",
         "sha256": "0deea54c1464ef3526d1050d261ebd277790f122c9c9e32e9ae43ce9ec1791a3",
@@ -4557,7 +4557,7 @@
     {
       "id": "CVE-2026-92509",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/92xxx/CVE-2026-92509.json",
         "sha256": "79355d4126e2da16a30d8f302ed88d5f2402a62c348f82e0c504b4e2ddb6b9fb",
@@ -4575,7 +4575,7 @@
     {
       "id": "CVE-2026-92510",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/92xxx/CVE-2026-92510.json",
         "sha256": "f2f1407fa681c2babb75c23dfdee5b54fa206a75b49078e3aa89d268c88b86aa",
@@ -4593,7 +4593,7 @@
     {
       "id": "CVE-2026-92511",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/92xxx/CVE-2026-92511.json",
         "sha256": "1acbe6426f9dc6c8d5b65efd9e51035bf90424b14353172abf61c0ac3362dfc7",
@@ -4611,7 +4611,7 @@
     {
       "id": "CVE-2026-92512",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/92xxx/CVE-2026-92512.json",
         "sha256": "81f1d02fefbf9ae1e97ff76a99862623f94cb93d3c3a6c80fb8fb23fb6ff1035",
@@ -4629,7 +4629,7 @@
     {
       "id": "CVE-2026-93105",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/93xxx/CVE-2026-93105.json",
         "sha256": "eecba01effa90159b931305cc0a890c263aa4657296155602df27fa40d20c8e4",
@@ -4648,7 +4648,7 @@
     {
       "id": "CVE-2026-93125",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/93xxx/CVE-2026-93125.json",
         "sha256": "af2802d02f1a3f4452881319272059aa56aa91cbf61d6a1cb376894aa6432159",
@@ -4666,7 +4666,7 @@
     {
       "id": "CVE-2026-93144",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/93xxx/CVE-2026-93144.json",
         "sha256": "5427b41877a2f79ad1b1ef5bfbfdf505ca2927498774f19ef4b6b1ce59a476e1",
@@ -4684,7 +4684,7 @@
     {
       "id": "CVE-2026-93148",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/93xxx/CVE-2026-93148.json",
         "sha256": "86cfbeb657f86e7c82072cfb586de15d65a5142097259a4fb78dcb1c4b1153c3",
@@ -4704,7 +4704,7 @@
     {
       "id": "CVE-2026-93154",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/93xxx/CVE-2026-93154.json",
         "sha256": "3e335b62f941636686c41bf3d9602f860c7a0425e2ade50a770d45d4c25579e0",
@@ -4723,7 +4723,7 @@
     {
       "id": "CVE-2026-93175",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/93xxx/CVE-2026-93175.json",
         "sha256": "1287b1bcb56ee0bd41a180c010bbdff6f5c2586a2c5e5394fffaf13d6fd8c2bd",
@@ -4741,7 +4741,7 @@
     {
       "id": "CVE-2026-93176",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/93xxx/CVE-2026-93176.json",
         "sha256": "0794e285b1a51efe577ebb2d268393164aa1b4b657d29114e8d7806ffe44c7b7",
@@ -4759,7 +4759,7 @@
     {
       "id": "CVE-2026-93192",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/93xxx/CVE-2026-93192.json",
         "sha256": "3456c4a144c290f79c9259c4fd65f30d2410f2f7ebda4293508ddb3f2445fb9c",
@@ -4777,7 +4777,7 @@
     {
       "id": "CVE-2026-93196",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/93xxx/CVE-2026-93196.json",
         "sha256": "06f177468927740d456dcbdbad81bc433d063598d3b15a00a85bb2a23280e70a",
@@ -4796,7 +4796,7 @@
     {
       "id": "CVE-2026-93199",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/93xxx/CVE-2026-93199.json",
         "sha256": "772739313ed35076063206e2731d04b9584783b27132e6d246f0b868cdab1bfc",
@@ -4814,7 +4814,7 @@
     {
       "id": "CVE-2026-93210",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/93xxx/CVE-2026-93210.json",
         "sha256": "bbe2dc148adf981eff10979e69066a0d4cc8e80a03d4ffb35e76e6b83d909e53",
@@ -4832,7 +4832,7 @@
     {
       "id": "CVE-2026-93221",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/93xxx/CVE-2026-93221.json",
         "sha256": "9fe53b2f8a72711db5ab4e2b33888f0f9ddae943e82bc6cdf87ac3c87d2120e7",
@@ -4855,7 +4855,7 @@
     {
       "id": "CVE-2026-93282",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/93xxx/CVE-2026-93282.json",
         "sha256": "9f8ba11cb15edce3c30f45b24773e07681f06a0bcd13c2b857630f718839c204",
@@ -4875,7 +4875,7 @@
     {
       "id": "CVE-2026-93787",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/93xxx/CVE-2026-93787.json",
         "sha256": "83fa4fed9be6b8d146c8d65b7b058042f9f869f0b8b72d791705ce661f7ea35d",
@@ -4893,7 +4893,7 @@
     {
       "id": "CVE-2026-93790",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/93xxx/CVE-2026-93790.json",
         "sha256": "4927f4b3e6a14ef176ac6a6463295d305e385c0f9b9986b09c687f960abad21c",
@@ -4911,7 +4911,7 @@
     {
       "id": "CVE-2026-93792",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/93xxx/CVE-2026-93792.json",
         "sha256": "108790db7ae33b495165603755292a0778a62ffc0d5e3ca5fefa0bbd62205102",
@@ -4929,7 +4929,7 @@
     {
       "id": "CVE-2026-93796",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/93xxx/CVE-2026-93796.json",
         "sha256": "8133704e41c837cc51b0c754da852064ec802d4dfefbde5a811267c1b22db7b2",
@@ -4947,7 +4947,7 @@
     {
       "id": "CVE-2026-93806",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/93xxx/CVE-2026-93806.json",
         "sha256": "e684e39f8e53130ebfbe71eb0ce599ee35bdd9350cead4ecf4b4f9bde09d2a62",
@@ -4965,7 +4965,7 @@
     {
       "id": "CVE-2026-93817",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/93xxx/CVE-2026-93817.json",
         "sha256": "0463e9bb8730435fc40a02c3f213c9a5969c48d1787dc38fb5fcfdbb43a16c54",
@@ -4983,7 +4983,7 @@
     {
       "id": "CVE-2026-93824",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/93xxx/CVE-2026-93824.json",
         "sha256": "58d46699233115c840c5c4ff923eb6d81e4d91f3481f5c52b7578152fecf1c1b",
@@ -5001,7 +5001,7 @@
     {
       "id": "CVE-2026-93828",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/93xxx/CVE-2026-93828.json",
         "sha256": "4da1a197db9046702cf44935c03ad8abccae570bafe81c45f4c55cef1c2d6e47",
@@ -5019,7 +5019,7 @@
     {
       "id": "CVE-2026-97415",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/97xxx/CVE-2026-97415.json",
         "sha256": "5a091fef204d35babde3bd3c4f11000f3dc11538aa9d1327c66b9a1253901a87",
@@ -5038,7 +5038,7 @@
     {
       "id": "CVE-2026-97429",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/97xxx/CVE-2026-97429.json",
         "sha256": "8f599ba83ccb1230cec9d5af6522ba12b12d5ab029dba00abade4e8420c61792",
@@ -5056,7 +5056,7 @@
     {
       "id": "CVE-2026-97442",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/97xxx/CVE-2026-97442.json",
         "sha256": "1fbacdf04ed66392c792146491953a901b65dc9de9a565885e94dfe2e215e666",
@@ -5074,7 +5074,7 @@
     {
       "id": "CVE-2026-97493",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/97xxx/CVE-2026-97493.json",
         "sha256": "4b3fb4778e4126c583293ca741651e6bfcff2009a60f6b050d04f09563c10d98",
@@ -5092,7 +5092,7 @@
     {
       "id": "CVE-2026-97497",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/97xxx/CVE-2026-97497.json",
         "sha256": "1c6bb30b25a317e838b7504758a7eb1f6023a36050a30a87713b81efd93f6596",
@@ -5110,7 +5110,7 @@
     {
       "id": "CVE-2026-97513",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/97xxx/CVE-2026-97513.json",
         "sha256": "2b1fb7fc76b022aae89d09a1b49f60b6ef9079df6e55549f1fc6613df0d43ac4",
@@ -5128,7 +5128,7 @@
     {
       "id": "CVE-2026-97530",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/97xxx/CVE-2026-97530.json",
         "sha256": "ea246551cb9a81cdd14d4809c6cce20251c41797771033809d492e1097faf027",
@@ -5146,7 +5146,7 @@
     {
       "id": "CVE-2026-97555",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/97xxx/CVE-2026-97555.json",
         "sha256": "9d6cd2fb58616b76a0e4a62e44be573fff7ca9cafef031556521e0d4b668a41d",
@@ -5164,7 +5164,7 @@
     {
       "id": "CVE-2026-97557",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/97xxx/CVE-2026-97557.json",
         "sha256": "09659edde9df2059ae279a8cb0d5549b902f58410048fe2f08e27f553149a190",
@@ -5182,7 +5182,7 @@
     {
       "id": "CVE-2026-97562",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/97xxx/CVE-2026-97562.json",
         "sha256": "f03699e31400b76d7800d4c421d9e85ff051ec4fab1d91a69bf2f38b2accbb99",
@@ -5200,7 +5200,7 @@
     {
       "id": "CVE-2026-97564",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/97xxx/CVE-2026-97564.json",
         "sha256": "4d05d37c93daa52f616e497469b00ab6534a8288bb74d4e93342dc6c43ba56fa",
@@ -5227,7 +5227,7 @@
     {
       "id": "CVE-2026-97565",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/97xxx/CVE-2026-97565.json",
         "sha256": "2cc2c20ff9dbd1deb915324ba466e9688b8eeb3580fd1716482a0fabe2de0a77",
@@ -5245,7 +5245,7 @@
     {
       "id": "CVE-2026-97581",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/97xxx/CVE-2026-97581.json",
         "sha256": "f51160bcc7f0383417cf4b3f279ffbeb3620ec905216adadaf3bc4155579ccba",
@@ -5263,7 +5263,7 @@
     {
       "id": "CVE-2026-97603",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/97xxx/CVE-2026-97603.json",
         "sha256": "352a97efa3eea6917c992d273f4c19b1062e188547f2c9b877aa322c03e46c45",
@@ -5281,7 +5281,7 @@
     {
       "id": "CVE-2026-97615",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/97xxx/CVE-2026-97615.json",
         "sha256": "99265d15a37c1f5899137785ec5a66450291cafb918a14ee995c24745d550f57",
@@ -5303,7 +5303,7 @@
     {
       "id": "CVE-2026-97906",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/97xxx/CVE-2026-97906.json",
         "sha256": "3845a5eb7af1fc8f2962edab3698e1e36bb6d72dc31802cbae34b66ba072d57e",
@@ -5321,7 +5321,7 @@
     {
       "id": "CVE-2026-97960",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/97xxx/CVE-2026-97960.json",
         "sha256": "cedcf55a51bb265c263e030be671e2a9d528c90dc05faf875b547fa6510f536a",
@@ -5341,7 +5341,7 @@
     {
       "id": "CVE-2026-97988",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/97xxx/CVE-2026-97988.json",
         "sha256": "8a399a94e414eea2b2130f4f139d4945e3e806675f55d03d577d2313a797e370",
@@ -5362,7 +5362,7 @@
     {
       "id": "CVE-2026-98017",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98017.json",
         "sha256": "9373b640620db199b2725ed3488a1b62851a90b63adc96828c3cacbca4278f3e",
@@ -5382,7 +5382,7 @@
     {
       "id": "CVE-2026-98019",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98019.json",
         "sha256": "7e395b714277c1a2df3f7b062e6e119552faba0784ba7aeb2d252859c2b615fd",
@@ -5407,7 +5407,7 @@
     {
       "id": "CVE-2026-98033",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98033.json",
         "sha256": "57dc496a8c9b78af9b842103d1b2d2d1d30e1211b4b03a9d210076825de42b75",
@@ -5425,7 +5425,7 @@
     {
       "id": "CVE-2026-98034",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98034.json",
         "sha256": "76618ca7243161bd421f32b5d49211e4526eee3fc4e38168d9a70e3ed77ec277",
@@ -5443,7 +5443,7 @@
     {
       "id": "CVE-2026-98041",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98041.json",
         "sha256": "752d920f750de8faa636983727c54801aa888e3e4ac0776fe9ebb45134cb3882",
@@ -5461,7 +5461,7 @@
     {
       "id": "CVE-2026-98056",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98056.json",
         "sha256": "dba372967aa2cd8cd44d86c2687d38a876af49a913a60d90174d745c2124b9b0",
@@ -5479,7 +5479,7 @@
     {
       "id": "CVE-2026-98084",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98084.json",
         "sha256": "25977161f3033f445738142ac8b131e27a7c0c00135760de41d0e812be30d8af",
@@ -5497,7 +5497,7 @@
     {
       "id": "CVE-2026-98085",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98085.json",
         "sha256": "c4ace74ee57ef000bd96d5ab0601aebfc0db56fc48e1248ea293f848ee33072a",
@@ -5515,7 +5515,7 @@
     {
       "id": "CVE-2026-98104",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98104.json",
         "sha256": "c3a5370bca3f89d4ef6e3790e4f50dde1d0148f4f70b495e12703eed2f2d40e2",
@@ -5533,7 +5533,7 @@
     {
       "id": "CVE-2026-98107",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98107.json",
         "sha256": "be50affca383b4a6e36978b46f0c8eeb4c0fbae758076450aa0ebcc71b071c70",
@@ -5551,7 +5551,7 @@
     {
       "id": "CVE-2026-98115",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98115.json",
         "sha256": "15144697422c5f4a77142075e3d07bb384bec5bc4d845e3a479e9522963afb15",
@@ -5574,7 +5574,7 @@
     {
       "id": "CVE-2026-98134",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98134.json",
         "sha256": "45683bd5a3cabb8a9787ea8eae1f2854b8b9c481fc7d7f78bbf380968687c20d",
@@ -5592,7 +5592,7 @@
     {
       "id": "CVE-2026-98164",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98164.json",
         "sha256": "27e18dc71e9beb1068c2f07116b9688d37fb711ef2819148d822c7965e61f7e8",
@@ -5610,7 +5610,7 @@
     {
       "id": "CVE-2026-98167",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98167.json",
         "sha256": "d206d6e0b73f6f3bb9fe71bd1807b139502251878ed811d7a2a84131515da1b7",
@@ -5628,7 +5628,7 @@
     {
       "id": "CVE-2026-98171",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98171.json",
         "sha256": "4f837e2ee6e558fdfd5258696e5ed60712713b5cec5ee9521873c2275d1dd7b2",
@@ -5646,7 +5646,7 @@
     {
       "id": "CVE-2026-98222",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98222.json",
         "sha256": "75e77407e4b41a271bff281bc3593c3cf400b5f3c8ce1bb4129ce964ea0e5470",
@@ -5664,7 +5664,7 @@
     {
       "id": "CVE-2026-98229",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98229.json",
         "sha256": "e3c5aa599abcb3f40612c691a801e30c09e0d9607ddbd5ea59d87fd9ab857a1c",
@@ -5682,7 +5682,7 @@
     {
       "id": "CVE-2026-98260",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98260.json",
         "sha256": "0a588d2aef58b9b96cddbbb679e112d440bff515bd3cd052a510e4757f40012a",
@@ -5700,7 +5700,7 @@
     {
       "id": "CVE-2026-98283",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98283.json",
         "sha256": "56cab1c9c23c6f3ca58fe5fdce25cd44470b1157cb11154e8c68b9717e2fab7a",
@@ -5718,7 +5718,7 @@
     {
       "id": "CVE-2026-98332",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98332.json",
         "sha256": "3e099697f13c14257ccd8f02098d40356ed553ddfb07440b3bc7e9f5d078d873",
@@ -5736,7 +5736,7 @@
     {
       "id": "CVE-2026-98333",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98333.json",
         "sha256": "00cc3242cfb8679da7ad8ce40894d1737b1352d558b4b53433507d5a1c1c8678",
@@ -5754,7 +5754,7 @@
     {
       "id": "CVE-2026-98341",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98341.json",
         "sha256": "7e241eb8b5663fd201a0863b157dd34558234251fb85703239a57e35e3410f90",
@@ -5775,7 +5775,7 @@
     {
       "id": "CVE-2026-98359",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98359.json",
         "sha256": "49af0c22b4919230545ef0bce7ea82baa6ab0ef457df53798673568012618ffd",
@@ -5793,7 +5793,7 @@
     {
       "id": "CVE-2026-98364",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98364.json",
         "sha256": "2215a2d73fa8a831065ad37311af040ec609727ea5272bcbb2a4c461da05cac7",
@@ -5811,7 +5811,7 @@
     {
       "id": "CVE-2026-98365",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98365.json",
         "sha256": "a6caacf26e008ebf532bb16854cf60fecaec0704bfb5a79c4908b3a507144f83",
@@ -5829,7 +5829,7 @@
     {
       "id": "CVE-2026-98420",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98420.json",
         "sha256": "3e3ab49b4a599ec52b4d75840b2c66a2c70599be78a32235791a26a59bfbaf83",
@@ -5855,7 +5855,7 @@
     {
       "id": "CVE-2026-98432",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98432.json",
         "sha256": "87a43ec27e8fd7ca0a7fba1fa2f70c209035375117de1d494efb3d1c564d1ec1",
@@ -5878,7 +5878,7 @@
     {
       "id": "CVE-2026-98439",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98439.json",
         "sha256": "7c90195aa831e4c162912b0fe258d971a4f58dd4efd1b20a44606b850d89db28",
@@ -5896,7 +5896,7 @@
     {
       "id": "CVE-2026-98441",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98441.json",
         "sha256": "da37bccf2cf92dc916213571e32176e4da3073d9f5341995ee01488491bb147f",
@@ -5914,7 +5914,7 @@
     {
       "id": "CVE-2026-98442",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98442.json",
         "sha256": "9be4e9863ae0e4d812f61979780fe63effb7c03d4aaae08123313370fafd20d0",
@@ -5932,7 +5932,7 @@
     {
       "id": "CVE-2026-98454",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98454.json",
         "sha256": "05691af2ba08951396a6110f0cec6317d01fbbddf695542a77e7ed38046aebbc",
@@ -5951,7 +5951,7 @@
     {
       "id": "CVE-2026-98456",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98456.json",
         "sha256": "7c102d4d9d089b3c126e649ef0918298b91f63f8a969914c24615c85bb413668",
@@ -5969,7 +5969,7 @@
     {
       "id": "CVE-2026-98457",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98457.json",
         "sha256": "47dd1181b7595b0fc11d70ef06483e9c81ede6690bd795b342d14c6bed1156d3",
@@ -5987,7 +5987,7 @@
     {
       "id": "CVE-2026-98459",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98459.json",
         "sha256": "ff02f8d822ac3fb2fc1dab9032cf26bb223e45e765a2e10b168b91773d16271e",
@@ -6005,7 +6005,7 @@
     {
       "id": "CVE-2026-98462",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98462.json",
         "sha256": "23721b60ece23eaaee069b2f65c4eef574925fa087b2046c6aa01280e3535886",
@@ -6023,7 +6023,7 @@
     {
       "id": "CVE-2026-98464",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98464.json",
         "sha256": "622fefe3d321c7bf30ff859adc95c568dd7fbaa3cdef3c190b80ddd1b11cf004",
@@ -6041,7 +6041,7 @@
     {
       "id": "CVE-2026-98479",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98479.json",
         "sha256": "cfdbe649921e00579e3689f5b57272f5491a18446d46852d2a927b2ecb688a04",
@@ -6059,7 +6059,7 @@
     {
       "id": "CVE-2026-98487",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98487.json",
         "sha256": "49236d4814f711de8c836969e1b22df184665445f3a68aac580efe6328f48594",
@@ -6077,7 +6077,7 @@
     {
       "id": "CVE-2026-98490",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98490.json",
         "sha256": "2c5e8f0fa45f97c49ffce068c5a8b7e66d20c044ab141d7cec3a909cd17ff5cc",
@@ -6095,7 +6095,7 @@
     {
       "id": "CVE-2026-98491",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98491.json",
         "sha256": "edd0c500e97dc94979aafb38320316c1e93251eced31433e6af30033aae60b89",
@@ -6114,7 +6114,7 @@
     {
       "id": "CVE-2026-98503",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98503.json",
         "sha256": "abe3dac544f364a0c527993d1ced17e2d3718e58b80bb88cbc3704a4ff7207c7",
@@ -6133,7 +6133,7 @@
     {
       "id": "CVE-2026-98515",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98515.json",
         "sha256": "a53c3ef46ca1cd3c43fc23fe493fda5ce4db3862eabb01c248e7704ea2b19e77",
@@ -6152,7 +6152,7 @@
     {
       "id": "CVE-2026-98524",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98524.json",
         "sha256": "9f8254ba1be691692fb15b9e329e14bf93e478916a67da7c5eb403e62692d574",
@@ -6170,7 +6170,7 @@
     {
       "id": "CVE-2026-98526",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98526.json",
         "sha256": "4935285f945dc4382f13a311376325075831b9bd377f1ac3a6a34210db91b413",
@@ -6188,7 +6188,7 @@
     {
       "id": "CVE-2026-98532",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98532.json",
         "sha256": "27a24970158c871b4460390a80a29b4ec4ae046bee757135d3e739a755d51874",
@@ -6206,7 +6206,7 @@
     {
       "id": "CVE-2026-98548",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98548.json",
         "sha256": "835bf90471160bfbc07be0e21795008c8aded0b76caf89ca153a929cdd05ba63",
@@ -6224,7 +6224,7 @@
     {
       "id": "CVE-2026-98561",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98561.json",
         "sha256": "cf2a4d14dc42d79d6f3e241637d6e818fb31ab94c1d49f5715dbd130a87e7c77",
@@ -6242,7 +6242,7 @@
     {
       "id": "CVE-2026-98567",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98567.json",
         "sha256": "8ecafc49d5dae8d86579bb2e9d18144dac853ad51e40283f1ea789fcf2633c16",
@@ -6260,7 +6260,7 @@
     {
       "id": "CVE-2026-98568",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98568.json",
         "sha256": "8488cd395765a27abe13f218ca1b52be351df5b77dbd4e4311a7caa23cf58003",
@@ -6278,7 +6278,7 @@
     {
       "id": "CVE-2026-98570",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98570.json",
         "sha256": "0ea72de7b1ed7fdd206c23d826bc86b6a65e1aff01e5393d708469adff367f9a",
@@ -6296,7 +6296,7 @@
     {
       "id": "CVE-2026-98572",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98572.json",
         "sha256": "3ce4b284af061231214aaa5693aef41ec7f8cb38c485ee4483972a14f5a53b43",
@@ -6314,7 +6314,7 @@
     {
       "id": "CVE-2026-98573",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98573.json",
         "sha256": "2c81f3b88ddfec794d8c0593e70855ef75784709e65ba4eecb08c0946b2ae56b",
@@ -6332,7 +6332,7 @@
     {
       "id": "CVE-2026-98580",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98580.json",
         "sha256": "8672aa5c6538e936da3dd26c592de62951b3671c93c4aa5bc093bbd802bc010c",
@@ -6352,7 +6352,7 @@
     {
       "id": "CVE-2026-98586",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98586.json",
         "sha256": "51b3b3f35ab228ff272b70fe2c09bbe1ca1b335039047a076b578631891e8ea2",
@@ -6371,7 +6371,7 @@
     {
       "id": "CVE-2026-98588",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98588.json",
         "sha256": "58da44f54113ae7d7266b43b0ab1b8148526dd2b494287255ae67ae31d6ace6d",
@@ -6389,7 +6389,7 @@
     {
       "id": "CVE-2026-98589",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98589.json",
         "sha256": "d672212620fb9ba80576bc54cc2ca318eeaf8321fb8cd8c10df689057e2b6232",
@@ -6407,7 +6407,7 @@
     {
       "id": "CVE-2026-98590",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98590.json",
         "sha256": "0a09e7335191abdc1221fbdd875591cfe4967f0065481417d0f529bc26686dcf",
@@ -6425,7 +6425,7 @@
     {
       "id": "CVE-2026-98591",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98591.json",
         "sha256": "cb7358ba0c9bc5c287990a8860e4038fc078904e06133a0183bc30441fc81abe",
@@ -6443,7 +6443,7 @@
     {
       "id": "CVE-2026-98599",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98599.json",
         "sha256": "7edf916f12c248f4dd419f9f1d00f92fb441044d2cc79aa684bb6791dd333189",
@@ -6461,7 +6461,7 @@
     {
       "id": "CVE-2026-98606",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98606.json",
         "sha256": "71e0ab92b271ff3e1c493cd1685b9cadc9296bfdfda3c64492f1d05821e53ee1",
@@ -6479,7 +6479,7 @@
     {
       "id": "CVE-2026-98621",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98621.json",
         "sha256": "8e26433425d7451a687097685b004fde709186eed3f84787df62511d99634590",
@@ -6497,7 +6497,7 @@
     {
       "id": "CVE-2026-98624",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98624.json",
         "sha256": "3a14649e3707e5633f72d397d3e03914a88539695470b7514457d7e2567551cd",
@@ -6515,7 +6515,7 @@
     {
       "id": "CVE-2026-98625",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98625.json",
         "sha256": "84edcab357ae72db9bf00e7212083fd4892d4274453689fccf18800a774eb302",
@@ -6533,7 +6533,7 @@
     {
       "id": "CVE-2026-98626",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98626.json",
         "sha256": "7daf57c5435c67cb906295f37508a6eb0b8904a0e8aa62a9034b614f8540ae26",
@@ -6559,7 +6559,7 @@
     {
       "id": "CVE-2026-98632",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98632.json",
         "sha256": "8612575abea4996b7c947217d38bbed689d380ff4963f2924e0c88994f3d8543",
@@ -6577,7 +6577,7 @@
     {
       "id": "CVE-2026-98634",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98634.json",
         "sha256": "3e6731114b46c4020f3868f8d370a93f3b6ee7b57853b3bdaae5a2dcd41bafcb",
@@ -6595,7 +6595,7 @@
     {
       "id": "CVE-2026-98642",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98642.json",
         "sha256": "3a57b3398209f2500a3c352ccd7095141793bf17a5198d371f37f7cce1277b7c",
@@ -6613,7 +6613,7 @@
     {
       "id": "CVE-2026-98652",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98652.json",
         "sha256": "400634f446209784823452f27ff674ad0accfd73a73eed8b07cd714e2d45527e",
@@ -6640,7 +6640,7 @@
     {
       "id": "CVE-2026-98699",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98699.json",
         "sha256": "013b0a2d671fe0b7129bd73180a9bcc9ddfea452a0386e9b3ac5ba9ea30693d1",
@@ -6658,7 +6658,7 @@
     {
       "id": "CVE-2026-98701",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98701.json",
         "sha256": "23f3678c190c5192ac14f4a2a7688d66de44e43808a6b76ab587ba48444c5281",
@@ -6676,7 +6676,7 @@
     {
       "id": "CVE-2026-98704",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98704.json",
         "sha256": "9f6645ef29be67a76982555da1d35ecc4ae7cd48c026f5ab7363bdc76a031baf",
@@ -6694,7 +6694,7 @@
     {
       "id": "CVE-2026-98706",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98706.json",
         "sha256": "6e3ed1b1773701ee83bb3adc8e08b51e10a8ace0745b9ec15d3edc13150212de",
@@ -6712,7 +6712,7 @@
     {
       "id": "CVE-2026-98707",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98707.json",
         "sha256": "5489301f2ca4bbeff54d01d873f64e49cab8cbd3a9c0a29a27e6303c1d3b47e6",
@@ -6730,7 +6730,7 @@
     {
       "id": "CVE-2026-98708",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98708.json",
         "sha256": "e3358febd0b8a3d0183dbe6ee04e90f83f77584b1ffc91ab14911abe8f566dce",
@@ -6748,7 +6748,7 @@
     {
       "id": "CVE-2026-98709",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98709.json",
         "sha256": "a1db2323f86d83a522674b0fa2654b4a6257be8829e80f641374eb01ccd559b8",
@@ -6766,7 +6766,7 @@
     {
       "id": "CVE-2026-98725",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98725.json",
         "sha256": "6d6231293bde0534df4525f0dfdeb45aa06460512b8ed3571beaf75392919a89",
@@ -6784,7 +6784,7 @@
     {
       "id": "CVE-2026-98733",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98733.json",
         "sha256": "0dedcbca6817b72c8da6e740106f698ca0c8185b54b972c59ae643e9b88cfc26",
@@ -6802,7 +6802,7 @@
     {
       "id": "CVE-2026-98734",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98734.json",
         "sha256": "b9ee21e1e5fc9f6dae42db21d6f7c2df2acbaac9ed73ec46eaf471c61d283816",
@@ -6820,7 +6820,7 @@
     {
       "id": "CVE-2026-98735",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98735.json",
         "sha256": "7d5de4e5b6ebfbfe99dd90151265bb91e7a2d6492575d6971a0abc436156eeba",
@@ -6838,7 +6838,7 @@
     {
       "id": "CVE-2026-98737",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98737.json",
         "sha256": "6ae5a5b05b63c9c3a2f3438fd4049a1b2cfb2ad2cc13fce10a59d0a317a97232",
@@ -6856,7 +6856,7 @@
     {
       "id": "CVE-2026-98738",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98738.json",
         "sha256": "c39755dbd0c7dfe4e4f83965bfe405fcf0234f297b491ef8eff13f80b27d4a9a",
@@ -6876,7 +6876,7 @@
     {
       "id": "CVE-2026-98739",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98739.json",
         "sha256": "1dafc4bfe38f3cf8742bfd1d3da53cea36c202479a5c02bf7b94728e29b63281",
@@ -6894,7 +6894,7 @@
     {
       "id": "CVE-2026-98741",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98741.json",
         "sha256": "d4c88524fb829c85a7697aa35936ab7b8f20c4e4a84f24b5b64903e92c6e1984",
@@ -6912,7 +6912,7 @@
     {
       "id": "CVE-2026-98742",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98742.json",
         "sha256": "c5ee1e1ae865c7cad0b37ea68340dfdf6eed200c5604a6b7e9e4a2c930b3b55b",
@@ -6930,7 +6930,7 @@
     {
       "id": "CVE-2026-98752",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98752.json",
         "sha256": "1d5276f356a13d0950d4165f92d43377bf94f1ef336e8608a68f0862a016ef1c",
@@ -6949,7 +6949,7 @@
     {
       "id": "CVE-2026-98754",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98754.json",
         "sha256": "eccb2f5d7a72a4e77f2f6db537e03aecf13feedbed3c724fb41f014e13454a2d",
@@ -6967,7 +6967,7 @@
     {
       "id": "CVE-2026-98763",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98763.json",
         "sha256": "f6d09a3b3011c23611d63ea6a6a37247d1ab30b4cdd05a77b8b53ba916ec82d4",
@@ -6985,7 +6985,7 @@
     {
       "id": "CVE-2026-98792",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98792.json",
         "sha256": "2de834421ce576eaeae3cc932bf90213e3dd28987fb8c50e5c2a8ea9c3bcebfa",
@@ -7006,7 +7006,7 @@
     {
       "id": "CVE-2026-98794",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98794.json",
         "sha256": "cd464b7d003214dddde4c3d4e8d13b2799fa931b7b1b8797868456bec6bc71fa",
@@ -7024,7 +7024,7 @@
     {
       "id": "CVE-2026-98797",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98797.json",
         "sha256": "c49404d14a2337261217420d1e78716527870ace0ff217bf48fd3a537437c31d",
@@ -7047,7 +7047,7 @@
     {
       "id": "CVE-2026-98799",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98799.json",
         "sha256": "2e1afb6690fbf6fe0286e304e19b8ecc6d7d6b5a873a7e5c13d336ccb205c54c",
@@ -7072,7 +7072,7 @@
     {
       "id": "CVE-2026-98800",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98800.json",
         "sha256": "366f656b5b391e354ed889657a1028925bcfc54896df129193c471b49e57fd80",
@@ -7092,7 +7092,7 @@
     {
       "id": "CVE-2026-98803",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98803.json",
         "sha256": "0a688bacb162096527612279eb8836b45d91456aee59d80621f9fce60c2fee0b",
@@ -7110,7 +7110,7 @@
     {
       "id": "CVE-2026-98805",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98805.json",
         "sha256": "ed728105c41fe281c20b2b60195b47652d6ff39d71ce7f3a0fa2239496c21b1b",
@@ -7128,7 +7128,7 @@
     {
       "id": "CVE-2026-98813",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98813.json",
         "sha256": "d0fc259d27315192a7be32c93cdf8433dba9b7381f778a57abd84ee989792999",
@@ -7146,7 +7146,7 @@
     {
       "id": "CVE-2026-98823",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98823.json",
         "sha256": "edc9ed3f5d0c968a1acfd3d703f2da33cf44c91431fce9e16279053525bf47a0",
@@ -7164,7 +7164,7 @@
     {
       "id": "CVE-2026-98824",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98824.json",
         "sha256": "42cebe09d42881983f68446d1ec2dfa2e77af825b7e899a854787f15102fb1d1",
@@ -7183,7 +7183,7 @@
     {
       "id": "CVE-2026-98827",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98827.json",
         "sha256": "ef0fc9b539e8bf75ea25ffb1da51a0746ca52fd59d064361f91b6b7072bd87ad",
@@ -7201,7 +7201,7 @@
     {
       "id": "CVE-2026-98829",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98829.json",
         "sha256": "f3cbc9aa6033ddd274caad1d6d9a1c0f17becd718f300acb366e985aefceb9c1",
@@ -7220,7 +7220,7 @@
     {
       "id": "CVE-2026-98836",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98836.json",
         "sha256": "7058ff9e048ad95ead0adfa2da7d6e1806047f2bffac7175344f8924f61fb359",
@@ -7238,7 +7238,7 @@
     {
       "id": "CVE-2026-98837",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98837.json",
         "sha256": "a812701e5a4946f42b76aa51738ec175249e69020231b2593d25e5897dce4c4d",
@@ -7256,7 +7256,7 @@
     {
       "id": "CVE-2026-98846",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98846.json",
         "sha256": "35a39998b29814a3a3926a4b7d0a4984c00cef151163dac3c2c55fa7a605b5cf",
@@ -7274,7 +7274,7 @@
     {
       "id": "CVE-2026-98862",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98862.json",
         "sha256": "d9ace6fbac034c4f7133f7b4e1f78ffce40cdf011f0123cfea1844d0defe34b2",
@@ -7292,7 +7292,7 @@
     {
       "id": "CVE-2026-98863",
       "scanned_package": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-151.151",
       "source_document": {
         "url": "https://raw.githubusercontent.com/CVEProject/cvelistV5/509084ac5403afa3487fa193fdbeb47842a80370/cves/2026/98xxx/CVE-2026-98863.json",
         "sha256": "aa3d596309f4e4cf8ec88c734ec3747e6986f4e4710c94a0caaebb84aacee822",

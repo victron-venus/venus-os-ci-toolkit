@@ -50,9 +50,9 @@ save = oci.save
 SCAN_POLICY = {'schema': 1,
  'scope': 'linux/amd64 image payload only; not the host kernel or vendor advisory status',
  'source_evidence': {'cna_repository_commit': '509084ac5403afa3487fa193fdbeb47842a80370',
-                     'public_rationale_document_sha256': 'fd9d1f9d92e5baa8e01b260534e097d74b3f43dff355b5be9fc8d950dd34f56d',
+                     'public_rationale_document_sha256': '0f996515080659f1b1ebbf8d97e61731eef9dd641efd3cdaa37fb8234f0c0f35',
                      'official_header_provenance_sha256': '210990b813fe81a35a8f598ebb0fe77ef743327751cb8b15801e199c71449db2',
-                     'ubuntu_deb_sha256': 'fec8e4a308c03cd98dace67370a8d5a8031c36741796065c9f6e3f9548ab0cd2',
+                     'ubuntu_deb_sha256': 'badd744a9dc7e43c53975ac08d88e23dd13223f2334637c25fd9b9e9bb5d236d',
                      'ubuntu_signing_fingerprint': 'F6ECB3762474EDA9D21B7022871920D1991BC93C',
                      'runc_source_commit': '29dd3dc2b13b4123162e5fe132504bb4b15569f1',
                      'runc_source_archive_sha256': '5386e1968f70cc1482b4b2a93dc1a88ea7fa5517fba49b9e0fafe614d5a4c97a'},
@@ -85,11 +85,11 @@ SCAN_POLICY = {'schema': 1,
                    ['stdlib', 'v1.27.3']],
  'headers': {'package': 'linux-libc-dev',
              'architecture': 'amd64',
-             'version': '6.8.0-147.147',
+             'version': '6.8.0-151.151',
              'source_package': 'linux',
              'filelist_sha256': '32d9e172ef54b79528d0e5e02278c9e37e8d3c9e1a0ed87056a9f0dabdd72a5b',
-             'md5sums_sha256': '1b9b3ccd6ca69cd3825c602f31e2fd6364e674ebdd8bdc1706677431fab63996',
-             'inventory_sha256': 'ff5df311395966f35d8be4265422da233af4abcb5b89ce923f0257b300f3dbe6',
+             'md5sums_sha256': '887774af1b682d5867ff38108d293669845eaff494d8d42d3fd2355b742de1d7',
+             'inventory_sha256': '93d2275e42c9a071560f81902f3e538fec561312cf992d306031fb71ce181b8e',
              'selected_header': {'type': 'regular',
                                  'bytes': 4588,
                                  'mode': 420,
@@ -261,13 +261,13 @@ SCAN_POLICY = {'schema': 1,
                             'debian-libbpf1.symbols': 'ab490f7bf94b224f4d5314c5d2600f5894a3b43df353d0d2981f5074b3e5f5b8'}},
  'identities': {'headers': {'class': 'os-pkgs',
                             'type': 'ubuntu',
-                            'package_id': 'linux-libc-dev@6.8.0-147.147',
+                            'package_id': 'linux-libc-dev@6.8.0-151.151',
                             'package': 'linux-libc-dev',
-                            'version': '6.8.0-147.147',
-                            'purl': 'pkg:deb/ubuntu/linux-libc-dev@6.8.0-147.147?arch=amd64&distro=ubuntu-24.04',
+                            'version': '6.8.0-151.151',
+                            'purl': 'pkg:deb/ubuntu/linux-libc-dev@6.8.0-151.151?arch=amd64&distro=ubuntu-24.04',
                             'source_package': 'linux',
                             'source_version': '6.8.0',
-                            'source_release': '147.147',
+                            'source_release': '151.151',
                             'architecture': 'amd64',
                             'package_path': None}},
  'advisories': {'CVE-2022-50240': ['headers',
@@ -1894,7 +1894,7 @@ def scan_file_evidence(layout, selection, proof, check):
     for name in ('headers', 'runc', 'libbpf', 'gstreamer'):
         try:
             if name == 'headers':
-                package = oci.package_files(effective, 'linux-libc-dev', 'amd64', '6.8.0-147.147')
+                package = oci.package_files(effective, 'linux-libc-dev', 'amd64', '6.8.0-151.151')
                 package['selected_header'] = record('usr/include/linux/netfilter/nf_conntrack_common.h')
                 components[name] = package
             elif name == 'runc':
