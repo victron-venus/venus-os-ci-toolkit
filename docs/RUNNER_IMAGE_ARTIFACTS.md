@@ -71,6 +71,20 @@ flowchart LR
 
 ## Run and inspect
 
+The image resolves its Ubuntu packages from the live `noble` release pockets, so
+an identity pinned in `SCAN_POLICY` can age without any repository change. Before
+dispatching, compare those pins with the indexes the build will use:
+
+    python3 scripts/check_runner_scan_policy.py
+
+Exit status 1 names every stale pin, 2 means the pins could not be verified (a
+package is missing from the index or a download failed), and 0 means the
+indexes, the review document and the policy agree. A retained report can be
+checked without the network with `--scan-report <artifact>/scan.json`, and
+`--no-network` limits the run to the offline document checks. The check changes
+no policy data: a stale pin still needs a reviewed identity update and a new
+advisory reassessment before the next dispatch.
+
 Use **Actions → Build nondeployable runner image artifacts → Run workflow** on
 the default branch. Dispatches from other branches, private repositories,
 self-hosted workers or non-amd64 workers are rejected. Runs are serialized and
