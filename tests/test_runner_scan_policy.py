@@ -190,6 +190,14 @@ class ScanPolicyCheckTests(unittest.TestCase):
         self.assertGreater(check.version_key('1.001'), check.version_key('1.0'))
         self.assertLess(check.version_key('1a'), check.version_key('1a1'))
 
+    def test_revision_follows_the_last_hyphen_as_dpkg_splits_it(self):
+        self.assertEqual(check.split_version('1.0-2-3'), ('1.0-2', '3'))
+        self.assertEqual(check.split_version('2:1.0-2-3'), ('1.0-2', '3'))
+        self.assertLess(check.version_key('1.0-2-3'), check.version_key('1.0-2-4'))
+        self.assertGreater(check.version_key('1.0-2-3'), check.version_key('1.0-2'))
+        self.assertGreater(check.version_key('1.0-2-3'), check.version_key('1.0-3'))
+        self.assertEqual(check.version_key('1.0-2-3'), check.version_key('1.0-2-03'))
+
 
 if __name__ == '__main__':
     unittest.main()

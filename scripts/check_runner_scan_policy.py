@@ -54,10 +54,16 @@ def split_epoch(version):
 
 
 def split_version(version):
-    """Split `[epoch:]upstream[-revision]` as apt reports it in SrcVersion/SrcRelease."""
+    """Split `[epoch:]upstream[-revision]` as apt reports it in SrcVersion/SrcRelease.
+
+    The Debian revision follows the last hyphen; an upstream version may itself
+    contain hyphens, so `1.0-2-3` is upstream `1.0-2` with revision `3`.
+    """
     _, remainder = split_epoch(version)
-    upstream, separator, revision = remainder.partition('-')
-    return upstream, revision if separator else None
+    upstream, separator, revision = remainder.rpartition('-')
+    if not separator:
+        return remainder, None
+    return upstream, revision
 
 
 def character_order(character):
