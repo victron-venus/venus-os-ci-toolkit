@@ -37,6 +37,14 @@ Do not edit the generated files: regeneration and `--check` reject content drift
 untracked collisions and symlinks. Old generated files are removed only when
 their hash still matches the lock and no caller uses them.
 
+A caller that needs a reviewed correction inside a generated bundle keeps that
+bundle local: it is neither pinned upstream nor tracked as generated. Declare it
+in the lock's `local` map as `{"<caller>": {"<job id>": "<generated path>"}}` and
+the generator verifies the declaration and leaves the file byte-identical instead
+of refusing the run. An undeclared local reference still fails, and a path cannot
+be both generated and locally patched. Remove the entry once the correction is
+upstreamed and the caller points at a pinned source again.
+
 For an upgrade, change the **caller job's** local `uses` back to the reviewed
 upstream reference with its new full SHA, then regenerate. The generator updates
 the lock, follows the new complete dependency graph and retires unused copies.
