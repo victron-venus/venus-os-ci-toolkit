@@ -100,7 +100,7 @@ on:
         type: boolean
         default: false
       browser-success-report-retention-days:
-        description: 'Retention for successful ordinary browser reports (1..14 days); failures and release qualification retain 14 days'
+        description: 'Retention for ordinary browser reports in any status (1..14 days); release qualification retains 14 days'
         type: number
         default: 14
       browser-artifact-id:
@@ -764,7 +764,7 @@ jobs:
           include-hidden-files: true
           overwrite: false
           if-no-files-found: error
-          retention-days: ${{ job.status == 'success' && inputs.browser-release-channel == '' && inputs.browser-success-report-retention-days || 14 }}
+          retention-days: ${{ inputs.browser-release-channel == '' && inputs.browser-success-report-retention-days || 14 }}
       - name: Retry browser evidence upload once without overwriting
         id: evidence_upload_retry
         if: ${{ always() && inputs.browser-evidence-upload-retry && steps.lock.outcome == 'success' && steps.evidence_upload.outcome == 'failure' }}
@@ -777,7 +777,7 @@ jobs:
           include-hidden-files: true
           overwrite: false
           if-no-files-found: error
-          retention-days: ${{ job.status == 'success' && inputs.browser-release-channel == '' && inputs.browser-success-report-retention-days || 14 }}
+          retention-days: ${{ inputs.browser-release-channel == '' && inputs.browser-success-report-retention-days || 14 }}
       - name: Read back browser evidence after optional upload recovery
         id: evidence_readback
         if: ${{ always() && inputs.browser-evidence-upload-retry && steps.evidence_snapshot.outcome == 'success' && steps.lock.outcome == 'success' }}

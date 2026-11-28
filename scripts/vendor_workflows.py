@@ -139,6 +139,22 @@ def read_lock(repository):
         path = safe_path(repository, relative)
         if not path.is_file() or digest(path.read_text()) != metadata["sha256"]:
             raise ValueError("Generated workflow drift: " + relative)
+    local = previous.get("local", {})
+    if not isinstance(local, dict):
+        raise ValueError("Invalid locally patched bundle map in lock")
+    for caller, jobs in local.items():
+        if not isinstance(jobs, dict) or not jobs:
+            raise ValueError("Invalid locally patched bundle entry: " + str(caller))
+        safe_path(repository, caller)
+        for job_id, patched in jobs.items():
+            if not isinstance(job_id, str) or not isinstance(patched, str) or not patched.startswith(
+                WORKFLOWS + "toolkit-"
+            ) or not NAME.fullmatch(patched[len(WORKFLOWS):]):
+                raise ValueError("Invalid locally patched bundle path: " + str(patched))
+            if patched in previous["files"]:
+                raise ValueError("A generated bundle cannot also be locally patched: " + patched)
+            if not safe_path(repository, patched).is_file():
+                raise ValueError("Missing locally patched bundle: " + patched)
     return previous
 
 
@@ -153,7 +169,15 @@ def rewrite_caller(bundle, original, relative, previous):
         if reference.startswith("./" + WORKFLOWS + "toolkit-"):
             source = previous.get("calls", {}).get(relative, {}).get(job_id, "")
             expected = remote_ref(source)
-            if not expected or reference != "./" + WORKFLOWS + local_name(*expected):
+            if not expected:
+                # A bundle that carries a reviewed local patch is declared in the
+                # lock instead of being generated: leave it byte-identical rather
+                # than rewriting or deleting the caller's correction.
+                declared = previous.get("local", {}).get(relative, {}).get(job_id)
+                if declared and reference == "./" + declared:
+                    continue
+                raise ValueError("Untracked generated workflow reference")
+            if reference != "./" + WORKFLOWS + local_name(*expected):
                 raise ValueError("Untracked generated workflow reference")
         dependency = remote_ref(source)
         if dependency:
@@ -186,10 +210,13 @@ def render(repository, toolkit):
         if path.exists() and relative not in old_files:
             raise ValueError("Refusing to overwrite an unowned workflow")
     files.update(bundle.files)
-    files[LOCK] = json.dumps({
+    lock = {
         "schema": 1, "upstream": "victron-venus/venus-os-ci-toolkit",
         "files": bundle.metadata, "calls": calls,
-    }, indent=2, sort_keys=True) + "\n"
+    }
+    if previous.get("local"):
+        lock["local"] = previous["local"]
+    files[LOCK] = json.dumps(lock, indent=2, sort_keys=True) + "\n"
     stale = set(old_files) - set(bundle.files)
     return files, stale
 
