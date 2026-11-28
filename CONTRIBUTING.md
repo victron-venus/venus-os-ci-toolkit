@@ -24,8 +24,11 @@ discovery. `bash scripts/ci.sh` reports missing requirements once with
 this install command instead of failing every importing module.
 
 The supervised release-process contracts need Linux Python 3.12+ or macOS Python
-3.13+ with `waitid(WNOWAIT)`; they skip with that reason on other interpreters,
-so activate the environment before running the suite.
+3.13+ with `waitid(WNOWAIT)`; they skip with that reason on other interpreters.
+A local pass that skipped them is not the CI result, so the same preflight also
+warns when it sees such a skip coming or when `python3` on `PATH` is older than
+3.12 (helper scripts start with it). Activate the environment before running the
+suite.
 
 The unittest suite exercises the Python generators, vendored release engine,
 rejected authorization/provenance inputs and generated workflow contracts.

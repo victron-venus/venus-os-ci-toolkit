@@ -395,6 +395,29 @@ def _kill_live_owned_leader(
         pass
 
 
+def _live_group_members(pgid: int) -> set[int] | None:
+    """Live members of pgid, or None when the host cannot list them."""
+    try:
+        listing = subprocess.run(
+            ["ps", "-o", "pid=,stat=", "-g", str(pgid)],
+            capture_output=True, text=True, timeout=CLEANUP_TIMEOUT_SECONDS, check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if listing.returncode != 0:
+        return None
+    members = set()
+    for line in listing.stdout.splitlines():
+        fields = line.split()
+        if not fields or not fields[0].isdigit():
+            continue
+        if len(fields) > 1 and fields[1].startswith("Z"):
+            # Zombies hold no execution resources and cannot outlive this leader.
+            continue
+        members.add(int(fields[0]))
+    return members
+
+
 def _kill_owned_process(process: subprocess.Popen[bytes]) -> OSError | None:
     """Signal an owned group without using a possibly recycled leader PID."""
     # WNOWAIT keeps an exited leader's PID reserved until the process group is gone.
@@ -406,8 +429,12 @@ def _kill_owned_process(process: subprocess.Popen[bytes]) -> OSError | None:
         _kill_live_owned_leader(process, leader_exited)
         return None
     except OSError as error:
-        # Failed group signaling is unverified; a PGID-only listing cannot prove
-        # that same-session descendants are absent.
+        # Darwin reports EPERM for a group whose only member is the leader we still
+        # hold unreaped: a group with a signalable member accepts the signal, so an
+        # empty listing here proves the group is already gone. Anything unproven,
+        # including a listing the host refuses, stays a fail-closed error.
+        if leader_exited and _live_group_members(process.pid) == set():
+            return None
         _kill_live_owned_leader(process, leader_exited)
         return error
     return None
