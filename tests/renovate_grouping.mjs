@@ -33,6 +33,7 @@ const allowedModules = new Set([
   'modules/manager/github-actions/extract',
   'modules/manager/pep621/extract',
   'modules/manager/pip-compile/extract',
+  'modules/manager/dockerfile/extract',
   'workers/repository/process/fetch',
   'modules/manager/custom/regex/index',
   'modules/manager/custom/jsonata/index',
@@ -443,6 +444,30 @@ try {
   pythonReleases.getReleases = originalPythonReleases;
 }
 console.log('Both native pyproject extractors keep Python runtime changes manual without disabling application updates.');
+
+// A pinned Python runtime image carries its interpreter into a compiled lock and
+// a startup probe. Interpreter releases must stay manual; the same interpreter's
+// digest and patch refreshes must keep flowing so base-image fixes arrive.
+const { extractPackageFile: extractDockerfile } = await moduleAt('modules/manager/dockerfile/extract');
+const dockerManagerConfig = getManagerConfig(fleetConfig, 'dockerfile');
+const runtimeImage = 'FROM python:3.14-slim@sha256:' + 'a'.repeat(64) + '\nRUN python -m pip check\n';
+const imageDeps = (await extractDockerfile(runtimeImage, 'recovery/runtime/Dockerfile', dockerManagerConfig)).deps;
+assert.equal(imageDeps.length, 1, 'The fixture must extract exactly one runtime image');
+const imageDependency = imageDeps[0];
+assert.equal(imageDependency.depName, 'python');
+const runtimeCandidate = (updateType) => ({ ...dockerManagerConfig, ...imageDependency, manager: 'dockerfile',
+  packageFile: 'recovery/runtime/Dockerfile', depName: 'python', packageName: 'python', updateType });
+for (const updateType of ['major', 'minor']) {
+  const effective = await applyPackageRules(runtimeCandidate(updateType), 'lookup');
+  assert.equal(effective.enabled, false, `A Python interpreter ${updateType} move needs an explicit project change`);
+}
+for (const updateType of ['digest', 'patch']) {
+  const effective = await applyPackageRules(runtimeCandidate(updateType), 'lookup');
+  assert.notEqual(effective.enabled, false, `A Python interpreter ${updateType} refresh must stay enabled`);
+}
+const otherImage = { ...runtimeCandidate('minor'), depName: 'nginx', packageName: 'nginx' };
+assert.notEqual((await applyPackageRules(otherImage, 'lookup')).enabled, false, 'Only the Python runtime image is held');
+console.log('The fleet preset holds a pinned Python runtime image at its interpreter while digest and patch refreshes stay automatic.');
 
 const lockScratch = await mkdtemp(resolve(tmpdir(), 'renovate-lockfiles-'));
 const pypi = getDatasourceFor('pypi');

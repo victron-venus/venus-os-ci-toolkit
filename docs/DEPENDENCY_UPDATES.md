@@ -42,6 +42,15 @@ generations, vendored sources and copied build overlays require their existing
 source-aware update procedures. Runner images, action tool-version inputs and
 Python `requires-python` runtime migrations remain explicit project changes.
 
+The fleet preset also holds Python runtime images at their interpreter. A pinned
+`python:X.Y-slim` image carries that interpreter into a compiled lock and a
+startup probe that asserts it, so a routine minor move breaks the image instead
+of updating it. Major and minor proposals for the `python` dockerfile dependency
+are disabled; digest and patch updates of the same interpreter still flow, which
+keeps base-image security fixes automatic. Moving the interpreter stays a
+reviewed project change that updates the image, its lock and its probe together,
+and consumers must not re-enable those updates locally.
+
 PEP 621 projects with lockfiles use `rangeStrategy: update-lockfile`: when a
 newer dependency fits an existing range such as `>=1.0`, Renovate refreshes the lockfile without
 raising that lower bound. Its default `replace` behavior would otherwise skip
