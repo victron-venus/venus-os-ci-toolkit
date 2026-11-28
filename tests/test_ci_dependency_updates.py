@@ -258,6 +258,22 @@ class CoupledWorkflowTests(unittest.TestCase):
         self.assertEqual(ci["vulnerabilityAlerts"]["groupSlug"], "ci-workflows")
         self.assertFalse(ci["vulnerabilityAlerts"]["separateMajorMinor"])
 
+    def test_fleet_preset_holds_python_runtime_images_at_their_interpreter(self):
+        # The interpreter is compiled into each consumer's lock and asserted by its
+        # startup probe, so a routine minor move breaks the image instead of updating it.
+        fleet = json.loads((ROOT / "renovate-fleet.json").read_text())
+        rules = [
+            rule
+            for rule in fleet["packageRules"]
+            if rule.get("matchManagers") == ["dockerfile"]
+            and rule.get("matchPackageNames") == ["python"]
+        ]
+        self.assertEqual(len(rules), 1)
+        self.assertEqual(rules[0]["matchUpdateTypes"], ["major", "minor"])
+        self.assertIs(rules[0]["enabled"], False)
+        # Digest and patch refreshes of the same interpreter must stay automatic.
+        self.assertNotIn("allowedVersions", rules[0])
+
     def test_repository_allowlist_keeps_shared_custom_managers_enabled(self):
         preset = json.loads((ROOT / "renovate-ci.json").read_text())
         repository = json.loads((ROOT / "renovate.json").read_text())

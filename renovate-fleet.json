@@ -77,6 +77,20 @@
         "requires-python"
       ],
       "enabled": false
+    },
+    {
+      "description": "A pinned Python runtime image carries its interpreter into a compiled lock and a startup probe; moving it across interpreter releases is an explicit project change, while digest and patch refreshes of the same interpreter still flow.",
+      "matchManagers": [
+        "dockerfile"
+      ],
+      "matchPackageNames": [
+        "python"
+      ],
+      "matchUpdateTypes": [
+        "major",
+        "minor"
+      ],
+      "enabled": false
     }
   ]
 }
