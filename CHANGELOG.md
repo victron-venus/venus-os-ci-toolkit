@@ -4,7 +4,8 @@
 
 ### Changed
 
-- tests: report an incomplete local test environment once with the hash-locked install command instead of one import error per module, read pinned CA constraints through the host's openssl (including LibreSSL), and skip the release-process contracts on runtimes without the supervised runner.
+- tests: report an incomplete local test environment once with the hash-locked install command instead of one import error per module, warn when `python3` is older than 3.12 or the release-process contracts will skip, read pinned CA constraints through the host's openssl (including LibreSSL), and skip the release-process contracts on runtimes without the supervised runner.
+- release: clear an owned process group when Darwin refuses the group signal for a group whose only remaining member is the exited leader, instead of reporting escaped descendants.
 - dependency updates: hold fleet Python runtime images at their pinned interpreter in the shared preset, so only digest and patch refreshes of that interpreter arrive automatically and moving the interpreter stays a reviewed project change.
 - release: publish a failed-only rerun from the earlier attempts of its own run: the collector keeps each artifact's newest attempt, package and fuzz receipts may come from an attempt at or before the current one, and a recorded successful job may be reported unchanged.
 - release: use docker credential helpers when publishing containers (#518).

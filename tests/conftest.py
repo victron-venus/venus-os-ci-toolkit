@@ -18,6 +18,8 @@ sys.path.insert(0, str(ROOT))
 
 from scripts import check_test_environment  # noqa: E402
 
-if Path.cwd().resolve() == ROOT and check_test_environment.missing_modules():
-    check_test_environment.main()
-    pytest.exit("Install the hash-locked test requirements and rerun.", returncode=2)
+if Path.cwd().resolve() == ROOT:
+    if check_test_environment.missing_modules():
+        check_test_environment.main()
+        pytest.exit("Install the hash-locked test requirements and rerun.", returncode=2)
+    check_test_environment.report_warnings()

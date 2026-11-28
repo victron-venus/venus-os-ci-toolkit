@@ -2,6 +2,7 @@
 
 import asyncio
 import contextvars
+import errno
 import gc
 import os
 from pathlib import Path
@@ -939,6 +940,51 @@ class AsyncProcessTests(unittest.TestCase):
             )
         self.assertEqual(result.returncode, 0)
         self.assertTrue(sleeps, "empty selector loop spun without sleeping")
+
+
+class GroupSignalClearingTests(unittest.TestCase):
+    """A denied group signal must clear only when the group holds no live member.
+
+    Darwin reports EPERM for a group whose only remaining member is the leader we
+    still hold unreaped, while Linux reports success or ESRCH in that state.
+    """
+
+    class FakeProcess:
+        pid = 4242
+
+        def __init__(self):
+            self.direct_kills = 0
+
+        def kill(self):
+            self.direct_kills += 1
+
+    def settle(self, *, leader_exited, members):
+        process = self.FakeProcess()
+        with patch.object(async_process, "_process_has_exited", return_value=leader_exited), \
+                patch.object(async_process, "_live_group_members", return_value=members), \
+                patch.object(async_process.os, "killpg",
+                             side_effect=PermissionError(errno.EPERM, "denied")) as killpg:
+            error = async_process._kill_owned_process(process)
+        killpg.assert_called_once_with(process.pid, signal.SIGKILL)
+        return error, process
+
+    def test_denied_group_signal_with_only_the_exited_leader_is_complete(self):
+        error, process = self.settle(leader_exited=True, members=set())
+        self.assertIsNone(error)
+        self.assertEqual(process.direct_kills, 0)
+
+    def test_denied_group_signal_with_a_live_member_fails_closed(self):
+        error, _process = self.settle(leader_exited=True, members={4343})
+        self.assertIsInstance(error, PermissionError)
+
+    def test_denied_group_signal_without_a_group_listing_fails_closed(self):
+        error, _process = self.settle(leader_exited=True, members=None)
+        self.assertIsInstance(error, PermissionError)
+
+    def test_denied_group_signal_with_a_live_leader_fails_closed(self):
+        error, process = self.settle(leader_exited=False, members=set())
+        self.assertIsInstance(error, PermissionError)
+        self.assertEqual(process.direct_kills, 1)
 
 
 @RELEASE_PROCESS_RUNNER
