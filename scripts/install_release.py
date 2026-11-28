@@ -2299,7 +2299,7 @@ def render_release_distribution(directory: Path) -> dict[str, str]:
 def migrate_push_runtime(source):
     """Replace two known functions only; reject unreviewed consumer runtime drift."""
     canonical = (ROOT / RELEASE_VERSIONED_PATH).read_text()
-    names = {"prepare": "4bba918ca86550fc0285a5c6dae25556df65bef54bd9ab82c77e71aa31dd2fe1",
+    names = {"prepare": "70a0fdb52f4d3233f4c0fa876ed11a06f85a8ef52c6fae416e884ed806302959",
              "scheduled_reuse": "c66212797408e7878d4e228e3cce8e75e9038dbe17e006f555a4404383e0c885"}
     original = {node.name: node for node in ast.parse(source).body if isinstance(node, ast.FunctionDef)}
     desired = {node.name: node for node in ast.parse(canonical).body if isinstance(node, ast.FunctionDef)}

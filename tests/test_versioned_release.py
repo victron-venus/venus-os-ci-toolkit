@@ -1785,6 +1785,156 @@ class LifecycleTests(unittest.TestCase):  # pylint: disable=too-many-public-meth
             }
         ]
 
+    def start_automatic_prepare(self):
+        self.gh.runs[99]["event"] = "push"
+        os.environ["GITHUB_EVENT_NAME"] = "push"
+
+    def reset_prepare_state(self):
+        self.gh.default_head = SHA
+        self.gh.successors = []
+        self.gh.branch = False
+        self.gh.ledger = None
+        self.gh.ledger_sha = None
+        self.gh.ledger_writes = []
+        self.gh.writes = []
+        lifecycle.PLAN.unlink(missing_ok=True)
+        (self.root / "version").write_text("1.2.3\n")
+
+    def test_proven_queued_replacement_skips_before_reservation(self):
+        self.start_automatic_prepare()
+        self.advance_default()
+        self.gh.successors[0]["status"] = "queued"
+        refs = copy.deepcopy(self.gh.refs)
+        releases = copy.deepcopy(self.gh.releases)
+        with (
+            patch.object(
+                lifecycle.rc, "superseded_candidate",
+                wraps=lifecycle.rc.superseded_candidate,
+            ) as detector,
+            patch.object(
+                lifecycle, "reserve_plan",
+                side_effect=AssertionError("superseded run reserved a plan"),
+            ) as reserve,
+            patch.object(
+                lifecycle.rc, "ensure_absent",
+                side_effect=AssertionError("superseded run checked tags"),
+            ) as absent,
+        ):
+            result = lifecycle.prepare(self.args)
+        detector.assert_called_once()
+        self.assertEqual(detector.call_args.args[-1], "beta")
+        reserve.assert_not_called()
+        absent.assert_not_called()
+        self.assertEqual(
+            result,
+            {
+                "status": "superseded",
+                "source_sha": SHA,
+                "superseded_by": "b" * 40,
+                "successor_run_id": "100",
+                "successor_run_url": f"https://github.com/{REPO}/actions/runs/100",
+                "channel": "beta",
+                "version": "",
+                "build": "false",
+                "plan_artifact": "",
+            },
+        )
+        self.assertFalse(lifecycle.PLAN.exists())
+        self.assertEqual(self.gh.ledger_writes, [])
+        self.assertEqual(self.gh.writes, [])
+        self.assertEqual(self.gh.refs, refs)
+        self.assertEqual(self.gh.releases, releases)
+        self.assertFalse(rc.EVIDENCE.exists())
+
+    def test_unproven_replacement_continues_full_prepare(self):
+        self.start_automatic_prepare()
+        self.advance_default()
+        self.gh.successors = []
+        with patch.object(
+            lifecycle, "reserve_plan", wraps=lifecycle.reserve_plan
+        ) as reserve:
+            result = lifecycle.prepare(self.args)
+        reserve.assert_called_once()
+        self.assertEqual(result["channel"], "beta")
+        self.assertEqual(result["build"], "true")
+        self.assertTrue(lifecycle.PLAN.exists())
+        self.assertEqual(len(self.gh.ledger_writes), 1)
+        self.assertEqual(self.gh.writes, [])
+        self.assertFalse(rc.EVIDENCE.exists())
+
+    def test_ambiguous_replacement_continues_full_prepare(self):
+        self.start_automatic_prepare()
+        self.advance_default()
+        self.gh.successors.append(copy.deepcopy(self.gh.successors[0]))
+        with patch.object(
+            lifecycle, "reserve_plan", wraps=lifecycle.reserve_plan
+        ) as reserve:
+            result = lifecycle.prepare(self.args)
+        reserve.assert_called_once()
+        self.assertEqual(result["build"], "true")
+        self.assertEqual(len(self.gh.ledger_writes), 1)
+
+    def test_detector_failures_never_become_an_early_skip(self):
+        self.start_automatic_prepare()
+        for error in (
+            rc.GitHubError("POST git/ref/heads/main: HTTP 500"),
+            ValueError("malformed response"),
+            KeyError("total_count"),
+            TypeError("unexpected response type"),
+            OSError("network unavailable"),
+        ):
+            with self.subTest(error=error):
+                self.reset_prepare_state()
+                with (
+                    patch.object(
+                        lifecycle.rc, "superseded_candidate", side_effect=error
+                    ) as detector,
+                    patch.object(
+                        lifecycle, "reserve_plan", wraps=lifecycle.reserve_plan
+                    ) as reserve,
+                ):
+                    result = lifecycle.prepare(self.args)
+                detector.assert_called_once()
+                reserve.assert_called_once()
+                self.assertEqual(result["build"], "true")
+                self.assertEqual(len(self.gh.ledger_writes), 1)
+                self.assertFalse(rc.EVIDENCE.exists())
+
+    def test_manual_and_non_push_channels_have_no_early_recheck(self):
+        for channel, event in (("beta", "workflow_dispatch"), ("rc", "workflow_dispatch"),
+                               ("nightly", "schedule")):
+            with self.subTest(channel=channel, event=event):
+                self.start_run(channel, 99)
+                self.gh.runs[99]["event"] = event
+                os.environ["GITHUB_EVENT_NAME"] = event
+                self.advance_default()
+                self.reset_prepare_state()
+                self.advance_default()
+                with (
+                    patch.object(
+                        lifecycle.rc, "superseded_candidate",
+                        side_effect=AssertionError("early detector call"),
+                    ) as detector,
+                    patch.object(
+                        lifecycle, "reserve_plan", wraps=lifecycle.reserve_plan
+                    ) as reserve,
+                ):
+                    result = lifecycle.prepare(self.args)
+                detector.assert_not_called()
+                reserve.assert_called_once()
+                self.assertEqual(result["channel"], channel)
+                self.assertEqual(result["build"], "true")
+
+    def test_publisher_keeps_both_superseded_rechecks(self):
+        self.automatic_build()
+        with patch.object(
+            lifecycle.rc, "superseded_candidate",
+            wraps=lifecycle.rc.superseded_candidate,
+        ) as detector:
+            result = lifecycle.publish_versioned(self.args)
+        self.assertEqual(result["status"], "published")
+        self.assertEqual(detector.call_count, 2)
+
     def test_automatic_current_head_publishes_exact_built_bytes(self):
         plan = self.automatic_build()
         result = lifecycle.publish_versioned(self.args)
