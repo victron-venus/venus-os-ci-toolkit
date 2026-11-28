@@ -31,6 +31,7 @@ def openssl_emits_authority_key_id() -> bool:
     return "LibreSSL" not in version.stdout
 
 
+@unittest.skipUnless(shutil.which("openssl"), "the strict TLS fixtures need openssl")
 class StrictTLSProfileTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
