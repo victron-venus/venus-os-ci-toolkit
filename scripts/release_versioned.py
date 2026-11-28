@@ -851,6 +851,21 @@ def prepare(args: argparse.Namespace) -> dict[str, object]:
         or inputs["expected_sha"] == cast(str, run["head_sha"]),
         "Default branch changed since dispatch; refresh and retry",
     )
+    if kind == "push" and channel == "beta":
+        # Only a proven queued replacement may avoid a full cycle. Treat any
+        # unproven or unavailable detector result as a normal release attempt.
+        try:
+            superseded = rc.superseded_candidate(gh, info, run, channel)
+        except (rc.ReleaseError, ValueError, KeyError, TypeError, OSError):
+            superseded = None
+        if superseded:
+            return {
+                **superseded,
+                "channel": channel,
+                "version": "",
+                "build": "false",
+                "plan_artifact": "",
+            }
     parent = None
     if channel == "stable":
         rc.require_reviewers(gh)
