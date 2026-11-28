@@ -470,13 +470,11 @@ try {
   const ascending = (left, right) => left.localeCompare(right);
   const pinned = await runtimeConfig(`python:3.12.1-slim@${runtimeHash('a')}`);
   const proposals = (await lookupUpdates(pinned)).unwrap().val.updates;
-  assert.deepEqual(proposals.map((update) => update.updateType).sort(ascending), ['digest', 'minor', 'patch'],
+  assert.deepEqual(proposals.map((update) => update.updateType).toSorted(ascending), ['digest', 'minor', 'patch'],
     'The patch refresh needs its own bucket next to the interpreter move');
-  const kept = [];
-  for (const update of proposals) {
-    if ((await applyPackageRules({ ...pinned, ...update }, 'lookup')).enabled !== false) kept.push(update.updateType);
-  }
-  assert.deepEqual(kept.sort(ascending), ['digest', 'patch'], 'Same-interpreter refreshes must survive the interpreter hold');
+  const resolved = await Promise.all(proposals.map((update) => applyPackageRules({ ...pinned, ...update }, 'lookup')));
+  const kept = proposals.filter((_, index) => resolved[index].enabled !== false).map((update) => update.updateType);
+  assert.deepEqual(kept.toSorted(ascending), ['digest', 'patch'], 'Same-interpreter refreshes must survive the interpreter hold');
   const move = proposals.find((update) => update.updateType === 'minor');
   assert.equal((await applyPackageRules({ ...pinned, ...move }, 'lookup')).enabled, false,
     'The interpreter move itself needs an explicit project change');
