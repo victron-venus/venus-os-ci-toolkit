@@ -20,8 +20,12 @@ bash scripts/ci.sh
 
 Install both existing lock files, as CI does. The GitHub secret-action lock
 includes PyNaCl, which the catalog-delivery and GitHub secret tests import during
-discovery. If discovery reports `ModuleNotFoundError: No module named 'nacl'`,
-activate the test environment and rerun the installation command above.
+discovery. `bash scripts/ci.sh` reports missing requirements once with
+this install command instead of failing every importing module.
+
+The supervised release-process contracts need Linux Python 3.12+ or macOS Python
+3.13+ with `waitid(WNOWAIT)`; they skip with that reason on other interpreters,
+so activate the environment before running the suite.
 
 The unittest suite exercises the Python generators, vendored release engine,
 rejected authorization/provenance inputs and generated workflow contracts.

@@ -4,6 +4,7 @@ from contextlib import contextmanager
 import http.server
 import os
 from pathlib import Path
+import shutil
 import ssl
 import subprocess
 import tempfile
@@ -14,6 +15,20 @@ import urllib.request
 from unittest.mock import patch
 
 from scripts import tls_profile
+
+
+def openssl_emits_authority_key_id() -> bool:
+    """Whether the local openssl writes the key identifiers a strict peer needs.
+
+    LibreSSL, the default `openssl` on macOS, ignores subjectKeyIdentifier and
+    authorityKeyIdentifier in `x509 -extfile`, so its leaf chains fail the strict
+    client with a missing authority key identifier.
+    """
+    binary = shutil.which("openssl")
+    if not binary:
+        return False
+    version = subprocess.run([binary, "version"], capture_output=True, text=True, check=False)
+    return "LibreSSL" not in version.stdout
 
 
 class StrictTLSProfileTests(unittest.TestCase):
@@ -87,6 +102,8 @@ class StrictTLSProfileTests(unittest.TestCase):
             'NO_PROXY': '*', 'no_proxy': '*',
         })
 
+    @unittest.skipUnless(openssl_emits_authority_key_id(),
+                         "synthetic strict-TLS chains need an openssl that writes key identifiers")
     def test_strong_peer_passes_and_weak_peer_gets_no_credentials(self):
         for version in (ssl.TLSVersion.TLSv1_2, ssl.TLSVersion.TLSv1_3):
             with self.subTest(version=version), self.strict():

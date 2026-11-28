@@ -32,6 +32,21 @@ from urllib.parse import urlsplit
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 async_process_module = importlib.import_module("async_process")
+
+
+def release_runner_supported() -> bool:
+    """Whether the supervised release runner may start on this host."""
+    try:
+        async_process_module._require_supported_runtime()
+    except NotImplementedError:
+        return False
+    return True
+
+
+RELEASE_PROCESS_RUNNER = unittest.skipUnless(
+    release_runner_supported(),
+    "release process runner requires Linux Python 3.12+ or macOS Python 3.13+ with waitid(WNOWAIT)",
+)
 SPEC = importlib.util.spec_from_file_location("release_control", ROOT / "scripts/release_control.py")
 rc = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(rc)
@@ -728,6 +743,7 @@ class WholeReadRecoveryTests(unittest.TestCase):
 
 
 
+@RELEASE_PROCESS_RUNNER
 class AssetStreamCleanupTests(unittest.TestCase):
     """Ensure a timed-out streaming helper cannot leave pipe-holding descendants."""
 
@@ -2646,6 +2662,7 @@ class TransportTests(unittest.TestCase):
             gh.api("releases/10", "PATCH", {"draft": False})
         self.assertEqual(command.call_count, len(paths) + 2)
 
+    @RELEASE_PROCESS_RUNNER
     @unittest.skipUnless(os.name == "posix", "the supervised asset downloader requires POSIX")
     def test_download_asset_resolves_and_runs_real_gh_from_path(self):
         payload = b"integration asset bytes"
@@ -2688,6 +2705,7 @@ class TransportTests(unittest.TestCase):
                 ],
             )
 
+    @RELEASE_PROCESS_RUNNER
     @unittest.skipUnless(os.name == "posix", "the supervised asset downloader requires POSIX")
     def test_download_asset_real_gh_timeout_is_not_retried(self):
         with tempfile.TemporaryDirectory(prefix="release-fake-gh-timeout-") as temp:

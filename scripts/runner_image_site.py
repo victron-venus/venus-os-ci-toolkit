@@ -100,13 +100,28 @@ def read_ca(path, expected):
     with tempfile.TemporaryDirectory(prefix='runner-public-ca-') as directory:
         certificate = Path(directory) / 'ca.pem'
         certificate.write_bytes(raw)
-        for args in (['x509', '-in', str(certificate), '-noout', '-ext', 'basicConstraints'],
-                     ['verify', '-CAfile', str(certificate), str(certificate)]):
-            result = subprocess.run(['openssl', *args], capture_output=True, timeout=15, check=False)
-            require(result.returncode == 0, 'CA certificate validation failed')
-            if args[0] == 'x509':
-                require(b'CA:TRUE' in result.stdout, 'Certificate is not a CA')
+        constraints = basic_constraints(certificate)
+        require(constraints is not None, 'CA certificate validation failed')
+        require(re.search(rb'X509v3 Basic Constraints:[^\n]*\n[ \t]*CA:TRUE', constraints), 'Certificate is not a CA')
+        result = subprocess.run(['openssl', 'verify', '-CAfile', str(certificate), str(certificate)],
+                                capture_output=True, timeout=15, check=False)
+        require(result.returncode == 0, 'CA certificate validation failed')
     return raw
+
+
+def basic_constraints(certificate):
+    """Pinned CA constraints, read by whichever OpenSSL the host provides.
+
+    OpenSSL 1.1.1 and later print one extension with `-ext`; LibreSSL, the default
+    `openssl` on macOS, has no such option and prints only the full text dump. Both
+    expose the same basicConstraints value, so validate either form.
+    """
+    for args in (['x509', '-in', str(certificate), '-noout', '-ext', 'basicConstraints'],
+                 ['x509', '-in', str(certificate), '-noout', '-text']):
+        result = subprocess.run(['openssl', *args], capture_output=True, timeout=15, check=False)
+        if result.returncode == 0:
+            return result.stdout
+    return None
 
 
 def ca_layer(raw):
