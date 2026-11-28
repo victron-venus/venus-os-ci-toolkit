@@ -88,6 +88,11 @@ change and adopt the new pins through the existing grouped Renovate updates.
 For existing generated gates and repository-owned Linux/x64 validation/build
 adapters, use the same installer without upgrading the release engine:
 
+The pinned generator lock needs Python 3.10 or later: on an older
+interpreter pip reports `bandit==1.9.4` as an unavailable version instead of
+naming the interpreter as unsupported. [CONTRIBUTING.md](../CONTRIBUTING.md)
+asks for 3.12.
+
 ```bash
 python3 -m pip install --require-hashes --only-binary=:all: -r .github/requirements-generator.txt
 python3 scripts/install_release.py /path/to/consumer --runners-only
