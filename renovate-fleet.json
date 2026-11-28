@@ -79,6 +79,16 @@
       "enabled": false
     },
     {
+      "description": "Give a Python runtime image its own minor and patch buckets: a combined non-major bucket proposes only the interpreter move, so disabling that move would swallow the same-interpreter patch refresh.",
+      "matchManagers": [
+        "dockerfile"
+      ],
+      "matchPackageNames": [
+        "python"
+      ],
+      "separateMinorPatch": true
+    },
+    {
       "description": "A pinned Python runtime image carries its interpreter into a compiled lock and a startup probe; moving it across interpreter releases is an explicit project change, while digest and patch refreshes of the same interpreter still flow.",
       "matchManagers": [
         "dockerfile"

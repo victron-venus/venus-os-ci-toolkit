@@ -268,11 +268,15 @@ class CoupledWorkflowTests(unittest.TestCase):
             if rule.get("matchManagers") == ["dockerfile"]
             and rule.get("matchPackageNames") == ["python"]
         ]
-        self.assertEqual(len(rules), 1)
-        self.assertEqual(rules[0]["matchUpdateTypes"], ["major", "minor"])
-        self.assertIs(rules[0]["enabled"], False)
-        # Digest and patch refreshes of the same interpreter must stay automatic.
-        self.assertNotIn("allowedVersions", rules[0])
+        self.assertEqual(len(rules), 2)
+        bucket_rule, hold_rule = rules
+        # A shared non-major bucket proposes only the interpreter move, so the
+        # patch refresh needs its own bucket before the move can be disabled.
+        self.assertIs(bucket_rule["separateMinorPatch"], True)
+        self.assertNotIn("matchUpdateTypes", bucket_rule)
+        self.assertEqual(hold_rule["matchUpdateTypes"], ["major", "minor"])
+        self.assertIs(hold_rule["enabled"], False)
+        self.assertNotIn("allowedVersions", hold_rule)
 
     def test_repository_allowlist_keeps_shared_custom_managers_enabled(self):
         preset = json.loads((ROOT / "renovate-ci.json").read_text())

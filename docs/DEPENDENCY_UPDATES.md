@@ -47,7 +47,10 @@ The fleet preset also holds Python runtime images at their interpreter. A pinned
 startup probe that asserts it, so a routine minor move breaks the image instead
 of updating it. Major and minor proposals for the `python` dockerfile dependency
 are disabled; digest and patch updates of the same interpreter still flow, which
-keeps base-image security fixes automatic. Moving the interpreter stays a
+keeps base-image security fixes automatic. The interpreter move and a
+same-interpreter patch share the default non-major bucket, where only the move
+would be proposed, so the preset gives `python` its own minor and patch buckets
+first; without that split, disabling the move would also swallow the patch. Moving the interpreter stays a
 reviewed project change that updates the image, its lock and its probe together,
 and consumers must not re-enable those updates locally.
 
