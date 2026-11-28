@@ -116,5 +116,52 @@ class VendorWorkflowsTests(unittest.TestCase):
         self.assertEqual(json.loads(files[vendor.LOCK])["files"], {})
 
 
+    def local_bundle(self):
+        """Caller that references a generated bundle carrying a reviewed local patch."""
+        patched = vendor.WORKFLOWS + "toolkit-local-patch-" + self.revision + ".yml"
+        (self.consumer / patched).write_text("on: workflow_call\n# reviewed local correction\njobs: {}\n")
+        caller = self.consumer / ".github/workflows/local.yml"
+        caller.write_text("on: pull_request\njobs:\n  local:\n    uses: ./" + patched + "\n")
+        return caller, patched
+
+    def declare_local(self, job_id, patched, caller=".github/workflows/local.yml"):
+        lock = json.loads((self.consumer / vendor.LOCK).read_text())
+        lock["local"] = {caller: {job_id: patched}}
+        (self.consumer / vendor.LOCK).write_text(json.dumps(lock))
+        return lock
+
+    def test_declared_local_bundle_is_left_untouched(self):
+        self.apply()
+        _, patched = self.local_bundle()
+        declared = self.declare_local("local", patched)
+        before = (self.consumer / patched).read_text()
+        files, stale = vendor.render(self.consumer, self.source)
+        self.assertEqual((self.consumer / patched).read_text(), before)
+        self.assertEqual(stale, set())
+        written = json.loads(files[vendor.LOCK])
+        self.assertEqual(written["local"], declared["local"])
+        self.assertNotIn(patched, written["files"])
+        self.assertNotIn(".github/workflows/local.yml", written["calls"])
+
+    def test_undeclared_local_bundle_still_fails(self):
+        self.apply()
+        self.local_bundle()
+        with self.assertRaisesRegex(ValueError, "Untracked generated workflow reference"):
+            vendor.render(self.consumer, self.source)
+
+    def test_local_bundle_cannot_also_be_generated(self):
+        self.apply()
+        generated = vendor.WORKFLOWS + vendor.local_name("parent.yml", self.revision)
+        self.declare_local("ci", generated, caller=".github/workflows/ci.yml")
+        with self.assertRaisesRegex(ValueError, "cannot also be locally patched"):
+            vendor.render(self.consumer, self.source)
+
+    def test_local_bundle_must_exist(self):
+        self.apply()
+        self.declare_local("local", vendor.WORKFLOWS + "toolkit-missing-" + self.revision + ".yml")
+        with self.assertRaisesRegex(ValueError, "Missing locally patched bundle"):
+            vendor.render(self.consumer, self.source)
+
+
 if __name__ == "__main__":
     unittest.main()

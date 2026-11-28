@@ -4,6 +4,7 @@
 
 ### Fixed
 
+- Let a consumer declare a generated bundle that carries a reviewed local patch in the workflow lock (`local`), so the vendoring script leaves it byte-identical instead of refusing to run. An undeclared local reference still fails, and a bundle cannot be both generated and locally patched.
 - Apply the caller's ordinary browser report retention to failed and cancelled targets as well. A failed target no longer always retains its evidence for 14 days, so repeated failures cannot exhaust the account's shared artifact quota; the default stays 14 days and release qualification still retains reports for 14 days.
 - Allow the reusable browser scope gate ten minutes for a cold Node 22 tool-cache download on private runners. Preserve the pinned runtime, coverage assertions and browser-test timeout.
 
