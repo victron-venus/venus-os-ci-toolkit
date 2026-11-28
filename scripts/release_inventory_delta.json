@@ -201,6 +201,16 @@
               "after": "\n        def confirm_final_publisher_attempt() -> None:\n            # The final boundary shares a short deadline with the tag GET.\n            # Recheck the exact attempt, default branch identity and captured\n            # source ref after the final tag read and before public PATCH. Do\n            # not add aggregate/jobs reads at this boundary.\n            current = gh.api(\n                f\"actions/runs/{run['id']}/attempts/{run['run_attempt']}\"\n            )\n            rc.require_active_attempt(current, run)\n            if automatic:\n                rc.require(\n                    rc.repository_info(gh)[\"default_branch\"] == info[\"default_branch\"],\n                    \"Automatic publication default branch changed; draft left unpublished\",\n                )\n                rc.require(\n                    gh.api(source_path) == source_ref[1],\n                    \"Automatic publication default source changed; draft left unpublished\",\n                )\n\n        # Execution admission may be minutes old after downloads and signatures.\n"
             }
           ]
+        },
+        {
+          "before_sha256": "b59bc005a75bf9fcfde9f334d914864b6391cb1d6ffe3993796c9acf8b20882e",
+          "after_sha256": "bc65c9c1e2bcf5afccd41927dac1e8de4b10732b1cac06847a01c92dd760780c",
+          "hunks": [
+            {
+              "before": "        or inputs[\"expected_sha\"] == cast(str, run[\"head_sha\"]),\n        \"Default branch changed since dispatch; refresh and retry\",\n    )\n    parent = None\n",
+              "after": "        or inputs[\"expected_sha\"] == cast(str, run[\"head_sha\"]),\n        \"Default branch changed since dispatch; refresh and retry\",\n    )\n    if kind == \"push\" and channel == \"beta\":\n        # Only a proven queued replacement may avoid a full cycle. Treat any\n        # unproven or unavailable detector result as a normal release attempt.\n        try:\n            superseded = rc.superseded_candidate(gh, info, run, channel)\n        except (rc.ReleaseError, ValueError, KeyError, TypeError, OSError):\n            superseded = None\n        if superseded:\n            return {\n                **superseded,\n                \"channel\": channel,\n                \"version\": \"\",\n                \"build\": \"false\",\n                \"plan_artifact\": \"\",\n            }\n    parent = None\n"
+            }
+          ]
         }
       ]
     }
