@@ -754,3 +754,171 @@ class ManualApprovalRecoveryTests(unittest.TestCase):
         self.current["head"]["sha"] = "b" * 40
         self.execute()
         self.assert_posts(0)
+
+
+class LastPushApprovalTests(unittest.TestCase):
+    """Keep CODEOWNER approval and independently meet GitHub's last-push rule."""
+
+    def setUp(self):
+        self.harness = AutoApproveContract()
+        self.harness.setUp()
+        self.harness.reviewer = "4alvit"
+        self.harness.environment.update({
+            "GITHUB_ACTOR": "4alvit", "PR_AUTHOR": "californiantiramisu",
+            "GITHUB_TOKEN": "test-actions-token", "GITHUB_EVENT_NAME": "pull_request",
+        })
+        self.harness.pr["head"]["repo"] = {"full_name": REPOSITORY}
+        self.harness.current = copy.deepcopy(self.harness.pr)
+        self.harness.base_reads = [BASE] * 10
+        self.harness.decisions = ["REVIEW_REQUIRED"] * 10
+        self.after_pat = None
+        original = self.harness.api_process
+
+        def process(command, **kwargs):
+            result = original(command, **kwargs)
+            if command[2] == f"{ENDPOINT}/reviews":
+                token = kwargs["env"]["GH_TOKEN"]
+                user = "github-actions[bot]" if token == "test-actions-token" else "4alvit"
+                review = self.harness.review(user=user)
+                review["body"] = json.loads(kwargs["input"])["body"]
+                self.harness.pages[-1].append(review)
+                if token == "test-bot-token" and self.after_pat:
+                    self.after_pat()
+            return result
+
+        self.harness.api_process = process
+
+    def retained_pat(self):
+        review = self.harness.review()
+        review["body"] = f"<!-- toolkit-approval-base:{BASE}:pr-base:{BASE} -->"
+        self.harness.pages = [[review]]
+
+    def post_tokens(self):
+        return [kwargs["env"]["GH_TOKEN"] for command, kwargs in self.harness.calls
+                if command[2] == f"{ENDPOINT}/reviews"]
+
+    def test_first_pat_approval_is_retained_before_actions_supplement(self):
+        self.harness.execute()
+        self.assertEqual(self.post_tokens(), ["test-bot-token", "test-actions-token"])
+        self.assertEqual([r["user"]["login"] for r in self.harness.pages[0]],
+                         ["4alvit", "github-actions[bot]"])
+        self.assertEqual(self.harness.read_count, 3)
+
+    def test_self_author_bot_falls_back_to_codeowner_then_actions(self):
+        self.harness.environment["APPROVAL_PAT"] = "test-owner-token"
+        self.harness.token_reviewers = {
+            "test-bot-token": "californiantiramisu", "test-owner-token": "4alvit",
+        }
+        self.harness.execute()
+        self.assertEqual(self.post_tokens(), ["test-owner-token", "test-actions-token"])
+        self.assertEqual([r["user"]["login"] for r in self.harness.pages[0]],
+                         ["4alvit", "github-actions[bot]"])
+
+    def test_existing_pat_marker_does_not_skip_actions_supplement(self):
+        self.retained_pat()
+        self.harness.execute()
+        self.assertEqual(self.post_tokens(), ["test-actions-token"])
+
+    def test_current_head_base_actions_approval_is_idempotent(self):
+        self.retained_pat()
+        review = self.harness.review(user="github-actions[bot]")
+        review["body"] = self.harness.pages[0][0]["body"]
+        self.harness.pages[0].append(review)
+        self.harness.execute()
+        self.assertEqual(self.post_tokens(), [])
+
+    def test_actions_approval_for_another_head_or_base_is_not_reused(self):
+        for head, marker in (("b" * 40, f"<!-- toolkit-approval-base:{BASE}:pr-base:{BASE} -->"),
+                             (HEAD, "<!-- toolkit-approval-base:old:pr-base:old -->")):
+            with self.subTest(head=head, marker=marker):
+                self.setUp()
+                self.retained_pat()
+                review = self.harness.review(head=head, user="github-actions[bot]")
+                review["body"] = marker
+                self.harness.pages[0].append(review)
+                self.harness.execute()
+                self.assertEqual(self.post_tokens(), ["test-actions-token"])
+
+    def test_missing_actions_token_fails_closed(self):
+        self.retained_pat()
+        self.harness.environment.pop("GITHUB_TOKEN")
+        with self.assertRaisesRegex(RuntimeError, "GITHUB_TOKEN is missing"):
+            self.harness.execute()
+        self.assertEqual(self.post_tokens(), [])
+
+    def test_dismissed_pat_after_publication_cannot_authorize_supplement(self):
+        self.after_pat = lambda: self.harness.pages[0][-1].update(state="DISMISSED")
+        self.harness.execute()
+        self.assertEqual(self.post_tokens(), ["test-bot-token"])
+
+    def test_changed_metadata_after_pat_prevents_actions_supplement(self):
+        variants = (
+            {"head": {"sha": "c" * 40, "repo": {"full_name": REPOSITORY}}},
+            {"head": {"sha": HEAD, "repo": {"full_name": "fork/project"}}},
+            {"base": {"sha": "e" * 40, "ref": "stable", "repo": {"full_name": REPOSITORY}}},
+            {"base": {"sha": BASE, "ref": "other", "repo": {"full_name": REPOSITORY}}},
+            {"user": {"login": "4alvit"}}, {"draft": True}, {"state": "closed"},
+        )
+        for changes in variants:
+            with self.subTest(changes=changes):
+                self.setUp()
+                self.after_pat = lambda: self.harness.current.update(changes)
+                self.harness.execute()
+                self.assertEqual(self.post_tokens(), ["test-bot-token"])
+
+    def test_changed_default_tip_after_pat_prevents_supplement(self):
+        self.harness.base_reads = [BASE, BASE, "e" * 40]
+        self.harness.execute()
+        self.assertEqual(self.post_tokens(), ["test-bot-token"])
+
+    def test_other_actor_or_event_author_cannot_enable_supplement(self):
+        for changes in ({"GITHUB_ACTOR": "someone-else"}, {"PR_AUTHOR": "4alvit"}):
+            with self.subTest(changes=changes):
+                self.setUp()
+                self.retained_pat()
+                self.harness.environment.update(changes)
+                self.harness.execute()
+                self.assertEqual(self.post_tokens(), [])
+
+    def test_fork_does_not_enable_supplement(self):
+        self.retained_pat()
+        self.harness.pr["head"]["repo"] = {"full_name": "fork/project"}
+        self.harness.current = copy.deepcopy(self.harness.pr)
+        self.harness.execute()
+        self.assertEqual(self.post_tokens(), [])
+
+    def test_recovery_never_enables_supplement(self):
+        self.retained_pat()
+        self.harness.environment.update({"GITHUB_EVENT_NAME": "workflow_dispatch",
+                                         "EXPLICIT_PR_NUMBER": "17", "EXPECTED_HEAD": HEAD})
+        self.harness.execute()
+        self.assertEqual(self.post_tokens(), [])
+
+    def test_other_review_decision_never_enables_supplement(self):
+        for decision in ("APPROVED", "CHANGES_REQUESTED", None):
+            with self.subTest(decision=decision):
+                self.setUp()
+                self.retained_pat()
+                self.harness.decisions = [decision] * 10
+                self.harness.execute()
+                self.assertEqual(self.post_tokens(), [])
+
+    def test_requirement_resolved_during_recheck_prevents_supplement(self):
+        self.harness.decisions = ["REVIEW_REQUIRED", "APPROVED"]
+        self.harness.execute()
+        self.assertEqual(self.post_tokens(), ["test-bot-token"])
+
+    def test_actions_api_error_fails_closed_without_disclosing_token(self):
+        self.retained_pat()
+        original = self.harness.api_process
+
+        def failing(command, **kwargs):
+            if command[2] == f"{ENDPOINT}/reviews" and kwargs["env"]["GH_TOKEN"] == "test-actions-token":
+                raise subprocess.CalledProcessError(1, command, stderr="Denied test-actions-token")
+            return original(command, **kwargs)
+
+        self.harness.api_process = failing
+        with self.assertRaisesRegex(RuntimeError, "Denied \*\*\*") as raised:
+            self.harness.execute()
+        self.assertNotIn("test-actions-token", str(raised.exception))
+        self.assertEqual(self.post_tokens(), [])

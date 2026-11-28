@@ -297,6 +297,7 @@ class QualificationRenderTests(unittest.TestCase):
 
 if __name__ == '__main__':
     if sys.argv[1:] == ['--cel-fixtures']:
-        print(json.dumps(cel_fixtures()))
+        from test_private_automation_priority import priority_cel_fixtures
+        print(json.dumps(cel_fixtures() + priority_cel_fixtures()))
     else:
         unittest.main()

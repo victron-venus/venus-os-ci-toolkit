@@ -47,7 +47,7 @@ class PublicRunnerImageTests(unittest.TestCase):
                  if line and not line.startswith('#')]
         self.assertEqual(lines[0], '**')
         allowed = {
-            '.github/gh/release.json', 'scripts/install_release_gh.py',
+            '.github/gh/release.json', 'scripts/install_release_gh.py', 'scripts/async_process.py',
             '.github/containers/runner-go-tools.json', 'scripts/build_runner_go_tools.py',
             '.github/containers/runner-libbpf.json', 'scripts/build_runner_libbpf.py',
             '.github/containers/libbpf/0001-restrict-core-poisoning.patch',
@@ -71,6 +71,7 @@ class PublicRunnerImageTests(unittest.TestCase):
         # No wildcard or directory exception can reopen unrelated context files.
         self.assertEqual(set(lines[1:]), {'!' + name for name in allowed})
         source = (RESERVE / 'Dockerfile').read_text().replace('\\\n', '')
+        self.assertIn('COPY scripts/async_process.py /tmp/reserve-gh/scripts/async_process.py', source)
         copied = set()
         for line in source.splitlines():
             if line.startswith('COPY ') and '--from=' not in line:
@@ -402,7 +403,7 @@ class PublicRunnerImageTests(unittest.TestCase):
                              'https://github.com/cli/cli/releases/download/v' + manifest['version']
                              + '/' + manifest['artifacts']['linux_' + architecture]['asset'])
         self.assertIn('GODEBUG=fips140=on python3 /tmp/reserve-gh/scripts/install_release_gh.py', source)
-        self.assertIn('--archive /tmp/reserve-gh/archive.tar.gz --output /usr/local/bin/gh', source)
+        self.assertIn('--archive /tmp/reserve-gh/archive.tar.gz --output /usr/local/bin/gh --system-image-install', source)
         self.assertIn('test "$(command -v gh)" = /usr/local/bin/gh', source)
         for check in self.capability_checks():
             self.assertIn(check, source)

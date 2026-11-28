@@ -1,0 +1,2 @@
+# Preserve the binary-only policy when regenerating common CI tools.
+--only-binary :all:

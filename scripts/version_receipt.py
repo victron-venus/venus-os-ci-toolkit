@@ -64,7 +64,12 @@ def current_producer(source_sha: str) -> dict[str, object] | None:
 def verify_producer_identity(
     receipt: dict[str, object], expected: dict[str, object]
 ) -> None:
-    """Reject missing, malformed or mismatched package execution identity."""
+    """Reject missing, malformed or mismatched package execution identity.
+
+    A failed-only rerun re-executes only the publisher, so a package keeps the
+    attempt that actually produced it. Any attempt of the same repository, run
+    and source is accepted; another run, source or a later attempt is not.
+    """
     producer = receipt.get("producer")
     if not isinstance(producer, dict) or set(producer) != set(expected):
         raise ValueError("Receipt lacks current package producer identity")
@@ -72,7 +77,13 @@ def verify_producer_identity(
         producer["repository"], producer["run_id"],
         producer["run_attempt"], producer["source_sha"],
     )
-    if checked != expected:
+    same_run = (
+        checked["repository"] == expected["repository"]
+        and checked["run_id"] == expected["run_id"]
+        and checked["source_sha"] == expected["source_sha"]
+        and cast(int, checked["run_attempt"]) <= cast(int, expected["run_attempt"])
+    )
+    if not same_run:
         raise ValueError("Receipt belongs to a different package producer attempt")
 
 

@@ -1,10 +1,10 @@
-# CI dependency updates
+# Dependency updates
 
 GitHub Actions and reusable workflows are maintained by the centrally scheduled
-`Renovate CI dependencies` workflow in this repository. It uses the existing
+`Renovate dependency updates` workflow in this repository. It uses the existing
 organization `BOT_PAT`, an explicit repository allowlist, and `requireConfig:
 required`. Repositories opt in with `renovate.json` extending
-`local>victron-venus/venus-os-ci-toolkit:renovate-ci`.
+`local>victron-venus/venus-os-ci-toolkit:renovate-fleet`.
 
 Each repository receives one `renovate/ci-workflows` PR containing all available
 CI updates. Major, minor, patch and digest updates are grouped together. CodeQL
@@ -34,14 +34,45 @@ The workflow contract now rejects missing or inconsistent CodeQL version
 comments as well as mixed SHAs. Consumers receive this guard when their
 vendored `scripts/workflow_contracts.py` is refreshed from the toolkit.
 
-Runner images and action tool-version inputs are excluded from this migration.
-Existing Dependabot policies for application packages and containers, including
-version exclusions, remain in place. Dependabot's Actions entry has a zero version
-PR limit and an explicit ignore rule, which also suppresses separate security
-update PRs. Merely deleting the entry would not suppress security PRs. GitHub
-vulnerability alerts remain enabled. Renovate's separate vulnerability PR path
-is disabled for this CI-only preset: patched action releases arrive through the
-same daily grouped update and required checks.
+The full-fleet preset extends the original `renovate-ci` preset with native
+application and container managers. Consumers explicitly list their managers
+and preserve project-specific version ceilings, groups and source exclusions.
+The `pep621` manager owns `pyproject.toml` and `uv.lock`. Historical browser
+generations, vendored sources and copied build overlays require their existing
+source-aware update procedures. Runner images, action tool-version inputs and
+Python `requires-python` runtime migrations remain explicit project changes.
+
+PEP 621 projects with lockfiles use `rangeStrategy: update-lockfile`: when a
+newer dependency fits an existing range such as `>=1.0`, Renovate refreshes the lockfile without
+raising that lower bound. Its default `replace` behavior would otherwise skip
+these in-range updates. Out-of-range updates keep the normal replacement
+behavior and remain subject to each consumer's version bounds and review.
+Coupled exports run after lock-only changes as well as manifest changes.
+
+Application updates form a separate group, with major updates separated from
+minor/patch updates. Defaults permit two open ordinary PRs and one new ordinary
+PR per hour per repository. Renovate reads GitHub vulnerability alerts for
+security fixes, with one concurrent security PR and no dashboard approval wait.
+CI security fixes remain in the same atomic `renovate/ci-workflows` branch;
+application security fixes retain separate per-package branches, unless a
+consumer preserves a required coupled dependency group. Both presets omit
+`vulnerabilityAlerts.enabled`: alert detection is active by default, and
+setting this field to `true` would force-enable dependencies that a consumer
+intentionally disables. Source and ABI compatibility rules therefore also
+apply to security updates; their alerts remain visible for manual remediation.
+Normal review and required CI still apply; automatic merging is disabled.
+
+Remove `.github/dependabot.yml` (or `.yaml`) after the replacement configuration
+is reviewed, and disable GitHub's **Dependabot security updates** setting. Keep
+the dependency graph and vulnerability alerts enabled, because Renovate reads
+those alerts. Terraform must declare `enabled = false` for security-update
+resources so a later apply cannot restore the old PR producer. Compatible
+review logic for historical Dependabot PRs can remain.
+
+The public runner contains only public repository names. Private consumers and
+the existing `ha-homelab/home-assistant` exception belong to the private runner's
+explicit inventory and visibility preflight. Each repository belongs to exactly
+one runner. Repositories without dependency or workflow inputs need no updater.
 
 ## Operations
 
@@ -49,8 +80,25 @@ The sweep runs daily at 09:23 UTC. For a read-only check, dispatch the workflow
 with `dry-run=true` (the manual default). Dispatch with `dry-run=false` for an
 immediate update sweep. Only the default branch may run the privileged job.
 Failures are visible in the workflow run; a missing token fails the job instead
-of silently disabling updates. The runner does not execute dependency lifecycle
-scripts or repository-defined post-upgrade commands.
+of silently disabling updates. Dependency lifecycle scripts, plugins and shell
+execution remain disabled. Post-upgrade tasks can run only the exact reviewed
+generator commands enumerated in `renovate-runner.cjs`.
+
+Some Python consumers export requirements from `uv.lock` or compile a platform
+lock constrained by that export. Their native source update is followed by a
+reviewed `uv export --locked --offline --no-build` or `uv pip compile --no-build`
+command. Export rejects a stale source/lock pair; no command may build source
+distributions. Tasks pin uv 0.13.4, name the exact files allowed into the commit,
+and use `executionMode: update` on the matching source rule. Branch mode can
+lose a task when another dependency leads a mixed update group in Renovate
+44.215.0. Temporary constraint exports are excluded from committed artifacts.
+
+Adding a generator requires reviewing its complete literal command, source
+ownership and output files, testing a changed dependency and stale-input failure,
+and extending the runner allowlist and its negative command-policy tests. A
+consumer must wait for that allowlist to reach the runner default branch before
+enabling its task. Unsupported source builds and local-interpreter contracts
+remain explicit manual boundaries. See [post-upgrade task configuration](https://docs.renovatebot.com/configuration-options/#postupgradetasks).
 
 `BOT_PAT` must permit repository contents and workflow writes (`repo` and
 `workflow` for a classic PAT). The preflight rejects a classic token missing
@@ -101,33 +149,168 @@ Run the offline regression suite with
 `python3 -m unittest discover -s tests -p 'test_renovate_signing.py' -v`.
 It generates disposable keys locally and never needs a repository secret.
 
-To migrate another repository:
+To onboard another full-fleet repository:
 
-1. Add its full name to `renovate-repositories.json`.
-2. Run `python3 scripts/migrate_ci_updates.py /path/to/repository`. The helper
-   adds version comments to bare SHA-pinned workflow references: `# main` for
-   Toolkit workflows and the exact declared release ref from `action-pins.json`
-   for other actions. These comments are required for Renovate to discover
-   digest updates; the SHA and executable YAML values do not change.
-   An existing prose-only comment is preserved after the verified version ref;
-   it is not treated as evidence that an action can already be updated.
-   If a legacy third-party SHA is unknown, migration stops before writing any
-   files. Verify the matching tag (dereferencing annotated tags) against the
-   action's GitHub repository, then pass `--action-versions verified-refs.json`.
-   The JSON format is `{"owner/action": {"40-character-commit-sha": "v1.2.3"}}`.
-   A branch ref is appropriate only when the pin's upstream branch identity was
-   verified (for example, its exact current SHA or the upstream commit metadata).
-   Never infer a release version from a neighboring action or guess `main`.
-3. Review the generated comments against the verified metadata and rerun the
-   helper to confirm there are no further changes.
-4. Ship the current `scripts/workflow_contracts.py` through the required CI gate.
-5. Validate the config with the pinned Renovate config validator, run workflow
-   contracts and actionlint, then merge the migration through the normal gate.
-6. Run a dry sweep followed by a live sweep and inspect the grouped PR.
+1. Audit the default branch and choose the public or private runner. Verify bot
+   access and add the repository to exactly one explicit inventory.
+2. Create `renovate.json` extending `renovate-fleet`, preserving version holds,
+   source exclusions and dependency groups. Explicitly enable required native
+   managers alongside `github-actions`, `custom.regex` and `custom.jsonata`.
+3. Review SHA-pinned workflow references and add missing version comments without
+   changing their executable values. Use the repository's verified action-pin
+   manifest, or verify an upstream tag resolves to that exact commit (including
+   annotated-tag dereferencing). Only use `# main` for a toolkit reference after
+   verifying its branch identity. Preserve existing prose after the version
+   comment. Stop for unknown pins; never guess a version from neighboring steps.
+4. Confirm the workflow-contract guard checks coupled CodeQL and toolkit pins.
+   Validate the configuration with the pinned Renovate validator and run
+   workflow contracts and actionlint for any changed workflow metadata.
+5. Merge the reviewed configuration and inventory through normal repository
+   gates. Run a dry sweep and verify the repository and expected managers.
+6. Remove the old Dependabot YAML, disable Dependabot security updates and run
+   a live sweep. Keep vulnerability alerts and project-specific source policies.
+
+`scripts/migrate_ci_updates.py` is a historical CI-only migration helper. It
+rejects full-fleet configurations and recreates the old Dependabot stub. Do not
+run it during full-fleet onboarding or use it as an annotation-only command.
 
 Do not merge old standalone Dependabot action PRs after migration. Close them
-when their changes are superseded by the grouped Renovate PR. Application
-dependency PRs are unaffected.
+when their changes are superseded by the verified Renovate path. Preserve any
+unique fixes until the replacement covers them.
 
 References: [GitHub Actions manager](https://docs.renovatebot.com/modules/manager/github-actions/)
 and [grouping options](https://docs.renovatebot.com/configuration-options/#groupname).
+
+### Security branch compatibility
+
+The two fleet runners use the official Renovate 44.215.0 image with a narrowly
+scoped, in-memory compatibility fix. Its branch planner otherwise takes all
+branch settings from the first alphabetically sorted dependency. A mixed group
+can therefore lose its security priority when the vulnerable dependency sorts
+later. The fix selects a vulnerable member as the branch settings source while
+preserving the entire ordered upgrade list and the existing aggregate review,
+automerge and minimum-group-size rules. Ordinary-only groups are unchanged.
+
+The loader verifies the package version and SHA-256 of the one affected upstream
+planner module before the CLI can access credentials. Unknown source fails closed; it
+never edits the installed package, loads repository code, or exports Node loader
+flags to package-manager subprocesses. Contract tests exercise native branch
+planning, both directions of the npm/Cargo pair, scheduling and independent
+security limits, plus an isolated official-image smoke test without credentials.
+The runtime version itself requires a reviewed change while this compatibility
+fix is present. To upgrade, reproduce the native tests against the new upstream
+version and either retire the fix or explicitly requalify its one-module hash;
+do not simply advance the runtime pin.
+
+### Python package build boundary
+
+The same loader also verifies four Python manager and post-upgrade modules and appends
+`--no-build` to UV compile and lock commands. The UV compile header parser accepts
+that flag for subsequent runs. Native generation and allowed post-upgrade UV
+commands use the reviewed UV 0.13.4, preserving other tool constraints. Legacy
+pip-tools compilation is not qualified for this runner. `ignoreScripts` and `UV_NO_BUILD` alone do not prevent all metadata
+backend execution in the reviewed Renovate/UV combination.
+
+UV lock resolution can still run a first-party project's metadata backend even
+with `--no-build`. Before invoking it, the runner checks the raw project metadata
+and local file context. Dynamic metadata, workspaces, local editable/directory
+sources and unqualified configuration stop the update with an artifact error.
+Static projects and confined prebuilt wheel sources remain supported. This check
+is separate from third-party source builds, which the CLI flag prohibits.
+
+Existing source-only compiler environments are held as complete source/output
+units in their repository policies; security alerts remain enabled for manual
+remediation. Do not accept resolver downgrades or change package origins to make
+such an environment pass. An existing immutable source archive may use reviewed,
+version-specific static dependency metadata without running its build backend.
+The offline official-image contract test exercises an inert metadata backend,
+requires the unprotected control to execute it, and requires the guarded path
+to reject it while still generating a hashed wheel lockfile. Requalify all five
+module hashes and these behavior tests before changing the runtime version.
+
+### npm registry bundle compatibility
+
+npm 12.2.2 misclassifies some registry-resolved bundled-dependency archives as
+arbitrary remote URLs during lockfile-only resolution
+([upstream issue 9800](https://github.com/npm/cli/issues/9800)). The runner keeps
+remote and Git dependency sources disabled and lifecycle scripts ignored.
+A sixth hash-verified Renovate module adds a supported post-install pre-command:
+only when the repository's npm requirement admits 12.2.2, it selects that exact
+version and validates the installed containerbase executable paths, package,
+CLI and Arborist source hashes. Node constraints remain unchanged, and a selected
+Node that cannot run the qualified npm is rejected before package resolution.
+
+The read-only helper changes one module inside the ephemeral npm tool cache.
+It copies npm's existing registry-origin/path predicate into the bundled archive
+fetch; direct tarball URLs, including URLs on the registry host, and Git sources
+remain denied. The helper is idempotent and rejects altered modules, unexpected
+launchers and repository-shadowed executables. It does not modify the repository
+or execute its code. Requalify the npm package, helper and sixth Renovate module
+together before changing either pinned runtime.
+
+The official-image contract installs the exact Node/npm toolchain and tests both
+public root and private `/config` read-only helper mounts. A loopback registry
+fixture must fail with the original npm and generate a lock through the guarded
+native updater, while direct URLs and Git stay blocked and an otherwise active
+lifecycle canary does not run. The existing planner and Python boundary tests
+remain required.
+
+### Private Python and Go tool lifecycle
+
+The private runner uses a separate, first `--import` preload for the qualified
+Renovate 44.215.0 command generator. The public runner does not enable it.
+Before installing a different Python version, a fixed helper reads the official
+containerbase JSON inventory. It removes only recorded old Python versions and
+their qualified `uv` 0.13.4 and `hashin` 1.0.5 leaves using explicit, non-recursive official uninstall
+commands. If the requested Python version already exists, its Python tool family
+is preserved; normal containerbase installation reuses and relinks that version.
+
+The same private preload handles a Go version transition before installation.
+If the requested Go version is absent, it removes only recorded obsolete Go
+versions through the official non-recursive CLI. Any Go child tool or unrecorded
+path rejects the entire removal plan. An already installed requested Go version
+is reused without removal. Python, Node, download archives and repository caches
+are not removed by the Go transition.
+
+Before a Python installation or reuse, the private command generator also checks
+the entire execution's requested tool list. If it contains no Go request, the
+same helper retires recorded Go versions first through the official CLI. This
+also applies to a first Python installation and an already installed Python.
+Both orderings of a mixed Go/Python request preserve Go. The combined removal
+plan is validated before any deletion; unknown Go children or paths fail closed.
+Node, npm, download archives and native module caches remain untouched. A later
+Go command installs its requested version again, including an identical version
+whose old in-memory marker remains. This reduces the overlapping tool footprint;
+it does not establish a sufficient disk reserve or a bound on all future peaks.
+
+The helper validates the complete removal plan, fixed canonical tool paths and
+all parent relationships before its first mutation, then rechecks the inventory
+and process namespace before every uninstall. Unknown children, shared child-tool
+parents, symlinks, unexpected state or any process outside its ancestor chain
+stop the artifact update. No process is killed and no repository path is removed.
+Only the private Python/UV/hashin/Go memoization shortcut is bypassed, so failed installs
+and an A-to-B-to-A transition cannot reuse a stale in-memory installed marker.
+Other tool memoization and all existing build and security guards remain active.
+The private hashin installer uses 1.0.5 only when the requested PEP 440 tool
+constraint admits it; an incompatible explicit constraint fails closed.
+Scheduling changes such as sleeping to running do not change process identity;
+PID, parent PID and start time must remain stable, with both snapshots requiring
+live ancestors and no unrelated process.
+
+This mode requires an exclusive updater container: do not run `docker exec`
+inside it during a sweep. Observe logs from outside the PID namespace. Two
+process snapshots reject already-present orphans; they are not an atomic lock
+against an external actor starting a new process afterward. The helper's
+120-second monotonic deadline, per-command bounds and existing outer runner
+limits remain in force. Successful cleanup does not itself guarantee enough
+space for every future tool or repository.
+
+The official-image contract tests the exact combined preload order, actual
+Python/UV/hashin transitions and reuse, unknown-child and process/path rejection, and
+native compiled-lock and hashed-requirements generation afterward. Go transition
+and native artifact checks run in the same official image, including two UV
+outputs, a subsequent guarded npm lock and a later same-version Go reinstall.
+Hosted tests establish
+functional behavior; the complete private sweep on its unchanged 3 GiB Docker
+filesystem remains the capacity check. Requalify the module hash, official
+containerbase inventory/layout and these tests before changing either runtime.

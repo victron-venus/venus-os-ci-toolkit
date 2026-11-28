@@ -1,17 +1,23 @@
-name: Renovate CI dependencies
+name: Renovate dependency updates
 
 on:
   schedule:
-    - cron: '23 9 * * *'
+    # One daily backup opportunity; the gate deduplicates successful production.
+    - cron: '23 9,21 * * *'
   workflow_dispatch:
     inputs:
       dry-run:
         description: Resolve updates without changing repositories
         type: boolean
         default: true
+      debug:
+        description: Include debug details for diagnosing dependency updates
+        type: boolean
+        default: false
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: renovate-ci-dependencies
@@ -25,19 +31,28 @@ jobs:
     timeout-minutes: 60
     steps:
       - name: Harden the runner (Audit all outbound calls)
-        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.23.0
         with:
           egress-policy: audit
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Check scheduled sweep freshness
+        id: schedule_gate
+        timeout-minutes: 3
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RENOVATE_PRIMARY_TIME: '09:23'
+        run: python3 scripts/renovate_schedule_gate.py
       - name: Check bot workflow permissions and signing configuration
+        if: steps.schedule_gate.outputs.run == 'true'
         env:
           RENOVATE_TOKEN: ${{ secrets.BOT_PAT }}
           RENOVATE_GIT_PRIVATE_KEY: ${{ secrets.RENOVATE_SIGNING_KEY }}
         run: python3 scripts/check_renovate_credentials.py
       - name: Read the tested Renovate version
+        if: steps.schedule_gate.outputs.run == 'true'
         id: runtime
         env:
           DRY_RUN: ${{ inputs.dry-run }}
@@ -49,14 +64,19 @@ jobs:
           if [ "$DRY_RUN" = "true" ]; then
             echo 'RENOVATE_DRY_RUN=full' >> "$GITHUB_ENV"
           fi
-      - name: Update CI dependencies as one tested unit
-        uses: renovatebot/github-action@1c0cf989c02653fba0efe7ca5772338860ca71dc # v46.3.12
+      - name: Update reviewed CI and application dependencies
+        if: steps.schedule_gate.outputs.run == 'true'
+        uses: renovatebot/github-action@1376d90bcd3a4d4e7393ae762eea56ac684aee38 # v48.0.0
         with:
           configurationFile: renovate-runner.cjs
-          # The action mounts only the config file; its adjacent allowlist needs a mount too.
-          docker-volumes: /tmp:/tmp;${{ github.workspace }}/renovate-repositories.json:/github-action/renovate-repositories.json:ro
+          docker-cmd-file: scripts/renovate-security-runner.sh
+          # The action mounts the executable at /; its preload and roster are read-only.
+          docker-volumes: /tmp:/tmp;${{ github.workspace }}/renovate-repositories.json:/github-action/renovate-repositories.json:ro;${{ github.workspace }}/scripts/renovate-security-compat.mjs:/renovate-security-compat.mjs:ro;${{ github.workspace }}/scripts/renovate-completion-compat.mjs:/renovate-completion-compat.mjs:ro;${{ github.workspace }}/scripts/verify-renovate-completion.cjs:/verify-renovate-completion.cjs:ro;${{ github.workspace }}/scripts/renovate-uv-preflight.mjs:/renovate-uv-preflight.mjs:ro;${{ github.workspace }}/scripts/prepare-renovate-npm.mjs:/prepare-renovate-npm.mjs:ro
           token: ${{ secrets.BOT_PAT }}
           renovate-version: ${{ steps.runtime.outputs.version }}
         env:
-          LOG_LEVEL: info
+          LOG_LEVEL: ${{ inputs.debug && 'debug' || 'info' }}
           RENOVATE_GIT_PRIVATE_KEY: ${{ secrets.RENOVATE_SIGNING_KEY }}
+      - name: Record completion-qualified Renovate production sweep
+        if: steps.schedule_gate.outputs.run == 'true' && inputs.dry-run != true
+        run: echo 'Renovate production completed with verified roster and artifact evidence.'

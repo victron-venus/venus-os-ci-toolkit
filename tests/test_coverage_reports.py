@@ -373,7 +373,7 @@ class CoverageWorkflowTests(unittest.TestCase):
                 report_root = root / "coverage-report"
                 report_root.mkdir()
                 (report_root / "coverage.xml").write_text(XML)
-                for index in [0, 2]:
+                for index in [0, 3]:
                     result = subprocess.run(
                         [
                             "bash",
@@ -417,6 +417,7 @@ class CoverageWorkflowTests(unittest.TestCase):
         for mode, job in self.workflow["jobs"].items():
             expected = {
                 "contents": "read",
+                "actions": "read",
                 **({"id-token": "write"} if mode == "oidc" else {}),
             }
             self.assertEqual(job["permissions"], expected)
@@ -456,38 +457,42 @@ class CoverageWorkflowTests(unittest.TestCase):
         for job in self.workflow["jobs"].values():
             steps = job["steps"]
             self.assertEqual(
-                steps[1]["uses"],
+                steps[2]["uses"],
                 "actions/download-artifact@" + pins["actions/download-artifact"],
             )
             self.assertEqual(
-                steps[1]["with"],
+                steps[2]["with"],
                 {
-                    "name": "${{ steps.contract.outputs.artifact_name }}",
+                    "artifact-ids": "${{ steps.artifact.outputs.artifact_id }}",
+                    "merge-multiple": True,
                     "path": "${{ runner.temp }}/coverage-report",
                 },
             )
             self.assertEqual(
-                steps[3]["uses"], "actions/checkout@" + pins["actions/checkout"]
+                steps[4]["uses"], "actions/checkout@" + pins["actions/checkout"]
             )
             self.assertEqual(
-                steps[3]["with"],
+                steps[4]["with"],
                 {
                     "repository": "${{ github.repository }}",
                     "ref": "${{ github.sha }}",
                     "persist-credentials": False,
                 },
             )
-            self.assertIn("report --directory", steps[2]["run"])
+            self.assertIn("report --directory", steps[3]["run"])
+            self.assertEqual(steps[1]["id"], "artifact")
+            self.assertEqual(steps[1]["env"], {"GITHUB_TOKEN": "${{ github.token }}"})
+            self.assertIn('coverage_reports.py" artifact', steps[1]["run"])
             self.assertEqual(
-                steps[4]["with"]["override_commit"],
+                steps[5]["with"]["override_commit"],
                 "${{ steps.contract.outputs.commit }}",
             )
             self.assertEqual(
-                steps[4]["with"]["override_pr"],
+                steps[5]["with"]["override_pr"],
                 "${{ steps.contract.outputs.pull_request }}",
             )
-            self.assertIn("not independently verified", steps[5]["run"])
-            self.assertIn("::warning::", steps[5]["run"])
+            self.assertIn("not independently verified", steps[6]["run"])
+            self.assertIn("::warning::", steps[6]["run"])
 
 
 if __name__ == "__main__":

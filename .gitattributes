@@ -2,3 +2,8 @@
 .github/containers/runner-browsers/* -text
 # Debian Packages paragraphs intentionally include a final blank separator.
 .github/containers/runner-browsers/*-Packages whitespace=-blank-at-eof
+
+# Hash-bound Renovate fixtures retain verbatim upstream distribution bytes.
+scripts/fixtures/renovate-completion-44.215.0/** -text
+# This generated upstream module has one intentional trailing space (line 396).
+scripts/fixtures/renovate-completion-44.215.0/dist/workers/repository/update/branch/index.js whitespace=-blank-at-eol

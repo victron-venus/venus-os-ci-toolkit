@@ -37,7 +37,10 @@ the separate deprecated module remains in the broader module graph. An explicit
 production-package guard now rejects its reintroduction. This source evidence
 does not substitute for clean scans of the actual replacement binaries.
 
-Go remains 1.26.10 for Buildx and 1.27.3 for BuildKit/runc; runc remains 1.5.2.
+The retained historical qualification used Go 1.26.10 for Buildx and 1.27.3 for
+BuildKit/runc; runc remains 1.5.2. The pending OpenTelemetry refresh uses new
+derivative labels and Go 1.27.4 and is not covered by those receipts; see
+[the preparation and qualification gate](OCI_TOOL_QUALIFICATION.md#pending-opentelemetry-security-refresh).
 The native inputs additionally pin matching zlib development headers so older
 hosted images can install the reviewed runtime without removing Python/MySQL
 development packages. The installer retains its no-download/no-remove policy;

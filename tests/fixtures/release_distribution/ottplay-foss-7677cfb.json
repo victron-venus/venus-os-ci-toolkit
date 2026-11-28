@@ -1,0 +1,52 @@
+{
+  "schema": 1,
+  "repository": "open-ott-play/ottplay-foss",
+  "commit": "7677cfbbe1395169403790307d3d9dd0fc25a43b",
+  "members": [
+    {
+      "path": ".github/release-tests/test_release_control.py",
+      "sha256": "07169c9c4a0d68155432bf013a29c2a84e2a610bc25082fdb1d66fd35f48e10c",
+      "size": 135250
+    },
+    {
+      "path": ".github/release-tests/test_verified_publication.py",
+      "sha256": "711f660ab89437153f17b039b2a92828ee2749c1bdc3dccc8c4636e976a2e638",
+      "size": 26737
+    },
+    {
+      "path": ".github/release-tests/test_versioned_release.py",
+      "sha256": "0552aced3950d028243d07d9202d4294c61d532b379bd709abcfd2c228b3f86a",
+      "size": 106549
+    },
+    {
+      "path": ".release-policy.json",
+      "sha256": "96d37f8c86491da1835ca9551cee6d63e27ee79e3f14234cccd8c0ee46d49cc1",
+      "size": 9625
+    },
+    {
+      "path": "docs/VERSIONING.md",
+      "sha256": "edfee8b89783fe94b362c6525a148c5ea208dce49e1ca7db77148145e9e57079",
+      "size": 16053
+    },
+    {
+      "path": "docs/release-workflow.md",
+      "sha256": "a280808901fa3cb4b021e09a776002800bcd897ee4075ed22eb102a048d08265",
+      "size": 29370
+    },
+    {
+      "path": "scripts/publish_verified.py",
+      "sha256": "129f0c9ea5b500f8a4f836b982199c4e276bf329a3a16bacbc7cdb7d188d616d",
+      "size": 11546
+    },
+    {
+      "path": "scripts/release_control.py",
+      "sha256": "5fd6924745aa1ee27c3c255902615e43ad7c565a5b8995bf17ab7e6654cfe4c2",
+      "size": 123932
+    },
+    {
+      "path": "scripts/release_versioned.py",
+      "sha256": "7af92ec53d18570c03d9fb9a9952f5a690ac16aa4a8c5cebd9fcaa365c3bff4f",
+      "size": 38200
+    }
+  ]
+}

@@ -61,6 +61,10 @@ exec ./bin/Runner.Listener run
 '''
 
 
+AUTOMATION_PRIORITY_CLASS = 'victron-private-automation-nonpreempting'
+AUTOMATION_PRIORITY_VALUE = 100
+
+
 class NucKvmConfig(NamedTuple):
     """One explicitly selected private CI scope; placement/resources are fixed."""
     scope: str
@@ -85,6 +89,7 @@ class NucKvmPlan(NamedTuple):
     bounded_heavy_image: str | None = None
     full_memory_ci_scopes: tuple[str, ...] = ()
     opportunistic_cpu_targets: tuple[NucKvmTarget, ...] = ()
+    nonpreempting_automation_scopes: tuple[str, ...] = ()
 
 
 class QualificationCanary(NamedTuple):
@@ -131,7 +136,8 @@ def load_nuc_kvm_plan(path):
     if (not isinstance(data, dict) or not required <= set(data)
             or set(data) - required - {'light_ci_scopes', 'low_share_ci_scopes',
                                       'bounded_heavy_ci_scopes', 'bounded_heavy_image',
-                                      'full_memory_ci_scopes', 'opportunistic_cpu_targets'}):
+                                      'full_memory_ci_scopes', 'opportunistic_cpu_targets',
+                                      'nonpreempting_automation_scopes'}):
         raise ValueError('NUC KVM plan requires targets, image and node_ip, with optional scoped selections')
     if not isinstance(data['targets'], list) or not data['targets']:
         raise ValueError('NUC KVM plan requires an explicit nonempty target list')
@@ -143,6 +149,9 @@ def load_nuc_kvm_plan(path):
             or any(not isinstance(target, dict) or set(target) != {'scope', 'profile'}
                    for target in opportunistic)):
         raise ValueError('opportunistic_cpu_targets requires an explicit list of scope/profile pairs')
+    automation_priority = data.get('nonpreempting_automation_scopes', [])
+    if not isinstance(automation_priority, list) or any(not isinstance(scope, str) for scope in automation_priority):
+        raise ValueError('nonpreempting_automation_scopes requires an explicit list of repository scopes')
     light = data.get('light_ci_scopes', [])
     if not isinstance(light, list) or any(not isinstance(scope, str) for scope in light):
         raise ValueError('light_ci_scopes must be an explicit list of repository scopes')
@@ -162,7 +171,7 @@ def load_nuc_kvm_plan(path):
     return NucKvmPlan(tuple(NucKvmTarget(**target) for target in data['targets']),
                       data['image'], data['node_ip'], tuple(light), tuple(low_share),
                       tuple(bounded), data.get('bounded_heavy_image'), tuple(full_memory),
-                      tuple(NucKvmTarget(**target) for target in opportunistic))
+                      tuple(NucKvmTarget(**target) for target in opportunistic), tuple(automation_priority))
 
 
 def validate_nuc_kvm(rows, config, sandbox_runtime, node_ip):
@@ -188,6 +197,14 @@ def validate_nuc_kvm(rows, config, sandbox_runtime, node_ip):
         raise ValueError('NUC KVM requires explicit typed CI, automation or release targets')
     if len(set(plan.targets)) != len(plan.targets):
         raise ValueError('Duplicate NUC KVM target')
+    if (not isinstance(plan.nonpreempting_automation_scopes, tuple)
+            or any(not isinstance(scope, str) or not SCOPE.fullmatch(scope)
+                   for scope in plan.nonpreempting_automation_scopes)
+            or len(set(plan.nonpreempting_automation_scopes)) != len(plan.nonpreempting_automation_scopes)):
+        raise ValueError('nonpreempting_automation_scopes requires unique typed repository scopes')
+    if any(NucKvmTarget(scope, 'automation') not in plan.targets
+           for scope in plan.nonpreempting_automation_scopes):
+        raise ValueError('Every priority scope must already be a selected NUC automation target')
     if (not isinstance(plan.light_ci_scopes, tuple)
             or any(not isinstance(scope, str) or not SCOPE.fullmatch(scope)
                    for scope in plan.light_ci_scopes)
@@ -277,7 +294,8 @@ def validate_nuc_kvm(rows, config, sandbox_runtime, node_ip):
                       tuple(sorted(plan.light_ci_scopes)), tuple(sorted(plan.low_share_ci_scopes)),
                       tuple(sorted(plan.bounded_heavy_ci_scopes)), plan.bounded_heavy_image,
                       tuple(sorted(plan.full_memory_ci_scopes)),
-                      tuple(sorted(plan.opportunistic_cpu_targets)))
+                      tuple(sorted(plan.opportunistic_cpu_targets)),
+                      tuple(sorted(plan.nonpreempting_automation_scopes)))
 
 
 def name(scope, profile):
@@ -706,6 +724,10 @@ def nuc_kvm_value(value, config):
                  in {name(scope, 'scope') for scope in config.low_share_ci_scopes})
     spec['affinity'] = nuc_serial_affinity(light)
     labels[SERIAL_LABEL] = 'nuc-kvm'
+    if (labels[PROFILE_LABEL] == 'automation'
+            and labels[SCOPE_LABEL] in {name(scope, 'scope') for scope in config.nonpreempting_automation_scopes}):
+        spec['priorityClassName'] = AUTOMATION_PRIORITY_CLASS
+        spec['preemptionPolicy'] = 'Never'
     if light:
         labels[CONCURRENCY_LABEL] = 'light'
         value['maxRunners'] = 2
@@ -967,13 +989,13 @@ def nuc_kvm_foundations(document, config, values_by_target):
                 'apiGroups': ['node.k8s.io'], 'apiVersions': ['v1'],
                 'operations': ['CREATE', 'UPDATE'], 'resources': ['runtimeclasses']}]},
             'matchConditions': [{'name': 'nuc-class-or-handler',
-                                 'expression': f'object.metadata.name == {json.dumps(NUC_RUNTIME)} || object.handler == {json.dumps(NUC_RUNTIME)}'}],
-            'validations': [{'expression': f'object.metadata.name == {json.dumps(NUC_RUNTIME)} && object.handler == {json.dumps(NUC_RUNTIME)} && '
+                                 'expression': f'object.metadata.name in {json.dumps([NUC_RUNTIME, "harness-pr-repair-nuc"])} || object.handler == {json.dumps(NUC_RUNTIME)}'}],
+            'validations': [{'expression': f'object.metadata.name in {json.dumps([NUC_RUNTIME, "harness-pr-repair-nuc"])} && object.handler == {json.dumps(NUC_RUNTIME)} && '
                              'has(object.overhead) && has(dyn(object.overhead).podFixed) && dyn(object.overhead).podFixed == '
                              + json.dumps(runtime['overhead']['podFixed']) + ' && has(object.scheduling) && '
                              'object.scheduling.nodeSelector == ' + json.dumps(runtime['scheduling']['nodeSelector'])
                              + ' && (!has(object.scheduling.tolerations) || size(object.scheduling.tolerations) == 0)',
-                             'message': 'The NUC handler has one fixed class, node and overhead; aliases are forbidden'}]}}
+                             'message': 'Only the ARC and exact Harness NUC classes may use the fixed handler, node and overhead'}]}}
     # Binding objects have no parent Pod spec available to CEL. Protect the
     # affected namespaces, including legacy bindings, without label selectors.
     binding_guard = {
@@ -1009,6 +1031,55 @@ def nuc_kvm_foundations(document, config, values_by_target):
             'metadata': {'name': policy['metadata']['name']}, 'spec': {
                 'policyName': policy['metadata']['name'], 'validationActions': ['Deny']}}]
     items += [runtime, *nuc_networks]
+    if config.nonpreempting_automation_scopes:
+        selected = ("request.namespace == 'arc-private-automation' && has(object.metadata.labels) && "
+                    + json.dumps(PROFILE_LABEL) + " in object.metadata.labels && object.metadata.labels["
+                    + json.dumps(PROFILE_LABEL) + "] == 'automation' && " + json.dumps(SCOPE_LABEL)
+                    + " in object.metadata.labels && object.metadata.labels[" + json.dumps(SCOPE_LABEL)
+                    + "] in " + json.dumps(sorted(name(scope, 'scope') for scope in config.nonpreempting_automation_scopes)))
+        exact = ('has(object.spec.priorityClassName) && object.spec.priorityClassName == '
+                 + json.dumps(AUTOMATION_PRIORITY_CLASS)
+                 + ' && has(object.spec.priority) && object.spec.priority == ' + str(AUTOMATION_PRIORITY_VALUE)
+                 + ' && has(object.spec.preemptionPolicy) && object.spec.preemptionPolicy == "Never"')
+        # Existing Pods keep their exact original priority tuple on status/spec
+        # UPDATE. A new template never changes an already admitted/running Pod.
+        preserved = ' && '.join(
+            '(has(object.spec.' + field + ') == has(oldObject.spec.' + field + ')) && '
+            '(!has(object.spec.' + field + ') || object.spec.' + field + ' == oldObject.spec.' + field + ')'
+            for field in ('priorityClassName', 'priority', 'preemptionPolicy'))
+        guard['spec']['validations'].append({
+            'expression': ('(request.operation == "CREATE" && (((' + selected + ') && (' + exact + ')) || (!('
+                           + selected + ') && (!has(object.spec.priorityClassName) || object.spec.priorityClassName != '
+                           + json.dumps(AUTOMATION_PRIORITY_CLASS) + ')))) || (request.operation == "UPDATE" && '
+                           'oldObject != null && (' + preserved + '))'),
+            'message': 'Only explicitly selected automation workers receive the fixed non-preempting priority'})
+        priority_guard = {
+            'apiVersion': 'admissionregistration.k8s.io/v1', 'kind': 'ValidatingAdmissionPolicy',
+            'metadata': {'name': AUTOMATION_PRIORITY_CLASS}, 'spec': {
+                'failurePolicy': 'Fail', 'matchConstraints': {'resourceRules': [{
+                    'apiGroups': ['scheduling.k8s.io'], 'apiVersions': ['v1'],
+                    'operations': ['CREATE', 'UPDATE'], 'resources': ['priorityclasses']}]},
+                'matchConditions': [{'name': 'exact-automation-priority-class',
+                    'expression': 'object.metadata.name == ' + json.dumps(AUTOMATION_PRIORITY_CLASS)
+                    + ' || (oldObject != null && oldObject.metadata.name == ' + json.dumps(AUTOMATION_PRIORITY_CLASS) + ')'}],
+                'validations': [{'expression': 'object.metadata.name == ' + json.dumps(AUTOMATION_PRIORITY_CLASS)
+                    + ' && object.value == ' + str(AUTOMATION_PRIORITY_VALUE)
+                    + ' && (!has(object.globalDefault) || !object.globalDefault)'
+                    + ' && has(object.preemptionPolicy) && object.preemptionPolicy == "Never"',
+                    'message': 'Automation preference has an exact bounded value, never preempts and is not global default'}]}}
+        items += [automation_priority_class(), priority_guard, {
+            'apiVersion': 'admissionregistration.k8s.io/v1', 'kind': 'ValidatingAdmissionPolicyBinding',
+            'metadata': {'name': AUTOMATION_PRIORITY_CLASS}, 'spec': {
+                'policyName': AUTOMATION_PRIORITY_CLASS, 'validationActions': ['Deny']}}]
+
+
+
+def automation_priority_class():
+    """Opt-in scheduling preference; Never does not change kubelet eviction ordering."""
+    return {'apiVersion': 'scheduling.k8s.io/v1', 'kind': 'PriorityClass',
+            'metadata': {'name': AUTOMATION_PRIORITY_CLASS}, 'value': AUTOMATION_PRIORITY_VALUE,
+            'globalDefault': False, 'preemptionPolicy': 'Never',
+            'description': 'Explicit automation scheduling preference, without scheduler preemption; not fair queueing.'}
 
 
 def qualification_priority_class():

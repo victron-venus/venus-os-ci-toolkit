@@ -27,15 +27,23 @@
     "scripts/version_receipt.py": {
       "hunks": [
         {
-          "before": "    return results\n\n\ndef validate_input_fields(\n    files: list[dict[str, object]], policy: dict[str, object], plan: dict[str, object]\n) -> None:\n",
-          "after": "    return results\n\n\ndef verify_required_build_receipts(\n    receipts: list[dict[str, object]], policy: dict[str, object],\n) -> None:\n    \"\"\"Require the source-declared package/signature set after RC evidence is split.\"\"\"\n    required = version_plan.required_build_receipts(cast(dict[str, object], policy[\"versioning\"]))\n    if required is None:\n        return\n    names = [cast(str, item[\"name\"]) for item in receipts]\n    if len(set(names)) != len(names):\n        raise ValueError(\"Duplicate authenticated build receipts\")\n    if set(names) != set(required):\n        raise ValueError(\n            \"Build receipt inventory differs from source policy: \"\n            f\"missing={sorted(set(required) - set(names))}, \"\n            f\"unexpected={sorted(set(names) - set(required))}\"\n        )\n\n\ndef validate_input_fields(\n    files: list[dict[str, object]], policy: dict[str, object], plan: dict[str, object]\n) -> None:\n"
+          "before": ") -> None:\n    \"\"\"Reject missing, malformed or mismatched package execution identity.\"\"\"\n    producer = receipt.get(\"producer\")\n",
+          "after": ") -> None:\n    \"\"\"Reject missing, malformed or mismatched package execution identity.\n\n    A failed-only rerun re-executes only the publisher, so a package keeps the\n    attempt that actually produced it. Any attempt of the same repository, run\n    and source is accepted; another run, source or a later attempt is not.\n    \"\"\"\n    producer = receipt.get(\"producer\")\n"
+        },
+        {
+          "before": "    )\n    if checked != expected:\n        raise ValueError(\"Receipt belongs to a different package producer attempt\")\n",
+          "after": "    )\n    same_run = (\n        checked[\"repository\"] == expected[\"repository\"]\n        and checked[\"run_id\"] == expected[\"run_id\"]\n        and checked[\"source_sha\"] == expected[\"source_sha\"]\n        and cast(int, checked[\"run_attempt\"]) <= cast(int, expected[\"run_attempt\"])\n    )\n    if not same_run:\n        raise ValueError(\"Receipt belongs to a different package producer attempt\")\n"
+        },
+        {
+          "before": "\ndef validate_input_fields(\n",
+          "after": "\ndef verify_required_build_receipts(\n    receipts: list[dict[str, object]], policy: dict[str, object],\n) -> None:\n    \"\"\"Require the source-declared package/signature set after RC evidence is split.\"\"\"\n    required = version_plan.required_build_receipts(cast(dict[str, object], policy[\"versioning\"]))\n    if required is None:\n        return\n    names = [cast(str, item[\"name\"]) for item in receipts]\n    if len(set(names)) != len(names):\n        raise ValueError(\"Duplicate authenticated build receipts\")\n    if set(names) != set(required):\n        raise ValueError(\n            \"Build receipt inventory differs from source policy: \"\n            f\"missing={sorted(set(required) - set(names))}, \"\n            f\"unexpected={sorted(set(names) - set(required))}\"\n        )\n\n\ndef validate_input_fields(\n"
         }
       ],
       "original_to_current": {
-        "4f273af2376ffe0de1ec1b064365badbbebf5b2718233817d12ead988d941e81": "72a3fcd5621024a0d7d0954cc9c2897f24277944a33fa69524bb23af020585c0"
+        "4f273af2376ffe0de1ec1b064365badbbebf5b2718233817d12ead988d941e81": "0e8659d77ac700d5e6dabc5a08b5a25b3db215ccbc191b41fc3558c7ec6abc48"
       },
       "current": [
-        "72a3fcd5621024a0d7d0954cc9c2897f24277944a33fa69524bb23af020585c0"
+        "0e8659d77ac700d5e6dabc5a08b5a25b3db215ccbc191b41fc3558c7ec6abc48"
       ]
     },
     "scripts/release_versioned.py": {
@@ -62,6 +70,138 @@
         "179a6fe589801c59bccfea0c9a0c2e1b5d0be1915e87e1b4ec9313f32380aa7a",
         "91ce53cb7a9db48e203a36350f8a5db1da18a9171e227d79b9eb0b3132826b91",
         "9427d169503d4f687742d601a28c180971aa5739555896c7d55f8b49a2c6f884"
+      ],
+      "successor_layers": [
+        {
+          "before_sha256": "c4f02e3089771b4d90e78c6b465deeec3cbf689d558f238d0caa95864c54ec9b",
+          "after_sha256": "26d7149a3a3966b4421da2fd3ce988e0f7ef87f0a14d1853fd50466a903e49b9",
+          "hunks": [
+            {
+              "before": "        def confirm_before_publish() -> None:\n            confirm_publisher_execution()\n",
+              "after": "        def confirm_before_publish() -> None:\n            # _publish_prepared calls this around its final tag readbacks; keep\n            # publisher and automatic-source checks in that shared boundary.\n            confirm_publisher_execution()\n"
+            }
+          ]
+        },
+        {
+          "before_sha256": "26d7149a3a3966b4421da2fd3ce988e0f7ef87f0a14d1853fd50466a903e49b9",
+          "after_sha256": "6bbc1b9be793a4f2d65d6819bb2fda78963faaa98ec7a26352908fdc413c7d43",
+          "hunks": [
+            {
+              "before": "            # _publish_prepared calls this around its final tag readbacks; keep\n            # publisher and automatic-source checks in that shared boundary.\n",
+              "after": "            # This full validation runs before _publish_prepared's final tag\n            # read; it may inspect publisher jobs and automatic source state.\n"
+            },
+            {
+              "before": "                confirm_automatic_source()\n\n",
+              "after": "                confirm_automatic_source()\n\n        def confirm_final_publisher_attempt() -> None:\n            # The final boundary shares a short deadline with the tag GET, so\n            # keep this to one exact attempt read without aggregate/jobs calls.\n            current = gh.api(\n                f\"actions/runs/{run['id']}/attempts/{run['run_attempt']}\"\n            )\n            rc.require_active_attempt(current, run)\n\n"
+            },
+            {
+              "before": "            confirm_publish=confirm_before_publish,\n        )\n",
+              "after": "            confirm_publish=confirm_before_publish,\n            confirm_final_publish=confirm_final_publisher_attempt,\n        )\n"
+            }
+          ]
+        },
+        {
+          "before_sha256": "6bbc1b9be793a4f2d65d6819bb2fda78963faaa98ec7a26352908fdc413c7d43",
+          "after_sha256": "9239726eeb16ff0d334b886b25e1de94f336b4fe56a87c291b18f67392b09c93",
+          "hunks": [
+            {
+              "before": "            payload = directory / (cast(str, item[\"name\"]) if retained else \"payload\")\n            identity = rc.download_asset(\n",
+              "after": "            payload = directory / (cast(str, item[\"name\"]) if retained else \"payload\")\n            # Keep candidate transfers on the shared bounded supervisor; it\n            # retains PID/PGID ownership through deadline cleanup before reaping.\n            identity = rc.download_asset(\n"
+            }
+          ]
+        },
+        {
+          "before_sha256": "9239726eeb16ff0d334b886b25e1de94f336b4fe56a87c291b18f67392b09c93",
+          "after_sha256": "a5559b466e5e85058ed8a193d46af472763b5b5dc01909de0eba30685de6b556",
+          "hunks": [
+            {
+              "before": "            # retains PID/PGID ownership through deadline cleanup before reaping.\n",
+              "after": "            # retains PID/PGID ownership through deadline cleanup before reaping.\n            # If group signaling is denied, its error still surfaces after reap.\n"
+            }
+          ]
+        },
+        {
+          "before_sha256": "a5559b466e5e85058ed8a193d46af472763b5b5dc01909de0eba30685de6b556",
+          "after_sha256": "c8d7f718e00a5043896311f60805c452172c49e9dd148c17b1e50a5f8b98e088",
+          "hunks": [
+            {
+              "before": "            # The final boundary shares a short deadline with the tag GET, so\n            # keep this to one exact attempt read without aggregate/jobs calls.\n",
+              "after": "            # The final boundary shares a short deadline with the tag GET, so\n            # keep this to one exact attempt read without aggregate/jobs calls.\n            # The release-control caller invokes it immediately after the last\n            # tag GET and before its protected public PATCH.\n"
+            }
+          ]
+        },
+        {
+          "before_sha256": "c8d7f718e00a5043896311f60805c452172c49e9dd148c17b1e50a5f8b98e088",
+          "after_sha256": "77b551f0de5ec378edcf5f0a25f731f77e65ee08986d1ba824ed078e83439d24",
+          "hunks": [
+            {
+              "before": "            # The release-control caller invokes it immediately after the last\n            # tag GET and before its protected public PATCH.\n",
+              "after": "            # The release-control caller invokes it immediately after the last\n            # tag GET and before its protected public PATCH.\n            # This callback is deliberately distinct from the full pre-tag\n            # publisher validation above; it closes only the last attempt race.\n"
+            }
+          ]
+        },
+        {
+          "before_sha256": "77b551f0de5ec378edcf5f0a25f731f77e65ee08986d1ba824ed078e83439d24",
+          "after_sha256": "7ce99af939a8c0f7c61ebf681295f780154976321284bb4df7a08aa7b69dbedd",
+          "hunks": [
+            {
+              "before": "            # This callback is deliberately distinct from the full pre-tag\n            # publisher validation above; it closes only the last attempt race.\n",
+              "after": "            # The shared confirm_publish contract separates this last-attempt\n            # recheck from the full pre-tag provenance callback above.\n"
+            }
+          ]
+        },
+        {
+          "before_sha256": "7ce99af939a8c0f7c61ebf681295f780154976321284bb4df7a08aa7b69dbedd",
+          "after_sha256": "bcd7ad592c9fdb5b668584d56b50fc7a13737853206f92acce2d37fcc1ece4f9",
+          "hunks": [
+            {
+              "before": "            # retains PID/PGID ownership through deadline cleanup before reaping.\n            # If group signaling is denied, its error still surfaces after reap.\n",
+              "after": "            # resolves gh and bounds post-status pipe cleanup before reaping.\n            # Signal failures still surface after bounded reap.\n"
+            }
+          ]
+        },
+        {
+          "before_sha256": "bcd7ad592c9fdb5b668584d56b50fc7a13737853206f92acce2d37fcc1ece4f9",
+          "after_sha256": "479ca7320f453dad0382c9f6b7292f41d9384e2c6db0f992f556ba858ae3d8c6",
+          "hunks": [
+            {
+              "before": "            # Keep candidate transfers on the shared bounded supervisor; it\n            # resolves gh and bounds post-status pipe cleanup before reaping.\n            # Signal failures still surface after bounded reap.\n",
+              "after": "            # The shared supervisor resolves gh and bounds post-status cleanup.\n            # Its ProcessCleanupError stays fatal; retrying could mask live work.\n"
+            }
+          ]
+        },
+        {
+          "before_sha256": "479ca7320f453dad0382c9f6b7292f41d9384e2c6db0f992f556ba858ae3d8c6",
+          "after_sha256": "9347ff07d4cd866529571166d3c16b6a413211e26c9b0d1aa3f2d905db754395",
+          "hunks": [
+            {
+              "before": "    return raw, manifest_asset_id, manifest_size\n\n\n# Keep all evidence comparisons together at this read-only reuse boundary.\n# pylint: disable-next=too-many-locals,too-many-arguments,too-many-positional-arguments\ndef verify_scheduled_reuse(\n",
+              "after": "    return raw, manifest_asset_id, manifest_size\n\n\ndef _validate_scheduled_reuse_run(\n    gh: rc.GitHub,\n    info: dict[str, object],\n    snapshot: dict[str, object],\n    plan: dict[str, object],\n    source_run_id: int,\n    attempt: int,\n) -> None:\n    \"\"\"Bind retained bytes to the exact completed source run and successful gates.\"\"\"\n    source_run = cast(dict[str, object], gh.api(f\"actions/runs/{source_run_id}\"))\n    rc.validate_validation_run(\n        gh, source_run, cast(dict[str, object], snapshot[\"data\"]), cast(str, plan[\"channel\"])\n    )\n    rc.require(source_run.get(\"id\") == source_run_id, \"Qualified run ID mismatch\")\n    rc.validate_run(\n        gh, source_run, info, cast(str, plan[\"source_sha\"]), attempt,\n        completed=True, gate=False,\n    )\n    jobs = gh.pages(f\"actions/runs/{source_run_id}/attempts/{attempt}/jobs\", \"jobs\")\n    for names in ((\"Release gate\",), (\"CI gate\", \"checks / CI gate\")):\n        gates = [job for job in jobs if job.get(\"name\") in names]\n        rc.require(\n            len(gates) == 1\n            and gates[0].get(\"status\") == \"completed\"\n            and gates[0].get(\"conclusion\") == \"success\"\n            and gates[0].get(\"head_sha\") == cast(str, plan[\"source_sha\"]),\n            \"Qualified run has no successful CI and Release gates\",\n        )\n\n\n# Keep all evidence comparisons together at this read-only reuse boundary.\n# pylint: disable-next=too-many-locals,too-many-arguments,too-many-positional-arguments\ndef verify_scheduled_reuse(\n"
+            },
+            {
+              "before": "        rc.require(candidate[\"version_plan\"] == plan and candidate[\"source_policy\"] == snapshot\n                   and candidate[\"run_id\"] == source_run_id,\n                   \"Compact stable differs from its qualified RC plan\")\n        return\n    rc.require(\n        isinstance(manifest, dict)\n",
+              "after": "        rc.require(candidate[\"version_plan\"] == plan and candidate[\"source_policy\"] == snapshot\n                   and candidate[\"run_id\"] == source_run_id,\n                   \"Compact stable differs from its qualified RC plan\")\n        _validate_scheduled_reuse_run(\n            gh, info, snapshot, plan, source_run_id,\n            rc.positive(candidate.get(\"run_attempt\"), \"qualified run attempt\"),\n        )\n        return\n    rc.require(\n        isinstance(manifest, dict)\n"
+            },
+            {
+              "before": "        ),\n        \"Qualified asset metadata mismatch\",\n    )\n    source_run = cast(dict[str, object], gh.api(f\"actions/runs/{source_run_id}\"))\n    rc.validate_validation_run(gh, source_run, cast(dict[str, object], snapshot[\"data\"]), cast(str, plan[\"channel\"]))\n    rc.require(source_run.get(\"id\") == source_run_id, \"Qualified run ID mismatch\")\n    attempt = rc.positive(manifest.get(\"run_attempt\"), \"qualified run attempt\")\n    rc.validate_run(\n        gh,\n        source_run,\n        info,\n        cast(str, plan[\"source_sha\"]),\n        attempt,\n        completed=True,\n        gate=False,\n    )\n    jobs = gh.pages(f\"actions/runs/{source_run_id}/attempts/{attempt}/jobs\", \"jobs\")\n    for names in ((\"Release gate\",), (\"CI gate\", \"checks / CI gate\")):\n        gates = [job for job in jobs if job.get(\"name\") in names]\n        rc.require(\n            len(gates) == 1\n            and gates[0].get(\"status\") == \"completed\"\n            and gates[0].get(\"conclusion\") == \"success\"\n            and gates[0].get(\"head_sha\") == cast(str, plan[\"source_sha\"]),\n            \"Qualified run has no successful CI and Release gates\",\n        )\n    rc.verify_evidence(gh, manifest, raw)\n    undigested_payloads = [\n        (name, entry) for name, entry in declarations.items()\n",
+              "after": "        ),\n        \"Qualified asset metadata mismatch\",\n    )\n    attempt = rc.positive(manifest.get(\"run_attempt\"), \"qualified run attempt\")\n    _validate_scheduled_reuse_run(gh, info, snapshot, plan, source_run_id, attempt)\n    rc.verify_evidence(gh, manifest, raw)\n    undigested_payloads = [\n        (name, entry) for name, entry in declarations.items()\n"
+            },
+            {
+              "before": "                )\n                rc.require(downloaded_identity == {key: entry[key] for key in (\"size\", \"sha256\")},\n                           \"Undigested qualified payload differs from its manifest\")\n    current = published_plan_snapshot(\n        gh, tag, cast(str, plan[\"source_sha\"]), tag != f\"v{plan['base_version']}\"\n    )\n",
+              "after": "                )\n                rc.require(downloaded_identity == {key: entry[key] for key in (\"size\", \"sha256\")},\n                           \"Undigested qualified payload differs from its manifest\")\n    # Evidence and payload reads can take long enough for a new workflow attempt\n    # to start. Recheck regardless of asset digest metadata before accepting reuse.\n    _validate_scheduled_reuse_run(gh, info, snapshot, plan, source_run_id, attempt)\n    current = published_plan_snapshot(\n        gh, tag, cast(str, plan[\"source_sha\"]), tag != f\"v{plan['base_version']}\"\n    )\n"
+            }
+          ]
+        },
+        {
+          "before_sha256": "9347ff07d4cd866529571166d3c16b6a413211e26c9b0d1aa3f2d905db754395",
+          "after_sha256": "b59bc005a75bf9fcfde9f334d914864b6391cb1d6ffe3993796c9acf8b20882e",
+          "hunks": [
+            {
+              "before": "\n        def confirm_final_publisher_attempt() -> None:\n            # The final boundary shares a short deadline with the tag GET, so\n            # keep this to one exact attempt read without aggregate/jobs calls.\n            # The release-control caller invokes it immediately after the last\n            # tag GET and before its protected public PATCH.\n            # The shared confirm_publish contract separates this last-attempt\n            # recheck from the full pre-tag provenance callback above.\n            current = gh.api(\n                f\"actions/runs/{run['id']}/attempts/{run['run_attempt']}\"\n            )\n            rc.require_active_attempt(current, run)\n\n        # Execution admission may be minutes old after downloads and signatures.\n",
+              "after": "\n        def confirm_final_publisher_attempt() -> None:\n            # The final boundary shares a short deadline with the tag GET.\n            # Recheck the exact attempt, default branch identity and captured\n            # source ref after the final tag read and before public PATCH. Do\n            # not add aggregate/jobs reads at this boundary.\n            current = gh.api(\n                f\"actions/runs/{run['id']}/attempts/{run['run_attempt']}\"\n            )\n            rc.require_active_attempt(current, run)\n            if automatic:\n                rc.require(\n                    rc.repository_info(gh)[\"default_branch\"] == info[\"default_branch\"],\n                    \"Automatic publication default branch changed; draft left unpublished\",\n                )\n                rc.require(\n                    gh.api(source_path) == source_ref[1],\n                    \"Automatic publication default source changed; draft left unpublished\",\n                )\n\n        # Execution admission may be minutes old after downloads and signatures.\n"
+            }
+          ]
+        }
       ]
     }
   }

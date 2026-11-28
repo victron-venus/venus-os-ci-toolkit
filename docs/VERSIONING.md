@@ -196,6 +196,15 @@ already contain the final base for RC. The embedded RC origin cannot change
 offline; external stable assignment and build origin are distinct. Full beta
 versions may be embedded because beta is not directly promoted.
 
+The current driver can separately opt into compact stable metadata with the
+top-level `stable_distribution: "rc-payloads-v1"` policy field. Its schema-2 stable
+manifest links the authenticated full RC proof and lists unchanged shipped
+payloads; declared receipts and the exact declared fuzz report remain at the RC.
+Absent means legacy full-manifest copying. This does not alter the RC's frozen
+plan, source or build number, and older schema-1 stable manifests remain readable.
+See [compact stable distribution](release-distribution.md) for validation,
+retention and the targeted migration that preserves existing workflows.
+
 `final-build` builds final-version packages from the accepted RC's exact source
 commit, including the dependency locks and recipe. The RC must match the current
 default-branch HEAD; create a new RC after code, policy or workflow changes.
@@ -243,7 +252,9 @@ publication API call, including promotion of an older RC.
 Each Actions package receipt records its producer repository, workflow run ID,
 run attempt and exact source SHA. The live publisher compares these fields with
 its independently verified GitHub run before it signs or publishes packages.
-Missing identity and earlier-attempt packages fail closed even when their version
+A receipt from any attempt at or before the current one of that same run is
+accepted, because a failed-only rerun re-executes only the failed jobs. Missing
+identity, another run and a later attempt fail closed even when their version
 plan and payload hashes match. Offline local packaging remains available, but an
 offline receipt cannot qualify a live Actions publication.
 
@@ -259,10 +270,15 @@ attempt, source and payload digest against the expected execution. A nonempty
 artifact ID alone is not proof. Name-based downloads must use one explicit
 selector; unknown run or repository overrides require the verified ID path.
 
+The publisher collects each downloaded artifact from its newest attempt of the
+same run, so a failed-only retry completes the current attempt with earlier
+uploads and recorded successful jobs instead of failing on their absence. The
+run ID, source SHA, version plan and successful job records are still verified;
+a later attempt of the same run never supplies bytes to an earlier one.
+
 Before publication starts, use **Re-run all jobs** only if the allocator and
-release policy permit reuse of that run's reservation. Recreate every required
-input in the same attempt; failed-only or individual retries can leave inputs
-missing, and older artifacts must not fill those gaps.
+release policy permit reuse of that run's reservation and every input must be
+rebuilt. A missing or expired upload needs the full rerun or a new run.
 
 For a fresh candidate or final build, once publication has started
 (`begin_publication`), or its external publication result is partial or uncertain,

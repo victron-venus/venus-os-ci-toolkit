@@ -375,7 +375,10 @@ class FuzzContracts(unittest.TestCase):
             path = root / fuzz.REPORT
             path.write_text(json.dumps(report))
             fuzz.verify_report(root, root, "owner/repo", "a" * 40, 42, 2)
-            for key, value in (("source_sha", "b" * 40), ("run_attempt", 1), ("targets", []), ("targets", [{"name": "parse", "seconds": 60, "exit_code": False}]), ("status", "failed"), ("private", 0)):
+            # A failed-only rerun keeps the campaign its earlier attempt recorded.
+            path.write_text(json.dumps({**report, "run_attempt": 1}))
+            fuzz.verify_report(root, root, "owner/repo", "a" * 40, 42, 2)
+            for key, value in (("source_sha", "b" * 40), ("run_attempt", 3), ("run_attempt", 0), ("run_attempt", True), ("targets", []), ("targets", [{"name": "parse", "seconds": 60, "exit_code": False}]), ("status", "failed"), ("private", 0)):
                 path.write_text(json.dumps({**report, key: value}))
                 with self.subTest(key=key), self.assertRaises(ValueError):
                     fuzz.verify_report(root, root, "owner/repo", "a" * 40, 42, 2)

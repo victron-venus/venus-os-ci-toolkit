@@ -10,6 +10,7 @@ import version_plan
 PLAN = "scripts/version_plan.py"
 FILES = (PLAN, receipts.RECEIPT, receipts.PUBLISHER)
 DELTA = Path(__file__).with_name("release_inventory_delta.json")
+SHEBANG = "#!/usr/bin/env python3\n"
 
 # Keep the accepted inventory-v1 delta and reversal oracle immutable.
 CASEFOLD = {
@@ -49,6 +50,39 @@ NAME_LIMIT = {
 }
 
 
+# Preserve the exact pre-digestless release verifier source for older renderers.
+DIGESTLESS_METADATA = {
+    "hunks": [
+        {
+            "before": "    rc.require(set(inventory) == set(declarations), \"Compact stable asset inventory mismatch\")\n    rc.require(all(asset.get(\"size\") == declarations[name][\"size\"]\n                   and asset.get(\"digest\") == \"sha256:\" + declarations[name][\"sha256\"]\n                   for name, asset in inventory.items()), \"Compact stable asset metadata mismatch\")\n    if stage is not None:\n",
+            "after": "    rc.require(set(inventory) == set(declarations), \"Compact stable asset inventory mismatch\")\n    rc.require(all(asset.get(\"size\") == declarations[name][\"size\"]\n                   and _asset_digest_metadata_matches(asset, declarations[name][\"sha256\"])\n                   for name, asset in inventory.items()), \"Compact stable asset metadata mismatch\")\n    if stage is not None:\n"
+        },
+        {
+            "before": "\n\ndef published_plan_snapshot(\n    gh: rc.GitHub, tag: str, source: str, prerelease: bool\n",
+            "after": "\n\ndef _asset_digest_metadata_matches(asset: dict[str, object], expected: str) -> bool:\n    \"\"\"Accept omitted API digests only when the caller verifies downloaded bytes.\"\"\"\n    actual = asset.get(\"digest\")\n    return actual is None or actual == \"sha256:\" + expected\n\n\ndef published_plan_snapshot(\n    gh: rc.GitHub, tag: str, source: str, prerelease: bool\n"
+        },
+        {
+            "before": "        gh, tag, cast(str, plan[\"source_sha\"]), tag != f\"v{plan['base_version']}\"\n    )\n    identity = rc.snapshot_identity(initial)\n    inventory = {asset[\"name\"]: asset for asset in initial[2]}\n    asset = inventory[rc.MANIFEST]\n",
+            "after": "        gh, tag, cast(str, plan[\"source_sha\"]), tag != f\"v{plan['base_version']}\"\n    )\n    snapshot_identity = rc.snapshot_identity(initial)\n    inventory = {asset[\"name\"]: asset for asset in initial[2]}\n    asset = inventory[rc.MANIFEST]\n"
+        },
+        {
+            "before": "        all(\n            inventory[name].get(\"size\") == entry[\"size\"]\n            and inventory[name].get(\"digest\") == \"sha256:\" + cast(str, entry[\"sha256\"])\n            for name, entry in declarations.items()\n        ),\n",
+            "after": "        all(\n            inventory[name].get(\"size\") == entry[\"size\"]\n            and _asset_digest_metadata_matches(inventory[name], cast(str, entry[\"sha256\"]))\n            for name, entry in declarations.items()\n        ),\n"
+        },
+        {
+            "before": "        )\n    rc.verify_evidence(gh, manifest, raw)\n    current = published_plan_snapshot(\n        gh, tag, cast(str, plan[\"source_sha\"]), tag != f\"v{plan['base_version']}\"\n    )\n    rc.require(\n        rc.snapshot_identity(current) == identity,\n        \"Qualified release changed during verification\",\n    )\n",
+            "after": "        )\n    rc.verify_evidence(gh, manifest, raw)\n    undigested_payloads = [\n        (name, entry) for name, entry in declarations.items()\n        if name != rc.MANIFEST and inventory[name].get(\"digest\") is None\n    ]\n    if undigested_payloads:\n        with tempfile.TemporaryDirectory(prefix=\"scheduled-release-verify-\") as temporary:\n            directory = Path(temporary)\n            budget = rc.DownloadBudget(sum(cast(int, entry[\"size\"]) for _, entry in undigested_payloads))\n            for name, entry in undigested_payloads:\n                downloaded_identity = rc.download_asset(\n                    gh, inventory[name][\"id\"], directory / name,\n                    expected=cast(rc.AssetIdentity, {key: entry[key] for key in (\"size\", \"sha256\")}),\n                    budget=budget,\n                )\n                rc.require(downloaded_identity == {key: entry[key] for key in (\"size\", \"sha256\")},\n                           \"Undigested qualified payload differs from its manifest\")\n    current = published_plan_snapshot(\n        gh, tag, cast(str, plan[\"source_sha\"]), tag != f\"v{plan['base_version']}\"\n    )\n    rc.require(\n        rc.snapshot_identity(current) == snapshot_identity,\n        \"Qualified release changed during verification\",\n    )\n"
+        }
+    ],
+    "original_to_current": {
+        "9d8957d25de18740c016da30774a47b7e2dc934a4d2d7bde96c4cdf8017908d8": "855728a86446b1062417a9b3ba75f0e3ad2329ecef9df6586dba547f4662f223"
+    },
+    "current": [
+        "855728a86446b1062417a9b3ba75f0e3ad2329ecef9df6586dba547f4662f223"
+    ]
+}
+
+
 # Recognize the independently reviewed notes fix without changing inventory-only scope.
 NOTES_PROVENANCE = {
     "hunks": [
@@ -76,6 +110,139 @@ NOTES_PROVENANCE = {
         "579c4409b768f90311a58eb6e9afef2eb423fa4ccdd75f9056e31d0e3497ee99"
     ]
 }
+
+
+# Keep publisher-job proof fresh through the last pre-publication boundary.
+PUBLISHER_EXECUTION_BOUNDARY = {
+    "hunks": [
+        {
+            "before": "        if current.get(\"status\") != \"in_progress\":\n            rc.require(type(execution_proof) is rc.ExecutionJobProof,\n                       \"Create readback lacks a local executing-job proof\")\n",
+            "after": "        if type(execution_proof) is rc.ExecutionJobProof:\n",
+        },
+        {
+            "before": "            rc.require(observed == proof, \"Create readback executing-job identity changed\")\n        info = readback.json(\"\")\n",
+            "after": "            rc.require(observed == proof, \"Create readback executing-job identity changed\")\n        else:\n            rc.require(current.get(\"status\") == \"in_progress\",\n                       \"Create readback lacks a local executing-job proof\")\n        info = readback.json(\"\")\n",
+        },
+        {
+            "before": "            rc.require(gh.api(source_path) == source_ref[1],\n                       \"Automatic publication default source changed; draft left unpublished\")\n\n        consumed = begin_publication(gh, plan, cast(int, run[\"id\"]), parent)\n",
+            "after": "            rc.require(gh.api(source_path) == source_ref[1],\n                       \"Automatic publication default source changed; draft left unpublished\")\n\n        def confirm_publisher_execution() -> None:\n            # Preserve the original local proof; never trust a proof inferred\n            # from a newer or different publisher job.\n            current = gh.api(f\"actions/runs/{run['id']}/attempts/{run['run_attempt']}\")\n            current_run = rc.require_active_attempt(current, run)\n            if not execution_proof:\n                rc.require(current_run.get(\"status\") == \"in_progress\",\n                           \"Publisher run has not reached in_progress\")\n            rc.require(rc.release_gate_ready(\n                gh, cast(int, run[\"id\"]), cast(str, run[\"head_sha\"]),\n                cast(int, run[\"run_attempt\"]),\n                publisher_proof=execution_proof[0] if execution_proof else None,\n                publisher_run=current_run,\n            ), \"Release gate is no longer ready before publication\")\n\n        def confirm_before_publish() -> None:\n            confirm_publisher_execution()\n            if automatic:\n                confirm_automatic_source()\n\n        # Execution admission may be minutes old after downloads and signatures.\n        # Recheck immediately before the first persistent ledger mutation.\n        confirm_publisher_execution()\n        consumed = begin_publication(gh, plan, cast(int, run[\"id\"]), parent)\n",
+        },
+        {
+            "before": "            confirm_publish=confirm_automatic_source if automatic else None,\n",
+            "after": "            confirm_publish=confirm_before_publish,\n",
+        },
+    ],
+    "original_to_current": {
+        "855728a86446b1062417a9b3ba75f0e3ad2329ecef9df6586dba547f4662f223": "f202a8706ed481f71076c4dc66c68c145a1f993e33589ed341bdcb5a9dc8dc1c"
+    },
+    "current": [
+        "f202a8706ed481f71076c4dc66c68c145a1f993e33589ed341bdcb5a9dc8dc1c"
+    ],
+}
+
+
+# Preserve the compact stable reader's exact manifest bytes across inventory-only
+# installs. This layer is newer than the publisher execution-boundary layer.
+COMPACT_MANIFEST_RECHECK = {
+    "hunks": [
+        {
+            "before": "        budget = rc.DownloadBudget(sum(item[\"size\"] for item in expected.values()))\n        for name, item in expected.items():\n",
+            "after": "        budget = rc.DownloadBudget(\n            sum(item[\"size\"] for item in expected.values()) + len(raw)\n        )\n        manifest_identity = {\"size\": len(raw), \"sha256\": rc.digest(raw)}\n        with tempfile.TemporaryDirectory(prefix=\"verified-distribution-manifest-\") as manifest_temp:\n            manifest_path = Path(manifest_temp) / rc.MANIFEST\n            observed_manifest = rc.download_asset(\n                gh, inventory[rc.MANIFEST][\"id\"], manifest_path,\n                expected=cast(rc.AssetIdentity, manifest_identity), budget=budget,\n            )\n            rc.require(observed_manifest == manifest_identity\n                       and manifest_path.read_bytes() == raw,\n                       \"Compact stable manifest changed from its caller-supplied bytes\")\n        for name, item in expected.items():\n",
+        }
+    ],
+    "original_to_current": {
+        "f202a8706ed481f71076c4dc66c68c145a1f993e33589ed341bdcb5a9dc8dc1c":
+        "c5f203a3bc5fb4adb8ed9cb6c7de4dba66488c648f729f8f50f7b25e596c9c94"
+    },
+    "current": [
+        "c5f203a3bc5fb4adb8ed9cb6c7de4dba66488c648f729f8f50f7b25e596c9c94"
+    ],
+}
+
+
+# Preserve the scheduled-reuse manifest identity readback as a separate exact
+# layer above the compact reader's manifest-byte verification.
+SCHEDULED_REUSE_READBACK = {
+    "hunks": [
+        {
+            "before": "    \"\"\"Require retained immutable evidence and matching published asset metadata.\"\"\"\n    initial = published_plan_snapshot(\n        gh, tag, cast(str, plan[\"source_sha\"]), tag != f\"v{plan['base_version']}\"\n    )\n",
+            "after": "    \"\"\"Require retained immutable evidence and matching published asset metadata.\"\"\"\n    # A digestless manifest has to be read on both sides of the checked asset\n    # inventory. Discover its immutable asset ID first, then capture the\n    # authoritative tag/source/asset snapshot after the first body read.\n    release_before = cast(dict[str, object], gh.api(f\"releases/tags/{tag}\"))\n    release_id_before = rc.positive(release_before.get(\"id\"), \"release ID\")\n    assets_before = gh.pages(f\"releases/{release_id_before}/assets\")\n    manifests_before = [asset for asset in assets_before if asset.get(\"name\") == rc.MANIFEST]\n    rc.require(\n        len(manifests_before) == 1\n        and manifests_before[0].get(\"state\") == \"uploaded\"\n        and type(manifests_before[0].get(\"size\")) is int\n        and 0 < cast(int, manifests_before[0][\"size\"]) <= 2_000_000,\n        \"Qualified manifest inventory is invalid\",\n    )\n    manifest_asset_id = rc.positive(manifests_before[0].get(\"id\"), \"manifest ID\")\n    manifest_size = cast(int, manifests_before[0][\"size\"])\n    raw = gh.binary(f\"releases/assets/{manifest_asset_id}\")\n    rc.require(len(raw) == manifest_size, \"Qualified manifest size changed during read\")\n\n    initial = published_plan_snapshot(\n        gh, tag, cast(str, plan[\"source_sha\"]), tag != f\"v{plan['base_version']}\"\n    )\n"
+        },
+        {
+            "before": "    rc.require(cast(int, asset[\"size\"]) <= 2_000_000, \"Qualified manifest is too large\")\n    raw = gh.binary(f\"releases/assets/{rc.positive(asset['id'], 'manifest ID')}\")\n    manifest = rc.parse_json(raw, \"qualified manifest\")\n",
+            "after": "    rc.require(cast(int, asset[\"size\"]) <= 2_000_000, \"Qualified manifest is too large\")\n    rc.require(\n        rc.positive(asset[\"id\"], \"manifest ID\") == manifest_asset_id\n        and asset[\"size\"] == manifest_size,\n        \"Qualified manifest asset changed during inventory read\",\n    )\n    manifest_identity: rc.AssetIdentity = {\"size\": len(raw), \"sha256\": rc.digest(raw)}\n    with tempfile.TemporaryDirectory(prefix=\"scheduled-manifest-readback-\") as temporary:\n        manifest_path = Path(temporary) / rc.MANIFEST\n        observed_manifest = rc.download_asset(\n            gh, manifest_asset_id, manifest_path,\n            expected=manifest_identity,\n            budget=rc.DownloadBudget(manifest_identity[\"size\"]),\n        )\n        rc.require(\n            observed_manifest == manifest_identity and manifest_path.read_bytes() == raw,\n            \"Qualified manifest changed from its pre-snapshot bytes\",\n        )\n    manifest = rc.parse_json(raw, \"qualified manifest\")\n"
+        }
+    ],
+    "original_to_current": {
+        "c5f203a3bc5fb4adb8ed9cb6c7de4dba66488c648f729f8f50f7b25e596c9c94":
+        "8596c2464781f9cedabc8cf797e2c7584aa9af60f00069d5b9f4fa04df6bd722"
+    },
+    "current": [
+        "8596c2464781f9cedabc8cf797e2c7584aa9af60f00069d5b9f4fa04df6bd722"
+    ],
+}
+
+
+# Preserve the extracted scheduled-manifest readback as a reversible layer above
+# the accepted inline readback postimage.
+SCHEDULED_REUSE_READBACK_HELPER = {'hunks': [{'before': '\n'
+                      '\n'
+                      '# Keep all evidence comparisons together at this read-only reuse boundary.\n'
+                      '# pylint: '
+                      'disable-next=too-many-locals,too-many-arguments,too-many-positional-arguments\n'
+                      'def verify_scheduled_reuse(\n'
+                      '    gh: rc.GitHub,\n'
+                      '    info: dict[str, object],\n'
+                      '    snapshot: dict[str, object],\n'
+                      '    plan: dict[str, object],\n'
+                      '    source_run_id: int,\n'
+                      '    tag: str,\n'
+                      ') -> None:\n'
+                      '    """Require retained immutable evidence and matching published asset '
+                      'metadata."""\n'
+                      '    # A digestless manifest has to be read on both sides of the checked '
+                      'asset\n'
+                      '    # inventory. Discover its immutable asset ID first, then capture the\n',
+            'after': '\n'
+                     '\n'
+                     'def _read_scheduled_manifest_before_snapshot(\n'
+                     '    gh: rc.GitHub, tag: str,\n'
+                     ') -> tuple[bytes, int, int]:\n'
+                     '    """Read the digestless manifest by its inventoried immutable asset '
+                     'ID."""\n'
+                     '    # A digestless manifest has to be read on both sides of the checked '
+                     'asset\n'
+                     '    # inventory. Discover its immutable asset ID first, then capture the\n'},
+           {'before': '    raw = gh.binary(f"releases/assets/{manifest_asset_id}")\n'
+                      '    rc.require(len(raw) == manifest_size, "Qualified manifest size changed '
+                      'during read")\n'
+                      '\n'
+                      '    initial = published_plan_snapshot(\n',
+            'after': '    raw = gh.binary(f"releases/assets/{manifest_asset_id}")\n'
+                     '    rc.require(len(raw) == manifest_size, "Qualified manifest size changed '
+                     'during read")\n'
+                     '    return raw, manifest_asset_id, manifest_size\n'
+                     '\n'
+                     '\n'
+                     '# Keep all evidence comparisons together at this read-only reuse boundary.\n'
+                     '# pylint: '
+                     'disable-next=too-many-locals,too-many-arguments,too-many-positional-arguments\n'
+                     'def verify_scheduled_reuse(\n'
+                     '    gh: rc.GitHub,\n'
+                     '    info: dict[str, object],\n'
+                     '    snapshot: dict[str, object],\n'
+                     '    plan: dict[str, object],\n'
+                     '    source_run_id: int,\n'
+                     '    tag: str,\n'
+                     ') -> None:\n'
+                     '    """Require retained immutable evidence and matching published asset '
+                     'metadata."""\n'
+                     '    raw, manifest_asset_id, manifest_size = '
+                     '_read_scheduled_manifest_before_snapshot(gh, tag)\n'
+                     '\n'
+                     '    initial = published_plan_snapshot(\n'}],
+ 'original_to_current': {'8596c2464781f9cedabc8cf797e2c7584aa9af60f00069d5b9f4fa04df6bd722': 'c4f02e3089771b4d90e78c6b465deeec3cbf689d558f238d0caa95864c54ec9b'},
+ 'current': ['c4f02e3089771b4d90e78c6b465deeec3cbf689d558f238d0caa95864c54ec9b']}
 
 
 # Recognize response reconciliation without adding it through inventory-only updates.
@@ -148,9 +315,125 @@ AUTOMATIC_SOURCE = {
 }
 
 
+# Preserve live execution proof only when the exact later layer is already present.
+EXECUTION_JOB = {
+    "hunks": [
+        {
+            "before": "\n\ndef context(\n    gh: rc.GitHub, channel: str, gate: bool = False\n) -> tuple[dict[str, object], dict[str, object], dict[str, object]]:\n    \"\"\"Reuse the original publisher's execution and source-policy checks.\"\"\"\n    run_id = rc.positive(os.environ.get(\"GITHUB_RUN_ID\"), \"run ID\")\n    attempt = rc.positive(os.environ.get(\"GITHUB_RUN_ATTEMPT\"), \"run attempt\")\n    info = rc.repository_info(gh)\n    run = rc.wait_for_executing_run(\n        gh, run_id, channel, info, rc.checked_out_sha(), attempt, gate=gate\n    )\n    snapshot = rc.source_policy_snapshot(gh, cast(str, run[\"head_sha\"]))\n    rc.require_release_policy(\n",
+            "after": "\n\ndef context(\n    gh: rc.GitHub, channel: str, gate: bool = False,\n    execution_proof: list[rc.ExecutionJobProof] | None = None,\n) -> tuple[dict[str, object], dict[str, object], dict[str, object]]:\n    \"\"\"Reuse the original publisher's execution and source-policy checks.\"\"\"\n    run_id = rc.positive(os.environ.get(\"GITHUB_RUN_ID\"), \"run ID\")\n    attempt = rc.positive(os.environ.get(\"GITHUB_RUN_ATTEMPT\"), \"run attempt\")\n    info = rc.repository_info(gh)\n    run = rc.wait_for_executing_run(\n        gh, run_id, channel, info, rc.checked_out_sha(), attempt, gate=gate,\n        execution_proof=execution_proof,\n    )\n    snapshot = rc.source_policy_snapshot(gh, cast(str, run[\"head_sha\"]))\n    rc.require_release_policy(\n"
+        },
+        {
+            "before": "\ndef create_confirmation(\n    run: dict[str, object], source_ref: tuple[str, object], consumed: bytes,\n) -> Callable[[rc.CreateReadback], None]:\n    \"\"\"Bind one release-create call, without adding any cross-run recovery state.\"\"\"\n\n    def confirm(readback: rc.CreateReadback) -> None:\n        current = readback.json(f\"actions/runs/{run['id']}/attempts/{run['run_attempt']}\")\n        rc.require(isinstance(current, dict) and current.get(\"status\") == \"in_progress\"\n                   and current.get(\"conclusion\") is None\n                   and all(type(current.get(key)) is type(run[key]) and current[key] == run[key] for key in\n                           (\"id\", \"run_attempt\", \"head_sha\", \"path\", \"event\")),\n                   \"Create readback run identity changed\")\n        info = readback.json(\"\")\n        rc.require(isinstance(info, dict) and isinstance(info.get(\"default_branch\"), str)\n                   and f\"git/ref/heads/{quote(info['default_branch'], safe='')}\" == source_ref[0],\n",
+            "after": "\ndef create_confirmation(\n    run: dict[str, object], source_ref: tuple[str, object], consumed: bytes,\n    execution_proof: rc.ExecutionJobProof | None = None,\n) -> Callable[[rc.CreateReadback], None]:\n    \"\"\"Bind one release-create call, without adding any cross-run recovery state.\"\"\"\n\n    def confirm(readback: rc.CreateReadback) -> None:\n        current = readback.json(f\"actions/runs/{run['id']}/attempts/{run['run_attempt']}\")\n        rc.require(isinstance(current, dict)\n                   and current.get(\"conclusion\") is None\n                   and all(type(current.get(key)) is type(run[key]) and current[key] == run[key] for key in\n                           (\"id\", \"run_attempt\", \"head_sha\", \"path\", \"event\")),\n                   \"Create readback run identity changed\")\n        current = rc.require_active_attempt(current, run)\n        if current.get(\"status\") != \"in_progress\":\n            rc.require(type(execution_proof) is rc.ExecutionJobProof,\n                       \"Create readback lacks a local executing-job proof\")\n            proof = cast(rc.ExecutionJobProof, execution_proof)\n            rc.require(type(proof.job_id) is int and proof.job_id > 0\n                       and type(proof.check_run_id) is int and proof.check_run_id > 0,\n                       \"Invalid local executing-job proof\")\n            rc.validate_run_provenance(\n                readback, current, {\"default_branch\": run[\"head_branch\"]},\n                cast(str, run[\"head_sha\"]), cast(int, run[\"run_attempt\"]),\n            )\n            rc.require(current.get(\"run_started_at\") == run.get(\"run_started_at\"),\n                       \"Create readback attempt start changed\")\n            job = readback.json(f\"actions/jobs/{proof.job_id}\")\n            observed = rc.require_executing_job(job, current, readback.repo, proof.check_run_id)\n            rc.require(observed == proof, \"Create readback executing-job identity changed\")\n        info = readback.json(\"\")\n        rc.require(isinstance(info, dict) and isinstance(info.get(\"default_branch\"), str)\n                   and f\"git/ref/heads/{quote(info['default_branch'], safe='')}\" == source_ref[0],\n"
+        },
+        {
+            "before": "    plan = version_plan.validate_plan(json.loads(PLAN.read_text(encoding=\"utf-8\")))\n    channel = cast(str, plan[\"channel\"])\n    gh = StateGitHub(args.repo)\n    info, run, snapshot = context(gh, channel, gate=True)\n    policy = cast(dict[str, object], snapshot[\"data\"])\n    version_plan.validate_plan(plan, policy, cast(str, run[\"head_sha\"]))\n    parent = None\n",
+            "after": "    plan = version_plan.validate_plan(json.loads(PLAN.read_text(encoding=\"utf-8\")))\n    channel = cast(str, plan[\"channel\"])\n    gh = StateGitHub(args.repo)\n    execution_proof: list[rc.ExecutionJobProof] = []\n    info, run, snapshot = context(gh, channel, gate=True, execution_proof=execution_proof)\n    policy = cast(dict[str, object], snapshot[\"data\"])\n    version_plan.validate_plan(plan, policy, cast(str, run[\"head_sha\"]))\n    parent = None\n"
+        },
+        {
+            "before": "                       \"Automatic publication default source changed; draft left unpublished\")\n\n        consumed = begin_publication(gh, plan, cast(int, run[\"id\"]), parent)\n        confirm_create = create_confirmation(run, source_ref, consumed)\n        result = rc._publish_prepared(  # pylint: disable=protected-access\n            gh,\n            cast(str, plan[\"tag\"]),\n",
+            "after": "                       \"Automatic publication default source changed; draft left unpublished\")\n\n        consumed = begin_publication(gh, plan, cast(int, run[\"id\"]), parent)\n        confirm_create = create_confirmation(\n            run, source_ref, consumed, execution_proof[0] if execution_proof else None\n        )\n        result = rc._publish_prepared(  # pylint: disable=protected-access\n            gh,\n            cast(str, plan[\"tag\"]),\n"
+        }
+    ],
+    "original_to_current": {
+        "19cb27817c0aaf75867cdfba01a72dacb1026f71773bf42acb6527fc8553cb42": "673f336995440c7b1c616322be470945e8d645a5144b102f686e037d6526564d"
+    },
+    "current": [
+        "673f336995440c7b1c616322be470945e8d645a5144b102f686e037d6526564d"
+    ]
+}
+
+
+# Preserve exact automatic test-push admission without installing it in inventory-only mode.
+AUTOMATIC_TEST_PUSH = {
+    "hunks": [
+        {
+            "before": "    run: dict[str, object],\n    snapshot: dict[str, object],\n    base: str,\n) -> str:\n    \"\"\"Find proved same-input publication after fresh scheduled checks and builds.\"\"\"\n    head_path = \"git/ref/heads/\" + quote(cast(str, info[\"default_branch\"]), safe=\"\")\n    if cast(\n        dict[str, object], cast(dict[str, object], gh.api(head_path)).get(\"object\", {})\n",
+            "after": "    run: dict[str, object],\n    snapshot: dict[str, object],\n    base: str,\n    *, source_sha: str | None = None,\n) -> str:\n    \"\"\"Prove a publication while guarding the current run against main movement.\"\"\"\n    source_sha = source_sha or cast(str, run[\"head_sha\"])\n    head_path = \"git/ref/heads/\" + quote(cast(str, info[\"default_branch\"]), safe=\"\")\n    if cast(\n        dict[str, object], cast(dict[str, object], gh.api(head_path)).get(\"object\", {})\n"
+        },
+        {
+            "before": "    records = [\n        (rc.positive(key, \"reserved run\"), record[\"plan\"])\n        for key, record in ledger[\"plans\"].items()\n        if record[\"plan\"][\"source_sha\"] == cast(str, run[\"head_sha\"])\n        and record[\"plan\"][\"base_version\"] == base\n        and record[\"plan\"][\"policy_sha256\"]\n        == version_plan.policy_digest(snapshot[\"data\"])\n",
+            "after": "    records = [\n        (rc.positive(key, \"reserved run\"), record[\"plan\"])\n        for key, record in ledger[\"plans\"].items()\n        if record[\"plan\"][\"source_sha\"] == source_sha\n        and record[\"plan\"][\"base_version\"] == base\n        and record[\"plan\"][\"policy_sha256\"]\n        == version_plan.policy_digest(snapshot[\"data\"])\n"
+        },
+        {
+            "before": "        f\"Validation: https://github.com/{repository}/actions/runs/{run_id}\\n\\n\"\n        f\"See `{rc.MANIFEST}` for package hashes and version input evidence.\"\n    )\n\n\ndef prepare(args: argparse.Namespace) -> dict[str, object]:\n",
+            "after": "        f\"Validation: https://github.com/{repository}/actions/runs/{run_id}\\n\\n\"\n        f\"See `{rc.MANIFEST}` for package hashes and version input evidence.\"\n    )\n\n\ndef automatic_test_push(\n    gh: rc.GitHub, info: dict[str, object], run: dict[str, object],\n    snapshot: dict[str, object], base: str,\n) -> dict[str, object] | None:\n    \"\"\"Skip only after proving the exact predecessor was already fully delivered.\"\"\"\n    policy = cast(dict[str, object], snapshot[\"data\"])\n    selected = cast(dict[str, object], policy.get(\"change_scope\", {})).get(\"automatic_release_test_paths\")\n    if os.environ.get(\"GITHUB_EVENT_NAME\") != \"push\" or not selected:\n        return None\n    if __package__:\n        from . import release_push_scope  # pylint: disable=import-outside-toplevel\n    else:\n        import release_push_scope  # pylint: disable=import-outside-toplevel\n    admission = release_push_scope.current_push(Path.cwd(), selected, info[\"default_branch\"])\n    if not admission[\"test_only\"] or admission[\"after\"] != run[\"head_sha\"]:\n        return None\n    try:\n        tag = scheduled_reuse(gh, info, run, snapshot, base, source_sha=admission[\"before\"])\n    except (rc.ReleaseError, ValueError, KeyError, TypeError, OSError):\n        # An unavailable/expired/pending proof must not suppress delivery.\n        return None\n    if not tag:\n        return None\n    admission.update(status=\"test-only-already-published\", published_tag=tag)\n    Path(\".release-push-admission.json\").write_bytes(rc.json_bytes(admission))\n    return {\"channel\": \"beta\", \"version\": base, \"build\": \"false\",\n            \"plan_artifact\": \"\", \"status\": admission[\"status\"]}\n\n\ndef prepare(args: argparse.Namespace) -> dict[str, object]:\n"
+        },
+        {
+            "before": "    else:\n        base = client.resolve_version(policy, cast(str, inputs.get(\"version\", \"\")))\n    version_plan.check_base_versions(Path.cwd(), policy, base)\n    closed = rc.closed_push_cycle(gh, base, cast(str, kind))\n    if closed:\n        return closed\n",
+            "after": "    else:\n        base = client.resolve_version(policy, cast(str, inputs.get(\"version\", \"\")))\n    version_plan.check_base_versions(Path.cwd(), policy, base)\n    if admitted := automatic_test_push(gh, info, run, snapshot, base):\n        return admitted\n    closed = rc.closed_push_cycle(gh, base, cast(str, kind))\n    if closed:\n        return closed\n"
+        }
+    ],
+    "original_to_current": {
+        "673f336995440c7b1c616322be470945e8d645a5144b102f686e037d6526564d": "b8eea2626f3cb7b850d0cfa2914bc75c069b3552958cc4eead84abc8c177de10"
+    },
+    "current": [
+        "b8eea2626f3cb7b850d0cfa2914bc75c069b3552958cc4eead84abc8c177de10"
+    ]
+}
+
+
+# Preserve compact readers only when this exact later layer is already installed.
+COMPACT_DISTRIBUTION = {
+    "hunks": [
+        {
+            "before": "import sys\nimport tempfile\nfrom collections.abc import Callable, Iterator\nfrom datetime import datetime, timezone\nfrom pathlib import Path\nfrom typing import cast\n",
+            "after": "import sys\nimport tempfile\nfrom collections.abc import Callable, Iterator\nfrom contextlib import nullcontext\nfrom datetime import datetime, timezone\nfrom pathlib import Path\nfrom typing import cast\n"
+        },
+        {
+            "before": "\n# Keep source, workflow and byte verification together at the trust boundary.\n# pylint: disable-next=too-many-locals\ndef verified_rc(\n    gh: rc.GitHub, tag: object, info: dict[str, object], current_run: dict[str, object]\n) -> tuple[dict[str, object], dict[str, object]]:\n    \"\"\"Verify the exact accepted RC source, immutable evidence and payload bytes.\"\"\"\n    rc.require(\n        isinstance(tag, str)\n",
+            "after": "\n# Keep source, workflow and byte verification together at the trust boundary.\n# pylint: disable-next=too-many-locals\ndef _read_verified_rc(\n    gh: rc.GitHub, tag: object, info: dict[str, object],\n    current_run: dict[str, object] | None, stage: Path | None,\n) -> tuple[dict[str, object], bytes, dict[str, object]]:\n    \"\"\"Verify the exact accepted RC source, immutable evidence and payload bytes.\"\"\"\n    rc.require(\n        isinstance(tag, str)\n"
+        },
+        {
+            "before": "    initial = rc.release_snapshot(gh, tag)\n    ref, _, assets = initial\n    manifests = [asset for asset in assets if asset[\"name\"] == rc.MANIFEST]\n    rc.require(len(manifests) == 1, \"RC manifest is missing\")\n    raw = gh.binary(\n        f\"releases/assets/{rc.positive(manifests[0]['id'], 'manifest asset ID')}\"\n    )\n    manifest = rc.validate_manifest(raw, gh.repo, tag)\n    source_policy = rc.source_policy_snapshot(gh, cast(str, manifest[\"source_sha\"]))\n    rc.require(source_policy == manifest[\"source_policy\"], \"RC source policy changed\")\n    rc.require_current_fuzzing(gh, cast(dict[str, object], source_policy[\"data\"]), cast(str, current_run[\"head_sha\"]))\n    rc.require(\n        cast(dict[str, object], ref[\"object\"]).get(\"sha\")\n        == cast(str, manifest[\"source_sha\"]),\n        \"RC source tag mismatch\",\n    )\n    rc.require(\n        manifest[\"run_id\"] != current_run[\"id\"], \"RC must come from a separate run\"\n    )\n    source_run = cast(dict[str, object], gh.api(f\"actions/runs/{manifest['run_id']}\"))\n    rc.validate_validation_run(gh, source_run, cast(dict[str, object], source_policy[\"data\"]), \"rc\")\n    rc.require(\n",
+            "after": "    initial = rc.release_snapshot(gh, tag)\n    ref, _, assets = initial\n    manifests = [asset for asset in assets if asset[\"name\"] == rc.MANIFEST]\n    rc.require(len(manifests) == 1 and 0 < cast(int, manifests[0].get(\"size\", 2_000_001)) <= 2_000_000,\n               \"RC manifest is missing or oversized\")\n    raw = gh.binary(\n        f\"releases/assets/{rc.positive(manifests[0]['id'], 'manifest asset ID')}\"\n    )\n    manifest = rc.validate_manifest(raw, gh.repo, tag)\n    source_policy = rc.source_policy_snapshot(gh, cast(str, manifest[\"source_sha\"]))\n    rc.require(source_policy == manifest[\"source_policy\"], \"RC source policy changed\")\n    rc.require_release_policy(cast(dict[str, object], source_policy[\"data\"]), gh.repo, qualified=True)\n    if current_run is not None:\n        rc.require_current_fuzzing(gh, cast(dict[str, object], source_policy[\"data\"]),\n                                   cast(str, current_run[\"head_sha\"]))\n    rc.require(\n        cast(dict[str, object], ref[\"object\"]).get(\"sha\")\n        == cast(str, manifest[\"source_sha\"]),\n        \"RC source tag mismatch\",\n    )\n    if current_run is not None:\n        rc.require(manifest[\"run_id\"] != current_run[\"id\"], \"RC must come from a separate run\")\n    source_run = cast(dict[str, object], gh.api(f\"actions/runs/{manifest['run_id']}\"))\n    rc.validate_validation_run(gh, source_run, cast(dict[str, object], source_policy[\"data\"]), \"rc\")\n    rc.require(\n"
+        },
+        {
+            "before": "        \"RC asset inventory differs from immutable evidence\",\n    )\n    rc.require(manifests[0][\"size\"] == len(raw), \"RC asset size mismatch\")\n    with tempfile.TemporaryDirectory(prefix=\"verified-rc-\") as temp:\n        payload = Path(temp) / \"payload\"\n        budget = rc.DownloadBudget(sum(cast(int, item[\"size\"]) for item in expected.values()))\n        for item in assets:\n            if item[\"name\"] == rc.MANIFEST:\n                continue\n            identity = rc.download_asset(\n                gh, item[\"id\"], payload,\n                expected=cast(rc.AssetIdentity, {\n                    key: expected[item[\"name\"]][key] for key in (\"size\", \"sha256\")\n                }), budget=budget,\n            )\n            payload.unlink()\n            rc.require(item[\"size\"] == identity[\"size\"], \"RC asset size mismatch\")\n            declaration = expected[item[\"name\"]]\n            rc.require(\n",
+            "after": "        \"RC asset inventory differs from immutable evidence\",\n    )\n    rc.require(manifests[0][\"size\"] == len(raw), \"RC asset size mismatch\")\n    if stage is not None:\n        rc.require(stage.is_dir() and not stage.is_symlink() and not any(stage.iterdir()),\n                   \"RC staging must be an empty owned directory\")\n    retained = stage is not None or bool(manifest.get(\"version_plan\"))\n    with (nullcontext(str(stage)) if stage is not None else\n          tempfile.TemporaryDirectory(prefix=\"verified-rc-\")) as temp:\n        directory = Path(temp)\n        budget = rc.DownloadBudget(sum(cast(int, item[\"size\"]) for item in expected.values()))\n        for item in assets:\n            if item[\"name\"] == rc.MANIFEST:\n                continue\n            payload = directory / (cast(str, item[\"name\"]) if retained else \"payload\")\n            identity = rc.download_asset(\n                gh, item[\"id\"], payload,\n                expected=cast(rc.AssetIdentity, {\n                    key: expected[item[\"name\"]][key] for key in (\"size\", \"sha256\")\n                }), budget=budget,\n            )\n            if not retained:\n                payload.unlink()\n            rc.require(item[\"size\"] == identity[\"size\"], \"RC asset size mismatch\")\n            declaration = expected[item[\"name\"]]\n            rc.require(\n"
+        },
+        {
+            "before": "                and identity[\"sha256\"] == declaration[\"sha256\"],\n                f\"RC payload checksum mismatch: {item['name']}\",\n            )\n    rc.require(\n        rc.snapshot_identity(rc.release_snapshot(gh, tag))\n        == rc.snapshot_identity(initial),\n        \"RC changed during verification\",\n    )\n    return manifest, {\n        \"tag\": tag,\n        \"manifest_sha256\": rc.digest(raw),\n        \"source_sha\": cast(str, manifest[\"source_sha\"]),\n        \"run_id\": manifest[\"run_id\"],\n    }\n\n\ndef event_inputs() -> dict[str, object]:\n",
+            "after": "                and identity[\"sha256\"] == declaration[\"sha256\"],\n                f\"RC payload checksum mismatch: {item['name']}\",\n            )\n        if manifest.get(\"version_plan\"):\n            policy = cast(dict[str, object], source_policy[\"data\"])\n            plan = cast(dict[str, object], manifest[\"version_plan\"])\n            receipts = verify_receipts(\n                directory, plan, cast(list[dict[str, object]], manifest[\"assets\"]), policy,\n                producer_identity(gh.repo, cast(int, manifest[\"run_id\"]),\n                                  cast(int, manifest[\"run_attempt\"]), cast(str, manifest[\"source_sha\"])))\n            build, validation = candidate_fuzz_receipts(policy, \"rc\", receipts)\n            verify_required_build_receipts(build, policy)\n            rc.require(manifest.get(\"build_receipts\") == [\n                {\"name\": value[\"name\"], \"sha256\": value[\"sha256\"]} for value in build\n            ], \"RC build receipt evidence differs\")\n            if \"fuzzing\" in policy:\n                rc.require(manifest.get(\"validation_receipts\") == [\n                    {\"name\": value[\"name\"], \"sha256\": value[\"sha256\"]} for value in validation\n                ], \"RC validation receipt evidence differs\")\n            rc.require(verify_declared_artifacts(directory, policy, plan) == manifest.get(\"package_versions\"),\n                       \"RC package metadata differs\")\n            if policy.get(\"sign_releases\"):\n                # Authenticate with the retained source policy, not a newer driver.\n                if __package__:\n                    from .release_signing import verify\n                else:\n                    from release_signing import verify\n                verify(directory, policy, cast(str, manifest[\"source_sha\"]))\n            else:\n                rc.verify_required_signatures(directory, gh.repo, cast(str, manifest[\"source_sha\"]))\n    latest = cast(dict[str, object], gh.api(f\"actions/runs/{manifest['run_id']}\"))\n    rc.require(latest.get(\"id\") == manifest[\"run_id\"], \"RC source run identity changed\")\n    rc.validate_validation_run(gh, latest, cast(dict[str, object], source_policy[\"data\"]), \"rc\")\n    rc.validate_run(gh, latest, info, cast(str, manifest[\"source_sha\"]),\n                    cast(int, manifest[\"run_attempt\"]), completed=True)\n    rc.require(\n        rc.snapshot_identity(rc.release_snapshot(gh, tag))\n        == rc.snapshot_identity(initial),\n        \"RC changed during verification\",\n    )\n    return manifest, raw, {\n        \"tag\": tag,\n        \"manifest_sha256\": rc.digest(raw),\n        \"source_sha\": cast(str, manifest[\"source_sha\"]),\n        \"run_id\": manifest[\"run_id\"],\n        \"run_attempt\": manifest[\"run_attempt\"],\n    }\n\n\ndef read_verified_rc(\n    gh: rc.GitHub, tag: object, info: dict[str, object] | None = None,\n    *, stage: Path | None = None,\n) -> tuple[dict[str, object], bytes, dict[str, object]]:\n    \"\"\"Authenticate a full retained RC without inventing a dispatch/current run.\n\n    An optional empty caller-owned stage retains every RC payload, including\n    receipts omitted by compact distributions. Without it temporary bytes expire.\n    \"\"\"\n    return _read_verified_rc(gh, tag, info or rc.repository_info(gh), None, stage)\n\n\ndef verified_rc(\n    gh: rc.GitHub, tag: object, info: dict[str, object], current_run: dict[str, object]\n) -> tuple[dict[str, object], dict[str, object]]:\n    \"\"\"Keep dispatch-only separation/fuzz checks and the legacy parent schema.\"\"\"\n    manifest, _, proof = _read_verified_rc(gh, tag, info, current_run, None)\n    return manifest, {key: value for key, value in proof.items() if key != \"run_attempt\"}\n\n\n# Keep the outer stable release and authenticated retained RC in one read scope.\n# pylint: disable-next=too-many-locals\ndef read_verified_distribution(\n    gh: rc.GitHub, tag: str, raw: bytes, info: dict[str, object] | None = None,\n    *, stage: Path | None = None,\n) -> tuple[dict[str, object], bytes, dict[str, object]]:\n    \"\"\"Resolve a compact stable envelope and verify its exact shipped bytes.\"\"\"\n    # Legacy generated consumers need not import this optional module.\n    # pylint: disable-next=import-outside-toplevel\n    if __package__:\n        from .release_distribution import parse_distribution, verify_distribution\n    else:\n        from release_distribution import parse_distribution, verify_distribution\n\n    compact = parse_distribution(raw, gh.repo, tag)\n    rc.require(not rc.RELEASE_SIGNATURES_REQUIRED,\n               \"Compact stable cannot omit full-inventory signature evidence\")\n    info = info or rc.repository_info(gh)\n    pointer = compact[\"rc_evidence\"]\n    original = rc.release_snapshot(gh, pointer[\"tag\"])\n    manifest, candidate_raw, proof = read_verified_rc(gh, pointer[\"tag\"], info)\n    rc.require(not cast(dict[str, object], cast(dict[str, object], manifest[\"source_policy\"])[\"data\"]).get(\"sign_releases\"),\n               \"Compact stable cannot omit full-inventory signature evidence\")\n    verify_distribution(compact, manifest, candidate_raw)\n    plan = cast(dict[str, object], manifest[\"version_plan\"])\n    policy = cast(dict[str, object], manifest[\"source_policy\"])\n    source, run_id = cast(str, manifest[\"source_sha\"]), cast(int, manifest[\"run_id\"])\n    candidate_tag = cast(str, manifest[\"tag\"])\n    verify_scheduled_reuse(gh, info, policy, plan, run_id, candidate_tag)\n    initial = published_plan_snapshot(gh, tag, source, False)\n    expected = {item[\"name\"]: item for item in compact[\"assets\"]}\n    declarations = {**expected, rc.MANIFEST: {\"size\": len(raw), \"sha256\": rc.digest(raw)}}\n    inventory = {asset[\"name\"]: asset for asset in initial[2]}\n    rc.require(set(inventory) == set(declarations), \"Compact stable asset inventory mismatch\")\n    rc.require(all(asset.get(\"size\") == declarations[name][\"size\"]\n                   and asset.get(\"digest\") == \"sha256:\" + declarations[name][\"sha256\"]\n                   for name, asset in inventory.items()), \"Compact stable asset metadata mismatch\")\n    if stage is not None:\n        rc.require(stage.is_dir() and not stage.is_symlink() and not any(stage.iterdir()),\n                   \"Stable staging must be an empty owned directory\")\n    with (nullcontext(str(stage)) if stage is not None else\n          tempfile.TemporaryDirectory(prefix=\"verified-distribution-\")) as temporary:\n        directory = Path(temporary)\n        budget = rc.DownloadBudget(sum(item[\"size\"] for item in expected.values()))\n        for name, item in expected.items():\n            identity = rc.download_asset(\n                gh, inventory[name][\"id\"], directory / name,\n                expected=cast(rc.AssetIdentity, {key: item[key] for key in (\"size\", \"sha256\")}), budget=budget,\n            )\n            rc.require(identity == {key: item[key] for key in (\"size\", \"sha256\")},\n                       \"Compact stable payload changed\")\n        verify_scheduled_reuse(gh, info, policy, plan, run_id, candidate_tag)\n        rc.require(rc.snapshot_identity(original) == rc.snapshot_identity(\n            rc.release_snapshot(gh, pointer[\"tag\"])), \"Retained RC changed during stable transfer\")\n        rc.require(rc.snapshot_identity(initial) == rc.snapshot_identity(\n            published_plan_snapshot(gh, tag, source, False)),\n            \"Compact stable release changed during transfer\")\n    return manifest, candidate_raw, proof\n\n\ndef event_inputs() -> dict[str, object]:\n"
+        },
+        {
+            "before": "    rc.require(cast(int, asset[\"size\"]) <= 2_000_000, \"Qualified manifest is too large\")\n    raw = gh.binary(f\"releases/assets/{rc.positive(asset['id'], 'manifest ID')}\")\n    manifest = rc.parse_json(raw, \"qualified manifest\")\n    rc.require(\n        isinstance(manifest, dict)\n        and isinstance(manifest.get(\"schema\"), int)\n",
+            "after": "    rc.require(cast(int, asset[\"size\"]) <= 2_000_000, \"Qualified manifest is too large\")\n    raw = gh.binary(f\"releases/assets/{rc.positive(asset['id'], 'manifest ID')}\")\n    manifest = rc.parse_json(raw, \"qualified manifest\")\n    if isinstance(manifest, dict) and type(manifest.get(\"schema\")) is int and manifest[\"schema\"] == 2:\n        candidate, _, _ = read_verified_distribution(gh, tag, raw, info)\n        rc.require(candidate[\"version_plan\"] == plan and candidate[\"source_policy\"] == snapshot\n                   and candidate[\"run_id\"] == source_run_id,\n                   \"Compact stable differs from its qualified RC plan\")\n        return\n    rc.require(\n        isinstance(manifest, dict)\n        and isinstance(manifest.get(\"schema\"), int)\n"
+        }
+    ],
+    "original_to_current": {
+        "b8eea2626f3cb7b850d0cfa2914bc75c069b3552958cc4eead84abc8c177de10": "999072e1cec48cc463ea34045b2983113a1e7731b459912e6d37b1f600f6224c"
+    },
+    "current": [
+        "999072e1cec48cc463ea34045b2983113a1e7731b459912e6d37b1f600f6224c"
+    ]
+}
+
+
+# Preserve the later dispatch-wrapper compatibility fix only when already installed.
+LEGACY_RC_COMPATIBILITY = {
+    "hunks": [
+        {
+            "before": "    if stage is not None:\n        rc.require(stage.is_dir() and not stage.is_symlink() and not any(stage.iterdir()),\n                   \"RC staging must be an empty owned directory\")\n    retained = stage is not None or bool(manifest.get(\"version_plan\"))\n    with (nullcontext(str(stage)) if stage is not None else\n          tempfile.TemporaryDirectory(prefix=\"verified-rc-\")) as temp:\n        directory = Path(temp)\n",
+            "after": "    if stage is not None:\n        rc.require(stage.is_dir() and not stage.is_symlink() and not any(stage.iterdir()),\n                   \"RC staging must be an empty owned directory\")\n    # The dispatch wrapper must keep accepting RC receipts from before producer\n    # identities were introduced. Only the new read-only resolver revalidates\n    # their complete semantic contract; the wrapper streams authenticated bytes.\n    retained = stage is not None or (current_run is None and bool(manifest.get(\"version_plan\")))\n    with (nullcontext(str(stage)) if stage is not None else\n          tempfile.TemporaryDirectory(prefix=\"verified-rc-\")) as temp:\n        directory = Path(temp)\n"
+        },
+        {
+            "before": "                and identity[\"sha256\"] == declaration[\"sha256\"],\n                f\"RC payload checksum mismatch: {item['name']}\",\n            )\n        if manifest.get(\"version_plan\"):\n            policy = cast(dict[str, object], source_policy[\"data\"])\n            plan = cast(dict[str, object], manifest[\"version_plan\"])\n            receipts = verify_receipts(\n",
+            "after": "                and identity[\"sha256\"] == declaration[\"sha256\"],\n                f\"RC payload checksum mismatch: {item['name']}\",\n            )\n        if current_run is None and manifest.get(\"version_plan\"):\n            policy = cast(dict[str, object], source_policy[\"data\"])\n            plan = cast(dict[str, object], manifest[\"version_plan\"])\n            receipts = verify_receipts(\n"
+        }
+    ],
+    "original_to_current": {
+        "999072e1cec48cc463ea34045b2983113a1e7731b459912e6d37b1f600f6224c": "9d8957d25de18740c016da30774a47b7e2dc934a4d2d7bde96c4cdf8017908d8"
+    },
+    "current": [
+        "9d8957d25de18740c016da30774a47b7e2dc934a4d2d7bde96c4cdf8017908d8"
+    ]
+}
+
+
 def _before_layer(source: str, layer: dict, label: str) -> str:
     """Reverse one exact accepted layer, preserving a vendor header."""
-    prefix = "#!/usr/bin/env python3\n" + receipts.HEADER
+    prefix = SHEBANG + receipts.HEADER
     vendored = source.startswith(prefix)
     body = source.replace(receipts.HEADER, "", 1) if vendored else source
     current = receipts.digest(body)
@@ -162,12 +445,85 @@ def _before_layer(source: str, layer: dict, label: str) -> str:
         body = body.replace(hunk["after"], hunk["before"], 1)
     if layer["original_to_current"].get(receipts.digest(body)) != current:
         raise ValueError(f"{label} reverse result changed")
-    return body.replace("#!/usr/bin/env python3\n", prefix, 1) if vendored else body
+    return body.replace(SHEBANG, prefix, 1) if vendored else body
+
+
+def _before_publisher_successors(source: str) -> str:
+    """Reverse only exact reviewed publisher-source successors in the inventory oracle."""
+    prefix = SHEBANG + receipts.HEADER
+    vendored = source.startswith(prefix)
+    body = source.replace(receipts.HEADER, "", 1) if vendored else source
+    layers = json.loads(DELTA.read_text(encoding="utf-8"))["files"][receipts.PUBLISHER].get(
+        "successor_layers", []
+    )
+    for layer in reversed(layers):
+        if receipts.digest(body) != layer["after_sha256"]:
+            continue
+        for hunk in reversed(layer["hunks"]):
+            if body.count(hunk["after"]) != 1:
+                raise ValueError("Publisher successor reverse context changed")
+            body = body.replace(hunk["after"], hunk["before"], 1)
+        if receipts.digest(body) != layer["before_sha256"]:
+            raise ValueError("Publisher successor reverse result changed")
+    return body.replace(SHEBANG, prefix, 1) if vendored else body
+
+
+def _apply_publisher_successors(source: str) -> str:
+    """Reapply exact reviewed publisher successors only when the input carried them."""
+    prefix = SHEBANG + receipts.HEADER
+    vendored = source.startswith(prefix)
+    body = source.replace(receipts.HEADER, "", 1) if vendored else source
+    layers = json.loads(DELTA.read_text(encoding="utf-8"))["files"][receipts.PUBLISHER].get(
+        "successor_layers", []
+    )
+    for layer in layers:
+        if receipts.digest(body) == layer["after_sha256"]:
+            continue
+        if receipts.digest(body) != layer["before_sha256"]:
+            # Older consumer source shapes do not carry this later comment layer.
+            continue
+        for hunk in layer["hunks"]:
+            if body.count(hunk["before"]) != 1:
+                raise ValueError("Publisher successor apply context changed")
+            body = body.replace(hunk["before"], hunk["after"], 1)
+        if receipts.digest(body) != layer["after_sha256"]:
+            raise ValueError("Publisher successor apply result changed")
+    return body.replace(SHEBANG, prefix, 1) if vendored else body
+
+
+def _before_digestless_metadata(source: str) -> str:
+    """Reverse only the exact absent-digest byte-verification source layer."""
+    return _before_layer(
+        _before_publisher_execution_boundary(source), DIGESTLESS_METADATA,
+        "Digestless metadata",
+    )
+
+
+def _before_legacy_rc_compatibility(source: str) -> str:
+    """Reverse only the exact dispatch-wrapper compatibility correction."""
+    return _before_layer(_before_digestless_metadata(source), LEGACY_RC_COMPATIBILITY, "Legacy RC compatibility")
+
+
+def _before_compact_distribution(source: str) -> str:
+    """Reverse only the exact compact reader layer; never accept partial shapes."""
+    return _before_layer(_before_legacy_rc_compatibility(source), COMPACT_DISTRIBUTION,
+                         "Compact distribution")
+
+
+def _before_automatic_test_push(source: str) -> str:
+    """Unwrap compact readers before the accepted automatic test-push layer."""
+    return _before_layer(_before_compact_distribution(source), AUTOMATIC_TEST_PUSH,
+                         "Automatic test push")
+
+
+def _before_execution_job(source: str) -> str:
+    """Reverse automatic test-push admission before the live execution-proof layer."""
+    return _before_layer(_before_automatic_test_push(source), EXECUTION_JOB, "Execution job")
 
 
 def _before_automatic_source(source: str) -> str:
-    """Reverse only the exact automatic publication source layer."""
-    return _before_layer(source, AUTOMATIC_SOURCE, "Automatic source")
+    """Reverse live execution proof before the automatic-source layer."""
+    return _before_layer(_before_execution_job(source), AUTOMATIC_SOURCE, "Automatic source")
 
 
 def _before_create_identity(source: str) -> str:
@@ -183,6 +539,52 @@ def _before_create_readback(source: str) -> str:
 def _before_notes_provenance(source: str) -> str:
     """Unwrap exact known publisher layers for the unchanged historical oracle."""
     return _before_layer(_before_create_readback(source), NOTES_PROVENANCE, "Notes provenance")
+
+
+def _before_publisher_execution_boundary(source: str) -> str:
+    """Reverse newer readback layers before the publisher-job proof layer."""
+    source = _before_compact_manifest_recheck(source)
+    return _before_layer(source, PUBLISHER_EXECUTION_BOUNDARY, "Publisher execution boundary")
+
+
+def _before_scheduled_reuse_readback(source: str) -> str:
+    """Reverse extracted helper, then the accepted inline readback layer."""
+    source = _before_scheduled_reuse_readback_helper(source)
+    return _before_layer(source, SCHEDULED_REUSE_READBACK, "Scheduled reuse readback")
+
+
+def _before_scheduled_reuse_readback_helper(source: str) -> str:
+    """Reverse only the exact helper extraction above the inline readback layer."""
+    return _before_layer(
+        source, SCHEDULED_REUSE_READBACK_HELPER, "Scheduled reuse helper extraction",
+    )
+
+
+def _before_compact_manifest_recheck(source: str) -> str:
+    """Reverse scheduled readback before the compact stable manifest layer."""
+    source = _before_scheduled_reuse_readback(source)
+    return _before_layer(source, COMPACT_MANIFEST_RECHECK, "Compact manifest reread")
+
+
+def _apply_publisher_execution_boundary(source: str) -> str:
+    """Apply the exact source hunks to the already inventory-migrated publisher."""
+    prefix = SHEBANG + receipts.HEADER
+    vendored = source.startswith(prefix)
+    body = source.replace(receipts.HEADER, "", 1) if vendored else source
+    original = next(iter(PUBLISHER_EXECUTION_BOUNDARY["original_to_current"]))
+    target = PUBLISHER_EXECUTION_BOUNDARY["original_to_current"][original]
+    identity = receipts.digest(body)
+    if identity == target:
+        return source
+    if identity != original:
+        raise ValueError("Publisher execution boundary input changed")
+    for hunk in PUBLISHER_EXECUTION_BOUNDARY["hunks"]:
+        if body.count(hunk["before"]) != 1:
+            raise ValueError("Publisher execution boundary context changed")
+        body = body.replace(hunk["before"], hunk["after"], 1)
+    if receipts.digest(body) != target:
+        raise ValueError("Publisher execution boundary output changed")
+    return body.replace(SHEBANG, prefix, 1) if vendored else body
 
 
 def _before_name_limit(source: str) -> str:
@@ -215,28 +617,66 @@ def render(directory: Path) -> dict[str, str]:
     states = set()
     for name in FILES:
         source = receipts.read_local(directory, name)
+        source_for_layers = source
         prior = _before_casefold(source) if name == PLAN else source
         if name == receipts.PUBLISHER:
-            prior = _before_notes_provenance(source)
+            source_for_layers = _before_publisher_successors(source)
+            prior = _before_notes_provenance(source_for_layers)
         state, result = receipts.transform(prior, name, specification[name])
         if name == PLAN:
             _, result = receipts.transform(result, name, CASEFOLD)
             _, result = receipts.transform(result, name, NAME_LIMIT)
-        elif name == receipts.PUBLISHER and prior != source:
+        elif name == receipts.PUBLISHER and prior != source_for_layers:
             # Preserve a fix already present; this mode does not install it.
             _, result = receipts.transform(result, name, NOTES_PROVENANCE)
-            if _before_create_readback(source) != source:
+            if _before_create_readback(source_for_layers) != source_for_layers:
                 _, result = receipts.transform(result, name, CREATE_READBACK)
-                if _before_create_identity(source) != source:
+                if _before_create_identity(source_for_layers) != source_for_layers:
                     _, result = receipts.transform(result, name, CREATE_IDENTITY)
-                    if _before_automatic_source(source) != source:
+                    if _before_automatic_source(source_for_layers) != source_for_layers:
                         _, result = receipts.transform(result, name, AUTOMATIC_SOURCE)
+                        if _before_execution_job(source_for_layers) != source_for_layers:
+                            _, result = receipts.transform(result, name, EXECUTION_JOB)
+            if _before_automatic_test_push(source_for_layers) != source_for_layers:
+                _, result = receipts.transform(result, name, AUTOMATIC_TEST_PUSH)
+            if _before_compact_distribution(source_for_layers) != source_for_layers:
+                _, result = receipts.transform(result, name, COMPACT_DISTRIBUTION)
+            if _before_legacy_rc_compatibility(source_for_layers) != source_for_layers:
+                _, result = receipts.transform(result, name, LEGACY_RC_COMPATIBILITY)
+            if _before_digestless_metadata(source_for_layers) != source_for_layers:
+                _, result = receipts.transform(result, name, DIGESTLESS_METADATA)
+            if _before_publisher_execution_boundary(source_for_layers) != source_for_layers:
+                result = _apply_publisher_execution_boundary(result)
+            if _before_compact_manifest_recheck(source_for_layers) != source_for_layers:
+                _, result = receipts.transform(result, name, COMPACT_MANIFEST_RECHECK)
+            if _before_scheduled_reuse_readback(source_for_layers) != source_for_layers:
+                _, result = receipts.transform(result, name, SCHEDULED_REUSE_READBACK)
+                _, result = receipts.transform(result, name, SCHEDULED_REUSE_READBACK_HELPER)
         states.add(state)
         if result != source:
             changes[name] = result
     if len(states) != 1:
         raise ValueError("Partially migrated inventory guard requires explicit review")
+    if receipts.PUBLISHER in changes:
+        original = receipts.read_local(directory, receipts.PUBLISHER)
+        result = changes[receipts.PUBLISHER]
+        if source_has_publisher_successor(original):
+            result = _apply_publisher_successors(result)
+        if result == original:
+            changes.pop(receipts.PUBLISHER)
+        else:
+            changes[receipts.PUBLISHER] = result
     return changes
+
+
+def source_has_publisher_successor(source: str) -> bool:
+    """Return whether the exact current source contains any reviewed successor layer."""
+    prefix = SHEBANG + receipts.HEADER
+    body = source.replace(receipts.HEADER, "", 1) if source.startswith(prefix) else source
+    layers = json.loads(DELTA.read_text(encoding="utf-8"))["files"][receipts.PUBLISHER].get(
+        "successor_layers", []
+    )
+    return any(receipts.digest(body) == layer["after_sha256"] for layer in layers)
 
 
 def previous_canonical_source(source: str, name: str) -> str:
@@ -246,7 +686,7 @@ def previous_canonical_source(source: str, name: str) -> str:
     if name == PLAN:
         source = _before_casefold(source)
     elif name == receipts.PUBLISHER:
-        source = _before_notes_provenance(source)
+        source = _before_notes_provenance(_before_publisher_successors(source))
     if name not in FILES:
         raise ValueError("Unknown inventory source")
     specification = json.loads(DELTA.read_text(encoding="utf-8"))["files"][name]

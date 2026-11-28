@@ -12,6 +12,7 @@ import secrets
 import sys
 import tempfile
 from collections.abc import Callable, Iterator
+from contextlib import nullcontext
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import cast
@@ -121,14 +122,16 @@ def toolchain_changes(original: object, current: object) -> Iterator[tuple[str, 
 
 
 def context(
-    gh: rc.GitHub, channel: str, gate: bool = False
+    gh: rc.GitHub, channel: str, gate: bool = False,
+    execution_proof: list[rc.ExecutionJobProof] | None = None,
 ) -> tuple[dict[str, object], dict[str, object], dict[str, object]]:
     """Reuse the original publisher's execution and source-policy checks."""
     run_id = rc.positive(os.environ.get("GITHUB_RUN_ID"), "run ID")
     attempt = rc.positive(os.environ.get("GITHUB_RUN_ATTEMPT"), "run attempt")
     info = rc.repository_info(gh)
     run = rc.wait_for_executing_run(
-        gh, run_id, channel, info, rc.checked_out_sha(), attempt, gate=gate
+        gh, run_id, channel, info, rc.checked_out_sha(), attempt, gate=gate,
+        execution_proof=execution_proof,
     )
     snapshot = rc.source_policy_snapshot(gh, cast(str, run["head_sha"]))
     rc.require_release_policy(
@@ -159,16 +162,35 @@ def create_marker(repository: str, run: dict[str, object], plan_digest: str, non
 
 def create_confirmation(
     run: dict[str, object], source_ref: tuple[str, object], consumed: bytes,
+    execution_proof: rc.ExecutionJobProof | None = None,
 ) -> Callable[[rc.CreateReadback], None]:
     """Bind one release-create call, without adding any cross-run recovery state."""
 
     def confirm(readback: rc.CreateReadback) -> None:
         current = readback.json(f"actions/runs/{run['id']}/attempts/{run['run_attempt']}")
-        rc.require(isinstance(current, dict) and current.get("status") == "in_progress"
+        rc.require(isinstance(current, dict)
                    and current.get("conclusion") is None
                    and all(type(current.get(key)) is type(run[key]) and current[key] == run[key] for key in
                            ("id", "run_attempt", "head_sha", "path", "event")),
                    "Create readback run identity changed")
+        current = rc.require_active_attempt(current, run)
+        if type(execution_proof) is rc.ExecutionJobProof:
+            proof = cast(rc.ExecutionJobProof, execution_proof)
+            rc.require(type(proof.job_id) is int and proof.job_id > 0
+                       and type(proof.check_run_id) is int and proof.check_run_id > 0,
+                       "Invalid local executing-job proof")
+            rc.validate_run_provenance(
+                readback, current, {"default_branch": run["head_branch"]},
+                cast(str, run["head_sha"]), cast(int, run["run_attempt"]),
+            )
+            rc.require(current.get("run_started_at") == run.get("run_started_at"),
+                       "Create readback attempt start changed")
+            job = readback.json(f"actions/jobs/{proof.job_id}")
+            observed = rc.require_executing_job(job, current, readback.repo, proof.check_run_id)
+            rc.require(observed == proof, "Create readback executing-job identity changed")
+        else:
+            rc.require(current.get("status") == "in_progress",
+                       "Create readback lacks a local executing-job proof")
         info = readback.json("")
         rc.require(isinstance(info, dict) and isinstance(info.get("default_branch"), str)
                    and f"git/ref/heads/{quote(info['default_branch'], safe='')}" == source_ref[0],
@@ -188,9 +210,10 @@ def create_confirmation(
 
 # Keep source, workflow and byte verification together at the trust boundary.
 # pylint: disable-next=too-many-locals
-def verified_rc(
-    gh: rc.GitHub, tag: object, info: dict[str, object], current_run: dict[str, object]
-) -> tuple[dict[str, object], dict[str, object]]:
+def _read_verified_rc(
+    gh: rc.GitHub, tag: object, info: dict[str, object],
+    current_run: dict[str, object] | None, stage: Path | None,
+) -> tuple[dict[str, object], bytes, dict[str, object]]:
     """Verify the exact accepted RC source, immutable evidence and payload bytes."""
     rc.require(
         isinstance(tag, str)
@@ -201,22 +224,25 @@ def verified_rc(
     initial = rc.release_snapshot(gh, tag)
     ref, _, assets = initial
     manifests = [asset for asset in assets if asset["name"] == rc.MANIFEST]
-    rc.require(len(manifests) == 1, "RC manifest is missing")
+    rc.require(len(manifests) == 1 and 0 < cast(int, manifests[0].get("size", 2_000_001)) <= 2_000_000,
+               "RC manifest is missing or oversized")
     raw = gh.binary(
         f"releases/assets/{rc.positive(manifests[0]['id'], 'manifest asset ID')}"
     )
     manifest = rc.validate_manifest(raw, gh.repo, tag)
     source_policy = rc.source_policy_snapshot(gh, cast(str, manifest["source_sha"]))
     rc.require(source_policy == manifest["source_policy"], "RC source policy changed")
-    rc.require_current_fuzzing(gh, cast(dict[str, object], source_policy["data"]), cast(str, current_run["head_sha"]))
+    rc.require_release_policy(cast(dict[str, object], source_policy["data"]), gh.repo, qualified=True)
+    if current_run is not None:
+        rc.require_current_fuzzing(gh, cast(dict[str, object], source_policy["data"]),
+                                   cast(str, current_run["head_sha"]))
     rc.require(
         cast(dict[str, object], ref["object"]).get("sha")
         == cast(str, manifest["source_sha"]),
         "RC source tag mismatch",
     )
-    rc.require(
-        manifest["run_id"] != current_run["id"], "RC must come from a separate run"
-    )
+    if current_run is not None:
+        rc.require(manifest["run_id"] != current_run["id"], "RC must come from a separate run")
     source_run = cast(dict[str, object], gh.api(f"actions/runs/{manifest['run_id']}"))
     rc.validate_validation_run(gh, source_run, cast(dict[str, object], source_policy["data"]), "rc")
     rc.require(
@@ -247,19 +273,31 @@ def verified_rc(
         "RC asset inventory differs from immutable evidence",
     )
     rc.require(manifests[0]["size"] == len(raw), "RC asset size mismatch")
-    with tempfile.TemporaryDirectory(prefix="verified-rc-") as temp:
-        payload = Path(temp) / "payload"
+    if stage is not None:
+        rc.require(stage.is_dir() and not stage.is_symlink() and not any(stage.iterdir()),
+                   "RC staging must be an empty owned directory")
+    # The dispatch wrapper must keep accepting RC receipts from before producer
+    # identities were introduced. Only the new read-only resolver revalidates
+    # their complete semantic contract; the wrapper streams authenticated bytes.
+    retained = stage is not None or (current_run is None and bool(manifest.get("version_plan")))
+    with (nullcontext(str(stage)) if stage is not None else
+          tempfile.TemporaryDirectory(prefix="verified-rc-")) as temp:
+        directory = Path(temp)
         budget = rc.DownloadBudget(sum(cast(int, item["size"]) for item in expected.values()))
         for item in assets:
             if item["name"] == rc.MANIFEST:
                 continue
+            payload = directory / (cast(str, item["name"]) if retained else "payload")
+            # The shared supervisor resolves gh and bounds post-status cleanup.
+            # Its ProcessCleanupError stays fatal; retrying could mask live work.
             identity = rc.download_asset(
                 gh, item["id"], payload,
                 expected=cast(rc.AssetIdentity, {
                     key: expected[item["name"]][key] for key in ("size", "sha256")
                 }), budget=budget,
             )
-            payload.unlink()
+            if not retained:
+                payload.unlink()
             rc.require(item["size"] == identity["size"], "RC asset size mismatch")
             declaration = expected[item["name"]]
             rc.require(
@@ -267,17 +305,142 @@ def verified_rc(
                 and identity["sha256"] == declaration["sha256"],
                 f"RC payload checksum mismatch: {item['name']}",
             )
+        if current_run is None and manifest.get("version_plan"):
+            policy = cast(dict[str, object], source_policy["data"])
+            plan = cast(dict[str, object], manifest["version_plan"])
+            receipts = verify_receipts(
+                directory, plan, cast(list[dict[str, object]], manifest["assets"]), policy,
+                producer_identity(gh.repo, cast(int, manifest["run_id"]),
+                                  cast(int, manifest["run_attempt"]), cast(str, manifest["source_sha"])))
+            build, validation = candidate_fuzz_receipts(policy, "rc", receipts)
+            verify_required_build_receipts(build, policy)
+            rc.require(manifest.get("build_receipts") == [
+                {"name": value["name"], "sha256": value["sha256"]} for value in build
+            ], "RC build receipt evidence differs")
+            if "fuzzing" in policy:
+                rc.require(manifest.get("validation_receipts") == [
+                    {"name": value["name"], "sha256": value["sha256"]} for value in validation
+                ], "RC validation receipt evidence differs")
+            rc.require(verify_declared_artifacts(directory, policy, plan) == manifest.get("package_versions"),
+                       "RC package metadata differs")
+            if policy.get("sign_releases"):
+                # Authenticate with the retained source policy, not a newer driver.
+                if __package__:
+                    from .release_signing import verify
+                else:
+                    from release_signing import verify
+                verify(directory, policy, cast(str, manifest["source_sha"]))
+            else:
+                rc.verify_required_signatures(directory, gh.repo, cast(str, manifest["source_sha"]))
+    latest = cast(dict[str, object], gh.api(f"actions/runs/{manifest['run_id']}"))
+    rc.require(latest.get("id") == manifest["run_id"], "RC source run identity changed")
+    rc.validate_validation_run(gh, latest, cast(dict[str, object], source_policy["data"]), "rc")
+    rc.validate_run(gh, latest, info, cast(str, manifest["source_sha"]),
+                    cast(int, manifest["run_attempt"]), completed=True)
     rc.require(
         rc.snapshot_identity(rc.release_snapshot(gh, tag))
         == rc.snapshot_identity(initial),
         "RC changed during verification",
     )
-    return manifest, {
+    return manifest, raw, {
         "tag": tag,
         "manifest_sha256": rc.digest(raw),
         "source_sha": cast(str, manifest["source_sha"]),
         "run_id": manifest["run_id"],
+        "run_attempt": manifest["run_attempt"],
     }
+
+
+def read_verified_rc(
+    gh: rc.GitHub, tag: object, info: dict[str, object] | None = None,
+    *, stage: Path | None = None,
+) -> tuple[dict[str, object], bytes, dict[str, object]]:
+    """Authenticate a full retained RC without inventing a dispatch/current run.
+
+    An optional empty caller-owned stage retains every RC payload, including
+    receipts omitted by compact distributions. Without it temporary bytes expire.
+    """
+    return _read_verified_rc(gh, tag, info or rc.repository_info(gh), None, stage)
+
+
+def verified_rc(
+    gh: rc.GitHub, tag: object, info: dict[str, object], current_run: dict[str, object]
+) -> tuple[dict[str, object], dict[str, object]]:
+    """Keep dispatch-only separation/fuzz checks and the legacy parent schema."""
+    manifest, _, proof = _read_verified_rc(gh, tag, info, current_run, None)
+    return manifest, {key: value for key, value in proof.items() if key != "run_attempt"}
+
+
+# Keep the outer stable release and authenticated retained RC in one read scope.
+# pylint: disable-next=too-many-locals
+def read_verified_distribution(
+    gh: rc.GitHub, tag: str, raw: bytes, info: dict[str, object] | None = None,
+    *, stage: Path | None = None,
+) -> tuple[dict[str, object], bytes, dict[str, object]]:
+    """Resolve a compact stable envelope and verify its exact shipped bytes."""
+    # Legacy generated consumers need not import this optional module.
+    # pylint: disable-next=import-outside-toplevel
+    if __package__:
+        from .release_distribution import parse_distribution, verify_distribution
+    else:
+        from release_distribution import parse_distribution, verify_distribution
+
+    compact = parse_distribution(raw, gh.repo, tag)
+    rc.require(not rc.RELEASE_SIGNATURES_REQUIRED,
+               "Compact stable cannot omit full-inventory signature evidence")
+    info = info or rc.repository_info(gh)
+    pointer = compact["rc_evidence"]
+    original = rc.release_snapshot(gh, pointer["tag"])
+    manifest, candidate_raw, proof = read_verified_rc(gh, pointer["tag"], info)
+    rc.require(not cast(dict[str, object], cast(dict[str, object], manifest["source_policy"])["data"]).get("sign_releases"),
+               "Compact stable cannot omit full-inventory signature evidence")
+    verify_distribution(compact, manifest, candidate_raw)
+    plan = cast(dict[str, object], manifest["version_plan"])
+    policy = cast(dict[str, object], manifest["source_policy"])
+    source, run_id = cast(str, manifest["source_sha"]), cast(int, manifest["run_id"])
+    candidate_tag = cast(str, manifest["tag"])
+    verify_scheduled_reuse(gh, info, policy, plan, run_id, candidate_tag)
+    initial = published_plan_snapshot(gh, tag, source, False)
+    expected = {item["name"]: item for item in compact["assets"]}
+    declarations = {**expected, rc.MANIFEST: {"size": len(raw), "sha256": rc.digest(raw)}}
+    inventory = {asset["name"]: asset for asset in initial[2]}
+    rc.require(set(inventory) == set(declarations), "Compact stable asset inventory mismatch")
+    rc.require(all(asset.get("size") == declarations[name]["size"]
+                   and _asset_digest_metadata_matches(asset, declarations[name]["sha256"])
+                   for name, asset in inventory.items()), "Compact stable asset metadata mismatch")
+    if stage is not None:
+        rc.require(stage.is_dir() and not stage.is_symlink() and not any(stage.iterdir()),
+                   "Stable staging must be an empty owned directory")
+    with (nullcontext(str(stage)) if stage is not None else
+          tempfile.TemporaryDirectory(prefix="verified-distribution-")) as temporary:
+        directory = Path(temporary)
+        budget = rc.DownloadBudget(
+            sum(item["size"] for item in expected.values()) + len(raw)
+        )
+        manifest_identity = {"size": len(raw), "sha256": rc.digest(raw)}
+        with tempfile.TemporaryDirectory(prefix="verified-distribution-manifest-") as manifest_temp:
+            manifest_path = Path(manifest_temp) / rc.MANIFEST
+            observed_manifest = rc.download_asset(
+                gh, inventory[rc.MANIFEST]["id"], manifest_path,
+                expected=cast(rc.AssetIdentity, manifest_identity), budget=budget,
+            )
+            rc.require(observed_manifest == manifest_identity
+                       and manifest_path.read_bytes() == raw,
+                       "Compact stable manifest changed from its caller-supplied bytes")
+        for name, item in expected.items():
+            identity = rc.download_asset(
+                gh, inventory[name]["id"], directory / name,
+                expected=cast(rc.AssetIdentity, {key: item[key] for key in ("size", "sha256")}), budget=budget,
+            )
+            rc.require(identity == {key: item[key] for key in ("size", "sha256")},
+                       "Compact stable payload changed")
+        verify_scheduled_reuse(gh, info, policy, plan, run_id, candidate_tag)
+        rc.require(rc.snapshot_identity(original) == rc.snapshot_identity(
+            rc.release_snapshot(gh, pointer["tag"])), "Retained RC changed during stable transfer")
+        rc.require(rc.snapshot_identity(initial) == rc.snapshot_identity(
+            published_plan_snapshot(gh, tag, source, False)),
+            "Compact stable release changed during transfer")
+    return manifest, candidate_raw, proof
 
 
 def event_inputs() -> dict[str, object]:
@@ -358,6 +521,12 @@ def verify_final_toolchains(
         )
 
 
+def _asset_digest_metadata_matches(asset: dict[str, object], expected: str) -> bool:
+    """Accept omitted API digests only when the caller verifies downloaded bytes."""
+    actual = asset.get("digest")
+    return actual is None or actual == "sha256:" + expected
+
+
 def published_plan_snapshot(
     gh: rc.GitHub, tag: str, source: str, prerelease: bool
 ) -> tuple[dict[str, object], dict[str, object], list[dict[str, object]]]:
@@ -387,6 +556,61 @@ def published_plan_snapshot(
     return ref, release, assets
 
 
+def _read_scheduled_manifest_before_snapshot(
+    gh: rc.GitHub, tag: str,
+) -> tuple[bytes, int, int]:
+    """Read the digestless manifest by its inventoried immutable asset ID."""
+    # A digestless manifest has to be read on both sides of the checked asset
+    # inventory. Discover its immutable asset ID first, then capture the
+    # authoritative tag/source/asset snapshot after the first body read.
+    release_before = cast(dict[str, object], gh.api(f"releases/tags/{tag}"))
+    release_id_before = rc.positive(release_before.get("id"), "release ID")
+    assets_before = gh.pages(f"releases/{release_id_before}/assets")
+    manifests_before = [asset for asset in assets_before if asset.get("name") == rc.MANIFEST]
+    rc.require(
+        len(manifests_before) == 1
+        and manifests_before[0].get("state") == "uploaded"
+        and type(manifests_before[0].get("size")) is int
+        and 0 < cast(int, manifests_before[0]["size"]) <= 2_000_000,
+        "Qualified manifest inventory is invalid",
+    )
+    manifest_asset_id = rc.positive(manifests_before[0].get("id"), "manifest ID")
+    manifest_size = cast(int, manifests_before[0]["size"])
+    raw = gh.binary(f"releases/assets/{manifest_asset_id}")
+    rc.require(len(raw) == manifest_size, "Qualified manifest size changed during read")
+    return raw, manifest_asset_id, manifest_size
+
+
+def _validate_scheduled_reuse_run(
+    gh: rc.GitHub,
+    info: dict[str, object],
+    snapshot: dict[str, object],
+    plan: dict[str, object],
+    source_run_id: int,
+    attempt: int,
+) -> None:
+    """Bind retained bytes to the exact completed source run and successful gates."""
+    source_run = cast(dict[str, object], gh.api(f"actions/runs/{source_run_id}"))
+    rc.validate_validation_run(
+        gh, source_run, cast(dict[str, object], snapshot["data"]), cast(str, plan["channel"])
+    )
+    rc.require(source_run.get("id") == source_run_id, "Qualified run ID mismatch")
+    rc.validate_run(
+        gh, source_run, info, cast(str, plan["source_sha"]), attempt,
+        completed=True, gate=False,
+    )
+    jobs = gh.pages(f"actions/runs/{source_run_id}/attempts/{attempt}/jobs", "jobs")
+    for names in (("Release gate",), ("CI gate", "checks / CI gate")):
+        gates = [job for job in jobs if job.get("name") in names]
+        rc.require(
+            len(gates) == 1
+            and gates[0].get("status") == "completed"
+            and gates[0].get("conclusion") == "success"
+            and gates[0].get("head_sha") == cast(str, plan["source_sha"]),
+            "Qualified run has no successful CI and Release gates",
+        )
+
+
 # Keep all evidence comparisons together at this read-only reuse boundary.
 # pylint: disable-next=too-many-locals,too-many-arguments,too-many-positional-arguments
 def verify_scheduled_reuse(
@@ -398,15 +622,43 @@ def verify_scheduled_reuse(
     tag: str,
 ) -> None:
     """Require retained immutable evidence and matching published asset metadata."""
+    raw, manifest_asset_id, manifest_size = _read_scheduled_manifest_before_snapshot(gh, tag)
+
     initial = published_plan_snapshot(
         gh, tag, cast(str, plan["source_sha"]), tag != f"v{plan['base_version']}"
     )
-    identity = rc.snapshot_identity(initial)
+    snapshot_identity = rc.snapshot_identity(initial)
     inventory = {asset["name"]: asset for asset in initial[2]}
     asset = inventory[rc.MANIFEST]
     rc.require(cast(int, asset["size"]) <= 2_000_000, "Qualified manifest is too large")
-    raw = gh.binary(f"releases/assets/{rc.positive(asset['id'], 'manifest ID')}")
+    rc.require(
+        rc.positive(asset["id"], "manifest ID") == manifest_asset_id
+        and asset["size"] == manifest_size,
+        "Qualified manifest asset changed during inventory read",
+    )
+    manifest_identity: rc.AssetIdentity = {"size": len(raw), "sha256": rc.digest(raw)}
+    with tempfile.TemporaryDirectory(prefix="scheduled-manifest-readback-") as temporary:
+        manifest_path = Path(temporary) / rc.MANIFEST
+        observed_manifest = rc.download_asset(
+            gh, manifest_asset_id, manifest_path,
+            expected=manifest_identity,
+            budget=rc.DownloadBudget(manifest_identity["size"]),
+        )
+        rc.require(
+            observed_manifest == manifest_identity and manifest_path.read_bytes() == raw,
+            "Qualified manifest changed from its pre-snapshot bytes",
+        )
     manifest = rc.parse_json(raw, "qualified manifest")
+    if isinstance(manifest, dict) and type(manifest.get("schema")) is int and manifest["schema"] == 2:
+        candidate, _, _ = read_verified_distribution(gh, tag, raw, info)
+        rc.require(candidate["version_plan"] == plan and candidate["source_policy"] == snapshot
+                   and candidate["run_id"] == source_run_id,
+                   "Compact stable differs from its qualified RC plan")
+        _validate_scheduled_reuse_run(
+            gh, info, snapshot, plan, source_run_id,
+            rc.positive(candidate.get("run_attempt"), "qualified run attempt"),
+        )
+        return
     rc.require(
         isinstance(manifest, dict)
         and isinstance(manifest.get("schema"), int)
@@ -439,40 +691,38 @@ def verify_scheduled_reuse(
     rc.require(
         all(
             inventory[name].get("size") == entry["size"]
-            and inventory[name].get("digest") == "sha256:" + cast(str, entry["sha256"])
+            and _asset_digest_metadata_matches(inventory[name], cast(str, entry["sha256"]))
             for name, entry in declarations.items()
         ),
         "Qualified asset metadata mismatch",
     )
-    source_run = cast(dict[str, object], gh.api(f"actions/runs/{source_run_id}"))
-    rc.validate_validation_run(gh, source_run, cast(dict[str, object], snapshot["data"]), cast(str, plan["channel"]))
-    rc.require(source_run.get("id") == source_run_id, "Qualified run ID mismatch")
     attempt = rc.positive(manifest.get("run_attempt"), "qualified run attempt")
-    rc.validate_run(
-        gh,
-        source_run,
-        info,
-        cast(str, plan["source_sha"]),
-        attempt,
-        completed=True,
-        gate=False,
-    )
-    jobs = gh.pages(f"actions/runs/{source_run_id}/attempts/{attempt}/jobs", "jobs")
-    for names in (("Release gate",), ("CI gate", "checks / CI gate")):
-        gates = [job for job in jobs if job.get("name") in names]
-        rc.require(
-            len(gates) == 1
-            and gates[0].get("status") == "completed"
-            and gates[0].get("conclusion") == "success"
-            and gates[0].get("head_sha") == cast(str, plan["source_sha"]),
-            "Qualified run has no successful CI and Release gates",
-        )
+    _validate_scheduled_reuse_run(gh, info, snapshot, plan, source_run_id, attempt)
     rc.verify_evidence(gh, manifest, raw)
+    undigested_payloads = [
+        (name, entry) for name, entry in declarations.items()
+        if name != rc.MANIFEST and inventory[name].get("digest") is None
+    ]
+    if undigested_payloads:
+        with tempfile.TemporaryDirectory(prefix="scheduled-release-verify-") as temporary:
+            directory = Path(temporary)
+            budget = rc.DownloadBudget(sum(cast(int, entry["size"]) for _, entry in undigested_payloads))
+            for name, entry in undigested_payloads:
+                downloaded_identity = rc.download_asset(
+                    gh, inventory[name]["id"], directory / name,
+                    expected=cast(rc.AssetIdentity, {key: entry[key] for key in ("size", "sha256")}),
+                    budget=budget,
+                )
+                rc.require(downloaded_identity == {key: entry[key] for key in ("size", "sha256")},
+                           "Undigested qualified payload differs from its manifest")
+    # Evidence and payload reads can take long enough for a new workflow attempt
+    # to start. Recheck regardless of asset digest metadata before accepting reuse.
+    _validate_scheduled_reuse_run(gh, info, snapshot, plan, source_run_id, attempt)
     current = published_plan_snapshot(
         gh, tag, cast(str, plan["source_sha"]), tag != f"v{plan['base_version']}"
     )
     rc.require(
-        rc.snapshot_identity(current) == identity,
+        rc.snapshot_identity(current) == snapshot_identity,
         "Qualified release changed during verification",
     )
 
@@ -483,8 +733,10 @@ def scheduled_reuse(
     run: dict[str, object],
     snapshot: dict[str, object],
     base: str,
+    *, source_sha: str | None = None,
 ) -> str:
-    """Find proved same-input publication after fresh scheduled checks and builds."""
+    """Prove a publication while guarding the current run against main movement."""
+    source_sha = source_sha or cast(str, run["head_sha"])
     head_path = "git/ref/heads/" + quote(cast(str, info["default_branch"]), safe="")
     if cast(
         dict[str, object], cast(dict[str, object], gh.api(head_path)).get("object", {})
@@ -494,7 +746,7 @@ def scheduled_reuse(
     records = [
         (rc.positive(key, "reserved run"), record["plan"])
         for key, record in ledger["plans"].items()
-        if record["plan"]["source_sha"] == cast(str, run["head_sha"])
+        if record["plan"]["source_sha"] == source_sha
         and record["plan"]["base_version"] == base
         and record["plan"]["policy_sha256"]
         == version_plan.policy_digest(snapshot["data"])
@@ -537,6 +789,35 @@ def candidate_provenance(
         f"Validation: https://github.com/{repository}/actions/runs/{run_id}\n\n"
         f"See `{rc.MANIFEST}` for package hashes and version input evidence."
     )
+
+
+def automatic_test_push(
+    gh: rc.GitHub, info: dict[str, object], run: dict[str, object],
+    snapshot: dict[str, object], base: str,
+) -> dict[str, object] | None:
+    """Skip only after proving the exact predecessor was already fully delivered."""
+    policy = cast(dict[str, object], snapshot["data"])
+    selected = cast(dict[str, object], policy.get("change_scope", {})).get("automatic_release_test_paths")
+    if os.environ.get("GITHUB_EVENT_NAME") != "push" or not selected:
+        return None
+    if __package__:
+        from . import release_push_scope  # pylint: disable=import-outside-toplevel
+    else:
+        import release_push_scope  # pylint: disable=import-outside-toplevel
+    admission = release_push_scope.current_push(Path.cwd(), selected, info["default_branch"])
+    if not admission["test_only"] or admission["after"] != run["head_sha"]:
+        return None
+    try:
+        tag = scheduled_reuse(gh, info, run, snapshot, base, source_sha=admission["before"])
+    except (rc.ReleaseError, ValueError, KeyError, TypeError, OSError):
+        # An unavailable/expired/pending proof must not suppress delivery.
+        return None
+    if not tag:
+        return None
+    admission.update(status="test-only-already-published", published_tag=tag)
+    Path(".release-push-admission.json").write_bytes(rc.json_bytes(admission))
+    return {"channel": "beta", "version": base, "build": "false",
+            "plan_artifact": "", "status": admission["status"]}
 
 
 def prepare(args: argparse.Namespace) -> dict[str, object]:
@@ -612,6 +893,8 @@ def prepare(args: argparse.Namespace) -> dict[str, object]:
     else:
         base = client.resolve_version(policy, cast(str, inputs.get("version", "")))
     version_plan.check_base_versions(Path.cwd(), policy, base)
+    if admitted := automatic_test_push(gh, info, run, snapshot, base):
+        return admitted
     closed = rc.closed_push_cycle(gh, base, cast(str, kind))
     if closed:
         return closed
@@ -706,7 +989,8 @@ def publish_versioned(args: argparse.Namespace) -> dict[str, object]:
     plan = version_plan.validate_plan(json.loads(PLAN.read_text(encoding="utf-8")))
     channel = cast(str, plan["channel"])
     gh = StateGitHub(args.repo)
-    info, run, snapshot = context(gh, channel, gate=True)
+    execution_proof: list[rc.ExecutionJobProof] = []
+    info, run, snapshot = context(gh, channel, gate=True, execution_proof=execution_proof)
     policy = cast(dict[str, object], snapshot["data"])
     version_plan.validate_plan(plan, policy, cast(str, run["head_sha"]))
     parent = None
@@ -827,8 +1111,54 @@ def publish_versioned(args: argparse.Namespace) -> dict[str, object]:
             rc.require(gh.api(source_path) == source_ref[1],
                        "Automatic publication default source changed; draft left unpublished")
 
+        def confirm_publisher_execution() -> None:
+            # Preserve the original local proof; never trust a proof inferred
+            # from a newer or different publisher job.
+            current = gh.api(f"actions/runs/{run['id']}/attempts/{run['run_attempt']}")
+            current_run = rc.require_active_attempt(current, run)
+            if not execution_proof:
+                rc.require(current_run.get("status") == "in_progress",
+                           "Publisher run has not reached in_progress")
+            rc.require(rc.release_gate_ready(
+                gh, cast(int, run["id"]), cast(str, run["head_sha"]),
+                cast(int, run["run_attempt"]),
+                publisher_proof=execution_proof[0] if execution_proof else None,
+                publisher_run=current_run,
+            ), "Release gate is no longer ready before publication")
+
+        def confirm_before_publish() -> None:
+            # This full validation runs before _publish_prepared's final tag
+            # read; it may inspect publisher jobs and automatic source state.
+            confirm_publisher_execution()
+            if automatic:
+                confirm_automatic_source()
+
+        def confirm_final_publisher_attempt() -> None:
+            # The final boundary shares a short deadline with the tag GET.
+            # Recheck the exact attempt, default branch identity and captured
+            # source ref after the final tag read and before public PATCH. Do
+            # not add aggregate/jobs reads at this boundary.
+            current = gh.api(
+                f"actions/runs/{run['id']}/attempts/{run['run_attempt']}"
+            )
+            rc.require_active_attempt(current, run)
+            if automatic:
+                rc.require(
+                    rc.repository_info(gh)["default_branch"] == info["default_branch"],
+                    "Automatic publication default branch changed; draft left unpublished",
+                )
+                rc.require(
+                    gh.api(source_path) == source_ref[1],
+                    "Automatic publication default source changed; draft left unpublished",
+                )
+
+        # Execution admission may be minutes old after downloads and signatures.
+        # Recheck immediately before the first persistent ledger mutation.
+        confirm_publisher_execution()
         consumed = begin_publication(gh, plan, cast(int, run["id"]), parent)
-        confirm_create = create_confirmation(run, source_ref, consumed)
+        confirm_create = create_confirmation(
+            run, source_ref, consumed, execution_proof[0] if execution_proof else None
+        )
         result = rc._publish_prepared(  # pylint: disable=protected-access
             gh,
             cast(str, plan["tag"]),
@@ -837,7 +1167,8 @@ def publish_versioned(args: argparse.Namespace) -> dict[str, object]:
             channel != "stable",
             body,
             confirm_create=confirm_create,
-            confirm_publish=confirm_automatic_source if automatic else None,
+            confirm_publish=confirm_before_publish,
+            confirm_final_publish=confirm_final_publisher_attempt,
         )
     return {
         "status": "published",

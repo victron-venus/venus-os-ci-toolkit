@@ -1,12 +1,52 @@
 # Changelog
 
-## [0.1.16] - Unreleased
+## [0.1.17] - Unreleased
+
+### Changed
+
+- release: publish a failed-only rerun from the earlier attempts of its own run: the collector keeps each artifact's newest attempt, package and fuzz receipts may come from an attempt at or before the current one, and a recorded successful job may be reported unchanged.
+- release: use docker credential helpers when publishing containers (#518).
+- preserve evidence when the recovery snapshot fails (#516).
+- describe evidence recovery waits and limits as implemented (#515).
+- Wait for evidence artifacts to be indexed before the named read-back (#512).
+- Refresh the coherent Ubuntu glibc lock for native OCI builds (#509).
+- harden release deadlines and consumer migration (#508).
+- clarify final publication read boundary.
+- retry streamed asset HTTP 5xx responses.
+- fix release runtime compatibility across Linux and macOS.
+- preserve verified release migration layers.
+
+### Upgrade
+
+Consumers receive the downloader fix through an explicit reviewed source update. Full current-toolkit adoption retains its qualified Go 1.27.3 runtime; a targeted backport to an older qualified runtime must record that adaptation and pass its own checks. Publishing this source release does not update consumer pins, credentials or deployed runners.
+
+### Security
+
+Download retries apply only to read-only archive GET requests; release-creation writes still occur once. Exact source, tag, ledger, manifest and checksum checks remain required, together with the existing HTTPS/FIPS and archive-size bounds. This release adds no credentials or repository permissions and does not change deployed runners.
+
+## [0.1.16] - 2026-11-05
 
 ### Fixed
 
-- Let a consumer declare a generated bundle that carries a reviewed local patch in the workflow lock (`local`), so the vendoring script leaves it byte-identical instead of refusing to run. An undeclared local reference still fails, and a bundle cannot be both generated and locally patched.
 - Apply the caller's ordinary browser report retention to failed and cancelled targets as well. A failed target no longer always retains its evidence for 14 days, so repeated failures cannot exhaust the account's shared artifact quota; the default stays 14 days and release qualification still retains reports for 14 days.
+
+- Let a consumer declare a generated bundle that carries a reviewed local patch in the workflow lock (`local`), so the vendoring script leaves it byte-identical instead of refusing to run. An undeclared local reference still fails, and a bundle cannot be both generated and locally patched.
+
+- Bind live release execution to the official current-job check-run identity when aggregate Actions metadata remains queued. Preserve exact attempt/source/runner checks, prerequisite gates, the five-minute deadline and strict completed-RC validation; ambiguous-create readback rechecks the current job independently.
+
 - Allow the reusable browser scope gate ten minutes for a cold Node 22 tool-cache download on private runners. Preserve the pinned runtime, coverage assertions and browser-test timeout.
+
+- Recheck the exact release tag after final confirmation, and match repository-name casing consistently when reconciling an ambiguous release creation.
+- Allow at most three total GitHub CLI artifact download attempts for transient HTTP responses within one 60-second deadline, with bounded backoff and `Retry-After` handling. Preserve HTTPS/FIPS, archive limits, checksum validation and terminal transport/body errors.
+- Simplify the successful-response and transient-status test helpers without changing retry behavior or test assertions.
+
+### Upgrade
+
+Consumers receive the downloader fix through an explicit reviewed source update. Full current-toolkit adoption retains its qualified Go 1.27.3 runtime; a targeted backport to an older qualified runtime must record that adaptation and pass its own checks. Publishing this source release does not update consumer pins, credentials or deployed runners.
+
+### Security
+
+Download retries apply only to read-only archive GET requests; release-creation writes still occur once. Exact source, tag, ledger, manifest and checksum checks remain required, together with the existing HTTPS/FIPS and archive-size bounds. This release adds no credentials or repository permissions and does not change deployed runners.
 
 ## [0.1.15] - 2026-11-04
 

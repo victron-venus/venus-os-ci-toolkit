@@ -206,11 +206,16 @@ def verify_report(directory: Path, root: Path, repository: str, sha: str, run: i
     config = manifest(root)
     expected = {
         "repository": repository, "source_sha": sha,
-        "run_id": run, "run_attempt": attempt, "channel": "rc", "private": False,
+        "run_id": run, "channel": "rc", "private": False,
         "manifest_sha256": hashlib.sha256((root / MANIFEST).read_bytes()).hexdigest(),
         "status": "passed", "network": "isolated",
     }
-    if type(data.get("schema")) is not int or data["schema"] not in {1, 2} or any(type(data.get(k)) is not type(v) or data.get(k) != v for k, v in expected.items()):
+    # A failed-only rerun keeps the campaign an earlier attempt of this same run
+    # recorded; a later attempt, another run or another source never matches.
+    produced = data.get("run_attempt")
+    if (type(data.get("schema")) is not int or data["schema"] not in {1, 2}
+            or type(produced) is not int or not 1 <= produced <= attempt
+            or any(type(data.get(k)) is not type(v) or data.get(k) != v for k, v in expected.items())):
         raise ValueError("Fuzz report identity or outcome mismatch")
     verify_target_inventory(data.get("targets", []), config["targets"])
     verify_preflight_evidence(data, config)

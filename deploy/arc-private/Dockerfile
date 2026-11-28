@@ -5,6 +5,7 @@ ARG BASE_IMAGE
 FROM scratch AS private-inputs
 COPY .github/gh/release.json /tmp/private-gh/.github/gh/release.json
 COPY scripts/install_release_gh.py /tmp/private-gh/scripts/install_release_gh.py
+COPY scripts/async_process.py /tmp/private-gh/scripts/async_process.py
 COPY deploy/runner-reserve/start-runner.sh deploy/runner-reserve/sandbox-docker.sh deploy/runner-reserve/qualify.sh /opt/victron-ci-reserve/
 COPY deploy/arc-private/sandbox-docker.sh /tmp/private-wrapper/sandbox-docker.sh
 FROM ${BASE_IMAGE}
@@ -24,6 +25,9 @@ RUN --mount=type=bind,from=private-inputs,target=/tmp/private-inputs,ro \
     mkdir -p /tmp/private-gh/.github/gh /tmp/private-gh/scripts \
     && cp -a --remove-destination /tmp/private-inputs/tmp/private-gh/.github/gh/release.json /tmp/private-gh/.github/gh/release.json \
     && cp -a --remove-destination /tmp/private-inputs/tmp/private-gh/scripts/install_release_gh.py /tmp/private-gh/scripts/install_release_gh.py \
+    && cp -a --remove-destination \
+        /tmp/private-inputs/tmp/private-gh/scripts/async_process.py \
+        /tmp/private-gh/scripts/async_process.py \
     && arch="$(dpkg --print-architecture)" \
     && case "$arch" in amd64|arm64) ;; *) exit 1 ;; esac \
     && curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' \
@@ -31,7 +35,7 @@ RUN --mount=type=bind,from=private-inputs,target=/tmp/private-inputs,ro \
         "https://github.com/cli/cli/releases/download/v2.103.0/gh_2.103.0_linux_${arch}.tar.gz" \
         --output /tmp/private-gh/archive.tar.gz \
     && GODEBUG=fips140=on python3 /tmp/private-gh/scripts/install_release_gh.py \
-        --archive /tmp/private-gh/archive.tar.gz --output /usr/local/bin/gh \
+        --archive /tmp/private-gh/archive.tar.gz --output /usr/local/bin/gh --system-image-install \
     && test "$(command -v gh)" = /usr/local/bin/gh \
     && gh api --paginate --slurp --help >/dev/null \
     && gh api --help | grep -F -- '--slurp' >/dev/null \

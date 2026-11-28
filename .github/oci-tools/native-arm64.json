@@ -2,8 +2,8 @@
   "schema": 1,
   "distribution": "ubuntu:24.04",
   "architecture": "arm64",
-  "snapshot": "20261103T000000Z",
-  "base_url": "https://snapshot.ubuntu.com/ubuntu/20261103T000000Z/",
+  "snapshot": "20261118T000000Z",
+  "base_url": "https://snapshot.ubuntu.com/ubuntu/20261118T000000Z/",
   "roots": [
     "gcc-13",
     "libc6-dev",
@@ -124,29 +124,29 @@
     },
     {
       "name": "libc-dev-bin",
-      "version": "2.39-0ubuntu8.9",
+      "version": "2.39-0ubuntu8.12",
       "architecture": "arm64",
-      "filename": "pool/main/g/glibc/libc-dev-bin_2.39-0ubuntu8.9_arm64.deb",
-      "sha256": "85564f1ba7dce372d0fdec055986b428f72cd9c235af1dd29950f589562d19bc",
-      "size": 19684,
+      "filename": "pool/main/g/glibc/libc-dev-bin_2.39-0ubuntu8.12_arm64.deb",
+      "sha256": "ecc2636c0d5cee59dc90ffb174807675f4f4c92b8fe6a2b745670682716ab48c",
+      "size": 19700,
       "source": "glibc"
     },
     {
       "name": "libc6",
-      "version": "2.39-0ubuntu8.9",
+      "version": "2.39-0ubuntu8.12",
       "architecture": "arm64",
-      "filename": "pool/main/g/glibc/libc6_2.39-0ubuntu8.9_arm64.deb",
-      "sha256": "ad109797c5f78a5eeb6d4c296bfbaae68b239111a0c9ac0eb97b8d430284ac45",
-      "size": 2776414,
+      "filename": "pool/main/g/glibc/libc6_2.39-0ubuntu8.12_arm64.deb",
+      "sha256": "2578bc27d4e077f5e93c283d2502bc693c516d9590a20a27840b548a4d436820",
+      "size": 2774244,
       "source": "glibc"
     },
     {
       "name": "libc6-dev",
-      "version": "2.39-0ubuntu8.9",
+      "version": "2.39-0ubuntu8.12",
       "architecture": "arm64",
-      "filename": "pool/main/g/glibc/libc6-dev_2.39-0ubuntu8.9_arm64.deb",
-      "sha256": "9bf6acb8a3433ffe561182517640970d324425fabbbeb54a24d737ba1f3c816b",
-      "size": 1596264,
+      "filename": "pool/main/g/glibc/libc6-dev_2.39-0ubuntu8.12_arm64.deb",
+      "sha256": "b8411b504a468c19a2acf4ff38a2015997853d078138afac76ff89c9599794b2",
+      "size": 1596322,
       "source": "glibc"
     },
     {
@@ -376,11 +376,11 @@
     },
     {
       "name": "linux-libc-dev",
-      "version": "6.8.0-147.147",
+      "version": "6.8.0-149.149",
       "architecture": "arm64",
-      "filename": "pool/main/l/linux/linux-libc-dev_6.8.0-147.147_arm64.deb",
-      "sha256": "e489840ff836f22ae92c1bc3534ea8c68bcce2c4500e39ba560bbefc1b25e359",
-      "size": 1568718,
+      "filename": "pool/main/l/linux/linux-libc-dev_6.8.0-149.149_arm64.deb",
+      "sha256": "7ab70f6ebc55fe9ea6ceb9bb087cc7df252b62b9f1b14df46e825052206d7cff",
+      "size": 1672414,
       "source": "linux"
     },
     {

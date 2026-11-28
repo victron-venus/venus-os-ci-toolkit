@@ -76,11 +76,11 @@ on:
         type: boolean
         default: false
       browser-platform-scope:
-        description: 'Ordinary browser CI scope: all or linux (ubuntu-latest reserve targets only); release qualification requires all'
+        description: 'Browser runtime scope: all, linux reserve, or explicit windows-only qualification; package builds are unchanged'
         type: string
         default: 'all'
       browser-release-channel:
-        description: 'Optional release qualification: nightly/beta require the declared profile, rc/stable require all 35'
+        description: 'Release qualification: declared required profile, or full scoped inventory for rc/stable; omitted platforms are reported'
         type: string
         default: ''
       browser-required-profile:
@@ -95,6 +95,10 @@ on:
         description: 'Unique artifact namespace when this workflow is called more than once per run'
         type: string
         default: 'browser-compatibility'
+      browser-evidence-upload-retry:
+        description: 'Opt in to one same-attempt browser evidence upload retry with exact artifact read-back verification'
+        type: boolean
+        default: false
       browser-success-report-retention-days:
         description: 'Retention for ordinary browser reports in any status (1..14 days); release qualification retains 14 days'
         type: number
@@ -136,7 +140,7 @@ jobs:
         working-directory: ${{ inputs.working-directory }}
     steps:
       - name: Harden the runner (Audit all outbound calls)
-        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.23.0
         with:
           egress-policy: audit
 
@@ -249,7 +253,7 @@ jobs:
           const isRegression = row => row.os === 'windows-2022' && row.engine === 'firefox' && row.playwright === '1.62.1' && !row.channel;
           if (regressionProfile && (rows.filter(isRegression).length !== 1 || rows.find(isRegression).tier !== 'required')) fail('The historical Windows Firefox profile requires its exact target');
           const requestedScope = process.env.BROWSER_PLATFORM_SCOPE ?? 'all';
-          if (!['all', 'linux'].includes(requestedScope)) fail('Browser platform scope must be all or linux');
+          if (!['all', 'linux', 'windows'].includes(requestedScope)) fail('Browser platform scope must be all, linux or windows');
           const hostedSetting = process.env.CI_HOSTED_RUNNERS_ENABLED || 'true';
           if (!['true', 'false'].includes(hostedSetting)) fail('CI_HOSTED_RUNNERS_ENABLED must be true or false');
           const hostedEnabled = hostedSetting === 'true';
@@ -258,13 +262,14 @@ jobs:
             try { labels = JSON.parse(process.env.CI_RUNNER_LABELS || '[]'); } catch { fail('Invalid CI_RUNNER_LABELS'); }
             if (!['self-hosted', 'k3s'].includes(process.env.CI_RUNNER_MODE) || !Array.isArray(labels) || !labels.length || labels.some(label => typeof label !== 'string' || !label.trim()) || process.env.RUNNER_ENVIRONMENT !== 'self-hosted') fail('Disabled hosted runners require a configured self-hosted CI runner');
           }
+          if (requestedScope === 'windows' && !hostedEnabled) fail('Windows qualification requires hosted Windows runners; Linux fallback is forbidden');
           const platformScope = hostedEnabled ? requestedScope : 'linux';
           const requested = rows.filter(row => row.tier === 'required' || process.env.BROWSER_EXTENDED === 'true');
-          const selected = requested.filter(row => platformScope === 'all' || row.os === 'ubuntu-latest');
+          const selected = requested.filter(row => platformScope === 'all' || (platformScope === 'windows' ? row.os === 'windows-2022' : row.os === 'ubuntu-latest'));
           if (!selected.some(row => row.tier === 'required')) fail('At least one required target in the selected platform scope is mandatory');
           const releaseChannel = process.env.BROWSER_RELEASE_CHANNEL || '';
           if (!['', 'nightly', 'beta', 'rc', 'stable'].includes(releaseChannel)) fail('Unknown browser release channel');
-          if (releaseChannel && requestedScope !== 'all') fail('Release inventory selection requires all platforms; use the explicit hosted budget policy for unavailable runners');
+          if (releaseChannel && requestedScope === 'linux') fail('Release inventory selection requires all platforms or explicit Windows scope; use the explicit hosted budget policy for unavailable runners');
           if (releaseChannel) {
             const full = ['rc', 'stable'].includes(releaseChannel);
             if (rows.length !== 35 || rows.filter(row => row.tier === 'required').length !== requiredCount) fail('Release qualification requires the reviewed 35-target inventory and declared required profile');
@@ -447,24 +452,35 @@ jobs:
           const lines = text.match(/[^\n]*\n|[^\n]+$/g) || [];
           const entries = lines.map((line, index) => ({index, fields: line.trim().split(/[ \t]+/)}))
             .filter(({fields}) => fields[0] && !fields[0].startsWith('#'));
-          const azure = entries.filter(({fields}) => fields[0] === 'http://azure.archive.ubuntu.com/ubuntu/');
-          if (!azure.length) {
-            console.log('Azure Ubuntu mirror is not configured; leaving APT unchanged');
+          const preferred = entries.filter(({fields}) =>
+            fields[0] === 'http://azure.archive.ubuntu.com/ubuntu/' ||
+            fields[0] === 'http://us-east-2.ec2.archive.ubuntu.com/ubuntu/'
+          );
+          if (!preferred.length) {
+            console.log('No recognized slow Ubuntu mirror is configured; leaving APT unchanged');
             process.exit(0);
           }
           const fallback = entries.filter(({fields}) => fields[0] === 'https://archive.ubuntu.com/ubuntu/');
-          if (azure.length !== 1 || azure[0].fields.length !== 2 || azure[0].fields[1] !== 'priority:1' ||
+          if (preferred.length !== 1 || preferred[0].fields.length !== 2 || preferred[0].fields[1] !== 'priority:1' ||
               fallback.length !== 1 || fallback[0].fields.length !== 2 || fallback[0].fields[1] !== 'priority:2') {
             console.log('::warning::Unrecognized Ubuntu mirror configuration; leaving APT unchanged');
             process.exit(0);
           }
-          const updated = lines.filter((_, index) => index !== azure[0].index).join('');
+          const updated = lines.filter((_, index) => index !== preferred[0].index).join('');
           if (!fs.readFileSync(mirrorFile).equals(original)) throw new Error('Ubuntu mirror list changed during preparation');
           fs.writeFileSync(mirrorFile, updated);
-          console.log('Removed the Azure entry; retained the image-provisioned HTTPS Ubuntu fallback');
+          console.log(`Removed the recognized preferred Ubuntu mirror (${preferred[0].fields[0]}); retained the image-provisioned HTTPS fallback`);
           NODE
+      - name: Install hosted Linux WebKit system dependencies
+        if: ${{ runner.environment == 'github-hosted' && runner.os == 'Linux' && matrix.engine == 'webkit' && matrix.channel == '' }}
+        timeout-minutes: 10
+        run: node "$CI_PLAYWRIGHT_MODULE/cli.js" install-deps webkit
+      - name: Install hosted Linux WebKit browser
+        if: ${{ runner.environment == 'github-hosted' && runner.os == 'Linux' && matrix.engine == 'webkit' && matrix.channel == '' }}
+        timeout-minutes: 5
+        run: node "$CI_PLAYWRIGHT_MODULE/cli.js" install webkit
       - name: Install selected browser and hosted system dependencies
-        if: runner.environment == 'github-hosted'
+        if: ${{ runner.environment == 'github-hosted' && !(runner.os == 'Linux' && matrix.engine == 'webkit' && matrix.channel == '') }}
         run: node "$CI_PLAYWRIGHT_MODULE/cli.js" install --with-deps "${CI_BROWSER_CHANNEL:-$CI_BROWSER_ENGINE}"
       # Branded installers may run a system package manager even without --with-deps.
       # Reserve images must provision those channels before accepting jobs.
@@ -516,15 +532,366 @@ jobs:
           if (!Number.isSafeInteger(result.testsPassed) || result.testsPassed < 1 || result.testsFailed !== 0) throw new Error('No passing application acceptance tests, or failed tests remain');
           if (!Array.isArray(result.scenarios) || result.scenarios.length !== result.testsPassed || result.scenarios.some(value => typeof value !== 'string' || !value.trim()) || new Set(result.scenarios).size !== result.scenarios.length) throw new Error('Each passed application scenario must be named exactly once');
           NODE
+      - name: Prepare bounded browser evidence recovery helper
+        id: evidence_helper
+        if: ${{ always() && inputs.browser-evidence-upload-retry && steps.lock.outcome == 'success' }}
+        timeout-minutes: 1
+        env:
+          BROWSER_EVIDENCE_DIRECTORY: .compatibility/${{ matrix.id }}
+          BROWSER_EVIDENCE_SNAPSHOT: ${{ runner.temp }}/browser-evidence-${{ matrix.id }}.json
+          BROWSER_EVIDENCE_READBACK: ${{ runner.temp }}/browser-evidence-readback-${{ matrix.id }}
+          BROWSER_EVIDENCE_TARGET_ID: ${{ matrix.id }}
+          BROWSER_EVIDENCE_HELPER: ${{ runner.temp }}/browser-evidence-recovery-${{ matrix.id }}.cjs
+          GITHUB_WORKSPACE: ${{ github.workspace }}
+        run: |
+          set -o noclobber
+          cat > "$BROWSER_EVIDENCE_HELPER" <<'NODE'
+          'use strict';
+          const crypto = require('node:crypto');
+          const fs = require('node:fs');
+          const path = require('node:path');
+          const MAX_FILES = 4096;
+          const MAX_ENTRIES = 8192;
+          const MAX_BYTES = 512 * 1024 * 1024;
+          const MAX_MANIFEST_BYTES = 4 * 1024 * 1024;
+          const MAX_DEPTH = 32;
+          const fail = message => { throw new Error(`Browser evidence recovery: ${message}`); };
+          function sameFileIdentity(before, after) {
+            return before.dev === after.dev && before.ino === after.ino && before.mode === after.mode &&
+              before.nlink === after.nlink && before.size === after.size && before.mtimeMs === after.mtimeMs &&
+              before.ctimeMs === after.ctimeMs;
+          }
+          function collect(root) {
+            const rootStat = fs.lstatSync(root);
+            if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) fail('evidence root must be a real directory');
+            const files = [];
+            const names = new Set();
+            let totalBytes = 0;
+            let totalEntries = 0;
+            function visit(directory, relative, depth) {
+              if (depth > MAX_DEPTH) fail('evidence directory depth exceeds the limit');
+              const openedDirectory = fs.opendirSync(directory);
+              try {
+                let entry;
+                while ((entry = openedDirectory.readSync()) !== null) {
+                  totalEntries += 1;
+                  if (totalEntries > MAX_ENTRIES) fail('evidence exceeds entry limit');
+                  if (!entry.name || entry.name === '.' || entry.name === '..' || /[\\/:\0]/.test(entry.name)) fail('invalid evidence filename');
+                  const name = relative ? `${relative}/${entry.name}` : entry.name;
+                  if (names.has(name)) fail('duplicate normalized evidence path');
+                  names.add(name);
+                  const filename = path.join(directory, entry.name);
+                  const before = fs.lstatSync(filename);
+                  if (before.isSymbolicLink()) fail('symbolic links are not permitted in browser evidence');
+                  if (before.isDirectory()) {
+                    visit(filename, name, depth + 1);
+                    const after = fs.lstatSync(filename);
+                    if (!sameFileIdentity(before, after)) fail('evidence directory changed while being read');
+                    continue;
+                  }
+                  if (!before.isFile() || before.nlink !== 1) fail('evidence must contain only singly-linked regular files and directories');
+                  if (files.length >= MAX_FILES || before.size > MAX_BYTES - totalBytes) fail('evidence exceeds file or byte limits');
+                  const flags = fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0);
+                  const fd = fs.openSync(filename, flags);
+                  const hash = crypto.createHash('sha256');
+                  let bytes = 0;
+                  try {
+                    const opened = fs.fstatSync(fd);
+                    if (!opened.isFile() || !sameFileIdentity(before, opened)) fail('evidence file changed before hashing');
+                    const buffer = Buffer.allocUnsafe(64 * 1024);
+                    for (;;) {
+                      const count = fs.readSync(fd, buffer, 0, buffer.length, null);
+                      if (count === 0) break;
+                      bytes += count;
+                      if (bytes > before.size || bytes > MAX_BYTES - totalBytes) fail('evidence file grew beyond the byte limit');
+                      hash.update(buffer.subarray(0, count));
+                    }
+                    const after = fs.fstatSync(fd);
+                    if (bytes !== before.size || !sameFileIdentity(before, after)) fail('evidence file changed while being read');
+                  } finally {
+                    fs.closeSync(fd);
+                  }
+                  totalBytes += bytes;
+                  files.push({path: name, size: bytes, sha256: hash.digest('hex')});
+                }
+              } finally {
+                openedDirectory.closeSync();
+              }
+            }
+            visit(root, '', 0);
+            const rootAfter = fs.lstatSync(root);
+            if (!sameFileIdentity(rootStat, rootAfter)) fail('evidence root changed while being read');
+            files.sort((a, b) => a.path.localeCompare(b.path));
+            if (files.length === 0) fail('evidence tree is empty');
+            return {schema: 1, fileCount: files.length, totalBytes, files};
+          }
+          function isWithin(parent, candidate) {
+            const relative = path.relative(parent, candidate);
+            return relative === '' || (relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
+          }
+          function evidenceRoot() {
+            const workspace = fs.realpathSync(process.env.GITHUB_WORKSPACE);
+            const workingDirectory = fs.realpathSync(process.cwd());
+            if (!isWithin(workspace, workingDirectory)) fail('working directory escapes the checkout');
+            const root = path.resolve(workingDirectory, process.env.BROWSER_EVIDENCE_DIRECTORY);
+            if (!isWithin(workingDirectory, root) || !isWithin(workspace, root)) fail('evidence directory escapes the checkout');
+            let cursor = root;
+            for (;;) {
+              const stat = fs.lstatSync(cursor);
+              if (stat.isSymbolicLink()) fail('symlinked evidence paths are not permitted');
+              if (cursor === workspace) break;
+              const parent = path.dirname(cursor);
+              if (parent === cursor || !isWithin(workspace, parent)) fail('evidence path has an unsafe checkout ancestor');
+              cursor = parent;
+            }
+            return root;
+          }
+          function ownedTempPath(candidate, expectedName) {
+            const tempRoot = fs.realpathSync(process.env.RUNNER_TEMP);
+            const resolved = path.resolve(candidate);
+            if (fs.realpathSync(path.dirname(resolved)) !== tempRoot || path.basename(resolved) !== expectedName) fail('temporary evidence path is outside the runner temp directory');
+            return resolved;
+          }
+          function expectedTempNames() {
+            const target = process.env.BROWSER_EVIDENCE_TARGET_ID;
+            if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(target || '')) fail('invalid browser target ID');
+            return {snapshot: `browser-evidence-${target}.json`, readback: `browser-evidence-readback-${target}`};
+          }
+          function snapshot() {
+            const names = expectedTempNames();
+            const snapshotPath = ownedTempPath(process.env.BROWSER_EVIDENCE_SNAPSHOT, names.snapshot);
+            const readbackPath = ownedTempPath(process.env.BROWSER_EVIDENCE_READBACK, names.readback);
+            if (fs.existsSync(snapshotPath) || fs.existsSync(readbackPath)) fail('snapshot or read-back destination already exists');
+            const inventory = collect(evidenceRoot());
+            const contents = `${JSON.stringify(inventory)}\n`;
+            if (Buffer.byteLength(contents) > MAX_MANIFEST_BYTES) fail('evidence snapshot exceeds manifest limit');
+            const fd = fs.openSync(snapshotPath, 'wx', 0o600);
+            try { fs.writeFileSync(fd, contents); } finally { fs.closeSync(fd); }
+            fs.mkdirSync(readbackPath, {mode: 0o700});
+            console.log(`Snapshotted ${inventory.fileCount} files (${inventory.totalBytes} bytes)`);
+          }
+          function readSnapshot(snapshotPath) {
+            const before = fs.lstatSync(snapshotPath);
+            if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1 || before.size > MAX_MANIFEST_BYTES) fail('snapshot manifest file is unsafe or oversized');
+            const fd = fs.openSync(snapshotPath, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0));
+            try {
+              const opened = fs.fstatSync(fd);
+              if (!opened.isFile() || !sameFileIdentity(before, opened)) fail('snapshot manifest changed before reading');
+              const bytes = Buffer.alloc(before.size + 1);
+              let length = 0;
+              while (length < bytes.length) {
+                const count = fs.readSync(fd, bytes, length, bytes.length - length, null);
+                if (count === 0) break;
+                length += count;
+              }
+              const after = fs.fstatSync(fd);
+              if (length !== before.size || !sameFileIdentity(before, after)) fail('snapshot manifest changed while being read');
+              return JSON.parse(bytes.subarray(0, length).toString('utf8'));
+            } finally {
+              fs.closeSync(fd);
+            }
+          }
+          function verify() {
+            const names = expectedTempNames();
+            const snapshotPath = ownedTempPath(process.env.BROWSER_EVIDENCE_SNAPSHOT, names.snapshot);
+            const readbackPath = ownedTempPath(process.env.BROWSER_EVIDENCE_READBACK, names.readback);
+            const expected = readSnapshot(snapshotPath);
+            if (expected.schema !== 1 || !Array.isArray(expected.files) || expected.files.length !== expected.fileCount || expected.fileCount < 1 || expected.fileCount > MAX_FILES || !Number.isSafeInteger(expected.totalBytes) || expected.totalBytes < 0 || expected.totalBytes > MAX_BYTES) fail('snapshot manifest is invalid');
+            let manifestBytes = 0;
+            const manifestPaths = new Set();
+            for (const item of expected.files) {
+              if (!item || typeof item.path !== 'string' || item.path.startsWith('/') || item.path.includes('\\') || item.path.split('/').some(part => !part || part === '.' || part === '..') || !Number.isSafeInteger(item.size) || item.size < 0 || !/^[a-f0-9]{64}$/.test(item.sha256 || '') || manifestPaths.has(item.path)) fail('snapshot manifest contains an invalid file entry');
+              manifestPaths.add(item.path);
+              manifestBytes += item.size;
+              if (!Number.isSafeInteger(manifestBytes) || manifestBytes > MAX_BYTES) fail('snapshot manifest exceeds the byte limit');
+            }
+            if (manifestBytes !== expected.totalBytes || expected.files.some((item, index) => index > 0 && expected.files[index - 1].path.localeCompare(item.path) >= 0)) fail('snapshot manifest totals or ordering are invalid');
+            const source = collect(evidenceRoot());
+            if (JSON.stringify(source) !== JSON.stringify(expected)) fail('original evidence changed after its snapshot');
+            const readback = collect(readbackPath);
+            if (JSON.stringify(readback) !== JSON.stringify(expected)) fail('downloaded artifact does not exactly match the snapshotted evidence');
+            console.log(`Verified exact browser evidence artifact (${expected.fileCount} files, ${expected.totalBytes} bytes)`);
+          }
+          const command = process.argv[2];
+          if (command === 'snapshot') snapshot();
+          else if (command === 'check') {
+            const inventory = collect(evidenceRoot());
+            console.log(`Evidence tree is uploadable (${inventory.fileCount} files, ${inventory.totalBytes} bytes)`);
+          }
+          else if (command === 'verify') verify();
+          else fail('expected snapshot, check or verify command');
+          NODE
+      - name: Snapshot browser evidence for optional upload recovery
+        id: evidence_snapshot
+        if: ${{ always() && inputs.browser-evidence-upload-retry && steps.evidence_helper.outcome == 'success' && steps.lock.outcome == 'success' }}
+        timeout-minutes: 1
+        env:
+          BROWSER_EVIDENCE_DIRECTORY: .compatibility/${{ matrix.id }}
+          BROWSER_EVIDENCE_SNAPSHOT: ${{ runner.temp }}/browser-evidence-${{ matrix.id }}.json
+          BROWSER_EVIDENCE_READBACK: ${{ runner.temp }}/browser-evidence-readback-${{ matrix.id }}
+          BROWSER_EVIDENCE_TARGET_ID: ${{ matrix.id }}
+          BROWSER_EVIDENCE_HELPER: ${{ runner.temp }}/browser-evidence-recovery-${{ matrix.id }}.cjs
+          GITHUB_WORKSPACE: ${{ github.workspace }}
+        run: node "$BROWSER_EVIDENCE_HELPER" snapshot
+      - name: Recheck the evidence tree before uploading without a snapshot
+        id: evidence_tree_check
+        # The snapshot is also the tree validator, and the upload action follows
+        # directory symlinks. When the snapshot fails, this recheck keeps the link,
+        # hard-link, special-file and bounds rejection between the tree and the
+        # upload instead of publishing files reached through a link.
+        if: ${{ always() && inputs.browser-evidence-upload-retry && steps.evidence_helper.outcome == 'success' && steps.lock.outcome == 'success' && steps.evidence_snapshot.outcome != 'success' }}
+        continue-on-error: true
+        timeout-minutes: 1
+        env:
+          BROWSER_EVIDENCE_DIRECTORY: .compatibility/${{ matrix.id }}
+          BROWSER_EVIDENCE_TARGET_ID: ${{ matrix.id }}
+          BROWSER_EVIDENCE_HELPER: ${{ runner.temp }}/browser-evidence-recovery-${{ matrix.id }}.cjs
+          GITHUB_WORKSPACE: ${{ github.workspace }}
+        run: node "$BROWSER_EVIDENCE_HELPER" check
       - name: Preserve browser versions and synthetic failure diagnostics
-        if: ${{ always() && steps.lock.outcome == 'success' }}
+        id: evidence_upload
+        # Recovery snapshots can fail permanently (unsupported tree, size limit),
+        # so the upload must not depend on the snapshot alone: evidence is preserved
+        # after the safe-tree recheck and an unavailable snapshot fails the job
+        # afterwards.
+        if: ${{ always() && steps.lock.outcome == 'success' && (inputs.browser-evidence-upload-retry != true || steps.evidence_snapshot.outcome == 'success' || steps.evidence_tree_check.outcome == 'success') }}
+        continue-on-error: ${{ inputs.browser-evidence-upload-retry }}
+        timeout-minutes: ${{ inputs.browser-evidence-upload-retry && 3 || 35 }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ${{ inputs.browser-evidence-prefix }}-${{ matrix.id }}-${{ github.run_attempt }}
           path: ${{ inputs.working-directory }}/.compatibility/${{ matrix.id }}/
           include-hidden-files: true
+          overwrite: false
           if-no-files-found: error
           retention-days: ${{ inputs.browser-release-channel == '' && inputs.browser-success-report-retention-days || 14 }}
+      - name: Retry browser evidence upload once without overwriting
+        id: evidence_upload_retry
+        if: ${{ always() && inputs.browser-evidence-upload-retry && steps.lock.outcome == 'success' && steps.evidence_upload.outcome == 'failure' }}
+        continue-on-error: true
+        timeout-minutes: 3
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ inputs.browser-evidence-prefix }}-${{ matrix.id }}-${{ github.run_attempt }}
+          path: ${{ inputs.working-directory }}/.compatibility/${{ matrix.id }}/
+          include-hidden-files: true
+          overwrite: false
+          if-no-files-found: error
+          retention-days: ${{ inputs.browser-release-channel == '' && inputs.browser-success-report-retention-days || 14 }}
+      - name: Read back browser evidence after optional upload recovery
+        id: evidence_readback
+        if: ${{ always() && inputs.browser-evidence-upload-retry && steps.evidence_snapshot.outcome == 'success' && steps.lock.outcome == 'success' }}
+        continue-on-error: true
+        timeout-minutes: 3
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ inputs.browser-evidence-prefix }}-${{ matrix.id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/browser-evidence-readback-${{ matrix.id }}
+      - name: Wait for artifact indexing before the named read-back retry
+        id: evidence_readback_wait
+        if: ${{ always() && inputs.browser-evidence-upload-retry && steps.evidence_snapshot.outcome == 'success' && steps.lock.outcome == 'success' && steps.evidence_readback.outcome == 'failure' }}
+        timeout-minutes: 1
+        run: |
+          # Upload finalisation can precede artifact indexing, so an immediate
+          # read-back by name fails with "Artifact not found". Listing artifacts
+          # over REST needs "actions: read", which this reusable workflow must not
+          # request from its callers, so indexing is waited on by retrying only the
+          # named download. The read-back below still verifies exact bytes.
+          sleep 30
+      - name: Retry the named browser evidence read-back once
+        id: evidence_readback_retry
+        if: ${{ always() && inputs.browser-evidence-upload-retry && steps.evidence_snapshot.outcome == 'success' && steps.lock.outcome == 'success' && steps.evidence_readback.outcome == 'failure' }}
+        continue-on-error: true
+        timeout-minutes: 3
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ inputs.browser-evidence-prefix }}-${{ matrix.id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/browser-evidence-readback-${{ matrix.id }}
+      - name: Require exact browser evidence read-back
+        id: evidence_verify
+        if: ${{ always() && inputs.browser-evidence-upload-retry && steps.evidence_snapshot.outcome == 'success' && steps.lock.outcome == 'success' }}
+        timeout-minutes: 1
+        env:
+          EVIDENCE_UPLOAD_OUTCOME: ${{ steps.evidence_upload.outcome }}
+          EVIDENCE_UPLOAD_RETRY_OUTCOME: ${{ steps.evidence_upload_retry.outcome }}
+          EVIDENCE_READBACK_OUTCOME: ${{ steps.evidence_readback.outcome }}
+          EVIDENCE_READBACK_RETRY_OUTCOME: ${{ steps.evidence_readback_retry.outcome }}
+          BROWSER_EVIDENCE_DIRECTORY: .compatibility/${{ matrix.id }}
+          BROWSER_EVIDENCE_SNAPSHOT: ${{ runner.temp }}/browser-evidence-${{ matrix.id }}.json
+          BROWSER_EVIDENCE_READBACK: ${{ runner.temp }}/browser-evidence-readback-${{ matrix.id }}
+          BROWSER_EVIDENCE_TARGET_ID: ${{ matrix.id }}
+          BROWSER_EVIDENCE_HELPER: ${{ runner.temp }}/browser-evidence-recovery-${{ matrix.id }}.cjs
+          GITHUB_WORKSPACE: ${{ github.workspace }}
+        run: |
+          if [[ "$EVIDENCE_READBACK_OUTCOME" != "success" && "$EVIDENCE_READBACK_RETRY_OUTCOME" != "success" ]]; then
+            if [[ "$EVIDENCE_UPLOAD_OUTCOME" != "success" && "$EVIDENCE_UPLOAD_RETRY_OUTCOME" != "success" ]]; then
+              echo "Both browser evidence upload attempts reported failure and no current-run artifact could be read back by its exact name after the indexing pause" >&2
+            else
+              echo "Uploaded browser evidence artifact could not be read back by its exact name after the indexing pause" >&2
+            fi
+            exit 1
+          fi
+          node "$BROWSER_EVIDENCE_HELPER" verify
+          if [[ -n "$GITHUB_OUTPUT" ]]; then echo "verified=true" >> "$GITHUB_OUTPUT"; fi
+      - name: Fail after preserving evidence when the recovery snapshot was unavailable
+        id: evidence_snapshot_failure
+        if: ${{ always() && inputs.browser-evidence-upload-retry && steps.lock.outcome == 'success' && steps.evidence_snapshot.outcome != 'success' }}
+        timeout-minutes: 1
+        env:
+          EVIDENCE_SNAPSHOT_OUTCOME: ${{ steps.evidence_snapshot.outcome }}
+          EVIDENCE_TREE_CHECK_OUTCOME: ${{ steps.evidence_tree_check.outcome }}
+          EVIDENCE_UPLOAD_OUTCOME: ${{ steps.evidence_upload.outcome }}
+          EVIDENCE_UPLOAD_RETRY_OUTCOME: ${{ steps.evidence_upload_retry.outcome }}
+        run: |
+          echo "Browser evidence recovery snapshot did not succeed ($EVIDENCE_SNAPSHOT_OUTCOME)" >&2
+          if [[ "$EVIDENCE_TREE_CHECK_OUTCOME" != "success" ]]; then
+            echo "The evidence tree did not pass the link and bounds check (${EVIDENCE_TREE_CHECK_OUTCOME}), so it was not uploaded" >&2
+          elif [[ "$EVIDENCE_UPLOAD_OUTCOME" == "success" || "$EVIDENCE_UPLOAD_RETRY_OUTCOME" == "success" ]]; then
+            echo "The immutable evidence upload ran and is preserved without exact verification" >&2
+          else
+            echo "The immutable evidence upload also failed, so no artifact was preserved" >&2
+          fi
+          exit 1
+      - name: Summarize browser evidence recovery outcomes
+        id: evidence_recovery_summary
+        if: ${{ always() && inputs.browser-evidence-upload-retry && steps.lock.outcome == 'success' }}
+        timeout-minutes: 1
+        env:
+          EVIDENCE_SNAPSHOT_OUTCOME: ${{ steps.evidence_snapshot.outcome }}
+          EVIDENCE_TREE_CHECK_OUTCOME: ${{ steps.evidence_tree_check.outcome }}
+          EVIDENCE_UPLOAD_OUTCOME: ${{ steps.evidence_upload.outcome }}
+          EVIDENCE_UPLOAD_RETRY_OUTCOME: ${{ steps.evidence_upload_retry.outcome }}
+          EVIDENCE_READBACK_OUTCOME: ${{ steps.evidence_readback.outcome }}
+          EVIDENCE_READBACK_RETRY_OUTCOME: ${{ steps.evidence_readback_retry.outcome }}
+          EVIDENCE_VERIFIED: ${{ steps.evidence_verify.outputs.verified }}
+        run: |
+          if [[ "$EVIDENCE_SNAPSHOT_OUTCOME" != "success" && "$EVIDENCE_TREE_CHECK_OUTCOME" != "success" ]]; then
+            cause="the recovery snapshot was unavailable (${EVIDENCE_SNAPSHOT_OUTCOME}) and the evidence tree did not pass the link and bounds check, so nothing was uploaded"
+          elif [[ "$EVIDENCE_SNAPSHOT_OUTCOME" != "success" ]]; then
+            cause="the recovery snapshot was unavailable (${EVIDENCE_SNAPSHOT_OUTCOME}); evidence preservation depended on the upload alone"
+          elif [[ "$EVIDENCE_READBACK_OUTCOME" != "success" && "$EVIDENCE_READBACK_RETRY_OUTCOME" != "success" ]]; then
+            cause="the uploaded artifact could not be read back by its exact name after the indexing pause"
+          elif [[ "$EVIDENCE_VERIFIED" != "true" ]]; then
+            cause="the downloaded artifact did not match the snapshotted evidence"
+          else
+            cause="the exact evidence read-back verified"
+          fi
+          echo "Browser evidence recovery: $cause"
+          if [[ -n "$GITHUB_STEP_SUMMARY" ]]; then
+            {
+              echo "### Browser evidence recovery"
+              echo
+              echo "| Step | Outcome |"
+              echo "| --- | --- |"
+              echo "| Snapshot | \`$EVIDENCE_SNAPSHOT_OUTCOME\` |"
+              echo "| Upload | \`$EVIDENCE_UPLOAD_OUTCOME\` |"
+              echo "| Upload retry | \`$EVIDENCE_UPLOAD_RETRY_OUTCOME\` |"
+              echo "| Read-back | \`$EVIDENCE_READBACK_OUTCOME\` |"
+              echo "| Read-back retry | \`$EVIDENCE_READBACK_RETRY_OUTCOME\` |"
+              echo
+              echo "Cause: $cause"
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
   browser-gate:
     name: Verify selected browser scope
     needs: [change-scope, browser-plan, browser]
@@ -577,7 +944,7 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Harden the runner (Audit all outbound calls)
-        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.23.0
         with:
           egress-policy: audit
       - name: Require all browser jobs to succeed
@@ -594,16 +961,25 @@ jobs:
           pattern: ${{ inputs.browser-evidence-prefix }}-*-${{ github.run_attempt }}
           path: ${{ runner.temp }}/browser-release-evidence
           merge-multiple: false
+      - name: Bind a singleton download to its exact artifact name
+        if: ${{ fromJSON(needs.browser-plan.outputs.matrix).include[1] == null }}
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ format('{0}-{1}-{2}', inputs.browser-evidence-prefix, fromJSON(needs.browser-plan.outputs.matrix).include[0].id, github.run_attempt) }}
+          path: ${{ runner.temp }}/browser-release-singleton
+          digest-mismatch: error
       - name: Verify the exact release target set and evidence identity
         env:
           BROWSER_MATRIX: ${{ needs.browser-plan.outputs.matrix }}
           BROWSER_COVERAGE: ${{ needs.browser-plan.outputs.coverage }}
+          BROWSER_PLATFORM_SCOPE: ${{ inputs.browser-platform-scope }}
           CI_HOSTED_RUNNERS_ENABLED: ${{ vars.CI_HOSTED_RUNNERS_ENABLED }}
           BROWSER_RELEASE_CHANNEL: ${{ inputs.browser-release-channel }}
           BROWSER_REQUIRED_PROFILE: ${{ inputs.browser-required-profile }}
           BROWSER_ARTIFACT_ID: ${{ inputs.browser-artifact-id }}
           BROWSER_EVIDENCE_PREFIX: ${{ inputs.browser-evidence-prefix }}
           BROWSER_EVIDENCE_DIRECTORY: ${{ runner.temp }}/browser-release-evidence
+          BROWSER_SINGLETON_EVIDENCE_DIRECTORY: ${{ runner.temp }}/browser-release-singleton
           BROWSER_VERDICT_FILE: ${{ runner.temp }}/browser-release-verdict.json
         run: |
           node <<'NODE'
@@ -619,11 +995,18 @@ jobs:
           const regressionProfile = requiredProfile === 'windows-firefox-1.62.1';
           const requiredCount = regressionProfile ? 6 : 5;
           const full = ['rc', 'stable'].includes(releaseChannel);
+          const requestedScope = process.env.BROWSER_PLATFORM_SCOPE ?? 'all';
+          if (!['all', 'windows'].includes(requestedScope)) fail('Release verdict requires all or explicit Windows scope');
+          const windows = requestedScope === 'windows';
           const reduced = process.env.CI_HOSTED_RUNNERS_ENABLED === 'false';
+          if (windows && reduced) fail('Windows qualification cannot use Linux fallback');
+          const selectedRequiredCount = windows ? (regressionProfile ? 2 : 1) : reduced ? 3 : requiredCount;
+          const selectedCount = windows ? (full ? 11 : selectedRequiredCount) : reduced ? (full ? 13 : 3) : (full ? 35 : requiredCount);
           const coverage = JSON.parse(process.env.BROWSER_COVERAGE || 'null');
-          if (!Array.isArray(rows) || rows.length !== (reduced ? (full ? 13 : 3) : (full ? 35 : requiredCount)) || new Set(rows.map(row => row.id)).size !== rows.length) fail('Incorrect or duplicate release target set');
-          if (rows.filter(row => row.tier === 'required').length !== (reduced ? 3 : requiredCount) || (!full && rows.some(row => row.tier !== 'required'))) fail('Incorrect required release targets');
+          if (!Array.isArray(rows) || rows.length !== selectedCount || new Set(rows.map(row => row.id)).size !== rows.length) fail('Incorrect or duplicate release target set');
+          if (rows.filter(row => row.tier === 'required').length !== selectedRequiredCount || (!full && rows.some(row => row.tier !== 'required'))) fail('Incorrect required release targets');
           if (reduced && (rows.some(row => row.os !== 'ubuntu-latest') || coverage?.hostedRunnersEnabled !== false || coverage.platformScope !== 'linux' || coverage.releaseChannel !== releaseChannel || JSON.stringify(coverage.selectedTargetIds) !== JSON.stringify(rows.map(row => row.id)) || coverage.skippedTargets?.length !== (full ? 22 : requiredCount - 3))) fail('Missing explicit reduced-platform evidence');
+          if (windows && (rows.some(row => row.os !== 'windows-2022') || coverage?.hostedRunnersEnabled !== true || coverage.requestedScope !== 'windows' || coverage.platformScope !== 'windows' || coverage.releaseChannel !== releaseChannel || JSON.stringify(coverage.selectedTargetIds) !== JSON.stringify(rows.map(row => row.id)) || coverage.skippedTargets?.length !== (full ? 24 : 4) || new Set(coverage.skippedTargets.map(row => row.id)).size !== coverage.skippedTargets.length || coverage.skippedTargets.some(row => !['ubuntu-latest', 'ubuntu-26.04', 'macos-15', 'macos-15-intel'].includes(row.os) || row.reason !== 'platform-scope' || rows.some(selected => selected.id === row.id)))) fail('Missing explicit Windows-only qualification evidence');
           if (regressionProfile && !reduced) {
             const matches = rows.filter(row => row.os === 'windows-2022' && row.engine === 'firefox' && row.playwright === '1.62.1' && !row.channel);
             if (matches.length !== 1 || matches[0].tier !== 'required') fail('Missing exact historical Windows Firefox result');
@@ -632,7 +1015,62 @@ jobs:
           const directory = process.env.BROWSER_EVIDENCE_DIRECTORY;
           const artifactName = row => `${process.env.BROWSER_EVIDENCE_PREFIX}-${row.id}-${binding.runAttempt}`;
           const expectedNames = rows.map(artifactName).sort();
-          const actualNames = fs.readdirSync(directory).sort();
+          let actualNames = fs.readdirSync(directory).sort();
+          // v8 flattens one pattern match even with merge-multiple:false. Bind that
+          // payload to a second exact-name download before restoring the strict layout.
+          if (rows.length === 1 && JSON.stringify(expectedNames) !== JSON.stringify(actualNames)) {
+            const collect = root => {
+              const tree = [];
+              let entries = 0, bytes = 0, files = 0;
+              const visit = (folder, relative, depth) => {
+                const parent = fs.lstatSync(folder);
+                if (depth > 16 || !parent.isDirectory() || parent.isSymbolicLink()) fail('Invalid singleton evidence directory');
+                const opened = fs.opendirSync(folder);
+                try {
+                  let entry;
+                  while ((entry = opened.readSync()) !== null) {
+                    if (++entries > 8192 || /[\\/:\0]/.test(entry.name)) fail('Invalid or excessive singleton evidence entries');
+                    const name = relative ? `${relative}/${entry.name}` : entry.name;
+                    const file = path.join(folder, entry.name);
+                    const stat = fs.lstatSync(file);
+                    if (stat.isSymbolicLink()) fail('Singleton evidence must not contain links');
+                    if (stat.isDirectory()) {
+                      tree.push({path: name, type: 'directory'});
+                      visit(file, name, depth + 1);
+                    } else {
+                      if (!stat.isFile() || stat.nlink !== 1 || ++files > 4096 || stat.size > 512 * 1024 * 1024 - bytes) fail('Singleton evidence exceeds regular-file bounds');
+                      bytes += stat.size;
+                      const fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+                      try {
+                        const same = current => current.dev === stat.dev && current.ino === stat.ino && current.mode === stat.mode && current.nlink === stat.nlink && current.size === stat.size && current.mtimeMs === stat.mtimeMs && current.ctimeMs === stat.ctimeMs;
+                        if (!same(fs.fstatSync(fd))) fail('Singleton evidence changed before reading');
+                        const hash = crypto.createHash('sha256'), buffer = Buffer.allocUnsafe(64 * 1024);
+                        let remaining = stat.size;
+                        while (remaining) {
+                          const count = fs.readSync(fd, buffer, 0, Math.min(buffer.length, remaining), null);
+                          if (!count) fail('Singleton evidence was truncated');
+                          hash.update(buffer.subarray(0, count));
+                          remaining -= count;
+                        }
+                        if (fs.readSync(fd, buffer, 0, 1, null) || !same(fs.fstatSync(fd))) fail('Singleton evidence changed while reading');
+                        tree.push({path: name, type: 'file', size: stat.size, sha256: hash.digest('hex')});
+                      } finally { fs.closeSync(fd); }
+                    }
+                  }
+                } finally { opened.closeSync(); }
+              };
+              visit(root, '', 0);
+              if (!files) fail('Singleton evidence is empty');
+              return tree.sort((a, b) => a.path.localeCompare(b.path));
+            };
+            if (JSON.stringify(collect(directory)) !== JSON.stringify(collect(process.env.BROWSER_SINGLETON_EVIDENCE_DIRECTORY))) fail('Singleton pattern and exact-name evidence differ');
+            const holding = directory + '-flat';
+            if (fs.existsSync(holding)) fail('Singleton normalization destination already exists');
+            fs.renameSync(directory, holding);
+            fs.mkdirSync(directory);
+            fs.renameSync(holding, path.join(directory, expectedNames[0]));
+            actualNames = fs.readdirSync(directory).sort();
+          }
           if (JSON.stringify(expectedNames) !== JSON.stringify(actualNames)) fail('Missing, duplicate or unexpected qualification evidence');
           const read = (folder, name) => {
             const file = path.join(folder, name);
@@ -658,7 +1096,7 @@ jobs:
             if (!Number.isSafeInteger(result.testsPassed) || result.testsPassed < 1 || result.testsFailed !== 0 || !Array.isArray(result.scenarios) || result.scenarios.length !== result.testsPassed || new Set(result.scenarios).size !== result.scenarios.length || result.scenarios.some(name => typeof name !== 'string' || !name.trim())) fail('Missing or failed application scenarios');
             return {id: row.id, os: row.os, engine: row.engine, channel: row.channel, playwrightVersion: runtime.playwrightVersion, browserVersion: runtime.browserVersion, testsPassed: result.testsPassed, scenarios: result.scenarios, evidenceSha256: digest};
           });
-          fs.writeFileSync(process.env.BROWSER_VERDICT_FILE, JSON.stringify({...binding, requiredProfile, targets, platformCoverage: reduced ? 'reduced-linux' : 'all-requested', fullPlatformQualified: !reduced, skippedTargets: coverage?.skippedTargets || []}, null, 2) + '\n');
+          fs.writeFileSync(process.env.BROWSER_VERDICT_FILE, JSON.stringify({...binding, requiredProfile, targets, platformCoverage: windows ? 'windows-only' : reduced ? 'reduced-linux' : 'all-requested', fullPlatformQualified: !windows && !reduced, skippedTargets: coverage?.skippedTargets || []}, null, 2) + '\n');
           NODE
       - name: Preserve verified release qualification
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

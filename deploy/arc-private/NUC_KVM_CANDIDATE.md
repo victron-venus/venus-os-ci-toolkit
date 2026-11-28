@@ -215,9 +215,19 @@ RuntimeClass/handler. The worker guard covers CREATE and UPDATE, including
 It matches either old or new NUC runtime, and either old or new selected scope
 in the CI namespace, so a label change cannot evade the guard. It requires the selected
 private CI scope, exact image/node/resource/storage/guard inputs and inherited
-no-host/no-credentials constraints. The class guard rejects another class name
-using this handler and changes to its node/overhead. Review pre-existing class
-aliases and Pods; an admission policy does not retroactively remove them.
+no-host/no-credentials constraints. The class guard allows only
+`victron-private-nuc-kvm` and `harness-pr-repair-nuc`, both with handler
+`victron-private-nuc-kvm`, the exact `nuc`/`amd64` selector, `100m`/`128Mi`
+overhead and no tolerations. Either protected name matches even with an
+incorrect handler. Review pre-existing class aliases and Pods; an admission
+policy does not retroactively remove them.
+
+Before permitting or creating the Harness alias, install and verify its exact
+Pod admission policy and Deny binding. The class allowance alone grants no Pod
+isolation and does not reuse or relax the ARC worker guard. Harness must retain
+its own namespace, image, resources, credentials and cross-namespace worker
+serialization constraints. This renderer does not create the Harness class or
+its Pod policy; qualify and admit that consumer separately.
 
 The original private policy delegates only the exact new RuntimeClass to the
 global guard and refuses an mp fallback for the selected CI scope. Other private

@@ -1,6 +1,6 @@
 // Exercise the actual pinned Renovate extractor and branch planner, without API writes.
 import assert from 'node:assert/strict';
-import { glob, mkdtemp, readFile, realpath, rm } from 'node:fs/promises';
+import { glob, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { isAbsolute, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -22,10 +22,23 @@ const allowedModules = new Set([
   'config/defaults',
   'config/global',
   'config/utils',
+  'config/index',
+  'modules/manager/index',
+  'modules/datasource/common',
+  'workers/repository/process/lookup/index',
+  'util/package-rules/index',
+  'modules/platform/api',
+  'modules/platform/index',
+  'workers/repository/init/vulnerability',
   'modules/manager/github-actions/extract',
+  'modules/manager/pep621/extract',
+  'modules/manager/pip-compile/extract',
+  'workers/repository/process/fetch',
   'modules/manager/custom/regex/index',
   'modules/manager/custom/jsonata/index',
   'workers/repository/updates/flatten',
+  'workers/repository/updates/branchify',
+  'workers/repository/update/pr/labels',
   'workers/repository/update/branch/auto-replace',
 ]);
 async function moduleAt(name) {
@@ -45,6 +58,9 @@ const { extractPackageFile: extractPins } = await moduleAt('modules/manager/cust
 const { extractPackageFile: extractRuntime } = await moduleAt('modules/manager/custom/jsonata/index');
 const { flattenUpdates } = await moduleAt('workers/repository/updates/flatten');
 const { doAutoReplace } = await moduleAt('workers/repository/update/branch/auto-replace');
+const { prepareLabels, shouldUpdateLabels, getChangedLabels } = await moduleAt('workers/repository/update/pr/labels');
+const { setPlatformApi } = await moduleAt('modules/platform/index');
+setPlatformApi('github');
 const preset = JSON.parse(await readFile('renovate-ci.json', 'utf8'));
 const config = mergeChildConfig(getConfig(), {
   ...preset,
@@ -223,6 +239,103 @@ for (const content of [
   runtimeWorkflow.replaceAll('victron-venus/venus-os-ci-toolkit/', 'another/team/'),
   'jobs: {caller: {with: {toolkit-ref: "' + old + '"}}}',
 ]) assert.equal(await extractRuntime(content, runtimeFile, runtimeManager), null);
+// Keep qualified vendor delivery inputs and explicitly marked contract pins
+// in the same native Renovate update as their immutable workflow references.
+const revisionManager = preset.customManagers.find((manager) =>
+  manager.customType === 'jsonata' && manager.matchStrings.some((value) => value.includes('toolkit-revision')));
+const contractManager = preset.customManagers.find((manager) =>
+  manager.customType === 'regex' && manager.matchStrings.some((value) => value.includes('renovate: toolkit-reference')));
+assert.ok(revisionManager);
+assert.ok(contractManager);
+const revisionFile = '.github/workflows/core.yml';
+const revisionWorkflow = `jobs:
+  deliver:
+    uses: victron-venus/venus-os-ci-toolkit/.github/workflows/vendor-update.yml@${old} # main
+    with:
+      toolkit-revision: '${old}' # qualified delivery
+      unrelated-ref: '${old}'
+  foreign:
+    uses: another/team/.github/workflows/vendor-update.yml@${old}
+    with:
+      toolkit-revision: '${old}'
+  example:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          toolkit-revision: '${old}'
+`;
+const contractFile = 'tests/test_metadata_automation.py';
+const contractSource = `# renovate: toolkit-reference
+TOOLKIT_REF = "${old}"
+UNRELATED_REF = "${old}"
+`;
+const revisionPins = await extractRuntime(revisionWorkflow, revisionFile, revisionManager);
+const contractPins = extractPins(contractSource, contractFile, contractManager);
+for (const result of [revisionPins, contractPins]) {
+  assert.equal(result.deps.length, 1);
+  const dep = result.deps[0];
+  assert.equal(dep.currentDigest, old);
+  assert.equal(dep.currentValue, 'main');
+  assert.equal(dep.depName, 'victron-venus/venus-os-ci-toolkit');
+  assert.equal(dep.datasource, 'git-refs');
+  dep.updates = [{ updateType: 'digest', newValue: 'main', newDigest: next }];
+}
+const coupledScratch = await mkdtemp(resolve(tmpdir(), 'renovate-coupled-inputs-'));
+try {
+  GlobalConfig.set({ localDir: coupledScratch, platform: 'github' });
+  const variants = [
+    [revisionManager, extractRuntime, 'jsonata', revisionFile, revisionWorkflow,
+      revisionWorkflow.replace(`toolkit-revision: '${old}' # qualified delivery`, `toolkit-revision: '${next}' # qualified delivery`)],
+    [contractManager, extractPins, 'regex', contractFile, contractSource,
+      contractSource.replace(`TOOLKIT_REF = "${old}"`, `TOOLKIT_REF = "${next}"`)],
+  ];
+  const jsSource = contractSource.replace('# renovate:', '// renovate:').replace('TOOLKIT_REF =', 'const TOOLKIT_REF =').replace(`"${old}"\n`, `"${old}";\n`);
+  variants.push([contractManager, extractPins, 'regex', 'scripts/check-contracts.mjs', jsSource,
+    jsSource.replace(`TOOLKIT_REF = "${old}"`, `TOOLKIT_REF = "${next}"`)]);
+  for (const [managerConfig, extractor, manager, packageFile, content, expected] of variants) {
+    for (const transform of [(value) => value, (value) => value.replaceAll('\n', '\r\n'), (value) => value.trimEnd()]) {
+      const before = transform(content);
+      const extractedPins = await extractor(before, packageFile, managerConfig);
+      assert.equal(extractedPins.deps.length, 1);
+      const updated = await doAutoReplace({
+        ...config, ...managerConfig, ...extractedPins, ...extractedPins.deps[0], manager,
+        packageFile, depIndex: 0, newValue: 'main', newDigest: next, updateType: 'digest',
+      }, before, false);
+      assert.equal(updated, transform(expected));
+      assert.equal((await extractor(updated, packageFile, managerConfig)).deps[0].currentDigest, next);
+    }
+  }
+} finally {
+  GlobalConfig.set({ localDir: process.cwd(), platform: 'github' });
+  await rm(coupledScratch, { recursive: true, force: true });
+}
+for (const content of [
+  revisionWorkflow.replaceAll(old, 'main'),
+  revisionWorkflow.replaceAll(old, old + 'a'),
+  revisionWorkflow.replaceAll('victron-venus/venus-os-ci-toolkit/', 'another/team/'),
+  revisionWorkflow.replaceAll('workflows/vendor-update.yml@', 'workflows/other.yml@'),
+  'jobs: {caller: {with: {toolkit-revision: "' + old + '"}}}',
+]) assert.equal(await extractRuntime(content, revisionFile, revisionManager), null);
+for (const content of [
+  contractSource.replace('# renovate: toolkit-reference\n', ''),
+  contractSource.replace('toolkit-reference', 'another-reference'),
+  contractSource.replace('TOOLKIT_REF =', 'OTHER_REF ='),
+  contractSource.replaceAll(old, 'main'),
+  contractSource.replaceAll(old, old + 'a'),
+  contractSource.replace('# renovate:', 'x# renovate:'),
+]) assert.equal(extractPins(content, contractFile, contractManager), null);
+const coupledUpdates = await flattenUpdates(config, {
+  'github-actions': [{ packageFile: revisionFile, deps: (await extractPackageFile(revisionWorkflow, revisionFile, config)).deps
+    .filter((dep) => dep.depName === 'victron-venus/venus-os-ci-toolkit')
+    .map((dep) => ({ ...dep, updates: [{ updateType: 'digest', newValue: 'main', newDigest: next }] })) }],
+  regex: [{ packageFile: contractFile, deps: contractPins.deps }],
+  jsonata: [{ packageFile: revisionFile, deps: revisionPins.deps }],
+});
+assert.equal(coupledUpdates.length, 3);
+assert.deepEqual([...new Set(coupledUpdates.map((update) => update.branchName))], ['renovate/ci-workflows']);
+assert.ok(coupledUpdates.every((update) => update.automerge === false && prepareLabels(update).includes('automerge')));
+console.log('Coupled toolkit delivery and explicit contract pins: native extraction, replacement, negative controls and atomic CI grouping passed.');
+
 const updates = await flattenUpdates(config, {
   'github-actions': [{ packageFile: '.github/workflows/ci.yml', deps: actions }],
   regex: [
@@ -234,6 +347,7 @@ const updates = await flattenUpdates(config, {
 assert.equal(updates.length, actions.length + pins.deps.length + policyPins.deps.length + runtimePins.deps.length);
 assert.deepEqual([...new Set(updates.map((update) => update.branchName))], ['renovate/ci-workflows']);
 assert.ok(updates.every((update) => update.automerge === false));
+assert.ok(updates.every((update) => prepareLabels(update).includes('automerge')));
 for await (const filename of glob(['.github/workflows/*.{yml,yaml}', 'actions/**/action.{yml,yaml}'])) {
   const actual = await extractPackageFile(await readFile(filename, 'utf8'), filename, config);
   for (const dep of actual?.deps ?? []) {
@@ -241,3 +355,209 @@ for await (const filename of glob(['.github/workflows/*.{yml,yaml}', 'actions/**
   }
 }
 console.log('Renovate groups CodeQL majors, reusable workflow digests, action patches, generator pins, release policy digests and toolkit runtime inputs into one PR; custom updaters preserve immutable SHAs.');
+
+// Full-fleet ownership must keep the CI unit while exposing real uv/PEP 621 deps.
+const fleetPreset = JSON.parse(await readFile('renovate-fleet.json', 'utf8'));
+const fleetConfig = mergeChildConfig(config, fleetPreset);
+const { extractPackageFile: extractPython } = await moduleAt('modules/manager/pep621/extract');
+const python = await extractPython('[project]\nname = "migration-fixture"\nversion = "1.0.0"\nrequires-python = ">=3.11"\ndependencies = ["httpx==0.28.0"]\n', 'pyproject.toml', fleetConfig);
+assert.ok(python.deps.some((dep) => dep.depName === 'httpx' || dep.packageName === 'httpx'));
+const fleetUpdates = await flattenUpdates(fleetConfig, {
+  'github-actions': [{ packageFile: '.github/workflows/ci.yml', deps: actions }],
+  npm: [{ packageFile: 'package.json', deps: [{ depName: 'fixture-library', datasource: 'npm', currentValue: '1.0.0', updates: [{ updateType: 'patch', newValue: '1.0.1', newMajor: 1 }] }] }],
+});
+const ciUpdates = fleetUpdates.filter((update) => update.manager === 'github-actions');
+const applicationUpdates = fleetUpdates.filter((update) => update.manager === 'npm');
+assert.ok(ciUpdates.length > 0 && applicationUpdates.length > 0);
+assert.ok(ciUpdates.every((update) => update.branchName === 'renovate/ci-workflows'));
+assert.ok(applicationUpdates.every((update) => update.branchName.includes('application-dependencies')));
+assert.ok(applicationUpdates.every((update) => update.branchName !== 'renovate/ci-workflows'));
+assert.ok(fleetUpdates.every((update) => update.automerge === false));
+assert.ok(fleetUpdates.every((update) => prepareLabels(update).includes('automerge')));
+assert.equal(Object.hasOwn(fleetConfig.vulnerabilityAlerts, 'enabled'), false);
+assert.equal(fleetConfig.vulnerabilityAlerts.dependencyDashboardApproval, false);
+console.log('Full-fleet policy extracts Python application dependencies and keeps application updates separate from atomic CI updates.');
+
+// The shared merger, not Renovate itself, owns approval and CI enforcement.
+// Exercise actual grouped branch configuration, including application majors.
+const { branchifyUpgrades } = await moduleAt('workers/repository/updates/branchify');
+const allUpdateTypes = ['major', 'minor', 'patch', 'pin', 'digest'];
+const applicationCases = allUpdateTypes.map((updateType, index) => ({
+  depName: `fixture-${updateType}`, datasource: 'npm', currentValue: '1.0.0',
+  updates: [{ updateType, newValue: updateType === 'major' ? '2.0.0' : `1.1.${index}`, newMajor: updateType === 'major' ? 2 : 1 }],
+}));
+const planned = await branchifyUpgrades({ ...fleetConfig, errors: [], warnings: [] }, {
+  'github-actions': [{ packageFile: '.github/workflows/ci.yml', deps: actions }],
+  npm: [{ packageFile: 'package.json', deps: applicationCases }],
+});
+assert.ok(planned.branches.some((branch) => branch.upgrades.some((update) => update.manager === 'npm' && update.updateType === 'major')));
+for (const branch of planned.branches) {
+  assert.ok(prepareLabels(branch).includes('automerge'), branch.branchName);
+  assert.equal(branch.automerge, false, 'Only the independently reviewed shared workflow may merge');
+}
+
+// A policy change may label an untouched existing PR, but never undo a user's
+// withdrawal or overwrite other manual edits. Missing historical metadata fails closed.
+const configuredLabels = prepareLabels({ ...fleetConfig, labels: ['dependencies'] });
+assert.deepEqual(configuredLabels, ['automerge', 'dependencies']);
+assert.equal(shouldUpdateLabels(['dependencies'], ['dependencies'], configuredLabels), true);
+assert.deepEqual(getChangedLabels(['dependencies'], configuredLabels), [['automerge'], []]);
+assert.equal(shouldUpdateLabels(configuredLabels.slice(), ['dependencies'], configuredLabels.slice()), false);
+assert.equal(shouldUpdateLabels(['dependencies'], ['dependencies', 'manual-hold'], configuredLabels.slice()), false);
+assert.equal(shouldUpdateLabels(undefined, [], configuredLabels.slice()), false);
+assert.equal(shouldUpdateLabels(configuredLabels.slice(), configuredLabels.slice(), configuredLabels.slice()), false);
+console.log('All enabled update types opt into the shared merger; actual Renovate label reconciliation preserves manual withdrawal.');
+
+// Lookup must propose a lock-only update even when the newer release already
+// satisfies the manifest. Supplying a prebuilt update would miss this regression.
+const { getManagerConfig } = await moduleAt('config/index');
+const { getRangeStrategy } = await moduleAt('modules/manager/index');
+const { getDatasourceFor } = await moduleAt('modules/datasource/common');
+const { lookupUpdates } = await moduleAt('workers/repository/process/lookup/index');
+const { applyPackageRules } = await moduleAt('util/package-rules/index');
+// The same pyproject runtime field is also extracted through pip-compile.
+// It must stop before release lookup while ordinary package updates stay enabled.
+const { extractPackageFile: extractCompiledPython } = await moduleAt('modules/manager/pip-compile/extract');
+const { fetchUpdates } = await moduleAt('workers/repository/process/fetch');
+const runtimeSource = '[project]\nname = "runtime-policy-fixture"\nversion = "1.0.0"\nrequires-python = "==3.11.*"\ndependencies = ["httpx==0.28.0"]\n';
+const pythonReleases = getDatasourceFor('python-version');
+const originalPythonReleases = pythonReleases.getReleases;
+pythonReleases.getReleases = async () => { throw new Error('A manual Python runtime must not request releases'); };
+try {
+  for (const [manager, extract] of [['pep621', extractPython], ['pip-compile', extractCompiledPython]]) {
+    const managerConfig = getManagerConfig(fleetConfig, manager);
+    const extracted = await extract(runtimeSource, 'pyproject.toml', managerConfig);
+    const runtimeDependency = extracted.deps.find((dep) => dep.depType === 'requires-python');
+    assert.ok(runtimeDependency, manager + ' must exercise the native runtime descriptor');
+    const packages = { [manager]: [{ packageFile: 'pyproject.toml', deps: [{ ...runtimeDependency }] }] };
+    await fetchUpdates(fleetConfig, packages);
+    assert.equal(packages[manager][0].deps[0].skipReason, 'disabled', manager + ' runtime needs explicit review');
+    assert.deepEqual(packages[manager][0].deps[0].updates, []);
+    const application = extracted.deps.find((dep) => dep.depName === 'httpx' || dep.packageName === 'httpx');
+    assert.ok(application);
+    const effectiveApplication = await applyPackageRules({ ...managerConfig, ...application,
+      manager, packageFile: 'pyproject.toml', depName: 'httpx', packageName: 'httpx' }, 'lookup');
+    assert.notEqual(effectiveApplication.enabled, false, manager + ' package updates must remain enabled');
+  }
+} finally {
+  pythonReleases.getReleases = originalPythonReleases;
+}
+console.log('Both native pyproject extractors keep Python runtime changes manual without disabling application updates.');
+
+const lockScratch = await mkdtemp(resolve(tmpdir(), 'renovate-lockfiles-'));
+const pypi = getDatasourceFor('pypi');
+const originalReleases = pypi.getReleases;
+const lockCases = [
+  { name: 'fixture-wide', range: '>=1.0', versions: ['1.0.0', '1.1.0', '1.2.0'] },
+  { name: 'fixture-bounded', range: '~=1.0', versions: ['1.0.0', '1.1.0', '1.2.0', '2.0.0'] },
+  { name: 'fixture-exact', range: '==1.1.0', versions: ['1.1.0', '1.2.0'] },
+  { name: 'fixture-without-lock', range: '>=1.0', versions: ['1.0.0', '1.1.0', '1.2.0'] },
+];
+try {
+  GlobalConfig.set({ localDir: lockScratch, platform: 'github' });
+  pypi.getReleases = async ({ packageName }) => {
+    const fixture = lockCases.find((item) => item.name === packageName);
+    assert.ok(fixture, 'Only synthetic package release metadata may be queried');
+    return { releases: fixture.versions.map((version) => ({ version, releaseTimestamp: '2025-01-01T00:00:00.000Z' })) };
+  };
+  await writeFile(resolve(lockScratch, 'uv.lock'), 'version = 1\nrequires-python = ">=3.11"\n' +
+    lockCases.filter((item) => item.name !== 'fixture-without-lock').map((item) =>
+      `\n[[package]]\nname = "${item.name}"\nversion = "1.1.0"\nsource = { registry = "https://pypi.org/simple" }\n`).join(''));
+  const manifest = '[project]\nname = "lock-fixture"\nversion = "1.0.0"\nrequires-python = ">=3.11"\ndependencies = [' +
+    lockCases.map((item) => JSON.stringify(item.name + item.range)).join(', ') + ']\n';
+  const managerConfig = getManagerConfig(fleetConfig, 'pep621');
+  const extracted = await extractPython(manifest, 'pyproject.toml', managerConfig);
+  for (const fixture of lockCases) {
+    const dependency = extracted.deps.find((item) => item.depName === fixture.name);
+    assert.ok(dependency);
+    assert.equal(dependency.lockedVersion, fixture.name === 'fixture-without-lock' ? undefined : '1.1.0');
+    const candidate = await applyPackageRules({ ...managerConfig, ...dependency,
+      manager: 'pep621', packageFile: 'pyproject.toml', depName: fixture.name, packageName: fixture.name }, 'lookup');
+    assert.equal(getRangeStrategy(candidate), 'update-lockfile');
+    const actual = (await lookupUpdates(structuredClone(candidate))).unwrap();
+    // Lookup applies package rules again per release; override the strategy there
+    // too so the negative control really exercises the previous behavior.
+    const baseline = (await lookupUpdates({ ...structuredClone(candidate), rangeStrategy: 'replace',
+      packageRules: [...structuredClone(candidate.packageRules), { matchPackageNames: [fixture.name], rangeStrategy: 'replace' }],
+    })).unwrap();
+    assert.equal(actual.err, undefined);
+    assert.equal(baseline.err, undefined);
+    const updates = actual.val.updates;
+    if (fixture.name === 'fixture-wide' || fixture.name === 'fixture-bounded') {
+      const withinRange = updates.find((item) => item.newVersion === '1.2.0');
+      assert.ok(withinRange, 'The declared range must not suppress a newer lockfile version');
+      assert.equal(withinRange.newValue, fixture.range);
+      assert.equal(withinRange.isLockfileUpdate, true);
+      assert.ok(!baseline.val.updates.some((item) => item.newVersion === '1.2.0'), JSON.stringify({ fixture, baseline }));
+    }
+    assert.deepEqual(updates.filter((item) => !item.isLockfileUpdate), baseline.val.updates,
+      'Exact pins, absent locks and out-of-range proposals keep replacement behavior');
+  }
+} finally {
+  pypi.getReleases = originalReleases;
+  GlobalConfig.set({ localDir: process.cwd(), platform: 'github' });
+  await rm(lockScratch, { recursive: true, force: true });
+}
+console.log('Native Python lookup refreshes in-range locks without changing manifest bounds; exact and out-of-range updates retain replacement behavior.');
+
+// Advisory rules force their own grouping; CI security fixes must stay atomic.
+const { default: platformApis } = await moduleAt('modules/platform/api');
+const { detectVulnerabilityAlerts } = await moduleAt('workers/repository/init/vulnerability');
+const advisory = (ecosystem, name, fixed) => ({
+  security_vulnerability: { package: { ecosystem, name }, first_patched_version: { identifier: fixed }, severity: 'high' },
+  security_advisory: { ghsa_id: 'GHSA-test-test-test', identifiers: [], summary: 'Synthetic grouping test', description: 'Synthetic data only', references: [], severity: 'high' },
+});
+platformApis.set('github', { getVulnerabilityAlerts: async () => [
+  advisory('actions', 'example/action', '1.1.0'), advisory('pip', 'example-package', '1.0.1'),
+] });
+setPlatformApi('github');
+const vulnerableAction = {
+  depName: 'example/action', packageName: 'example/action', datasource: 'github-tags', versioning: 'github-actions',
+  currentValue: 'v1.0.0', currentVersion: '1.0.0', currentDigest: old,
+  updates: [{ updateType: 'minor', newValue: 'v1.1.0', newVersion: '1.1.0', newDigest: next, newMajor: 1, newMinor: 1 }],
+};
+const securityPackages = {
+  'github-actions': [{ packageFile: '.github/workflows/ci.yml', deps: [structuredClone(vulnerableAction), {
+    ...structuredClone(vulnerableAction), depName: 'example/ordinary-action', packageName: 'example/ordinary-action',
+    updates: [{ updateType: 'major', newValue: 'v2.0.0', newVersion: '2.0.0', newDigest: next, newMajor: 2, newMinor: 0 }],
+  }] }],
+  'custom.regex': [{ packageFile: '.github/action-pins.json', deps: [structuredClone(vulnerableAction)] }],
+  'custom.jsonata': [{ packageFile: '.github/workflows/ci.yml', deps: [{
+    depName: 'victron-venus/venus-os-ci-toolkit', packageName: 'https://github.com/victron-venus/venus-os-ci-toolkit',
+    datasource: 'git-refs', currentValue: 'main', currentDigest: old,
+    updates: [{ updateType: 'digest', newValue: 'main', newDigest: next }],
+  }] }],
+  pip_requirements: [{ packageFile: 'requirements.txt', deps: [{
+    depName: 'example-package', packageName: 'example-package', datasource: 'pypi', versioning: 'pep440',
+    currentValue: '1.0.0', currentVersion: '1.0.0',
+    updates: [{ updateType: 'patch', newValue: '1.0.1', newVersion: '1.0.1', newMajor: 1, newMinor: 0 }],
+  }] }],
+};
+const advisoryConfig = await detectVulnerabilityAlerts(fleetConfig);
+assert.equal(advisoryConfig.packageRules.filter((rule) => rule.isVulnerabilityAlert).length, 2);
+assert.ok(advisoryConfig.packageRules.filter((rule) => rule.isVulnerabilityAlert)
+  .every((rule) => !Object.hasOwn(rule.force, 'enabled')));
+const securityUpdates = await flattenUpdates(advisoryConfig, structuredClone(securityPackages));
+assert.equal(securityUpdates.length, 5);
+assert.equal(securityUpdates.filter((update) => update.isVulnerabilityAlert).length, 3);
+assert.ok(securityUpdates.every((update) => prepareLabels(update).includes('automerge')));
+assert.ok(securityUpdates.filter((update) => update.manager !== 'pip_requirements')
+  .every((update) => update.branchName === 'renovate/ci-workflows'));
+assert.ok(securityUpdates.filter((update) => update.manager === 'pip_requirements')
+  .every((update) => update.branchName === 'renovate/pypi-example-package-vulnerability'));
+console.log('Synthetic advisories preserve atomic CI grouping and separate application security fixes.');
+
+// Security detection stays active without forcing disabled consumer dependencies on.
+const heldConfig = mergeChildConfig(fleetConfig, { packageRules: [{
+  matchPackageNames: ['example/action', 'example-package'], enabled: false,
+}] });
+const heldUpdates = await flattenUpdates(await detectVulnerabilityAlerts(heldConfig), structuredClone(securityPackages));
+assert.equal(heldUpdates.length, 2);
+assert.ok(heldUpdates.every((update) => !['example/action', 'example-package'].includes(update.depName)));
+const ciSecurityPackages = Object.fromEntries(Object.entries(structuredClone(securityPackages))
+  .filter(([manager]) => manager !== 'pip_requirements'));
+const ciSecurityUpdates = await flattenUpdates(await detectVulnerabilityAlerts(config), ciSecurityPackages);
+assert.equal(ciSecurityUpdates.length, 4);
+assert.ok(ciSecurityUpdates.some((update) => update.isVulnerabilityAlert));
+assert.ok(ciSecurityUpdates.every((update) => update.branchName === 'renovate/ci-workflows'));
+console.log('Default security detection respects dependency holds and keeps the CI-only preset atomic.');

@@ -36,7 +36,7 @@ class AutofixContract(unittest.TestCase):
         }
         self.repository = {"full_name": REPO, "private": False, "visibility": "public", "archived": False}
         self.pr = {"number": 17, "state": "open", "draft": False,
-                   "head": {"sha": HEAD, "repo": {"full_name": "contributor/fork"}},
+                   "head": {"sha": HEAD, "repo": {"full_name": REPO}},
                    "base": {"repo": {"full_name": REPO}}}
         self.current = copy.deepcopy(self.pr)
         self.identity = dict(BOT)
@@ -56,6 +56,8 @@ class AutofixContract(unittest.TestCase):
         self.paginate_threads = False
         self.graphql_error = False
         self.fail_post = False
+        self.associated = [[{"number": 17}]]
+        self.open_pages = [[]]
 
     def api_process(self, command, **kwargs):
         self.assertEqual(command[:2], ["gh", "api"])
@@ -67,7 +69,11 @@ class AutofixContract(unittest.TestCase):
         elif path == "user":
             result = self.identity
         elif path == f"{BASE}/commits/{HEAD}/pulls?per_page=100":
-            result = [[{"number": 17}]]
+            result = self.associated
+        elif path.startswith(f"{BASE}/pulls?state=open&per_page=100&page="):
+            self.assertEqual(command[3:], [])
+            page = int(path.rsplit("=", 1)[1])
+            result = self.open_pages[min(page - 1, len(self.open_pages) - 1)]
         elif path == f"{BASE}/pulls/17":
             self.reads += 1
             result = self.pr if self.reads == 1 else self.current
@@ -95,7 +101,7 @@ class AutofixContract(unittest.TestCase):
         elif path == f"{BASE}/issues/17/comments":
             self.assertEqual(command[3:], ["--method", "POST", "--input", "-"])
             body = json.loads(kwargs["input"])["body"]
-            self.assertTrue(body.startswith("@coderabbitai autofix\n\n<!-- toolkit-coderabbit-autofix:v1 "))
+            self.assertTrue(body.startswith("@coderabbitai fix comments stacked pr\n\n<!-- toolkit-coderabbit-autofix:v1 "))
             self.assertNotIn("Do not execute", body)
             self.posted.append(body)
             if self.fail_post:
@@ -111,14 +117,107 @@ class AutofixContract(unittest.TestCase):
         with patch.dict(os.environ, self.environment, clear=True), patch("subprocess.run", side_effect=self.api_process):
             exec(compile(self.code, str(WORKFLOW), "exec"), {"__name__": "__main__"})  # noqa: S102
 
-    def marked_comment(self, head=HEAD, fingerprint=None, author=None):
+    def marked_comment(self, head=HEAD, fingerprint=None, author=None, *, legacy=False):
         fingerprint = fingerprint or hashlib.sha256(b"thread-1").hexdigest()
-        return {"user": author or BOT, "body": f"@coderabbitai autofix\n\n<!-- toolkit-coderabbit-autofix:v1 head={head} findings={fingerprint} -->"}
+        command = "@coderabbitai autofix" if legacy else "@coderabbitai fix comments stacked pr"
+        return {"user": author or BOT, "body": f"{command}\n\n<!-- toolkit-coderabbit-autofix:v1 head={head} findings={fingerprint} -->"}
 
-    def test_completed_fork_review_posts_fixed_command(self):
+    def test_open_fork_is_skipped_without_requesting_unsupported_delivery(self):
+        self.pr["head"]["repo"]["full_name"] = "contributor/fork"
+        self.current = copy.deepcopy(self.pr)
+        self.execute()
+        self.assertEqual(self.posted, [])
+        self.assertEqual(self.reads, 1)
+        self.assertEqual(self.thread_reads, 0)
+
+    def test_request_is_a_one_off_stacked_proposal_not_direct_autofix(self):
+        self.execute()
+        self.assertEqual(self.posted[0].splitlines()[0], "@coderabbitai fix comments stacked pr")
+
+    def test_legacy_request_still_deduplicates_current_head_or_findings(self):
+        for head, fingerprint in ((HEAD, "c" * 64), ("b" * 40, None)):
+            with self.subTest(head=head):
+                self.setUp()
+                self.comments = [[self.marked_comment(head=head, fingerprint=fingerprint, legacy=True)]]
+                self.execute()
+                self.assertEqual(self.posted, [])
+
+    def test_legacy_and_proposal_requests_share_the_same_three_round_cap(self):
+        self.comments = [[self.marked_comment(head=c * 40, fingerprint=c * 64, legacy=(c != "c"))
+                          for c in "bcd"]]
+        self.execute()
+        self.assertEqual(self.posted, [])
+
+    def test_unrelated_new_review_can_request_proposal_below_legacy_cap(self):
+        self.comments = [[self.marked_comment(head="b" * 40, fingerprint="c" * 64, legacy=True)]]
+        self.execute()
+        self.assertEqual(self.posted, [self.marked_comment()["body"]])
+
+    def test_completed_same_repository_review_posts_fixed_command(self):
         self.execute()
         self.assertEqual(self.posted, [self.marked_comment()["body"]])
         self.assertEqual(self.reads, 2)
+
+    def test_default_branch_commit_falls_back_to_exact_open_same_repo_head(self):
+        self.associated = [[]]
+        self.pr["base"]["ref"] = "release-preview"
+        self.pr["head"]["repo"]["full_name"] = REPO
+        self.current = copy.deepcopy(self.pr)
+        self.open_pages = [[copy.deepcopy(self.pr)]]
+        self.execute()
+        self.assertEqual(self.posted, [self.marked_comment()["body"]])
+        self.assertEqual(self.reads, 2)
+
+    def test_open_fallback_rejects_forks_wrong_heads_and_ineligible_prs(self):
+        for changes in ({"state": "closed"}, {"draft": True},
+                        {"head": {"sha": "b" * 40, "repo": {"full_name": REPO}}},
+                        {"head": {"sha": HEAD, "repo": {"full_name": "contributor/fork"}}},
+                        {"head": {"sha": HEAD, "repo": None}},
+                        {"base": {"repo": {"full_name": "other/repo"}}}):
+            with self.subTest(changes=changes):
+                self.setUp()
+                self.associated = [[]]
+                candidate = copy.deepcopy(self.pr)
+                candidate["head"]["repo"]["full_name"] = REPO
+                candidate.update(changes)
+                self.open_pages = [[candidate]]
+                self.execute()
+                self.assertEqual(self.posted, [])
+                self.assertEqual(self.reads, 0)
+
+    def test_open_fallback_paginates_then_deduplicates_before_existing_guards(self):
+        self.pr["head"]["repo"]["full_name"] = REPO
+        self.current = copy.deepcopy(self.pr)
+        self.open_pages = [[copy.deepcopy(self.pr)] * 100, [copy.deepcopy(self.pr)]]
+        self.execute()
+        self.assertEqual(self.posted, [self.marked_comment()["body"]])
+        self.assertEqual(self.reads, 2)
+
+    def test_open_fallback_overflow_or_malformed_page_never_posts_partial_results(self):
+        for rows in ([copy.deepcopy(self.pr)] * 100, {}, [None], [{"number": True}],
+                     [{"number": 0}], [copy.deepcopy(self.pr)] * 101):
+            with self.subTest(rows=repr(rows)[:100]):
+                self.setUp()
+                self.open_pages = [rows]
+                with self.assertRaisesRegex(RuntimeError, "open PR discovery|Open PR discovery"):
+                    self.execute()
+                self.assertEqual(self.posted, [])
+                self.assertEqual(self.reads, 0)
+
+    def test_fallback_does_not_bypass_current_head_review_or_final_re_read(self):
+        for changed in ("review", "head"):
+            with self.subTest(changed=changed):
+                self.setUp()
+                self.associated = [[]]
+                self.pr["head"]["repo"]["full_name"] = REPO
+                self.current = copy.deepcopy(self.pr)
+                self.open_pages = [[copy.deepcopy(self.pr)]]
+                if changed == "review":
+                    self.reviews[0][0]["commit_id"] = "b" * 40
+                else:
+                    self.current["head"]["sha"] = "b" * 40
+                self.execute()
+                self.assertEqual(self.posted, [])
 
     def test_manual_dispatch_uses_exact_head_and_defaults_can_dry_run(self):
         self.environment.update(GITHUB_EVENT_NAME="workflow_dispatch", PR_NUMBER="17", EXPECTED_HEAD=HEAD, DRY_RUN="true")

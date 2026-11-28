@@ -20,28 +20,33 @@
     "digest": "6d4fd22b20465ccc0f7354476588e8df7c9ca0e0"
   },
   {
+    "packageName": "actions/setup-node",
+    "version": "v7.1.0",
+    "digest": "949feb2413d6458794dcd2491c4babbbce0c15c1"
+  },
+  {
     "packageName": "codecov/codecov-action",
     "version": "v7.1.1",
     "digest": "303a32d7a59b442fa8d48b6a1cc6825c09c847a5"
   },
   {
     "packageName": "step-security/harden-runner",
-    "version": "v2.22.3",
-    "digest": "46b06cea07f9e64621fdf066ba77ac6915163d43"
+    "version": "v2.23.0",
+    "digest": "aebdcf6156ab6691adf63218240e476564a1ed4c"
   },
   {
     "packageName": "sigstore/cosign-installer",
-    "version": "v4.1.2",
-    "digest": "6f9f17788090df1f26f669e9d70d6ae9567deba6"
+    "version": "v4.1.4",
+    "digest": "881c63bd87e38389154debd8331404ce7ca8a3ab"
   },
   {
     "packageName": "astral-sh/setup-uv",
-    "version": "v10.3.3",
-    "digest": "68559e99cc807c1eb7e9238fd43a15bba460eec2"
+    "version": "v10.4.0",
+    "digest": "1db35dd8eee11c5894872e0b383ae6c406cf738d"
   },
   {
     "packageName": "actions/setup-go",
-    "version": "v7.0.0",
-    "digest": "b7ad1dad31e06c5925ef5d2fc7ad053ef454303e"
+    "version": "v7.1.0",
+    "digest": "d8cbb8045d7f43706b9177cceb36c1f91a6644d5"
   }
 ]

@@ -37,7 +37,7 @@ USER 0:0
 RUN dpkg --path-include='/usr/share/locale/*/LC_MESSAGES/gst-plugins-bad-1.0.mo' \
         --unpack /opt/victron-gstreamer/libgstreamer-plugins-bad1.0-0.deb /opt/victron-gstreamer/gstreamer1.0-plugins-bad.deb \
     && sha256sum --check /opt/victron-gstreamer/installed.sha256
-FROM --platform=$BUILDPLATFORM docker.io/library/golang@sha256:672c944cfd07599b5f1bb179869270cdc94c6254e41db4d431259693cb286b82 AS patched-go-tools
+FROM --platform=$BUILDPLATFORM docker.io/library/golang@sha256:4fa7c968ba93f1635670522dbb01a2c78150443e1385746924566079f36570ea AS patched-go-tools
 ARG TARGETARCH
 RUN apt-get update && apt-get install -y --no-install-recommends python3 ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
@@ -92,6 +92,7 @@ COPY scripts/install_runner_browsers.py scripts/browser-toolchains.json /opt/vic
 COPY .github/containers/runner-browsers/ /opt/victron-image-build/browsers/.github/containers/runner-browsers/
 COPY .github/gh/release.json /tmp/reserve-gh/.github/gh/release.json
 COPY scripts/install_release_gh.py /tmp/reserve-gh/scripts/install_release_gh.py
+COPY scripts/async_process.py /tmp/reserve-gh/scripts/async_process.py
 COPY .github/containers/runner-npm.json /opt/victron-image-build/npm/.github/containers/runner-npm.json
 COPY scripts/install_runner_npm.py /opt/victron-image-build/npm/scripts/install_runner_npm.py
 COPY deploy/runner-reserve/qualify-npm.cjs /opt/victron-image-build/npm/qualify-npm.cjs
@@ -200,7 +201,7 @@ RUN --mount=type=bind,from=runner-inputs,target=/tmp/runner-inputs,ro \
         "https://github.com/cli/cli/releases/download/v2.103.0/gh_2.103.0_linux_${arch}.tar.gz" \
         --output /tmp/reserve-gh/archive.tar.gz \
     && GODEBUG=fips140=on python3 /tmp/reserve-gh/scripts/install_release_gh.py \
-        --archive /tmp/reserve-gh/archive.tar.gz --output /usr/local/bin/gh \
+        --archive /tmp/reserve-gh/archive.tar.gz --output /usr/local/bin/gh --system-image-install \
     && test "$(command -v gh)" = /usr/local/bin/gh \
     && gh api --paginate --slurp --help >/dev/null \
     && gh api --help | grep -F -- '--slurp' >/dev/null \

@@ -1,20 +1,24 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": [
-    "local>victron-venus/venus-os-ci-toolkit:renovate-ci"
+    "local>victron-venus/venus-os-ci-toolkit:renovate-fleet"
   ],
   "enabledManagers": [
     "github-actions",
     "custom.regex",
     "custom.jsonata",
-    "npm"
+    "npm",
+    "pip_requirements",
+    "gomod",
+    "dockerfile",
+    "pip-compile"
   ],
   "packageRules": [
     {
       "matchManagers": [
         "npm"
       ],
-      "enabled": false
+      "enabled": true
     },
     {
       "description": "Keep only the toolkit expression-test engine in the CI update group.",
@@ -30,6 +34,73 @@
       "groupSingleUpdates": true,
       "separateMajorMinor": false,
       "separateMinorPatch": false
+    },
+    {
+      "description": "Keep the compiled common tools owned by pip-compile and regenerate their hashes.",
+      "matchManagers": [
+        "pip_requirements"
+      ],
+      "matchFileNames": [
+        "actions/setup-python/requirements.txt"
+      ],
+      "enabled": false
+    },
+    {
+      "description": "Requalify the hash-bound security branch compatibility fix before changing the Renovate runtime.",
+      "matchManagers": [
+        "custom.regex"
+      ],
+      "matchPackageNames": [
+        "renovate"
+      ],
+      "matchFileNames": [
+        ".github/renovate-runtime.json"
+      ],
+      "enabled": false
+    },
+    {
+      "description": "Runtime runner images require a dedicated source-bound image qualification with their compiler, ABI and package locks; do not replace qualified base digests with the default latest tags.",
+      "matchManagers": [
+        "dockerfile"
+      ],
+      "matchFileNames": [
+        "deploy/arc-ottplay/Dockerfile",
+        "deploy/runner-reserve/Dockerfile"
+      ],
+      "enabled": false
     }
-  ]
+  ],
+  "ignorePaths": [
+    "**/vendor/**",
+    "**/node_modules/**",
+    "**/fixtures/**",
+    ".github/containers/runner-go-tools/**",
+    ".github/cosign/**",
+    ".github/oci-tools/**",
+    "actions/setup-go/tools/**",
+    "tools/scorecard-scan/**",
+    "tools/secret_control/**"
+  ],
+  "pip_requirements": {
+    "managerFilePatterns": [
+      "/(^|/)requirements[^/]*\\.(txt|pip)$/"
+    ],
+    "ignorePaths": [
+      "**/vendor/**",
+      "**/node_modules/**",
+      "**/fixtures/**",
+      ".github/containers/runner-go-tools/**",
+      ".github/cosign/**",
+      ".github/oci-tools/**",
+      "actions/setup-go/tools/**",
+      "tools/scorecard-scan/**",
+      "tools/secret_control/**",
+      "actions/setup-python/requirements.txt"
+    ]
+  },
+  "pip-compile": {
+    "managerFilePatterns": [
+      "/^actions/setup-python/requirements\\.txt$/"
+    ]
+  }
 }

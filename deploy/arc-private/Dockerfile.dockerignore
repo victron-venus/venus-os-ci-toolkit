@@ -3,6 +3,7 @@
 **
 !.github/gh/release.json
 !scripts/install_release_gh.py
+!scripts/async_process.py
 !deploy/arc-private/Dockerfile
 !deploy/arc-private/Dockerfile.dockerignore
 !deploy/arc-private/sandbox-docker.sh

@@ -31,15 +31,15 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - go: '1.26.10'
+          - go: '1.26.11'
             lint: '1'
-          - go: '1.27.3'
+          - go: '1.27.4'
             lint: '2'
     runs-on: ${{ fromJSON((vars.CI_RUNNER_MODE == 'self-hosted' || vars.CI_RUNNER_MODE == 'k3s') && ((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) || (contains(fromJSON('["push","schedule","workflow_dispatch"]'), github.event_name) && github.ref == format('refs/heads/{0}', github.event.repository.default_branch))) && (vars.CI_RUNNER_LABELS || '[]') || '["ubuntu-latest"]') }}
     timeout-minutes: 15
     steps:
       - name: Harden the runner (Audit all outbound calls)
-        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.23.0
         with:
           egress-policy: audit
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -70,7 +70,7 @@ jobs:
     timeout-minutes: 45
     steps:
       - name: Harden the runner (Audit all outbound calls)
-        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.23.0
         with:
           egress-policy: audit
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -84,10 +84,10 @@ jobs:
         run: |
           needed=$(python3 scripts/build_runner_go_tools.py --check-changes)
           printf 'needed=%s\n' "$needed" >> "$GITHUB_OUTPUT"
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7
         if: steps.changes.outputs.needed == 'true'
         with:
-          go-version: '1.26.10'
+          go-version: '1.27.4'
           cache-dependency-path: .github/containers/runner-go-tools/${{ matrix.component }}/go.sum
       - name: Test and compile the exact patched release source
         if: steps.changes.outputs.needed == 'true'
@@ -116,16 +116,16 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Harden the runner (Audit all outbound calls)
-        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.23.0
         with:
           egress-policy: audit
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7
         with:
-          go-version: '1.27.3'
+          go-version: '1.27.4'
           cache-dependency-path: tools/scorecard-scan/go.sum
       - name: Test the scan-completeness and SARIF contracts
         working-directory: tools/scorecard-scan
@@ -136,14 +136,14 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Harden the runner (Audit all outbound calls)
-        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.23.0
         with:
           egress-policy: audit
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7
         with:
           go-version: '1.27.3'
           cache-dependency-path: tests/cel/go.sum
@@ -153,10 +153,10 @@ jobs:
   renovate-contracts:
     name: Atomic dependency update contracts
     runs-on: ${{ fromJSON((vars.CI_RUNNER_MODE == 'self-hosted' || vars.CI_RUNNER_MODE == 'k3s') && ((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) || (contains(fromJSON('["push","schedule","workflow_dispatch"]'), github.event_name) && github.ref == format('refs/heads/{0}', github.event.repository.default_branch))) && (vars.CI_RUNNER_LABELS || '[]') || '["ubuntu-latest"]') }}
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - name: Harden the runner (Audit all outbound calls)
-        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.23.0
         with:
           egress-policy: audit
 
@@ -179,15 +179,80 @@ jobs:
           RENOVATE_X_IGNORE_RE2: 'true'
         run: |
           renovate="$RUNNER_TEMP/renovate/node_modules/renovate"
-          node "$renovate/dist/config-validator.js" --strict --no-global renovate-ci.json
+          node "$renovate/dist/config-validator.js" --strict --no-global renovate-ci.json renovate-fleet.json
+          node --test scripts/test_sync_pocket_id_source.cjs
           node tests/renovate_grouping.mjs "$renovate"
+          node tests/renovate_security_grouping.mjs "$renovate"
+          node tests/renovate_uv_preflight.mjs "$renovate"
+          node --test scripts/test-renovate-completion.cjs scripts/test-renovate-completion-native.cjs
+      - name: Verify private Python lifecycle safety contracts
+        run: node --test tests/renovate_python_lifecycle.mjs
+      - name: Install the reviewed UV for offline build-boundary tests
+        uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          version: '0.13.4'
+          enable-cache: false
+      - name: Verify compatibility in the official container without credentials
+        run: |
+          version=$(python3 -c 'import json; print(json.load(open(".github/renovate-runtime.json"))["version"])')
+          docker pull "ghcr.io/renovatebot/renovate:$version"
+          docker run --rm --network none --cap-drop ALL --security-opt no-new-privileges \
+            --mount "type=bind,src=$PWD,dst=/repo,readonly" --workdir /repo \
+            --mount "type=bind,src=$PWD/scripts,dst=/config,readonly" \
+            --mount "type=bind,src=$(command -v uv),dst=/usr/local/bin/uv,readonly" \
+            "ghcr.io/renovatebot/renovate:$version" bash -e -c '
+              export PATH="/usr/local/bin:$PATH"
+              /usr/local/renovate/node --test scripts/test_sync_pocket_id_source.cjs
+              /usr/local/renovate/node tests/renovate_pocket_id_post_upgrade.mjs /usr/local/renovate
+              /usr/local/renovate/node tests/renovate_security_grouping.mjs /usr/local/renovate
+              /usr/local/renovate/node tests/renovate_uv_preflight.mjs /usr/local/renovate
+              /usr/local/renovate/node tests/renovate_python_builds.mjs /usr/local/renovate
+              bash scripts/renovate-security-runner.sh --version
+            '
+      - name: Verify the public root-mounted entrypoint without credentials
+        run: |
+          version=$(python3 -c 'import json; print(json.load(open(".github/renovate-runtime.json"))["version"])')
+          docker run --rm --network none --cap-drop ALL --security-opt no-new-privileges \
+            --mount "type=bind,src=$PWD/scripts/renovate-security-runner.sh,dst=/renovate-security-runner.sh,readonly" \
+            --mount "type=bind,src=$PWD/scripts/renovate-security-compat.mjs,dst=/renovate-security-compat.mjs,readonly" \
+            --mount "type=bind,src=$PWD/scripts/renovate-completion-compat.mjs,dst=/renovate-completion-compat.mjs,readonly" \
+            --mount "type=bind,src=$PWD/scripts/verify-renovate-completion.cjs,dst=/verify-renovate-completion.cjs,readonly" \
+            --mount "type=bind,src=$PWD/scripts/renovate-uv-preflight.mjs,dst=/renovate-uv-preflight.mjs,readonly" \
+            --mount "type=bind,src=$PWD/scripts/prepare-renovate-npm.mjs,dst=/prepare-renovate-npm.mjs,readonly" \
+            "ghcr.io/renovatebot/renovate:$version" /renovate-security-runner.sh --version
+      - name: Verify npm bundle guards with the installed official toolchain
+        run: |
+          version=$(python3 -c 'import json; print(json.load(open(".github/renovate-runtime.json"))["version"])')
+          for mount_dir in '' /config; do
+            docker run --rm --cap-drop ALL --security-opt no-new-privileges \
+              --mount "type=bind,src=$PWD,dst=/repo,readonly" --workdir /repo \
+              --mount "type=bind,src=$PWD/scripts/renovate-security-compat.mjs,dst=$mount_dir/renovate-security-compat.mjs,readonly" \
+              --mount "type=bind,src=$PWD/scripts/renovate-completion-compat.mjs,dst=$mount_dir/renovate-completion-compat.mjs,readonly" \
+              --mount "type=bind,src=$PWD/scripts/renovate-uv-preflight.mjs,dst=$mount_dir/renovate-uv-preflight.mjs,readonly" \
+              --mount "type=bind,src=$PWD/scripts/prepare-renovate-npm.mjs,dst=$mount_dir/prepare-renovate-npm.mjs,readonly" \
+              "ghcr.io/renovatebot/renovate:$version" bash -e -c '
+                install-tool node 24.22.2
+                install-tool npm 12.2.2
+                /usr/local/renovate/node /repo/tests/renovate_npm_bundles.mjs /usr/local/renovate "$1"
+              ' _ "$mount_dir/renovate-security-compat.mjs"
+          done
+      - name: Verify private Python tool lifecycle in the official image
+        run: |
+          version=$(python3 -c 'import json; print(json.load(open(".github/renovate-runtime.json"))["version"])')
+          container="renovate-python-lifecycle-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          trap 'docker rm -f "$container" >/dev/null 2>&1 || true' EXIT
+          timeout --signal=TERM --kill-after=30s 480s docker run --rm --init --name "$container" --cap-drop ALL --security-opt no-new-privileges \
+            --mount "type=bind,src=$PWD,dst=/repo,readonly" --workdir /repo \
+            --mount "type=bind,src=$PWD/scripts,dst=/config,readonly" \
+            "ghcr.io/renovatebot/renovate:$version" \
+            /usr/local/renovate/node /repo/tests/renovate_python_lifecycle_image.mjs
   python-typecheck-contract:
     name: Workflow contracts
     runs-on: ${{ fromJSON((vars.CI_RUNNER_MODE == 'self-hosted' || vars.CI_RUNNER_MODE == 'k3s') && ((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) || (contains(fromJSON('["push","schedule","workflow_dispatch"]'), github.event_name) && github.ref == format('refs/heads/{0}', github.event.repository.default_branch))) && (vars.CI_RUNNER_LABELS || '[]') || '["ubuntu-latest"]') }}
     timeout-minutes: 10
     steps:
       - name: Harden the runner (Audit all outbound calls)
-        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.23.0
         with:
           egress-policy: audit
 
@@ -197,14 +262,9 @@ jobs:
           python-version: '3.12'
       - name: Install generator and contract test dependencies
         run: 'python3 -m pip install --require-hashes --only-binary=:all: -r .github/requirements-generator.txt -r tools/secret_control/requirements-github-lock.txt'
+      # The parent quality gate runs the complete Python suite in release-contracts.
       - name: Analyze Python source and tests
         run: python3 -m ruff check --config ruff.toml .
-      - name: Install uv for locked dependency contracts
-        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
-        with:
-          version: '0.13.4'
-      - name: Exercise type checking and PR automation contracts
-        run: python -m unittest discover -s tests -p 'test_*.py' -v
   python-action-contracts:
     uses: ./.github/workflows/python-action-tests.yml
   release-signer-contract:
@@ -215,7 +275,7 @@ jobs:
       contents: read
     steps:
       - name: Harden the runner (Audit all outbound calls)
-        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.23.0
         with:
           egress-policy: audit
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -227,9 +287,9 @@ jobs:
           ref: 11926fa5bbbbde47e88fc006b625a17769b743b2
           path: .release-cosign-source
           persist-credentials: false
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
-          go-version: 1.27.3
+          go-version: 1.27.4
           cache-dependency-path: .github/cosign/go.sum
       - name: Build the reviewed patched release signer
         run: 'python3 scripts/build_release_signer.py --source .release-cosign-source --output "$RUNNER_TEMP/release-signer/cosign"
@@ -314,16 +374,28 @@ jobs:
       contents: read
     steps:
       - name: Harden the runner (Audit all outbound calls)
-        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.23.0
         with:
           egress-policy: audit
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
-          go-version: 1.27.3
+          go-version: 1.27.4
           cache: false
+      - name: Test bounded release CLI download retries
+        timeout-minutes: 3
+        env:
+          GOTOOLCHAIN: local
+          GO111MODULE: 'off'
+          GOWORK: 'off'
+          GOENV: 'off'
+          CGO_ENABLED: '0'
+          GODEBUG: fips140=on
+          GOMAXPROCS: '2'
+          GOFLAGS: -p=2
+        run: go test -count=1 -timeout=60s scripts/download_release_gh.go scripts/download_release_gh_test.go
       - name: Install the qualified GitHub CLI
         env:
           GODEBUG: fips140=on

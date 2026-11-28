@@ -1,6 +1,6 @@
 # Source-built OCI tool qualification
 
-This lane builds candidate **BuildKit 0.34.1 and runc 1.5.2** from pinned public
+This lane builds candidate **BuildKit 0.34.2 and runc 1.5.2** from pinned public
 upstream source, with Go 1.27.3 and reviewed module updates. It does not use Docker,
 Buildx or an existing BuildKit daemon to bootstrap either tool. It does not change
 the toolkit release policy, publish a production binary, install a household
@@ -38,8 +38,9 @@ The two native targets are `ubuntu-24.04`/amd64 and `ubuntu-24.04-arm`/arm64.
 Neither job falls back to shared or household runners. Compilation and unit tests
 run without root. Native package installation and the finite metadata repair
 described below are the only sudo operations in the source job. Packages come
-from the 2026-11-03 Ubuntu snapshot, with individually
-pinned versions, download sizes and SHA-256 digests. The compiler, libc, binutils,
+from the Ubuntu snapshots identified in the [AMD64](../.github/oci-tools/native-amd64.json)
+and [ARM64](../.github/oci-tools/native-arm64.json) locks, with individually pinned
+versions, download sizes and SHA-256 digests. The compiler, libc, binutils,
 Linux headers and libseccomp dependency closure are explicit. Installation permits
 no missing-package download or package removal; a host incompatibility must be
 resolved in the recipe rather than silently accepted.
@@ -180,11 +181,33 @@ installed-package inventory, notices and full native vulnerability scan.
 Keep `--no-remove` and `--no-download`; do not work around a package conflict by
 allowing removals or resolving an unpinned package from a live repository.
 
+### Hosted glibc package compatibility
+
+On hosted AMD64, the earlier glibc lock caused apt to propose removing
+`libc6-i386` and four dependent packages. The installer stopped at `--no-remove`
+before compilation in both
+[run 44526011844](https://github.com/victron-venus/venus-os-ci-toolkit/actions/runs/44526011844)
+and [run 44580320708](https://github.com/victron-venus/venus-os-ci-toolkit/actions/runs/44580320708).
+
+The Ubuntu snapshot `20261118T000000Z` provides `libc6`, `libc6-dev` and
+`libc-dev-bin` at `2.39-0ubuntu8.12` on AMD64 and ARM64. The AMD64 lock also
+includes `libc6-i386` at that version because it requires the exact `libc6`
+version. Canonical's signed package indexes match the sizes and SHA-256 values
+of all 87 other package records. The locks retain `linux-libc-dev 6.8.0-149.149`,
+its byte-level evidence and the finite reviewed header policy.
+[Canonical security notice](https://ubuntu.com/security/notices/USN-9065-1).
+
+Keep `--no-download` and `--no-remove`. Accept the refresh after both hosted
+architectures pass native installation, compilation and security checks on the
+reviewed commit. Runtime and promotion still require their existing gates.
+
 ### Finite Linux header applicability
 
 The [reviewed policy](../.github/oci-tools/header-disposition.json) binds a finite
-set of 385 observed CVEs to Ubuntu 24.04 `linux-libc-dev` version `6.8.0-147.147`,
-with separate amd64/arm64 archive hashes, sizes, complete member inventories and
+set of 432 observed CVEs (the original 385, a 45-ID extension and a 2-ID extension)
+to Ubuntu 24.04 `linux-libc-dev` version `6.8.0-149.149`
+after the explicit input revalidation below, with separate amd64/arm64 archive
+hashes, sizes, complete member inventories and
 installed-file hashes. It is **inactive while `reviewed` is false**. It is not a
 package-wide suppression or a claim that header files cannot contain vulnerable
 inline code: for example, exported `linux/swab.h` contains inline operations.
@@ -196,6 +219,19 @@ implementations being absent from this userspace component. It relies on the
 published affected-component metadata and reviewed patches; it is not a new audit
 of all kernel code. The older [Canonical explanation](https://lists.ubuntu.com/archives/kernel-team/2024-February/148886.html)
 provides context, not the verdict for newer CVEs.
+
+The second extension reviewed the two HIGH advisories that reached the Ubuntu scanner
+database after the 45-ID batch: `CVE-2026-99312`
+([KVM x86 INIT MMU reset](https://www.cve.org/CVERecord?id=CVE-2026-99312), affected
+`arch/x86/kvm/x86.c`) and `CVE-2026-99317`
+([ALSA hwdep DSP load serialization](https://www.cve.org/CVERecord?id=CVE-2026-99317),
+affected `include/sound/hwdep.h` and `sound/core/hwdep.c`). Both raw CNA records are
+SHA-256 bound in the evidence file, and all eight referenced stable patches were
+fetched and hashed. None of the affected paths is a packaged exported header in
+either locked inventory, and no referenced patch changes `include/uapi` or
+`arch/*/include/uapi`, so these are kernel-implementation defects absent from this
+userspace component. The batch binds its own hosted gate artifacts, and any later
+CNA, patch or package drift requires a fresh review.
 
 One case, `CVE-2026-80668`, does touch an exported UAPI path. Its
 [upstream patch](https://github.com/torvalds/linux/commit/b8b09dc2bf35a00d4e0556b5d6308c7b917ebda2)
@@ -290,11 +326,58 @@ Download necessary review evidence before expiry. Both successful and failed
 source jobs upload the available reports. No publication permission or registry
 credential is requested by this workflow.
 
+## Pending OpenTelemetry security refresh
+
+The source candidate uses Go 1.27.4 and OpenTelemetry SDK/trace 1.47.0 to address
+[GHSA-q7gw-24fr-5p69](https://github.com/open-telemetry/opentelemetry-go/security/advisories/GHSA-q7gw-24fr-5p69).
+BuildKit and runc receive new `victron.security.2` identities; old binary receipts
+cannot qualify these new compiler/module inputs. Hosted preparation from
+[run 43563786217](https://github.com/victron-venus/venus-os-ci-toolkit/actions/runs/43563786217)
+resolved, verified and vendored the actual upstream trees. Its exact artifact
+`14101885685` received an independent source/module/lock review before adopting
+the new bindings and setting `locks_reviewed=true`. This admits the mandatory
+native build/security lanes; it does not establish native or runtime acceptance.
+An unreviewed candidate still selects preparation only, and regression tests
+reject native/build/scan/bundle operations while `locks_reviewed=false`.
+
+The accepted builder, promotion records, runtime image pins and cluster routing
+remain the retained operational inputs. The adopted full graphs and vendor hashes must now be rechecked against the
+actual new source during both native architecture builds and security scans.
+Publication, image assembly, nonroot smoke, cold/warm resource observations and
+runtime promotion require their own fresh receipts. A changed source hash or a
+successful lock-preparation job is not evidence that those later gates passed.
+
+## Patched userspace header input
+
+The native closure now pins published Ubuntu `linux-libc-dev` 6.8.0-149.149 on
+both AMD64 and ARM64. The previous exact source scan reported 233 additional
+HIGH/CRITICAL kernel-package findings with this published fixed version.
+Both official archive checksums and the unchanged snapshot downloader were
+verified before choosing the patched input; no other native package, snapshot,
+origin, installation constraint or scanner rule changes.
+
+The 12 common exported-header deltas were reviewed as declarations,
+structs/unions, enums/constants, comments and include order, with no added kernel
+implementation or inline function bodies. These are real input changes, so no
+byte/ABI equivalence is claimed. The original 385 finite per-CVE records and
+reasons remain immutable; the exported conntrack boundary remains identical.
+The source-bound policy records the input revalidation and adds zero new
+non-applicability entries. Actual fresh native builds, binary/source/library
+scans and runtime checks remain required. This changes compiler input packages,
+not the running host kernel, and makes no claim that a host kernel was patched.
+
+For the Cgo-enabled runc build, the helper creates a new private 0700 `GOCACHE`
+under the owned stage and refuses an existing path before running any Go command.
+Its provenance binds that fresh cache to the native-input manifest hash.
+`setup-go` cache restoration remains disabled; ambient compiled Cgo objects from
+an older header/library closure cannot qualify the new input. This does not
+change the separate module checksum/verification requirements.
+
 ## Updating inputs and diagnosing failures
 
 Prepare changes in a disposable source directory, outside primary repositories:
 verify the exact commit archive, record original locks, apply the explicitly
-selected module versions with Go 1.27.3, then run `go mod tidy`, `go mod verify`,
+selected module versions with Go 1.27.4, then run `go mod tidy`, `go mod verify`,
 `go mod vendor` and `go list -mod=readonly -m -json all`. The recipe's
 `locked_modules()` removes machine paths, and `tree_digest()` binds vendor paths
 and file contents independently of timestamps. Review the complete lock diff and

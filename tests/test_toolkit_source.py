@@ -4,6 +4,8 @@ import base64
 import hashlib
 import io
 import json
+import shutil
+import sys
 import subprocess
 import tarfile
 import tempfile
@@ -36,6 +38,61 @@ class ToolkitReleaseNotesTests(unittest.TestCase):
             for path in (root / "docs").glob("RUNNER_ADVISORY_REVIEW_*.json")
         )
         self.assertFalse(required - declared, f"Unshipped source or acceptance input: {sorted(required - declared)}")
+
+    def test_source_archive_ships_admission_and_migration_inputs(self):
+        root = Path(__file__).resolve().parents[1]
+        declared = toolkit_source.inventory(root)
+        required = {
+            "scripts/release_push_scope.py",
+            "tests/test_release_push_admission_generator.py",
+            "tests/test_release_push_prepare.py",
+            "tests/test_release_push_scope.py",
+            "docs/automatic-release-test-paths.md",
+            "tests/fixtures/release_distribution/ottplay-foss-7677cfb.json",
+            "tests/fixtures/release_distribution/ottplay-foss-7677cfb.tar.gz",
+        }
+        self.assertFalse(required - set(declared), "Acceptance inputs missing from source archive")
+        with tempfile.TemporaryDirectory() as temporary:
+            work = Path(temporary)
+            checkout = work / "checkout"
+            for name in declared:
+                target = checkout / name
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(root / name, target)
+            # Model a source checkout even when this test runs inside a versioned candidate.
+            base = (checkout / "SOURCE_VERSION").read_text().strip().split("-", 1)[0]
+            (checkout / "SOURCE_VERSION").write_text(base + "\n")
+            subprocess.run(["git", "init", "-q"], cwd=checkout, check=True)
+            subprocess.run(["git", "add", "-f", "--", "."], cwd=checkout, check=True)
+            archive = toolkit_source.build(checkout, work / "package", base, "beta")
+            extracted = toolkit_source.extract_verified(checkout, archive, work / "extracted")
+            for name in required:
+                self.assertEqual((extracted / name).read_bytes(), (root / name).read_bytes())
+            result = subprocess.run(
+                [sys.executable, "-I", "-B", "-c",
+                 "import sys; sys.path[:0] = ['scripts', 'tests']; "
+                 "import install_release, release_push_scope; "
+                 "import test_release_push_admission_generator, test_release_push_prepare, test_release_push_scope; "
+                 "from pathlib import Path; "
+                 "assert Path(install_release.__file__).resolve().is_relative_to(Path.cwd()); "
+                 "assert 'automatic_release_test_paths' in Path('docs/automatic-release-test-paths.md').read_text()"],
+                cwd=extracted, capture_output=True, text=True, check=False,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+
+            # Exercise documentation from the shipped archive, including its
+            # workflow, canonical pins, navigation and image dependencies.
+            # This pattern excludes this package test, so it cannot recurse.
+            for command in (
+                [sys.executable, "-I", "-B", "-m", "unittest", "discover",
+                 "-s", "tests", "-p", "test*docs*.py", "-v"],
+                [sys.executable, "-I", "-B", "scripts/check_docs.py", "--root", "."],
+            ):
+                result = subprocess.run(
+                    command, cwd=extracted, capture_output=True, text=True,
+                    check=False,
+                )
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_checkout_changelog_supports_beta_and_rc(self):
         root = Path(__file__).resolve().parents[1]

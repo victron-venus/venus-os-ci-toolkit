@@ -24,10 +24,26 @@ The optional `change_scope` policy provides exact `documentation_paths`, exact
 `required_paths` for documentation used as a build input, and
 `always_validate_workflows` for independently required checks. Documentation paths
 cannot exempt source, tests, fixtures, build configuration or dependencies.
-Manual dispatch, scheduled runs and release qualification remain full. Only with
-explicit `change_scope` opt-in does a documentation-only push stop before release
-preparation, version allocation, artifact builds or publication. This does not
-change the configured nightly policy.
+Documentation-only PRs may skip expensive validation after explicit opt-in.
+Main-branch release pushes, manual dispatch and scheduled runs keep full
+preparation and qualification. A newer automatic run supersedes unfinished
+candidates, so it must remain eligible to replace them and run the required
+security checks. Release-note files parsed by contracts remain required inputs.
+The configured nightly policy is unchanged.
+
+## Live release execution
+
+Release steps pass the official `job.check_run_id` context as
+`RELEASE_EXECUTION_CHECK_RUN_ID`. If aggregate run metadata is delayed, the
+publisher first checks the exact attempt, then may match this identifier to the
+unique attempt job's exact GitHub `check_run_url`. The job must still be executing
+on the current runner with a current-attempt executing step. Display names and
+matrix labels do not identify the job. The shared five-minute deadline and all
+prerequisite gates remain required; terminal or conflicting metadata fails.
+Older workflows and hosts without this context keep the strict aggregate-status
+path. Adopt both the reviewed generated workflow and publisher together.
+Ambiguous-create confirmation uses a fresh bounded job read, never a saved status.
+Completed historical RCs still require successful terminal validation.
 
 ## Local checks
 
@@ -93,18 +109,21 @@ never update stable/latest. All required platforms must build before publication
 `release-manifest.json` records source SHA, workflow/run attempt and every payload
 SHA-256. The manifest is also saved in immutable Actions evidence for 90 days.
 Versioned Actions packages also record their producer repository, run ID, attempt
-and source in every receipt; publication requires the current verified run identity.
-The installer scopes build, signing and collection artifact names to that attempt.
+and source in every receipt; publication requires the verified run identity and
+accepts an attempt at or before the current one of that same run.
+The installer scopes build artifact names to the attempt and lets the publisher
+collect each artifact from its newest attempt of the same run.
 ID-selected candidate downloads require a separate consumer check of receipt
 producer identity and payload digest; the name-scoping helper does not verify them.
-**Re-run failed jobs** can retain successful checks and packages from an older
-attempt, so it is insufficient when publication requires fresh inputs from the
-current attempt. Before publication starts, read back the release ledger and
-existing tags and releases. If the reservation is still eligible, its build
-number is above the publication floor, and the candidate tag is absent, use
-**Re-run all jobs** on the same run only when the allocator and release policy
-permit it. Recreate every required input in the same attempt; older packages
-must not fill missing current builds.
+**Re-run failed jobs** re-executes only the failed jobs, so it publishes the
+packages, receipts and successful jobs an earlier attempt of the same run
+produced. Before publication starts, read back the release ledger and existing
+tags and releases. If the reservation is still eligible, its build number is
+above the publication floor, and the candidate tag is absent, a failed-only
+rerun of that run may publish. Another run, another source revision or a later
+attempt of the same run never qualifies. Use **Re-run all jobs** on the same run
+only when the allocator and release policy permit it and a fresh build of every
+input is required.
 
 Once the publication floor has consumed the build number, use a policy-authorized
 new workflow run and reservation. If publication started or its external result
@@ -144,14 +163,36 @@ Stable `vX.Y.Z` copies the tested RC bytes without rebuilding. No override or
 force-tag option exists. Expired/missing evidence requires a new RC. A partial
 upload remains an unpublished draft; inspect it before any manual recovery.
 
-Assets are uploaded to the draft's known release ID, using one bounded request
-per file. Publication does not repeat a tag lookup for each upload: a draft may
-not appear in the published-release-by-tag API. Each response must confirm a
-created asset with the expected name and size; the final verification still
-downloads and checks every payload before making the release public. A timeout,
-incomplete response or upload conflict stops publication without retrying or
-overwriting the asset. Preserve the draft and its evidence for inspection;
-do not reset the version allocation ledger to reuse the failed build number.
+Compact stable distribution is opt-in: the current driver's top-level policy
+must explicitly set `stable_distribution` to `rc-payloads-v1`. Absent means the
+existing full-manifest copy behavior; unknown, null and boolean values fail.
+The historical RC policy need not contain this field. Opted-in byte promotions
+ship unchanged payloads with a new schema-2 manifest linking the full RC proof.
+Only declared, verified receipts and the exact declared fuzz report stay solely
+on the RC; runtime JSON, feeds, metadata, checksums and signatures remain shipped.
+Every omitted file is still verified before publication. Keep the referenced RC
+and its immutable Actions evidence available and unexpired. Old schema-1 stable
+and final-build paths remain supported. See [compact distribution](release-distribution.md)
+for the narrow scripts/tests/docs migration and its workflow-preservation limits.
+
+Assets are uploaded to the draft's known release ID. Publication does not
+repeat a tag lookup for each upload: a draft may not appear in the
+published-release-by-tag API. After a non-201 response, timeout or malformed
+response, the publisher reads the complete asset inventory for that exact release
+ID. An exact name, size and digest match confirms the upload; if the API omits its
+digest, the publisher downloads and hashes that exact asset. The final verification
+still downloads and checks every payload before making the release public.
+
+Only an explicit HTTP 500, 502, 503 or 504 followed by a successful complete
+inventory showing the exact asset name absent allows one retry. A timeout, lost
+or malformed HTTP response, or any other status never authorizes a retry, but an
+exact matching inventory may still confirm that upload. Conflicting assets,
+malformed or unavailable inventory, or an asset still absent after the permitted
+retry stop publication. No retry overwrites or deletes an asset. The bounded
+error records the attempt, HTTP outcome when available, and reconciliation state
+without response bodies or credentials. Preserve the draft and its evidence for
+inspection; do not reset the version allocation ledger to reuse the failed build
+number.
 
 Release-asset downloads use the expected size and SHA-256 from the validated
 inventory before opening a new destination. Every chunk is checked before it is
@@ -176,6 +217,16 @@ The built-in promotion, closed-build resolution, registry publication and
 versioned verification paths
 share a budget derived from their validated manifest. Upload readback uses the
 known local identities and a shared budget for its complete upload inventory.
+Upload readback and promotion source downloads each use an internal allowance
+of three times their total expected inventory size, with at most three GET
+attempts per asset within one shared transfer deadline. Failed prefixes remain
+charged to that allowance; each retry clears only its own staging file and
+resets the per-file hash. Every accepted file must still
+match its expected size and SHA-256. Authentication failures, download timeouts
+and cancellations are not retried. Publication writes other than the bounded
+upload exception above are never replayed.
+Operator-supplied budgets and other download paths keep their existing caps:
+a retry stops if the remaining budget cannot fit the complete expected asset.
 A consumer backport must update `release_control.py`, `release_closed.py`,
 `release_versioned.py` and any installed `publish_verified.py` atomically
 with their generated contract tests; the installer ships this complete bundle.
@@ -202,6 +253,29 @@ update the general revision only as part of that full migration.
 GitHub releases do not deploy production. Existing push/tag/CI deployment hooks
 must be migrated or disabled before enabling automatic prereleases. Container
 and PyPI publication use verified stable assets as a separate explicit operation.
+
+```bash
+# Verify and display the exact registry operations; requires skopeo and registry login.
+python3 scripts/publish_verified.py containers --tag v1.2.3
+# Import the same OCI bytes, then optionally move latest after all version tags exist.
+python3 scripts/publish_verified.py containers --tag v1.2.3 --execute --latest
+```
+
+Each mapped destination needs a usable login before the payload verification
+downloads anything; otherwise the run stops with
+`No registry credentials for <host>; run docker login for that registry and retry`.
+`docker login` is enough: `credsStore` and `credHelpers` entries are resolved
+through the matching `docker-credential-*` helper, including the
+`https://index.docker.io/v1/` key Docker uses for Docker Hub, and a helper that
+reports an OAuth refresh token as the `<token>` username keeps its identity-token
+semantics. A `skopeo login` found in skopeo's own auth files is accepted without
+a docker login. Setting `REGISTRY_AUTH_FILE` is the operator override: the tool
+then contributes no credentials of its own. The generated credential file is
+created with `0600` permissions and passed only to the skopeo commands, so the
+shell's `DOCKER_CONFIG` is left untouched.
+
+If publication partially fails, inspect the existing immutable version tags before
+retrying. The tool refuses to overwrite them. Never rebuild an image for stable.
 
 ## Qualified GitHub CLI
 
@@ -266,14 +340,15 @@ or missing local object stops before writes, without falling back to a fetch.
 Workflow files and policy text are read and written as UTF-8 on every platform.
 
 Every ordinary release artifact name now ends in
-`-run-<run_id>-attempt-<run_attempt>`. A full same-run retry can retain previous
-attempts without mixing their payloads. Before publication starts, use
-**Re-run all jobs** only if the allocator and release policy permit reuse of that
-reservation, so every required producer creates inputs for the same new attempt.
-Re-running only a failed job can leave no current inputs, or an incomplete set;
-older packages must not fill those gaps. Once publication starts, or its result
-is partial or uncertain, inspect existing tags, releases and assets before a
-policy-authorized new run. Never reset the ledger or overwrite published assets.
+`-run-<run_id>-attempt-<run_attempt>`. The publisher collects each artifact from
+its newest attempt of the same run, so a full same-run retry keeps its newest
+payloads and a failed-only retry completes them with earlier attempts' uploads,
+receipts and recorded successful jobs. Attempts are never mixed across runs or
+source revisions. Before publication starts, use **Re-run all jobs** only if the
+allocator and release policy permit reuse of that reservation and every input
+must be rebuilt. Once publication starts, or its result is partial or uncertain,
+inspect existing tags, releases and assets before a policy-authorized new run.
+Never reset the ledger or overwrite published assets.
 See [publication-phase retry rules](VERSIONING.md#package-identity-across-reruns).
 Duplicate payload names remain errors, even when their bytes match.
 
@@ -313,12 +388,13 @@ The generated header and detached-provenance requirement are preserved.
 
 After migration, run a fresh, complete build of all required package producers in
 one workflow attempt. The publisher verifies the independently supplied repository,
-run ID, attempt and source SHA against every package receipt. Pre-migration receipts
+run ID and source SHA against every package receipt, and accepts a receipt from any
+attempt at or before the current one of that same run. Pre-migration receipts
 without producer identity cannot qualify fresh package publication through this
 migrated publisher. Existing historical promotion and retained-evidence validation
-remain separate and unchanged. A failed-job-only retry cannot
-fill missing current-attempt packages from an earlier attempt; regenerate the full
-coherent package set instead. Existing release approval and acceptance policies
+remain separate and unchanged. A failed-job-only retry publishes the packages an
+earlier attempt produced; rebuild only a package whose receipt is missing or whose
+bytes changed. Existing release approval and acceptance policies
 still apply.
 
 Offline creation and inspection remain supported without an Actions identity, but

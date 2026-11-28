@@ -5,6 +5,7 @@ import hashlib
 import io
 import json
 from pathlib import Path
+import re
 import shlex
 import sys
 import subprocess
@@ -67,6 +68,37 @@ class BuilderTests(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
+
+    def workflow_compiler_before(self, command):
+        workflow = (tools.ROOT / '.github/workflows/oci-builder-qualification.yml').read_text()
+        compiler = None
+        found = []
+        for line in workflow.splitlines():
+            version = re.fullmatch(r"\s+go-version: '([0-9]+\.[0-9]+\.[0-9]+)'", line)
+            if version:
+                compiler = 'go' + version.group(1)
+            if line.strip() == 'run: ' + command:
+                found.append(compiler)
+        self.assertEqual(len(found), 1, 'Expected exactly one native compiler consumer')
+        return found[0]
+
+    def test_builder_client_workflow_compiler_matches_reviewed_manifest(self):
+        manifest = json.loads(tools.client.MANIFEST.read_text())
+        self.assertEqual(self.workflow_compiler_before(
+            'python3 scripts/build_runner_go_tools.py buildx --ci'), manifest['go_version'])
+
+    def test_builder_helper_workflow_compiler_matches_exact_runtime_guard(self):
+        self.assertEqual(self.workflow_compiler_before(
+            'python3 scripts/prepare_oci_builder_tools.py helper'), tools.HELPER_GO_VERSION)
+
+    def test_builder_helper_wrong_compiler_rejected_before_stage_or_build(self):
+        stage = self.root / 'helper'
+        with patch.object(tools.subprocess, 'check_output', return_value='go version go1.27.3 linux/amd64'), \
+                patch.object(tools.source, 'run') as build:
+            with self.assertRaisesRegex(ValueError, 'Exact helper compiler'):
+                tools.helper('amd64', stage)
+        build.assert_not_called()
+        self.assertFalse(stage.exists())
 
     def test_manual_exact_native_admission(self):
         env = {"GITHUB_ACTIONS": "true", "RUNNER_OS": "Linux", "RUNNER_ENVIRONMENT": "github-hosted",

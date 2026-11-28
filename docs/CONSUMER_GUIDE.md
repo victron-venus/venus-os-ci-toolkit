@@ -98,6 +98,41 @@ caller to Quality gate. Only that caller receives OIDC; test validators need no
 OIDC allowlist entry. Python and Go already produce reports. Other languages must
 first collect a real report in their existing test job.
 
+### Consumer-owned contract tests
+
+A consumer may already own contract tests that the generated
+`workflow-contracts` and `release-contracts` jobs should run. Name their exact
+repository-relative files in `.release-policy.json`; the generator emits the
+steps only for that declaration and never assumes a particular consumer layout.
+
+```json
+"consumer_checks": {
+  "documentation": {
+    "prepare": "scripts/prepare-docs-validation.cjs",
+    "test": "tests/test_readme_docs.cjs"
+  },
+  "release_cli_retry": {
+    "files": ["scripts/download_release_gh.go", "scripts/download_release_gh_test.go"]
+  }
+}
+```
+
+`documentation` selects a Node step that runs the declared preparation script in
+a temporary directory, installs that directory's lock with `npm ci`, and then
+runs the declared test with `NODE_PATH` pointing at the installed modules. That
+step also disables setup-node's automatic package-manager cache, because the
+declared dependencies live only in the temporary directory.
+`release_cli_retry` selects a Go step that runs the declared files with a
+bounded timeout, so the list must contain exactly one `*_test.go` file.
+
+Both entries are optional and independent. Every declared path must be an exact
+safe relative path that still exists when the workflows are rendered: a missing
+file fails rendering instead of silently dropping the check. `documentation`
+requires `single_entry_ci`, and `release_cli_retry` requires `mode=release`,
+because those settings decide whether the containing jobs exist. The canonical
+toolkit ignores this section, and a consumer that declares nothing gains no
+extra steps even if it happens to commit files with the same names.
+
 ### Supported Consumer Workflow Files
 
 | Consumer workflow file | Toolkit workflow called | Notes |
@@ -143,11 +178,13 @@ the tested matrix, not every architecture or future interpreter release.
 
 To update the common tools, edit `actions/setup-python/requirements.in` and
 regenerate the hash lock using the exact command in its header with uv 0.13.4.
+Renovate uses the same input and `requirements-wheels-only.in` policy file to
+update all hashes together; the policy continues to reject source distributions.
 Review all version changes and run the action matrix, the offline path/hash
 regressions and a vulnerability audit of every locked version, including
 platform-specific dependencies. Consumer application locks remain independent.
 
-The Go action defaults to Go 1.26.10. It builds `govulncheck v1.8.0` and
+The Go action defaults to Go 1.26.11. It builds `govulncheck v1.8.0` and
 `golangci-lint v1.64.8` from separate committed `go.mod`/`go.sum` files using
 `go install -mod=readonly`. The v1 linter preserves existing consumer configs;
 its locked transitive dependencies include fixes for known mapstructure,
@@ -158,7 +195,8 @@ lock files for a project with a v2 configuration. Consult the
 before changing the configuration generation.
 
 The contract matrix runs real lint, vulnerability analysis and tests with
-Go 1.26.10/v1 and Go 1.27.3/v2. A selected Go toolchain of at least 1.26 is
+Go 1.26.11/v1 and Go 1.27.4/v2. These qualified patch-level toolchains include the
+standard-library fixes for GO-2026-6859. A selected Go toolchain of at least 1.26 is
 required. The pinned `actions/setup-go` exports `GOTOOLCHAIN=local`, so an older
 requested version fails instead of silently downloading a newer compiler.
 Tool installation disables workspace discovery (`GOWORK=off`); consumer
@@ -206,13 +244,13 @@ No Codecov secret is forwarded. Opt-in central publication uses GitHub OIDC;
 
 #### `go-ci.yml`
 
-The workflow uses Go 1.26.10 by default and installs its tools from the action's
+The workflow uses Go 1.26.11 by default and installs its tools from the action's
 isolated, checked-in Go module graphs. Select `golangci-lint-major: '2'` for a
 version 2 configuration; the default preserves version 1 configurations.
 
 | Input | Type | Default | Required |
 |---|---|---|---|
-| `go-version` | string | `'1.26.10'` | No |
+| `go-version` | string | `'1.26.11'` | No |
 | `golangci-lint-major` | string | `'1'` | No |
 | `working-directory` | string | `'.'` | No |
 | `run-lint` | boolean | `true` | No |
@@ -338,6 +376,10 @@ A ready PR from a trusted author targeting the repository's default branch is el
 Dependabot approval uses the caller's automatic `GITHUB_TOKEN` and the `github-actions[bot]` identity, without PAT secrets. Grant `pull-requests: write` in the caller and enable **Allow GitHub Actions to create and approve pull requests** in repository Actions settings. Select `pull_request` for Dependabot; the toolkit's own caller retains `pull_request_target` for other authors. The PR author determines the credential even when another actor triggers the event. Existing CODEOWNERS and review rules still apply.
 
 For other authors, explicitly forward `BOT_PAT` and optional `APPROVAL_PAT`. Approval first checks the actual account behind `BOT_PAT`. It uses `APPROVAL_PAT` only when `BOT_PAT` is absent or belongs to the PR author; the selected account must be independent of the author. Invalid credentials fail explicitly rather than silently selecting another account. `BOT_PAT` requires repository write permission for merging and pull request write permission for approval. When `BOT_PAT` is confirmed to belong to the PR author `californiantiramisu`, a same-repository PR can use `GITHUB_TOKEN` as the independent Actions reviewer if no independent `APPROVAL_PAT` was selected. This fallback requires Actions approval to be enabled, verifies the repository again before approval, and does not apply to forks, other authors or manual recovery. Missing credentials or remaining self-approval are configuration errors. The merge workflow continues using `BOT_PAT` for every author so downstream workflows retain their existing event behavior.
+
+When a same-repository PR authored by `californiantiramisu` retains a PAT review of the current head and checked base, but GitHub still reports `REVIEW_REQUIRED`, the workflow can add a supplementary `github-actions[bot]` approval. This narrow path requires the PAT reviewer to match the event's `GITHUB_ACTOR`, rechecks the same repository, head and base, and is disabled for forks, other authors and manual recovery. It preserves the PAT review needed by CODEOWNERS instead of replacing it.
+
+These are trusted automation approvals from distinct authenticated identities, **not evidence of independent human code inspection**. Do not advertise bot reviews alone as human review in security attestations or badges. CI, CodeRabbit findings and any human review remain separate checks. Do not adopt this automatic approval policy where a person must inspect the code after every push.
 
 Title/body-only PR edits skip the approval and merge jobs before a runner is
 allocated. The `edited` event remains subscribed because changing the base branch

@@ -1,8 +1,10 @@
 """Exercise bounded release payload I/O and fail-closed staging offline."""
 
 import io
+import os
 # Imported only for subprocess result/exception fixtures; commands are mocked.
 import subprocess  # nosec B404
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -92,6 +94,120 @@ class AssetStreamingTests(unittest.TestCase):
             self.assertEqual(
                 result, {"size": len(gh.files[21]), "sha256": rc.digest(gh.files[21])}
             )
+
+    @unittest.skipUnless(os.name == "posix", "the supervised asset downloader requires POSIX")
+    def test_http_502_small_and_oversized_bodies_retry_before_asset_writes(self):
+        """Retry explicit 502 responses without letting their bodies pollute the staged file."""
+        payload = b"verified asset payload"
+        for error_body in (b"upstream unavailable", b"gateway failure " * 10000):
+            with self.subTest(error_body_size=len(error_body)), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp)
+                gh_path, calls = self._fake_gh(
+                    root,
+                    [
+                        (b"HTTP/2 502 Bad Gateway\r\n\r\n"
+                         + error_body, 1),
+                        (b"HTTP/2 200 OK\r\nContent-Type: application/octet-stream\r\n\r\n"
+                         + payload, 0),
+                    ],
+                )
+                destination = root / "asset.bin"
+                with (
+                    patch.object(rc, "resolve_executable", lambda _name: str(gh_path)),
+                    patch.object(rc.time, "sleep"),
+                ):
+                    identity = rc.download_asset(
+                        rc.GitHub(REPO), 21, destination,
+                        expected={"size": len(payload), "sha256": rc.digest(payload)},
+                        budget=rc.DownloadBudget(len(payload)),
+                    )
+                self.assertEqual(calls.read_text(), "2")
+                self.assertEqual(destination.read_bytes(), payload)
+                self.assertEqual(identity, {"size": len(payload), "sha256": rc.digest(payload)})
+
+    @unittest.skipUnless(os.name == "posix", "the supervised asset downloader requires POSIX")
+    def test_http_4xx_is_terminal_but_success_body_identity_is_preserved(self):
+        """A denial is not retried, and HTTP framing never enters the asset hash."""
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            gh_path, calls = self._fake_gh(
+                root, [(b"HTTP/2 403 Forbidden\r\n\r\nnot allowed", 1)],
+            )
+            destination = root / "asset.bin"
+            with patch.object(rc, "resolve_executable", lambda _name: str(gh_path)):
+                with self.assertRaises(rc.GitHubError):
+                    rc.download_asset(
+                        rc.GitHub(REPO), 21, destination,
+                        expected={"size": 4, "sha256": rc.digest(b"data")},
+                        budget=rc.DownloadBudget(4),
+                    )
+            self.assertEqual(calls.read_text(), "1")
+            self.assertFalse(destination.exists())
+
+    @unittest.skipUnless(os.name == "posix", "the supervised asset downloader requires POSIX")
+    def test_http_stream_frames_the_final_redirect_response_only(self):
+        """gh follows redirects; its included final 200 frame is separated from payload bytes."""
+        payload = b"redirected release asset"
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            gh_path, calls = self._fake_gh(
+                root,
+                [(b"HTTP/2 200 OK\r\nContent-Type: application/octet-stream\r\n\r\n"
+                  + payload, 0)],
+            )
+            destination = root / "asset.bin"
+            with patch.object(rc, "resolve_executable", lambda _name: str(gh_path)):
+                identity = rc.download_asset(
+                    rc.GitHub(REPO), 21, destination,
+                    expected={"size": len(payload), "sha256": rc.digest(payload)},
+                    budget=rc.DownloadBudget(len(payload)),
+                )
+            self.assertEqual(calls.read_text(), "1")
+            self.assertEqual(destination.read_bytes(), payload)
+            self.assertEqual(identity, {"size": len(payload), "sha256": rc.digest(payload)})
+
+    @unittest.skipUnless(os.name == "posix", "the supervised asset downloader requires POSIX")
+    def test_oversized_and_truncated_http_headers_are_terminal_before_asset_writes(self):
+        """Malformed framing cannot consume payload budget or be mistaken for asset bytes."""
+        responses = (
+            b"HTTP/2 200 OK\r\nX-Large: " + b"x" * rc.ASSET_HTTP_HEADER_LIMIT + b"\r\n\r\npayload",
+            b"HTTP/2 200 OK\r\nContent-Type: application/octet-stream\r\n",
+        )
+        for response in responses:
+            with self.subTest(response_size=len(response)), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp)
+                gh_path, calls = self._fake_gh(root, [(response, 0)])
+                destination = root / "asset.bin"
+                with patch.object(rc, "resolve_executable", lambda _name: str(gh_path)):
+                    with self.assertRaises(rc.GitHubError):
+                        rc.download_asset(
+                            rc.GitHub(REPO), 21, destination,
+                            expected={"size": 7, "sha256": rc.digest(b"payload")},
+                            budget=rc.DownloadBudget(7),
+                        )
+                self.assertEqual(calls.read_text(), "1")
+                self.assertFalse(destination.exists())
+
+    @staticmethod
+    def _fake_gh(root, responses):
+        """Create a deterministic local gh executable and return its call ledger."""
+        fake_bin = root / "bin"
+        fake_bin.mkdir()
+        gh_path = fake_bin / "gh"
+        calls = root / "calls"
+        gh_path.write_text(
+            f"#!{sys.executable}\n"
+            "import pathlib,sys\n"
+            f"counter=pathlib.Path({str(calls)!r})\n"
+            "index=int(counter.read_text()) if counter.exists() else 0\n"
+            "counter.write_text(str(index+1))\n"
+            f"responses={responses!r}\n"
+            "data,code=responses[min(index,len(responses)-1)]\n"
+            "sys.stdout.buffer.write(data)\n"
+            "sys.exit(code)\n"
+        )
+        gh_path.chmod(0o755)
+        return gh_path, calls
 
     def test_partial_download_is_removed_on_transport_error_timeout_or_interrupt(self):
         """No failed payload remains eligible for a subsequent upload."""

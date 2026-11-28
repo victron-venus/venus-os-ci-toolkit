@@ -5,17 +5,24 @@
     "commit": "6cbc19a3fd59e305fb814dca4d854a4fb67d2941",
     "archive_sha256": "2293b570f258dfc6e38e0bfdd3fa0e710324a7cf0449994304b524af8fb4f06c"
   },
-  "go_version": "go1.26.10",
+  "go_version": "go1.27.4",
   "original_locks": {
     "go.mod": "4af3e0f8be78563fb4793b24f38d9efa51bb07147d4bcfbfe5751be47f7bbd62",
     "go.sum": "c7958ca4e417c9da1dc013e51923633385fe1e7814f651cdc432719bb0607dd8"
   },
   "fixed_locks": {
-    "go.mod": "4fc4a43a1c6d22f08ceae0ab0cebfb35af6d4c99d1b83a79c749b088b8a7748c",
-    "go.sum": "4fab90ed241d7edaacb92b2c500225d0ad03e2c4e46dffe81011d686d58e9f47"
+    "go.mod": "b676ee5cd734a2366ff88d0bbe23c4be442df9b21116e5ca6ade0452b32aaa92",
+    "go.sum": "4b10f5783608bfd60a488ac77bef645f2eb9104a64a79a0d083fb0e1f4e817ee"
+  },
+  "oci_error_test_fix": {
+    "before_sha256": "2d070da80c42b6efbd59b9280556d914522e21515c7199fd89dd46123fa8ad18",
+    "after_sha256": "4ebac137435c9824a016d255beb64fe81db97f5e7011982d0b293d11269acebf"
   },
   "updates": [
-    "golang.org/x/net@v0.60.0"
+    "github.com/containerd/containerd/v2@v2.4.2",
+    "Retain the bounded-read rejection asserted by the compose OCI blob test; the fixed containerd reports the capacity error directly instead of a size-mismatch wrapper",
+    "golang.org/x/net@v0.62.0",
+    "OpenTelemetry root/SDK/trace1.47.0 via actual Go1.27.4 resolution; all changed selected ZIP+module sums verified, including log and SDK metric companions; fresh binary/image qualification required"
   ],
   "qualification": "Lock preparation only. Source tests and final image acceptance are separate required gates."
 }

@@ -77,7 +77,9 @@ coverage percentages to Terraform, firmware YAML or external integration suites.
 
 The official, SHA-pinned Codecov action uses GitHub OIDC for trusted public
 repository runs. It needs `id-token: write` on the uploader and each caller hop,
-not a `BOT_PAT`, Codecov token or new secret. Fork PRs use the official tokenless
+not a `BOT_PAT`, Codecov token or new secret. Read-only `actions: read` on both
+uploader jobs and each caller hop permits same-run artifact metadata lookup.
+Fork PRs use the official tokenless
 path, with no OIDC permission; fork publication is informational. The workflow
 rejects unsupported events, private repositories, unsafe paths, malformed or
 empty reports and extra files before uploading. It does not execute checked-out
@@ -100,9 +102,25 @@ thresholds are separate; initially keep those informational until a meaningful
 baseline exists. Avoid treating generated files as tracked application coverage.
 
 Artifacts use `coverage-<name>-<run_attempt>` with seven-day retention and a hard
-error for missing files. To retry publication after a producer succeeded in an
-older attempt, rerun **all** jobs so the report is recreated for the new attempt.
-Reports are not taken from another run or silently reused after expiry.
+error for missing files. A partial uploader rerun resolves the newest named
+producer artifact at or before the uploader attempt in the **same workflow run**.
+It selects the newest name before validating uniqueness, expiry, SHA-256 digest metadata syntax and
+repository/head metadata; a malformed, expired or mismatched newest artifact
+fails instead of falling back to an older report. Download uses the selected
+artifact ID, followed by the existing mandatory nonempty report/schema checks.
+The resolver records the API's digest metadata; it does not independently hash
+or verify the downloaded ZIP bytes. The pinned download action retains its own
+integrity behavior, including warnings, while local report validation stays
+mandatory. Operator-configured HTTPS proxies remain supported.
+
+The selection receipt records the producer attempt separately from the uploader
+attempt, the source head, original tested merge SHA and original event base.
+GitHub reruns retain the original `GITHUB_SHA` and `GITHUB_REF`; the mutable
+`run.pull_requests` association is not used for source attribution. No report is
+taken from another run. Selecting an older report does **not** retest code or
+prove that a newer producer passed: the caller's required CI gates remain
+responsible for that decision. Rerun the producer when a newly generated report
+is needed. Expired reports must be regenerated, never silently reused.
 
 ## Maintain centrally
 
@@ -122,3 +140,5 @@ renderer/checker; historical `fleet.json` entries are not a current rollout list
 Official references: [Codecov Action/OIDC](https://github.com/codecov/codecov-action),
 [GitHub reusable workflow permissions](https://docs.github.com/en/actions/how-tos/reuse-automations/reuse-workflows),
 [Renovate Git refs](https://docs.renovatebot.com/modules/datasource/git-refs/).
+
+Artifact transport references: [GitHub artifact metadata](https://docs.github.com/en/rest/actions/artifacts), [immutable source context on reruns](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/re-run-workflows-and-jobs).

@@ -19,10 +19,16 @@
   "visibility": "public",
   "single_entry_ci": true,
   "change_scope": {
-    "documentation_paths": [],
-    "required_paths": [],
+    "documentation_paths": [
+      "GOVERNANCE.md",
+      "TERRAFORM_IMPORT.md"
+    ],
+    "required_paths": [
+      "CHANGELOG.md"
+    ],
     "always_validate_workflows": [
-      "ci.yml"
+      "ci.yml",
+      "security-required.yml"
     ]
   },
   "artifact_pattern": "release-assets*",
@@ -53,7 +59,7 @@
     ]
   },
   "fuzzing": {
-    "toolkit_ref": "2439b9eb60cdbcd02edf43b62c551a357be3accc"
+    "toolkit_ref": "0ef5d19a724a3910985fae1a6ec86cd7a5c92cf7"
   },
   "container_assets": {
     "oci-builder-linux-amd64.oci.tar": "ghcr.io/victron-venus/oci-builder-amd64",

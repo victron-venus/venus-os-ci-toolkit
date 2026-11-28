@@ -1,0 +1,77 @@
+name: Documentation checks
+
+# Callers opt in from their own workflow; nothing here runs by itself.
+#
+#   jobs:
+#     docs:
+#       uses: victron-venus/venus-os-ci-toolkit/.github/workflows/docs-check.yml@<40-char-sha>
+#
+# The checker itself lives in this toolkit. The caller supplies only its own
+# rules: which checks to run, and whether an index is required. That keeps one
+# implementation while still allowing a repository to keep a local invariant
+# that the shared checker does not express.
+on:
+  workflow_call:
+    inputs:
+      checks:
+        description: Comma-separated rule names or "all"
+        type: string
+        default: links,anchors,svg,index,fences,mermaid
+      python-version:
+        description: Python version for the checker
+        type: string
+        default: '3.12'
+      toolkit-ref:
+        description: Immutable toolkit commit that supplies the checker
+        type: string
+        required: true
+permissions:
+  contents: read
+jobs:
+  docs:
+    name: Documentation
+    runs-on: ${{ fromJSON((vars.CI_RUNNER_MODE == 'self-hosted' || vars.CI_RUNNER_MODE == 'k3s') && ((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) || (contains(fromJSON('["push","schedule","workflow_dispatch"]'), github.event_name) && github.ref == format('refs/heads/{0}', github.event.repository.default_branch))) && (vars.CI_RUNNER_LABELS || '[]') || '["ubuntu-latest"]') }}
+    timeout-minutes: 10
+    steps:
+      - name: Require an immutable checker revision
+        shell: bash
+        env:
+          TOOLKIT_REF: ${{ inputs.toolkit-ref }}
+        run: |
+          if [[ ! "$TOOLKIT_REF" =~ ^[0-9a-fA-F]{40}$ ]]; then
+            echo 'toolkit-ref must be a full 40-character commit SHA' >&2
+            exit 1
+          fi
+
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.23.0
+        with:
+          egress-policy: audit
+
+      - name: Checkout the caller
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: project
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Checkout the checker
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: victron-venus/venus-os-ci-toolkit
+          ref: ${{ inputs.toolkit-ref }}
+          path: toolkit
+          persist-credentials: false
+          sparse-checkout: scripts/check_docs.py
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: ${{ inputs.python-version }}
+
+      - name: Run the shared checker
+        working-directory: project
+        env:
+          CHECKS: ${{ inputs.checks }}
+        run: python ../toolkit/scripts/check_docs.py --root . --checks "$CHECKS"

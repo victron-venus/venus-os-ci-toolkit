@@ -36,7 +36,7 @@ jobs:
     env:
       REVIEWED_COMMIT: ${{ inputs.reviewed_commit }}
     steps:
-      - uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+      - uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.23.0
         with:
           egress-policy: audit
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -58,17 +58,17 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: python3 scripts/prepare_oci_promotion.py
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7
         with:
-          go-version: '1.26.10'
+          go-version: '1.27.4'
           cache: false
       - name: Build the source-locked native Buildx client
         env:
           TARGETARCH: ${{ matrix.arch }}
         run: python3 scripts/build_runner_go_tools.py buildx --ci
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7
         with:
-          go-version: '1.27.3'
+          go-version: '1.27.4'
           cache: false
       - name: Build and test the fixed-path cgroup reader
         run: python3 scripts/prepare_oci_builder_tools.py helper

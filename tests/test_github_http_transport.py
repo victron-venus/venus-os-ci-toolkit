@@ -5,6 +5,7 @@ import importlib.util
 import json
 import os
 import shutil
+import sys
 # Subprocess calls use fixed argument vectors with shell=False.
 import subprocess  # nosec B404
 import tempfile
@@ -17,6 +18,7 @@ from unittest.mock import patch
 ROOT = Path(__file__).resolve().parents[1]
 if not (ROOT / "scripts/release_control.py").is_file():
     ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "scripts"))
 SPEC = importlib.util.spec_from_file_location(
     "release_control_http_transport", ROOT / "scripts/release_control.py"
 )
@@ -28,14 +30,27 @@ def wire(status, body=b"{}"):
     return f"HTTP/2.0 {status} Test\nContent-Type: application/json\r\n\r\n".encode() + body
 
 
+def paged_wire(status, body, *, next_page):
+    response = wire(status, body)
+    if next_page:
+        response = response.replace(
+            b"\r\n\r\n",
+            b'\r\nLink: <https://api.github.com/next>; rel="next"\r\n\r\n',
+            1,
+        )
+    return response
+
+
 class HTTPTransportTests(unittest.TestCase):
     def setUp(self):
         self.enterContext(patch.dict(os.environ, {"RELEASE_REQUIRE_WORKFLOW_SCOPE": ""}))
+        self.enterContext(patch.object(rc, "resolve_executable", return_value="/tools/gh"))
         self.github = rc.GitHub("example/project")
 
     def failure(self, status, body, method="GET", path="git/ref/tags/v1.2.3"):
         def run(command, **_kwargs):
-            self.assertEqual(command[:2], ["gh", "api"])
+            self.assertEqual(Path(command[0]).name, "gh")
+            self.assertEqual(command[1], "api")
             self.assertIn("--include", command)
             self.assertEqual(command[command.index("--method") + 1], method)
             self.assertEqual(command[-1], f"repos/example/project/{path}")
@@ -55,7 +70,7 @@ class HTTPTransportTests(unittest.TestCase):
                 ):
                     with self.subTest(status=status, body=body, operation=operation):
                         with (
-                            patch.object(rc.subprocess, "run", side_effect=self.failure(status, body)),
+                            patch.object(rc, "run_process", side_effect=self.failure(status, body)),
                             patch("time.sleep"),
                             self.assertRaises(rc.GitHubError) as error,
                         ):
@@ -63,13 +78,13 @@ class HTTPTransportTests(unittest.TestCase):
                         self.assertFalse(error.exception.not_found)
 
     def test_real_http_404_is_optional_regardless_of_error_prose(self):
-        with patch.object(rc.subprocess, "run", side_effect=self.failure(404, b'{"errors":"HTTP 403"}')) as run:
+        with patch.object(rc, "run_process", side_effect=self.failure(404, b'{"errors":"HTTP 403"}')) as run:
             self.assertIsNone(self.github.optional("git/ref/tags/v1.2.3"))
         run.assert_called_once()
 
     def test_missing_headers_never_fall_back_to_error_prose(self):
         result = subprocess.CompletedProcess([], 1, b'{"errors":"HTTP 404"}', b"gh: HTTP 404")
-        with patch.object(rc.subprocess, "run", return_value=result) as run:
+        with patch.object(rc, "run_process", return_value=result) as run:
             with self.assertRaises(rc.GitHubError) as error:
                 self.github.optional("git/ref/tags/v1.2.3")
         self.assertFalse(error.exception.not_found)
@@ -79,7 +94,7 @@ class HTTPTransportTests(unittest.TestCase):
         for status, returncode in ((200, 1), (204, 1), (404, 0), (502, 0)):
             with self.subTest(status=status, returncode=returncode):
                 result = subprocess.CompletedProcess([], returncode, wire(status), b"gh: HTTP 404")
-                with patch.object(rc.subprocess, "run", return_value=result) as run:
+                with patch.object(rc, "run_process", return_value=result) as run:
                     with self.assertRaises(rc.GitHubError) as error:
                         self.github.optional("git/ref/tags/v1.2.3")
                 self.assertFalse(error.exception.not_found)
@@ -89,7 +104,7 @@ class HTTPTransportTests(unittest.TestCase):
         for status in (403, 503):
             with self.subTest(status=status):
                 with (
-                    patch.object(rc.subprocess, "run", side_effect=self.failure(status, b"{}", "POST", "releases")) as run,
+                    patch.object(rc, "run_process", side_effect=self.failure(status, b"{}", "POST", "releases")) as run,
                     self.assertRaises(rc.GitHubError) as error,
                 ):
                     self.github.api("releases", "POST", {"tag_name": "v1.2.3-rc.1"})
@@ -104,21 +119,21 @@ class HTTPTransportTests(unittest.TestCase):
         for path in ("releases/assets/21", "actions/artifacts/40/zip"):
             with self.subTest(path=path):
                 result = subprocess.CompletedProcess([], 0, wire(200, payload), b"")
-                with patch.object(rc.subprocess, "run", return_value=result) as run:
+                with patch.object(rc, "run_process", return_value=result) as run:
                     self.assertEqual(self.github.binary(path), payload)
                 run.assert_called_once()
         self.assertEqual(rc.github_http_response(wire(204, b"")), (204, b""))
 
     def test_pagination_has_exact_json_boundaries_and_discards_partial_result(self):
-        first = wire(200, b'[{"discarded":true}]') + b"\n" + wire(403, b"arbitrary \xff HTTP 404")
+        first = paged_wire(200, b'[{"discarded":true}]', next_page=True) + b"\n" + wire(403, b"arbitrary \xff HTTP 404")
         page = json.dumps([{"name": "caf\u00e9\U0001f600", "text": "HTTP/2.0 404 fake\r\n\r\n"}], ensure_ascii=False).encode()
-        second = wire(200, page) + b"\n" + wire(200, b'[{"final":true}]')
-        with patch.object(rc.subprocess, "run", return_value=subprocess.CompletedProcess([], 1, first, b"gh: HTTP 404")) as failed:
+        second = paged_wire(200, page, next_page=True) + b"\n" + paged_wire(200, b'[{"final":true}]', next_page=False)
+        with patch.object(rc, "run_process", return_value=subprocess.CompletedProcess([], 1, first, b"gh: HTTP 404")) as failed:
             with self.assertRaises(rc.GitHubError) as error:
                 self.github.pages("releases")
         self.assertFalse(error.exception.not_found)
         failed.assert_called_once()
-        with patch.object(rc.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, second, b"")) as run:
+        with patch.object(rc, "run_process", return_value=subprocess.CompletedProcess([], 0, second, b"")) as run:
             self.assertEqual(self.github.pages("releases"), json.loads(page) + [{"final": True}])
         run.assert_called_once()
         self.assertNotIn("--slurp", run.call_args.args[0])
@@ -225,7 +240,9 @@ class RealGitHubCLITests(unittest.TestCase):
         server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         worker = threading.Thread(target=server.serve_forever, daemon=True)
         worker.start()
-        real_run = subprocess.run
+        real_run = rc.run_process
+        actual_gh = shutil.which("gh")
+        self.assertIsNotNone(actual_gh, "real gh CLI is required by this local protocol test")
         try:
             with tempfile.TemporaryDirectory() as config:
                 # Keep this real-CLI fixture local, including sampled gh telemetry.
@@ -246,9 +263,14 @@ class RealGitHubCLITests(unittest.TestCase):
                         self.assertIn("--include", command)
                         self.assertIn("--paginate", command)
                         self.assertEqual(command[command.index("--jq") + 1], "tojson")
-                        result = real_run(  # nosec B603
-                            [*command[:-1], f"http://127.0.0.1:{server.server_port}{path}"],
-                            env=environment, **kwargs,
+                        result = real_run(
+                            [actual_gh, *command[1:-1],
+                             f"http://127.0.0.1:{server.server_port}{path}"],
+                            env=environment,
+                            input=kwargs.get("input"),
+                            check=kwargs.get("check", True),
+                            timeout=kwargs["timeout"],
+                            max_output_bytes=kwargs.get("max_output_bytes", 64 * 1024 * 1024),
                         )
                         self.assertIn(b"HTTP/1.0 200 OK", result.stdout)
                         self.assertNotIn(b"HTTP/2.0 404 Not Found", result.stdout)
@@ -257,7 +279,7 @@ class RealGitHubCLITests(unittest.TestCase):
                     with (
                         self.subTest(path=path),
                         patch.dict(os.environ, {"RELEASE_REQUIRE_WORKFLOW_SCOPE": ""}),
-                        patch.object(rc.subprocess, "run", side_effect=local_run) as run,
+                        patch.object(rc, "run_process", side_effect=local_run) as run,
                         self.assertRaises(rc.GitHubError) as error,
                     ):
                         rc.GitHub("example/project").pages("releases")
@@ -268,7 +290,7 @@ class RealGitHubCLITests(unittest.TestCase):
                 path = "/normalized"
                 with (
                     patch.dict(os.environ, {"RELEASE_REQUIRE_WORKFLOW_SCOPE": ""}),
-                    patch.object(rc.subprocess, "run", side_effect=local_run),
+                    patch.object(rc, "run_process", side_effect=local_run),
                 ):
                     self.assertEqual(
                         rc.GitHub("example/project").pages("releases"),

@@ -461,6 +461,82 @@ class NucKvmTests(unittest.TestCase):
                     bad['overhead'] = overhead
                 self.assertFalse(identity_expression(expression, {'object': bad}))
 
+    def test_class_guard_allows_only_two_exact_names_with_the_fixed_handler(self):
+        items = render()['foundations.json']['items']
+        runtime = next(x for x in items if x['kind'] == 'RuntimeClass')
+        guard = next(x for x in items if x['kind'] == 'ValidatingAdmissionPolicy'
+                     and x['metadata']['name'] == arc.NUC_RUNTIME + '-class')
+        match = guard['spec']['matchConditions'][0]['expression']
+        valid = guard['spec']['validations'][0]['expression']
+        for name in [arc.NUC_RUNTIME, 'harness-pr-repair-nuc']:
+            candidate = copy.deepcopy(runtime)
+            candidate['metadata']['name'] = name
+            for tolerations in [None, []]:
+                if tolerations is not None:
+                    candidate['scheduling']['tolerations'] = tolerations
+                self.assertTrue(identity_expression(match, {'object': candidate}))
+                self.assertTrue(identity_expression(valid, {'object': candidate}))
+            candidate['handler'] = 'another-handler'
+            self.assertTrue(identity_expression(match, {'object': candidate}))
+            self.assertFalse(identity_expression(valid, {'object': candidate}))
+        for name in ['another-alias', 'harness-pr-repair-nuc-extra', 'harness-pr-repair']:
+            candidate = copy.deepcopy(runtime)
+            candidate['metadata']['name'] = name
+            self.assertTrue(identity_expression(match, {'object': candidate}))
+            self.assertFalse(identity_expression(valid, {'object': candidate}))
+        unrelated = {'metadata': {'name': 'unrelated'}, 'handler': 'unrelated'}
+        self.assertFalse(identity_expression(match, {'object': unrelated}))
+
+    def test_class_update_cannot_remove_handler_or_exact_placement_constraints(self):
+        items = render()['foundations.json']['items']
+        runtime = next(x for x in items if x['kind'] == 'RuntimeClass')
+        guard = next(x for x in items if x['kind'] == 'ValidatingAdmissionPolicy'
+                     and x['metadata']['name'] == arc.NUC_RUNTIME + '-class')
+        match = guard['spec']['matchConditions'][0]['expression']
+        valid = guard['spec']['validations'][0]['expression']
+        self.assertEqual(guard['spec']['failurePolicy'], 'Fail')
+        self.assertEqual(guard['spec']['matchConstraints']['resourceRules'][0]['operations'],
+                         ['CREATE', 'UPDATE'])
+        for name in [arc.NUC_RUNTIME, 'harness-pr-repair-nuc']:
+            old = copy.deepcopy(runtime)
+            old['metadata']['name'] = name
+            for change in ['handler', 'overhead', 'scheduling', 'node', 'extra-selector', 'tolerations']:
+                candidate = copy.deepcopy(old)
+                if change == 'handler':
+                    candidate['handler'] = 'another-handler'
+                elif change in ['overhead', 'scheduling']:
+                    del candidate[change]
+                elif change == 'node':
+                    candidate['scheduling']['nodeSelector']['kubernetes.io/hostname'] = 'other'
+                elif change == 'extra-selector':
+                    candidate['scheduling']['nodeSelector']['another'] = 'value'
+                else:
+                    candidate['scheduling']['tolerations'] = [{'operator': 'Exists'}]
+                context = {'object': candidate, 'oldObject': old, 'request': {'operation': 'UPDATE'}}
+                with self.subTest(name=name, change=change):
+                    # Matching the immutable name remains sufficient even when a
+                    # submitted update changes the handler. Kubernetes separately
+                    # enforces immutable RuntimeClass names and handlers.
+                    self.assertTrue(identity_expression(match, context))
+                    self.assertFalse(identity_expression(valid, context))
+
+    def test_alias_allowance_changes_only_three_class_guard_fields(self):
+        documents = render()
+        items = documents['foundations.json']['items']
+        guard = next(x for x in items if x['kind'] == 'ValidatingAdmissionPolicy'
+                     and x['metadata']['name'] == arc.NUC_RUNTIME + '-class')
+        for rule in [guard['spec']['matchConditions'][0], guard['spec']['validations'][0]]:
+            rule['expression'] = rule['expression'].replace(
+                'object.metadata.name in ' + json.dumps([arc.NUC_RUNTIME, 'harness-pr-repair-nuc']),
+                'object.metadata.name == ' + json.dumps(arc.NUC_RUNTIME))
+        guard['spec']['validations'][0]['message'] = (
+            'The NUC handler has one fixed class, node and overhead; aliases are forbidden')
+        payload = json.dumps(documents, sort_keys=True, separators=(',', ':')).encode()
+        # Entire pre-change output, including the existing ARC worker guard,
+        # RuntimeClass, bindings, namespaces and resource limits.
+        self.assertEqual(hashlib.sha256(payload).hexdigest(),
+                         '0c7f10c945fa7a6611a36567821faf417dc4458269938af5c578527d75d6c8c2')
+
     def test_host_assets_select_complete_versioned_bundle_and_reuse_guard(self):
         directory = ROOT / 'deploy/arc-private'
         config = tomllib.loads((directory / 'runsc-nuc-kvm.toml').read_text())

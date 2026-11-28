@@ -6,14 +6,18 @@
 import argparse
 import base64
 import gc
+import hashlib
 import importlib.util
 import io
 import json
 import os
+import sys
+import struct
 
 # Subprocess calls below use argument vectors with shell=False.
 import subprocess  # nosec B404
 import tempfile
+import types
 import unittest
 import weakref
 import zipfile
@@ -23,12 +27,55 @@ from datetime import datetime, timezone
 from itertools import product
 from pathlib import Path
 from unittest.mock import Mock, patch
+from urllib.parse import urlsplit
 
-SPEC = importlib.util.spec_from_file_location(
-    "release_control", Path(__file__).parents[1] / "scripts/release_control.py"
-)
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "scripts"))
+async_process_module = importlib.import_module("async_process")
+SPEC = importlib.util.spec_from_file_location("release_control", ROOT / "scripts/release_control.py")
 rc = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(rc)
+
+
+def setUpModule():
+    """Keep command fixtures concise while process-runner tests verify absolutes."""
+    global _resolver_patch
+    _resolver_patch = patch.object(rc, "resolve_executable", side_effect=lambda name: name)
+    _resolver_patch.start()
+
+
+def tearDownModule():
+    _resolver_patch.stop()
+
+
+def asset_process_recorders(events):
+    """Record supervisor observe→signal→reap ordering around the real process."""
+    real_popen = rc.subprocess.Popen
+    real_waitid = rc.os.waitid
+    real_killpg = rc.os.killpg
+
+    def recording_popen(*args, **kwargs):
+        process = real_popen(*args, **kwargs)
+        wait = process.wait
+
+        def recording_wait(*wait_args, **wait_kwargs):
+            events.append("reap")
+            return wait(*wait_args, **wait_kwargs)
+
+        process.wait = recording_wait
+        return process
+
+    def observing_waitid(*args):
+        events.append("observe")
+        return real_waitid(*args)
+
+    def recording_killpg(*args):
+        events.append("killpg")
+        return real_killpg(*args)
+
+    return recording_popen, observing_waitid, recording_killpg
+
+
 # These fixtures model the original unsigned publication contract. Consumers may
 # opt into signatures; that boundary is exercised with enforcement enabled in
 # test_release_signing.py, rather than requiring Cosign/network access here.
@@ -39,10 +86,13 @@ SHA = "a" * 40
 RC_TAG = "v1.2.3-rc.2"
 
 
-def http_response(status=0, stdout=b"{}", error_format="gh: API failed (HTTP {status})"):
+def http_response(status=0, stdout=b"{}", error_format="gh: API failed (HTTP {status})", link=None):
     """Return a complete gh --include fixture independent of retry support."""
+    headers = b"Content-Type: application/json\r\n"
+    if link is not None:
+        headers += b"Link: " + link + b"\r\n"
     return subprocess.CompletedProcess(
-        [], bool(status), f"HTTP/2.0 {status or 200} Test\nContent-Type: application/json\r\n\r\n".encode() + stdout,
+        [], bool(status), f"HTTP/2.0 {status or 200} Test\n".encode() + headers + b"\r\n" + stdout,
         error_format.format(status=status).encode() if status else b"",
     )
 
@@ -71,14 +121,57 @@ class MetadataReadRetryTests(unittest.TestCase):
             return subprocess.CompletedProcess(command, 1, self.response(status).stdout, message)
         return run
 
+    def assert_read_output_limit_is_redacted_and_not_retried(self, callback):
+        gh = rc.GitHub(REPO)
+        with (
+            patch.object(rc, "run_process", side_effect=rc.ProcessOutputLimit("private captured bytes")) as run,
+            patch.object(rc.time, "sleep") as sleep,
+            self.assertRaisesRegex(rc.GitHubError, "response exceeded output limit") as caught,
+        ):
+            callback(gh)
+        run.assert_called_once()
+        sleep.assert_not_called()
+        self.assertNotIn("private captured bytes", str(caught.exception))
+        self.assertTrue(caught.exception.__suppress_context__)
+
+    def test_output_limited_api_read_becomes_redacted_nonretryable_github_error(self):
+        self.assert_read_output_limit_is_redacted_and_not_retried(
+            lambda gh: gh.api("releases/7")
+        )
+
+    def test_output_limited_pages_read_becomes_redacted_nonretryable_github_error(self):
+        self.assert_read_output_limit_is_redacted_and_not_retried(
+            lambda gh: gh.pages("releases")
+        )
+
+    def test_output_limited_binary_read_becomes_redacted_nonretryable_github_error(self):
+        self.assert_read_output_limit_is_redacted_and_not_retried(
+            lambda gh: gh.binary("releases/assets/7")
+        )
+
+    def test_cli_reports_redacted_bounded_read_failure(self):
+        stderr = io.StringIO()
+        with (
+            patch.object(rc, "run_process", side_effect=rc.ProcessOutputLimit("private captured bytes")) as run,
+            patch.object(rc.sys, "stderr", stderr),
+        ):
+            result = rc.main(["next", "--repo", REPO, "--channel", "beta", "--version", "1.2.3"])
+        self.assertEqual(result, 1)
+        run.assert_called_once()
+        self.assertIn("response exceeded output limit", stderr.getvalue())
+        self.assertNotIn("private captured bytes", stderr.getvalue())
+
     def test_transient_read_retries_and_discards_partial_pages(self):
         for status, error_format in product((500, 502, 503, 504), self.ERROR_FORMATS):
-            partial = self.response(stdout=b'[{"partial": true}]').stdout
+            partial = self.response(
+                stdout=b'[{"partial": true}]',
+                link=b'<https://api.github.com/repos/example/project/releases?per_page=100&page=2>; rel="next"',
+            ).stdout
             failed = self.response(status, b'{"errors":"HTTP 404"}', error_format)
             failed.stdout = partial + b"\n" + failed.stdout
             with (
                 self.subTest(status=status, error_format=error_format),
-                patch.object(rc.subprocess, "run", side_effect=[
+                patch.object(rc, "run_process", side_effect=[
                     failed,
                     self.response(stdout=b'[{"id": 42}]'),
                 ]) as run,
@@ -94,7 +187,7 @@ class MetadataReadRetryTests(unittest.TestCase):
     def test_exhausted_reads_fail_without_becoming_missing(self):
         gh = rc.GitHub(REPO)
         with (
-            patch.object(rc.subprocess, "run", return_value=self.response(502)) as run,
+            patch.object(rc, "run_process", return_value=self.response(502)) as run,
             patch.object(rc.time, "sleep") as sleep,
             self.assertRaises(rc.GitHubError) as error,
         ):
@@ -109,7 +202,7 @@ class MetadataReadRetryTests(unittest.TestCase):
         for error_format in self.ERROR_FORMATS:
             with (
                 self.subTest(error_format=error_format),
-                patch.object(rc.subprocess, "run", side_effect=self.failed_request(
+                patch.object(rc, "run_process", side_effect=self.failed_request(
                     self.response(404, error_format=error_format).stderr, status=404,
                 )) as run,
                 patch.object(rc.time, "sleep") as sleep,
@@ -137,7 +230,7 @@ class MetadataReadRetryTests(unittest.TestCase):
         for message, attempts in cases:
             with (
                 self.subTest(message=message),
-                patch.object(rc.subprocess, "run", side_effect=self.failed_request(
+                patch.object(rc, "run_process", side_effect=self.failed_request(
                     message, status=502 if attempts == 3 else 403,
                 )) as run,
                 patch.object(rc.time, "sleep"),
@@ -150,7 +243,7 @@ class MetadataReadRetryTests(unittest.TestCase):
     def test_failed_write_uses_the_same_exact_missing_status(self):
         gh = rc.GitHub(REPO)
         with (
-            patch.object(rc.subprocess, "run", side_effect=self.failed_request(
+            patch.object(rc, "run_process", side_effect=self.failed_request(
                 b"gh: Authorization error mentions HTTP 404 (HTTP 403)",
                 method="POST", path="releases",
             )) as run,
@@ -179,7 +272,7 @@ class MetadataReadRetryTests(unittest.TestCase):
             ):
                 with self.subTest(message=message, operation=operation):
                     with (
-                        patch.object(rc.subprocess, "run", side_effect=self.failed_request(message)) as run,
+                        patch.object(rc, "run_process", side_effect=self.failed_request(message)) as run,
                         patch.object(rc.time, "sleep") as sleep,
                         self.assertRaises(rc.GitHubError) as error,
                     ):
@@ -191,7 +284,7 @@ class MetadataReadRetryTests(unittest.TestCase):
     def test_timeouts_are_bounded_and_do_not_expose_partial_output(self):
         gh = rc.GitHub(REPO)
         with (
-            patch.object(rc.subprocess, "run", side_effect=subprocess.TimeoutExpired(
+            patch.object(rc, "run_process", side_effect=subprocess.TimeoutExpired(
                 ["gh"], 30, output=b"private payload", stderr=b"private diagnostics"
             )) as run,
             patch.object(rc.time, "sleep") as sleep,
@@ -211,7 +304,7 @@ class MetadataReadRetryTests(unittest.TestCase):
         ):
             with (
                 self.subTest(status=status, error_format=error_format),
-                patch.object(rc.subprocess, "run", return_value=self.response(
+                patch.object(rc, "run_process", return_value=self.response(
                     status, error_format=error_format
                 )) as run,
                 patch.object(rc.time, "sleep") as sleep,
@@ -238,7 +331,7 @@ class MetadataReadRetryTests(unittest.TestCase):
         ):
             with (
                 self.subTest(message=message),
-                patch.object(rc.subprocess, "run", return_value=subprocess.CompletedProcess(
+                patch.object(rc, "run_process", return_value=subprocess.CompletedProcess(
                     [], 1, self.response(403).stdout, message,
                 )) as run,
                 patch.object(rc.time, "sleep") as sleep,
@@ -258,7 +351,7 @@ class MetadataReadRetryTests(unittest.TestCase):
         for (path, method, body, mode), error_format in product(cases, self.ERROR_FORMATS):
             with (
                 self.subTest(method=method, path=path, error_format=error_format),
-                patch.object(rc.subprocess, "run", return_value=self.response(
+                patch.object(rc, "run_process", return_value=self.response(
                     502, error_format=error_format
                 )) as run,
                 patch.object(rc.time, "sleep") as sleep,
@@ -267,7 +360,7 @@ class MetadataReadRetryTests(unittest.TestCase):
                 gh.request(path, method, body, mode)
             run.assert_called_once()
             sleep.assert_not_called()
-            self.assertNotIn("timeout", run.call_args.kwargs)
+            self.assertEqual(run.call_args.kwargs["timeout"], rc.API_READ_TIMEOUT)
 
 
 class WholeReadRecoveryTests(unittest.TestCase):
@@ -306,7 +399,7 @@ class WholeReadRecoveryTests(unittest.TestCase):
                 return self.failed(stdout=captured)
 
             with (
-                patch.object(rc.subprocess, "run", side_effect=capture) as run,
+                patch.object(rc, "run_process", side_effect=capture) as run,
                 patch.object(rc.time, "sleep", side_effect=assert_released) as sleep,
             ):
                 self.assertEqual(self.gh.binary(path), b"COMPLETE")
@@ -325,7 +418,7 @@ class WholeReadRecoveryTests(unittest.TestCase):
         for message in (b"unexpected EOF", b"EOF", b"connection reset by peer", b"i/o timeout",
                         b"TLS handshake timeout", b"context deadline exceeded", b"Client.Timeout exceeded",
                         b"server closed idle connection", b"use of closed network connection"):
-            with self.subTest(message=message), patch.object(rc.subprocess, "run", side_effect=[
+            with self.subTest(message=message), patch.object(rc, "run_process", side_effect=[
                     self.failed(message), http_response(stdout=b'{"id":7}')]) as run, patch.object(rc.time, "sleep"):
                 self.assertEqual(self.gh.api("releases/7"), {"id": 7})
                 self.assertEqual(run.call_count, 2)
@@ -335,7 +428,7 @@ class WholeReadRecoveryTests(unittest.TestCase):
         partial = self.failed(stdout=http_response(stdout=b"PARTIAL").stdout)
         payload = bytes(range(256)) + b"HTTP/2.0 404 body data"
         for path in ("releases/assets/7", "actions/artifacts/7/zip"):
-            with self.subTest(path=path), patch.object(rc.subprocess, "run", side_effect=[
+            with self.subTest(path=path), patch.object(rc, "run_process", side_effect=[
                     partial, http_response(stdout=payload)]) as run, patch.object(rc.time, "sleep"):
                 self.assertEqual(self.gh.binary(path), payload)
                 self.assertEqual(run.call_count, 2)
@@ -352,9 +445,9 @@ class WholeReadRecoveryTests(unittest.TestCase):
                 header = b"HTTP/2.0 200 OK" + newline
                 partial = header + newline + b"partial binary" + newline
                 partial += f"HTTP/2.0 {status} body data".encode() + newline
-                result = (subprocess.TimeoutExpired(["gh"], 120, output=partial)
+                result = (rc.ProcessTimeout(120, partial, b"")
                           if failure == "timeout" else self.failed(stdout=partial))
-                with (patch.object(rc.subprocess, "run", side_effect=[
+                with (patch.object(rc, "run_process", side_effect=[
                     result, http_response(stdout=b"COMPLETE")]) as run,
                     patch.object(rc.time, "sleep") as sleep,
                     patch.object(rc, "_github_http_head", wraps=rc._github_http_head) as parse_header):
@@ -365,6 +458,7 @@ class WholeReadRecoveryTests(unittest.TestCase):
                     self.assertEqual(sleep.call_count, 1)
                     self.assertEqual(run.call_args_list[0], run.call_args_list[1])
 
+
     def test_timed_out_first_header_denials_still_veto_retry(self):
         for newline, status, complete_header in product(
             (b"\n", b"\r\n"), (401, 403, 404, 429), (False, True),
@@ -374,7 +468,7 @@ class WholeReadRecoveryTests(unittest.TestCase):
                 if complete_header:
                     partial += newline + b"partial response body"
                 result = subprocess.TimeoutExpired(["gh"], 30, output=partial)
-                with (patch.object(rc.subprocess, "run", side_effect=[result]) as run,
+                with (patch.object(rc, "run_process", side_effect=[result]) as run,
                       patch.object(rc.time, "sleep") as sleep):
                     with self.assertRaises(rc.GitHubError) as error:
                         self.gh.optional("releases/7")
@@ -385,11 +479,14 @@ class WholeReadRecoveryTests(unittest.TestCase):
     def test_later_partial_page_denials_still_veto_retry(self):
         for status, failure in product((401, 403, 404, 429), ("timeout", "eof")):
             with self.subTest(status=status, failure=failure):
-                partial = http_response(stdout=b'[{"id":1}]\n').stdout
-                partial += f"HTTP/2.0 {status} Denied\r\n".encode()
+                partial = http_response(
+                    stdout=b'[{"id":1}]',
+                    link=b'<https://api.github.com/repos/example/project/releases?per_page=100&page=2>; rel="next"',
+                ).stdout
+                partial += b"\n" + f"HTTP/2.0 {status} Denied\r\n".encode()
                 result = (subprocess.TimeoutExpired(["gh"], 30, output=partial)
                           if failure == "timeout" else self.failed(stdout=partial))
-                with (patch.object(rc.subprocess, "run", side_effect=[result]) as run,
+                with (patch.object(rc, "run_process", side_effect=[result]) as run,
                       patch.object(rc.time, "sleep") as sleep):
                     with self.assertRaises(rc.GitHubError) as error:
                         self.gh.pages("releases")
@@ -402,7 +499,7 @@ class WholeReadRecoveryTests(unittest.TestCase):
             with self.subTest(status=status):
                 body = json.dumps([{"text": f"body\nHTTP/2.0 {status} data"}]).encode()
                 result = subprocess.TimeoutExpired(["gh"], 30, output=http_response(stdout=body).stdout)
-                with (patch.object(rc.subprocess, "run", side_effect=[
+                with (patch.object(rc, "run_process", side_effect=[
                     result, http_response(stdout=b'[{"id":2}]')]) as run,
                     patch.object(rc.time, "sleep")):
                     self.assertEqual(self.gh.pages("releases"), [{"id": 2}])
@@ -411,7 +508,7 @@ class WholeReadRecoveryTests(unittest.TestCase):
     def test_timed_out_body_status_cannot_establish_optional_absence(self):
         partial = http_response(stdout=b'partial\nHTTP/2.0 404 body data').stdout
         result = subprocess.TimeoutExpired(["gh"], 30, output=partial)
-        with (patch.object(rc.subprocess, "run", side_effect=[
+        with (patch.object(rc, "run_process", side_effect=[
             result, http_response(stdout=b'{"id":7}')]) as run,
             patch.object(rc.time, "sleep")):
             self.assertEqual(self.gh.optional("releases/7"), {"id": 7})
@@ -427,7 +524,7 @@ class WholeReadRecoveryTests(unittest.TestCase):
                 with self.subTest(partial=partial, failure=failure):
                     result = (subprocess.TimeoutExpired(["gh"], 120, output=partial)
                               if failure == "timeout" else self.failed(stdout=partial))
-                    with (patch.object(rc.subprocess, "run", side_effect=[result]) as run,
+                    with (patch.object(rc, "run_process", side_effect=[result]) as run,
                           patch.object(rc.time, "sleep") as sleep):
                         with self.assertRaises(rc.GitHubError) as error:
                             self.gh.binary("releases/assets/7")
@@ -439,12 +536,12 @@ class WholeReadRecoveryTests(unittest.TestCase):
         for replies, expected_calls in (([http_response(stdout=b"")], 1),
                                         ([self.failed(), http_response(stdout=b"")], 2)):
             with self.subTest(expected_calls=expected_calls), patch.object(
-                    rc.subprocess, "run", side_effect=replies) as run, patch.object(rc.time, "sleep"):
+                    rc, "run_process", side_effect=replies) as run, patch.object(rc.time, "sleep"):
                 self.assertEqual(self.gh.binary("releases/assets/7"), b"")
                 self.assertEqual(run.call_count, expected_calls)
 
     def test_repeated_asset_timeouts_are_bounded(self):
-        with patch.object(rc.subprocess, "run", side_effect=subprocess.TimeoutExpired(
+        with patch.object(rc, "run_process", side_effect=subprocess.TimeoutExpired(
                 ["gh"], 120, output=b"partial")) as run, patch.object(rc.time, "sleep") as sleep:
             with self.assertRaises(rc.GitHubError):
                 self.gh.binary("releases/assets/7")
@@ -454,12 +551,12 @@ class WholeReadRecoveryTests(unittest.TestCase):
 
     def test_binary_5xx_retries_but_other_statuses_never_do(self):
         for status in (500, 502, 503, 504):
-            with self.subTest(status=status), patch.object(rc.subprocess, "run", side_effect=[
+            with self.subTest(status=status), patch.object(rc, "run_process", side_effect=[
                     http_response(status), http_response(stdout=b"good")]) as run, patch.object(rc.time, "sleep"):
                 self.assertEqual(self.gh.binary("releases/assets/7"), b"good")
                 self.assertEqual(run.call_count, 2)
         for status in (400, 401, 403, 404, 409, 422, 429, 501):
-            with self.subTest(status=status), patch.object(rc.subprocess, "run", return_value=http_response(status)) as run:
+            with self.subTest(status=status), patch.object(rc, "run_process", return_value=http_response(status)) as run:
                 with self.assertRaises(rc.GitHubError):
                     self.gh.binary("releases/assets/7")
                 run.assert_called_once()
@@ -483,13 +580,13 @@ class WholeReadRecoveryTests(unittest.TestCase):
         for message in (b"Unauthorized; unexpected EOF", b"unauthorised; i/o timeout", b"authorization failed; EOF", b"UNAUTHORIZED; unexpected EOF", b"requires authentication; unexpected EOF", b"bad credentials; i/o timeout",
                         b"x509 certificate error; unexpected EOF", b"permission denied; EOF", b"rate limit; EOF"):
             for result in (self.failed(message), subprocess.TimeoutExpired(["gh"], 30, stderr=message)):
-                with self.subTest(message=message, result=type(result).__name__), patch.object(rc.subprocess, "run", side_effect=[result]) as run:
+                with self.subTest(message=message, result=type(result).__name__), patch.object(rc, "run_process", side_effect=[result]) as run:
                     with self.assertRaises(rc.GitHubError):
                         self.gh.api("releases")
                     run.assert_called_once()
         for status in (401, 403, 404, 429):
             result = self.failed(stdout=f"HTTP/2.0 {status} Denied\r\n".encode())
-            with self.subTest(status=status), patch.object(rc.subprocess, "run", return_value=result) as run:
+            with self.subTest(status=status), patch.object(rc, "run_process", return_value=result) as run:
                 with self.assertRaises(rc.GitHubError) as error:
                     self.gh.optional("releases/7")
                 self.assertFalse(error.exception.not_found)
@@ -497,12 +594,12 @@ class WholeReadRecoveryTests(unittest.TestCase):
 
     def test_successful_exit_with_malformed_content_never_retries(self):
         for result in (self.failed(code=0), http_response(stdout=b"{broken")):
-            with self.subTest(result=result), patch.object(rc.subprocess, "run", return_value=result) as run:
+            with self.subTest(result=result), patch.object(rc, "run_process", return_value=result) as run:
                 with self.assertRaises(rc.ReleaseError):
                     self.gh.api("releases")
                 run.assert_called_once()
         malformed = http_response(stdout=b'[]\nHTTP/2.0 200 OK\r\n\r\n{broken')
-        with patch.object(rc.subprocess, "run", return_value=malformed) as run:
+        with patch.object(rc, "run_process", return_value=malformed) as run:
             with self.assertRaises(rc.GitHubError):
                 self.gh.pages("releases")
             run.assert_called_once()
@@ -510,17 +607,541 @@ class WholeReadRecoveryTests(unittest.TestCase):
     def test_unknown_cli_failures_and_success_code_5xx_never_retry(self):
         for result in (self.failed(b"unknown CLI failure"), self.failed(b"unexpected EOF", code=2),
                        self.failed(stdout=http_response(503).stdout, code=0)):
-            with self.subTest(result=result), patch.object(rc.subprocess, "run", return_value=result) as run:
+            with self.subTest(result=result), patch.object(rc, "run_process", return_value=result) as run:
                 with self.assertRaises(rc.GitHubError):
                     self.gh.api("releases")
                 run.assert_called_once()
 
     def test_transport_retry_discards_all_paginated_prefixes(self):
         partial = self.failed(stdout=http_response(stdout=b'[{"id":1}]\nHTTP/2.0 200 OK\r\n').stdout)
-        with patch.object(rc.subprocess, "run", side_effect=[partial, http_response(stdout=b'[{"id":2}]')]) as run, patch.object(rc.time, "sleep"):
+        with patch.object(rc, "run_process", side_effect=[partial, http_response(stdout=b'[{"id":2}]')]) as run, patch.object(rc.time, "sleep"):
             self.assertEqual(self.gh.pages("releases"), [{"id": 2}])
             self.assertEqual(run.call_count, 2)
 
+    def test_malformed_link_on_later_503_page_does_not_hide_retryable_status(self):
+        first = http_response(
+            stdout=b'[{"id":1}]',
+            link=b'<https://api.github.com/repos/example/project/releases?per_page=100&page=2>; rel="next"',
+        )
+        failed_page = http_response(503, stdout=b'{"message":"try again"}', link=b"not a link")
+        partial = subprocess.CompletedProcess(
+            [], 1, first.stdout + b"\n" + failed_page.stdout,
+            b"gh: Server Error (HTTP 503)",
+        )
+        with (
+            patch.object(rc, "run_process", side_effect=[partial, http_response(stdout=b'[{"id":2}]')]) as run,
+            patch.object(rc.time, "sleep"),
+        ):
+            self.assertEqual(self.gh.pages("releases"), [{"id": 2}])
+        self.assertEqual(run.call_count, 2)
+
+    def test_execution_deadline_caps_each_metadata_get_timeout(self):
+        gh = rc.GitHub(REPO)
+        now = rc.time.monotonic()
+        token = rc._API_READ_DEADLINE.set(now + 4)
+        try:
+            with (
+                patch.object(rc.time, "monotonic", return_value=now),
+                patch.object(rc, "run_process", side_effect=[
+                    http_response(503), http_response(stdout=b'{"id":7}'),
+                ]) as run,
+                patch.object(rc.time, "sleep"),
+            ):
+                self.assertEqual(gh.api("releases/7"), {"id": 7})
+            timeouts = [call.kwargs["timeout"] for call in run.call_args_list]
+            self.assertEqual(len(timeouts), 2)
+            for timeout in timeouts:
+                self.assertAlmostEqual(timeout, 4)
+        finally:
+            rc._API_READ_DEADLINE.reset(token)
+
+    def test_retry_jitter_is_capped_by_remaining_execution_deadline(self):
+        gh = rc.GitHub(REPO)
+        now = rc.time.monotonic()
+        token = rc._API_READ_DEADLINE.set(now + 1.5)
+        try:
+            with (
+                patch.object(rc.time, "monotonic", return_value=now),
+                patch.object(rc, "run_process", side_effect=[
+                    http_response(503), http_response(stdout=b'{"id":7}'),
+                ]) as run,
+                patch.object(rc.random, "uniform", return_value=2),
+                patch.object(rc.time, "sleep") as sleep,
+            ):
+                self.assertEqual(gh.api("releases/7"), {"id": 7})
+            timeouts = [call.kwargs["timeout"] for call in run.call_args_list]
+            self.assertEqual(len(timeouts), 2)
+            for timeout in timeouts:
+                self.assertAlmostEqual(timeout, 1.5)
+            sleep.assert_called_once()
+            self.assertAlmostEqual(sleep.call_args.args[0], 1.5)
+        finally:
+            rc._API_READ_DEADLINE.reset(token)
+
+    def test_expired_execution_deadline_prevents_another_get_or_retry(self):
+        gh = rc.GitHub(REPO)
+        token = rc._API_READ_DEADLINE.set(rc.time.monotonic() - 1)
+        try:
+            with patch.object(rc, "run_process") as run, self.assertRaisesRegex(
+                rc.ReleaseError, "metadata deadline exceeded",
+            ):
+                gh.api("releases/7")
+            run.assert_not_called()
+        finally:
+            rc._API_READ_DEADLINE.reset(token)
+
+    def test_create_response_output_limit_is_reconciliable_ambiguity(self):
+        gh = rc.GitHub(REPO)
+        with patch.object(rc, "run_process", side_effect=rc.ProcessOutputLimit("too large")) as post:
+            with self.assertRaises(rc.AmbiguousCreate):
+                gh.create_release_once({"tag_name": RC_TAG})
+        post.assert_called_once()
+
+    def test_paginated_response_must_reach_advertised_terminal_page(self):
+        first = http_response(
+            stdout=b'[{"id":1}]',
+            link=b'<https://api.github.com/repos/example/project/releases?per_page=100&page=2>; rel=next',
+        )
+        with patch.object(rc, "run_process", return_value=first):
+            with self.assertRaisesRegex(rc.GitHubError, "before the advertised terminal page"):
+                rc.GitHub(REPO).pages("releases")
+
+    def test_paginated_response_accepts_unquoted_next_when_followed(self):
+        first = http_response(
+            stdout=b'[{"id":1}]',
+            link=b'<https://api.github.com/repos/example/project/releases?per_page=100&page=2>; rel=next',
+        ).stdout
+        second = http_response(stdout=b'[{"id":2}]').stdout
+        with patch.object(rc, "run_process", return_value=subprocess.CompletedProcess(
+            [], 0, first + b"\n" + second, b"",
+        )):
+            self.assertEqual(rc.GitHub(REPO).pages("releases"), [{"id": 1}, {"id": 2}])
+
+    def test_paginated_response_rejects_unadvertised_later_page(self):
+        first = http_response(stdout=b'[{"id":1}]').stdout
+        second = http_response(stdout=b'[{"id":2}]').stdout
+        with patch.object(rc, "run_process", return_value=subprocess.CompletedProcess(
+            [], 0, first + b"\n" + second, b"",
+        )):
+            with self.assertRaisesRegex(rc.GitHubError, "unadvertised response page"):
+                rc.GitHub(REPO).pages("releases")
+
+
+
+class AssetStreamCleanupTests(unittest.TestCase):
+    """Ensure a timed-out streaming helper cannot leave pipe-holding descendants."""
+
+    class _Pipe:
+        def __init__(self):
+            self.closed = False
+
+        def close(self):
+            self.closed = True
+
+    class _Process:
+        pid = 12345
+
+        def __init__(self):
+            self.stdout = AssetStreamCleanupTests._Pipe()
+            self.stderr = AssetStreamCleanupTests._Pipe()
+            self.wait_timeouts = []
+
+        def wait(self, timeout=None):
+            self.wait_timeouts.append(timeout)
+            return 0
+
+    class _Thread:
+        def __init__(self, *args, **kwargs):
+            self.ident = None
+
+        def start(self):
+            self.ident = 1
+
+        def join(self, timeout=None):
+            return None
+
+    class _Output:
+        def check(self):
+            return None
+
+    def drain_status_events(self, statuses, eof=True):
+        events = rc.queue.Queue()
+        for frame in statuses:
+            events.put(("status", frame))
+        events.put(("stdout", None))
+        events.put(("stderr", None))
+        if eof:
+            events.put(("status", None))
+
+        class Output:
+            def __init__(self):
+                self.data = bytearray()
+
+            def check(self):
+                return None
+
+            def write(self, value):
+                self.data.extend(value)
+
+        output = Output()
+        launch = types.SimpleNamespace(process=object(), control_fd=-1)
+        with (
+            patch.object(rc, "_kill_owned_process", return_value=None),
+            patch.object(rc, "_close_asset_supervisor_control"),
+        ):
+            result = rc._drain_asset_stream(
+                events, output, ["gh"], rc.time.monotonic() + 5, launch,
+            )
+        return result, output.data
+
+    def test_asset_status_frame_accumulates_fragmented_reads(self):
+        frame = struct.pack("!4sBi", b"IVSP", 1, 7)
+        result, _output = self.drain_status_events((frame[:3], frame[3:]))
+        self.assertEqual(result, (b"", 7))
+
+    def test_asset_status_frame_rejects_oversized_duplicate_and_truncated(self):
+        frame = struct.pack("!4sBi", b"IVSP", 1, 0)
+        for label, chunks, expected in (
+            ("oversized", (frame + b"x",), "oversized status frame"),
+            ("duplicate", (frame, frame), "duplicate status"),
+            ("truncated", (frame[:4],), "without a complete status frame"),
+        ):
+            with self.subTest(label=label), self.assertRaisesRegex(rc.GitHubError, expected):
+                self.drain_status_events(chunks)
+
+    def test_asset_deadline_is_decided_before_reaping_observed_leader(self):
+        class Output:
+            def check(self):
+                return None
+
+        class Process:
+            wait_called = False
+
+            def wait(self, timeout=None):
+                self.wait_called = True
+                return 0
+
+        process = Process()
+        output = Output()
+        command = ["gh"]
+        with (
+            patch.object(rc, "_process_has_exited", return_value=True) as observe,
+            patch.object(rc.time, "monotonic", side_effect=(0, 2)),
+        ):
+            with self.assertRaises(subprocess.TimeoutExpired):
+                rc._wait_for_asset_process(process, output, command, deadline=1)
+        observe.assert_called_once_with(process)
+        self.assertFalse(process.wait_called, "deadline-crossing decision reaped the leader")
+
+    @unittest.skipUnless(os.name == "posix", "process stream groups require POSIX")
+    def test_waitid_capability_is_checked_before_asset_process_launch(self):
+        with tempfile.TemporaryDirectory(prefix="release-stream-capability-") as temp:
+            destination = Path(temp) / "asset.bin"
+            with destination.open("w+b") as output_file:
+                writer = rc._AssetWriter(
+                    output_file, destination,
+                    {"size": 0, "sha256": hashlib.sha256(b"").hexdigest()},
+                    rc.DownloadBudget(0),
+                )
+                with (
+                    patch.object(rc, "_require_nonreaping_wait_support", side_effect=NotImplementedError),
+                    patch.object(rc.subprocess, "Popen") as popen,
+                ):
+                    with self.assertRaises(NotImplementedError):
+                        rc._stream_asset([sys.executable, "-c", "pass"], writer)
+                popen.assert_not_called()
+
+    @unittest.skipUnless(os.name == "posix", "process stream groups require POSIX")
+    def test_asset_supervisor_kills_group_before_reaping_wrapper(self):
+        with tempfile.TemporaryDirectory(prefix="release-stream-order-") as temp:
+            destination = Path(temp) / "asset.bin"
+            events = []
+            recording_popen, observing_waitid, recording_killpg = asset_process_recorders(events)
+            with destination.open("w+b") as output_file:
+                writer = rc._AssetWriter(
+                    output_file, destination,
+                    {"size": 7, "sha256": hashlib.sha256(b"payload").hexdigest()},
+                    rc.DownloadBudget(7),
+                )
+                with (
+                    patch.object(rc.subprocess, "Popen", side_effect=recording_popen),
+                    patch.object(rc.os, "waitid", side_effect=observing_waitid),
+                    patch.object(rc.os, "killpg", side_effect=recording_killpg),
+                ):
+                    result = rc._stream_asset(
+                        [sys.executable, "-c", "import sys;sys.stdout.buffer.write(b'payload')"],
+                        writer, deadline=rc.time.monotonic() + 5,
+                    )
+            self.assertEqual(result.returncode, 0)
+            self.assertEqual(destination.read_bytes(), b"payload")
+            self.assertEqual(events, ["observe", "killpg", "reap"])
+
+    def test_exited_owned_leader_is_not_killed_after_group_permission_error(self):
+        class Process:
+            pid = 12345
+
+            def kill(self):
+                raise AssertionError("an exited leader must not be signaled by PID")
+
+        process = Process()
+        denied = PermissionError("test permission denial")
+        with (
+            patch.object(rc.os, "waitid", return_value=object()),
+            patch.object(rc.os, "killpg", side_effect=denied),
+        ):
+            self.assertIs(rc._terminate_asset_process_group(process), denied)
+
+    @unittest.skipUnless(os.name == "posix", "process stream groups require POSIX")
+    def test_group_signal_permission_error_kills_owned_leader_then_reaps(self):
+        with tempfile.TemporaryDirectory(prefix="release-stream-permission-") as temp:
+            destination = Path(temp) / "asset.bin"
+            command = [sys.executable, "-c", "import time; time.sleep(30)"]
+            events = []
+            processes = []
+            real_popen = rc.subprocess.Popen
+            real_waitid = rc.os.waitid
+
+            def recording_popen(*args, **kwargs):
+                process = real_popen(*args, **kwargs)
+                processes.append(process)
+                kill = process.kill
+                wait = process.wait
+
+                def recording_kill():
+                    events.append("leader-kill")
+                    return kill()
+
+                def recording_wait(*wait_args, **wait_kwargs):
+                    events.append("reap")
+                    return wait(*wait_args, **wait_kwargs)
+
+                process.kill = recording_kill
+                process.wait = recording_wait
+                return process
+
+            def observing_waitid(*args):
+                events.append("observe")
+                return real_waitid(*args)
+
+            def denied_killpg(*_args):
+                events.append("killpg-denied")
+                raise PermissionError("test permission denial")
+
+            with destination.open("w+b") as output_file:
+                writer = rc._AssetWriter(
+                    output_file, destination,
+                    {"size": 100, "sha256": "0" * 64}, rc.DownloadBudget(100),
+                )
+                with (
+                    patch.object(rc.subprocess, "Popen", side_effect=recording_popen),
+                    patch.object(rc.os, "waitid", side_effect=observing_waitid),
+                    patch.object(rc.os, "killpg", side_effect=denied_killpg),
+                    self.assertRaisesRegex(rc.GitHubError, "descendants may still be running"),
+                ):
+                    rc._stream_asset(command, writer, deadline=rc.time.monotonic() + 0.1)
+
+            self.assertEqual(events, [
+                "observe", "killpg-denied", "observe", "leader-kill", "reap",
+            ])
+            self.assertEqual(len(processes), 1)
+            self.assertIsNotNone(processes[0].returncode, "leader was not reaped")
+
+    def test_group_signal_permission_error_for_exited_leader_still_reaps(self):
+        class Pipe:
+            def close(self):
+                return None
+
+        class Process:
+            pid = 12345
+            stdout = Pipe()
+            stderr = Pipe()
+            returncode = None
+
+            def __init__(self):
+                self.wait_timeouts = []
+
+            def kill(self):
+                raise AssertionError("an exited leader must not be signaled by PID")
+
+            def wait(self, timeout=None):
+                self.wait_timeouts.append(timeout)
+                self.returncode = 0
+                return self.returncode
+
+        class Thread:
+            def __init__(self, *args, **kwargs):
+                self.ident = None
+
+            def start(self):
+                self.ident = 1
+
+            def join(self, timeout=None):
+                return None
+
+        class Output:
+            def check(self):
+                return None
+
+        process = Process()
+        launch = types.SimpleNamespace(
+            process=process, status_stream=Pipe(), control_fd=-1,
+        )
+        denied = PermissionError("test permission denial")
+        with (
+            patch.object(rc, "_require_nonreaping_wait_support"),
+            patch.object(rc, "_launch_supervised_process", return_value=launch),
+            patch.object(rc.threading, "Thread", Thread),
+            patch.object(rc, "_drain_asset_stream", side_effect=RuntimeError("stream failed")),
+            patch.object(rc, "_process_has_exited", return_value=True),
+            patch.object(rc.os, "killpg", side_effect=denied),
+            self.assertRaisesRegex(rc.GitHubError, "descendants may still be running") as raised,
+        ):
+            rc._stream_asset(["gh"], Output(), deadline=rc.time.monotonic() + 1)
+
+        self.assertEqual(process.wait_timeouts, [rc.CLEANUP_TIMEOUT_SECONDS])
+        self.assertEqual(process.returncode, 0, "the leader was not reaped")
+        self.assertIs(raised.exception.__cause__, denied, "original signal failure was obscured")
+
+    @unittest.skipUnless(os.name == "posix", "stream process groups require POSIX")
+    def test_inherited_pipe_cleanup_uses_short_post_status_deadline(self):
+        with tempfile.TemporaryDirectory(prefix="release-stream-inherited-pipe-") as temp:
+            root = Path(temp)
+            destination = root / "asset.bin"
+            child_pid = root / "escaped-child.pid"
+            child_code = (
+                "import os,pathlib,time; os.setsid(); "
+                f"pathlib.Path({str(child_pid)!r}).write_text(str(os.getpid())); "
+                "time.sleep(30)"
+            )
+            script = (
+                "import os,subprocess,sys,time\n"
+                f"subprocess.Popen([sys.executable,'-c',{child_code!r}])\n"
+                f"ready={str(child_pid)!r}\n"
+                "deadline=time.monotonic()+2\n"
+                "while not os.path.exists(ready) and time.monotonic()<deadline:\n"
+                " time.sleep(0.01)\n"
+            )
+            command = [sys.executable, "-c", script]
+            started = rc.time.monotonic()
+            with destination.open("w+b", buffering=0) as output_file:
+                writer = rc._AssetWriter(
+                    output_file, destination,
+                    {"size": 0, "sha256": hashlib.sha256(b"").hexdigest()},
+                    rc.DownloadBudget(0),
+                )
+                with (
+                    patch.object(rc, "CLEANUP_TIMEOUT_SECONDS", 0.2),
+                    self.assertRaisesRegex(
+                        rc.ProcessCleanupError,
+                        "inherited pipes did not reach EOF before cleanup deadline",
+                    ),
+                ):
+                    rc._stream_asset(command, writer, deadline=started + 10)
+            elapsed = rc.time.monotonic() - started
+            self.assertTrue(child_pid.exists(), "target did not create the escaped child")
+            self.assertLess(elapsed, 5, "cleanup waited for the transfer deadline")
+            try:
+                os.kill(int(child_pid.read_text()), rc.signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+
+    @unittest.skipUnless(os.name == "posix", "stream process groups require POSIX")
+    def test_supervisor_control_fd_closes_if_group_termination_raises(self):
+        process = self._Process()
+        status_pipe = self._Pipe()
+        launch = types.SimpleNamespace(
+            process=process, status_stream=status_pipe, control_fd=1234,
+        )
+        termination_error = OSError("group signaling failed")
+        with (
+            patch.object(rc, "_require_nonreaping_wait_support"),
+            patch.object(rc, "_launch_supervised_process", return_value=launch),
+            patch.object(rc.threading, "Thread", self._Thread),
+            patch.object(rc, "_drain_asset_stream", side_effect=RuntimeError("stream failed")),
+            patch.object(rc, "_terminate_asset_process_group", side_effect=termination_error),
+            patch.object(rc.os, "close") as close_fd,
+            self.assertRaisesRegex(OSError, "group signaling failed"),
+        ):
+            rc._stream_asset(["/usr/bin/gh"], self._Output(), deadline=rc.time.monotonic() + 1)
+
+        close_fd.assert_called_once_with(1234)
+        self.assertEqual(launch.control_fd, -1)
+        self.assertTrue(process.stdout.closed)
+        self.assertTrue(process.stderr.closed)
+        self.assertTrue(status_pipe.closed)
+
+    @unittest.skipUnless(os.name == "posix", "stream process groups require POSIX")
+    def test_status_signal_denial_is_not_retried_during_teardown(self):
+        process = self._Process()
+        launch = types.SimpleNamespace(
+            process=process, status_stream=self._Pipe(), control_fd=1234,
+        )
+        denied = PermissionError("group signal denied")
+        frame = struct.pack("!4sBi", b"IVSP", 1, 0)
+
+        def fail_while_accepting_status(*_args):
+            rc._accept_asset_status(frame, bytearray(), None, launch)
+
+        with (
+            patch.object(rc, "_require_nonreaping_wait_support"),
+            patch.object(rc, "_launch_supervised_process", return_value=launch),
+            patch.object(rc.threading, "Thread", self._Thread),
+            patch.object(rc, "_drain_asset_stream", side_effect=fail_while_accepting_status),
+            patch.object(rc, "_kill_owned_process", return_value=denied) as signal_group,
+            patch.object(rc, "_terminate_asset_process_group") as fallback_signal,
+            patch.object(rc.os, "close") as close_fd,
+            self.assertRaisesRegex(rc.GitHubError, "termination failed; descendants may still be running") as raised,
+        ):
+            rc._stream_asset(["/usr/bin/gh"], self._Output(), deadline=rc.time.monotonic() + 1)
+
+        signal_group.assert_called_once_with(process)
+        fallback_signal.assert_not_called()
+        self.assertEqual(process.wait_timeouts, [rc.CLEANUP_TIMEOUT_SECONDS])
+        self.assertEqual(launch.control_fd, -1)
+        close_fd.assert_called_once_with(1234)
+        self.assertIs(raised.exception.__cause__, denied)
+
+    @unittest.skipUnless(os.name == "posix", "stream process groups require POSIX")
+    def test_timeout_kills_process_group_when_descendants_hold_or_close_pipes(self):
+        cases = (
+            (
+                "descendant inherits pipes",
+                "import subprocess,sys,time; "
+                "subprocess.Popen([sys.executable,'-c','import time; time.sleep(30)']); "
+                "time.sleep(30)",
+            ),
+            (
+                "descendant closes parent pipes",
+                "import os,subprocess,sys,time; "
+                "subprocess.Popen([sys.executable,'-c','import time; time.sleep(30)'], "
+                "stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL); "
+                "os.close(1); os.close(2); time.sleep(30)",
+            ),
+        )
+        for name, script in cases:
+            with self.subTest(scenario=name), tempfile.TemporaryDirectory(prefix="release-stream-") as temp:
+                destination = Path(temp) / "asset.bin"
+                command = [sys.executable, "-c", script]
+                events = []
+                recording_popen, observing_waitid, recording_killpg = asset_process_recorders(events)
+                with destination.open("w+b") as output_file:
+                    writer = rc._AssetWriter(
+                        output_file, destination, {"size": 100, "sha256": "0" * 64},
+                        rc.DownloadBudget(100),
+                    )
+                    deadline = rc.time.monotonic() + 0.3
+                    with (
+                        patch.object(rc.subprocess, "Popen", side_effect=recording_popen),
+                        patch.object(rc.os, "waitid", side_effect=observing_waitid),
+                        patch.object(rc.os, "killpg", side_effect=recording_killpg) as kill_group,
+                        self.assertRaises(subprocess.TimeoutExpired),
+                    ):
+                        rc._stream_asset(command, writer, deadline=deadline)
+                kill_group.assert_called_once()
+                self.assertEqual(kill_group.call_args.args[1], rc.signal.SIGKILL)
+                kill_index = events.index("killpg")
+                self.assertIn("observe", events[:kill_index])
+                self.assertEqual(events[kill_index + 1:], ["reap"])
 
 
 class JobPaginationTests(unittest.TestCase):
@@ -539,8 +1160,12 @@ class JobPaginationTests(unittest.TestCase):
     @staticmethod
     def response(jobs):
         pages = [
-            http_response(stdout=json.dumps({"total_count": len(jobs), "jobs": jobs[start:start + 20]}).encode()).stdout
-            for start in range(0, len(jobs), 20)
+            http_response(
+                stdout=json.dumps({"total_count": len(jobs), "jobs": jobs[start:start + 20]}).encode(),
+                link=(f'<https://api.github.com/repos/{REPO}/actions/runs/17/attempts/1/jobs?per_page=20&page={index + 2}>; rel="next"'.encode()
+                      if start + 20 < len(jobs) else None),
+            ).stdout
+            for index, start in enumerate(range(0, len(jobs), 20))
         ]
         return subprocess.CompletedProcess([], 0, b"\n".join(pages), b"")
 
@@ -555,23 +1180,26 @@ class JobPaginationTests(unittest.TestCase):
             self.assertIn("--paginate", command)
             return self.response(jobs)
 
-        with patch.object(rc.subprocess, "run", side_effect=service), patch.object(rc.time, "sleep"):
+        with patch.object(rc, "run_process", side_effect=service), patch.object(rc.time, "sleep"):
             self.assertEqual(gh.pages("actions/runs/17/attempts/1/jobs", "jobs"), jobs)
             rc.validate_run(gh, run(), {"default_branch": "main"}, SHA, 1, completed=True)
 
     def test_failed_last_page_gate_still_blocks_publication(self):
         jobs = self.jobs()
         jobs[-1]["conclusion"] = "failure"
-        with patch.object(rc.subprocess, "run", return_value=self.response(jobs)):
+        with patch.object(rc, "run_process", return_value=self.response(jobs)):
             with self.assertRaisesRegex(rc.ReleaseError, "successful, completed Release gate"):
                 rc.validate_run(rc.GitHub(REPO), run(), {"default_branch": "main"}, SHA, 1, completed=True)
 
     def test_later_page_failure_discards_partial_jobs_before_retry(self):
         failed = http_response(502)
-        failed.stdout = http_response(stdout=b'{"total_count":94,"jobs":[{"id":999}]}').stdout + b"\n" + failed.stdout
+        failed.stdout = http_response(
+            stdout=b'{"total_count":94,"jobs":[{"id":999}]}',
+            link=b'<https://api.github.com/repos/example/project/actions/runs/17/attempts/1/jobs?per_page=20&page=2>; rel="next"',
+        ).stdout + b"\n" + failed.stdout
         for recover in (False, True):
             responses = [failed, self.response(self.jobs())] if recover else [failed] * 3
-            with self.subTest(recover=recover), patch.object(rc.subprocess, "run", side_effect=responses) as command, patch.object(rc.time, "sleep"):
+            with self.subTest(recover=recover), patch.object(rc, "run_process", side_effect=responses) as command, patch.object(rc.time, "sleep"):
                 if recover:
                     self.assertEqual(rc.GitHub(REPO).pages("actions/runs/17/attempts/1/jobs", "jobs"), self.jobs())
                 else:
@@ -581,7 +1209,7 @@ class JobPaginationTests(unittest.TestCase):
                 self.assertTrue(all(call.args[0][-1].endswith("/jobs?per_page=20") for call in command.call_args_list))
 
     def test_other_paginated_metadata_keeps_its_page_size(self):
-        with patch.object(rc.subprocess, "run", return_value=http_response(stdout=b"[]")) as command:
+        with patch.object(rc, "run_process", return_value=http_response(stdout=b"[]")) as command:
             self.assertEqual(rc.GitHub(REPO).pages("releases"), [])
         self.assertEqual(command.call_args.args[0][-1], f"repos/{REPO}/releases?per_page=100")
 
@@ -1005,7 +1633,8 @@ class ReleaseControlTests(unittest.TestCase):
     def test_promotion_waits_for_fresh_active_run_and_keeps_rc_bytes(self):
         """A stale post-approval status delays, rather than bypasses, promotion."""
         original_api = self.gh.api
-        statuses = iter(("waiting", "queued", "in_progress"))
+        statuses = iter(("waiting", "queued", "in_progress", "in_progress",
+                         "in_progress", "in_progress"))
 
         def delayed(path, method="GET", body=None):
             value = original_api(path, method, body)
@@ -1030,6 +1659,217 @@ class ReleaseControlTests(unittest.TestCase):
             a["name"]: self.gh.files[a["id"]] for a in self.gh.assets[stable["id"]]
         }
         self.assertEqual(actual, expected)
+
+    def active_publisher_job(self):
+        """Install one exact check-run job and no Release gate."""
+        self.gh.runs[99]["run_started_at"] = "2026-01-01T00:00:00Z"
+        job = {
+            "id": 701, "run_id": 99, "run_attempt": 1, "head_sha": SHA,
+            "check_run_url": f"https://api.github.com/repos/{REPO}/check-runs/800",
+            "runner_id": 900, "runner_name": "runner-example", "name": "stable publisher",
+            "status": "in_progress", "conclusion": None, "completed_at": None,
+            "started_at": "2026-01-01T00:00:01Z", "steps": [
+                {"number": 1, "status": "in_progress", "conclusion": None,
+                 "started_at": "2026-01-01T00:00:02Z", "completed_at": None}],
+        }
+        return job
+
+    def test_promotion_rechecks_check_run_proof_without_a_release_gate(self):
+        """The same live publisher proof is required at both callbacks, with no gate job."""
+        publisher = self.active_publisher_job()
+        pages = self.gh.pages
+        observations = []
+
+        def observe(path, field=None):
+            if path == "actions/runs/99/attempts/1/jobs":
+                observations.append(path)
+                return [publisher]
+            return pages(path, field)
+
+        with patch.dict(os.environ, {
+            "RELEASE_EXECUTION_CHECK_RUN_ID": "800",
+            "RUNNER_NAME": "runner-example",
+            "GITHUB_JOB": "stable-publisher-job",
+        }), patch.object(self.gh, "pages", side_effect=observe):
+            result = rc.promote(self.args)
+
+        self.assertEqual(result["tag"], "v1.2.3")
+        self.assertEqual(len(observations), 3)  # Admission, full recheck and final attempt read.
+
+    def test_terminal_attempt_after_jobs_inventory_blocks_first_protected_write(self):
+        """A terminal attempt after stale jobs readback cannot authorize a tag write."""
+        publisher = self.active_publisher_job()
+        pages = self.gh.pages
+        api = self.gh.api
+        events = []
+        job_reads = 0
+
+        def observe_api(path, method="GET", body=None):
+            if path == "actions/runs/99/attempts/1":
+                events.append("attempt")
+            return api(path, method, body)
+
+        def finish_during_inventory(path, field=None):
+            nonlocal job_reads
+            if path == "actions/runs/99/attempts/1/jobs":
+                job_reads += 1
+                events.append("jobs")
+                result = [deepcopy(publisher)]
+                if job_reads == 2:
+                    # The returned paginated inventory is stale: it still says
+                    # in_progress although this exact attempt just terminated.
+                    self.gh.runs[99].update(
+                        status="completed", conclusion="cancelled",
+                    )
+                return result
+            return pages(path, field)
+
+        with (
+            patch.dict(os.environ, {
+                "RELEASE_EXECUTION_CHECK_RUN_ID": "800",
+                "RUNNER_NAME": "runner-example",
+                "GITHUB_JOB": "stable-publisher-job",
+            }),
+            patch.object(self.gh, "api", side_effect=observe_api),
+            patch.object(self.gh, "pages", side_effect=finish_during_inventory),
+            self.assertRaisesRegex(rc.ReleaseError, "Execution attempt is not active"),
+        ):
+            rc.promote(self.args)
+
+        self.assertEqual(job_reads, 2)  # Admission, then pre-write revalidation.
+        self.assertEqual(events[-3:], ["attempt", "jobs", "attempt"])
+        self.assertEqual(self.gh.writes, [])
+
+    def test_terminal_attempt_after_aggregate_read_blocks_first_protected_write(self):
+        """Legacy execution context re-reads the exact attempt after its aggregate."""
+        api = self.gh.api
+        aggregate_reads = 0
+        events = []
+
+        def finish_after_aggregate(path, method="GET", body=None):
+            nonlocal aggregate_reads
+            result = api(path, method, body)
+            if path == "actions/runs/99/attempts/1":
+                events.append("attempt")
+            elif path == "actions/runs/99":
+                aggregate_reads += 1
+                events.append("aggregate")
+                if aggregate_reads == 2:
+                    # The aggregate response was active when read, but the
+                    # exact publisher attempt terminates before the next read.
+                    self.gh.runs[99].update(
+                        status="completed", conclusion="cancelled",
+                    )
+            return result
+
+        with (
+            patch.object(self.gh, "api", side_effect=finish_after_aggregate),
+            self.assertRaisesRegex(rc.ReleaseError, "Execution attempt is not active"),
+        ):
+            rc.promote(self.args)
+
+        self.assertEqual(aggregate_reads, 2)  # Admission then pre-write check.
+        self.assertEqual(events[-3:], ["attempt", "aggregate", "attempt"])
+        self.assertEqual(self.gh.writes, [])
+
+    def test_cancel_during_final_promotion_order_read_prevents_ledger_put(self):
+        """Publisher cancellation after order reads is checked before ledger CAS."""
+        from test_versioned_release import LedgerGitHub, policy as version_policy, state
+
+        gh = LedgerGitHub()
+        gh.releases.clear()
+        plan = state.reserve_plan(
+            gh, version_policy("promote-bytes"), "1.2.3", "rc", SHA, 99, 1,
+            datetime(2026, 9, 13, tzinfo=timezone.utc), None,
+        )
+        state.begin_publication(gh, plan, 99)
+        gh.releases[50] = {"tag_name": plan["tag"], "draft": False}
+        before_writes = len(gh.ledger_writes)
+        publisher = {
+            "id": 100, "run_attempt": 1, "head_sha": SHA, "path": rc.WORKFLOW,
+            "event": "workflow_dispatch", "status": "in_progress", "conclusion": None,
+        }
+        gh.runs[100] = publisher.copy()
+        order_reads = 0
+        events = []
+        original_pages = gh.pages
+
+        def mutate_after_final_order_read(path, field=None):
+            nonlocal order_reads
+            result = original_pages(path, field)
+            if path == "releases":
+                order_reads += 1
+                events.append(f"order-read-{order_reads}")
+                if order_reads == 2:
+                    gh.runs[100].update(status="completed", conclusion="cancelled")
+            return result
+
+        def confirm_active_attempt():
+            current = gh.api("actions/runs/100/attempts/1")
+            events.append(f"publisher-{current['status']}")
+            rc.require_active_attempt(current, publisher)
+
+        with patch.object(gh, "pages", side_effect=mutate_after_final_order_read):
+            with self.assertRaisesRegex(rc.ReleaseError, "not active"):
+                rc._begin_promotion_publication(
+                    gh, {"version_plan": plan}, 100, confirm_active_attempt,
+                )
+
+        self.assertEqual(order_reads, 2)
+        self.assertEqual(events, ["order-read-1", "order-read-2", "publisher-completed"])
+        self.assertEqual(len(gh.ledger_writes), before_writes)
+
+    def test_legacy_promotion_confirms_active_publisher_before_publication(self):
+        """Legacy manifests still validate the publisher before creating release state."""
+        confirmed = []
+        rc._begin_promotion_publication(
+            self.gh, {"version_plan": None}, 100,
+            lambda: confirmed.append("active"),
+        )
+        self.assertEqual(confirmed, ["active"])
+
+    def test_promotion_rechecks_publisher_before_public_release_patch(self):
+        """A publisher cancelled after draft upload leaves the release unpublished."""
+        original_api = self.gh.api
+        attempt_reads = 0
+        publisher = self.active_publisher_job()
+        original_pages = self.gh.pages
+
+        def cancel_before_confirm_publish(path, method="GET", body=None):
+            nonlocal attempt_reads
+            if path == "actions/runs/99/attempts/1":
+                attempt_reads += 1
+                status = "completed" if attempt_reads >= 5 else "in_progress"
+                conclusion = None if status == "in_progress" else "cancelled"
+                current = original_api(path, method, body)
+                current.update(status=status, conclusion=conclusion)
+                return current
+            return original_api(path, method, body)
+
+        def active_job(path, field=None):
+            if path == "actions/runs/99/attempts/1/jobs":
+                return [publisher]
+            return original_pages(path, field)
+
+        with (
+            patch.dict(os.environ, {
+                "RELEASE_EXECUTION_CHECK_RUN_ID": "800",
+                "RUNNER_NAME": "runner-example",
+                "GITHUB_JOB": "stable-publisher-job",
+                "GITHUB_REPOSITORY": REPO,
+            }),
+            patch.object(self.gh, "api", side_effect=cancel_before_confirm_publish),
+            patch.object(self.gh, "pages", side_effect=active_job),
+        ):
+            with self.assertRaisesRegex(rc.ReleaseError, "not active"):
+                rc.promote(self.args)
+
+        self.assertGreaterEqual(attempt_reads, 3)
+        stable = next(item for item in self.gh.releases.values()
+                      if item["tag_name"] == "v1.2.3")
+        self.assertTrue(stable["draft"])
+        self.assertTrue(any(write[0] == "upload" for write in self.gh.writes))
+        self.assertFalse(any(write[1] == "PATCH" for write in self.gh.writes))
 
     def test_candidate_waits_for_fresh_active_run_before_gate(self):
         """The unversioned publisher uses the same bounded execution check."""
@@ -1458,7 +2298,7 @@ class PublicationPermissionTests(unittest.TestCase):
         """Consumers that did not opt in preserve their GITHUB_TOKEN behavior."""
         with (
             patch.dict(os.environ, {"RELEASE_REQUIRE_WORKFLOW_SCOPE": ""}),
-            patch.object(rc.subprocess, "run") as command,
+            patch.object(rc, "run_process") as command,
         ):
             gh = rc.GitHub(REPO)
         self.assertFalse(gh.workflow_scope_verified)
@@ -1478,7 +2318,7 @@ class PublicationPermissionTests(unittest.TestCase):
                     },
                 ),
                 patch.object(
-                    rc.subprocess, "run", return_value=self.probe(scopes)
+                    rc, "run_process", return_value=self.probe(scopes)
                 ) as command,
             ):
                 gh = rc.GitHub(REPO)
@@ -1522,7 +2362,7 @@ class PublicationPermissionTests(unittest.TestCase):
                         "RELEASE_REQUIRE_WORKFLOW_SCOPE": "true",
                     },
                 ),
-                patch.object(rc.subprocess, "run", return_value=response) as command,
+                patch.object(rc, "run_process", return_value=response) as command,
                 self.assertRaises(rc.ReleaseError),
             ):
                 rc.GitHub(REPO)
@@ -1537,7 +2377,7 @@ class PublicationPermissionTests(unittest.TestCase):
                 os.environ,
                 {"GH_TOKEN": "", "RELEASE_REQUIRE_WORKFLOW_SCOPE": "true"},  # nosec B105
             ),
-            patch.object(rc.subprocess, "run") as command,
+            patch.object(rc, "run_process") as command,
             self.assertRaises(rc.ReleaseError),
         ):
             rc.GitHub(REPO)
@@ -1551,7 +2391,7 @@ class PublicationPermissionTests(unittest.TestCase):
                 # Deliberate test credential, never used for authentication.
                 {"GH_TOKEN": "test-secret", "RELEASE_REQUIRE_WORKFLOW_SCOPE": "true"},  # nosec B105
             ),
-            patch.object(rc.subprocess, "run", return_value=self.probe()) as command,
+            patch.object(rc, "run_process", return_value=self.probe()) as command,
         ):
             gh = rc.GitHub(REPO)
             command.return_value = self.probe("repo")
@@ -1570,7 +2410,7 @@ class PublicationPermissionTests(unittest.TestCase):
                 # Deliberate test credential, never used for authentication.
                 {"GH_TOKEN": "test-secret", "RELEASE_REQUIRE_WORKFLOW_SCOPE": "true"},  # nosec B105
             ),
-            patch.object(rc.subprocess, "run", return_value=response),
+            patch.object(rc, "run_process", return_value=response),
             self.assertRaises(rc.ReleaseError) as error,
         ):
             rc.GitHub(REPO)
@@ -1584,8 +2424,7 @@ class PublicationPermissionTests(unittest.TestCase):
             gh = rc.GitHub(REPO)
         with (
             patch.object(
-                rc.subprocess,
-                "run",
+                rc, "run_process",
                 return_value=http_response(
                     403, b"private body",
                     "gh: Resource not accessible by integration (HTTP {status})",
@@ -1721,7 +2560,7 @@ class TransportTests(unittest.TestCase):
         ):
             with (
                 self.subTest(path=path, method=method),
-                patch.object(rc.subprocess, "run") as command,
+                patch.object(rc, "run_process") as command,
                 self.assertRaises(rc.ReleaseError),
             ):
                 gh.api(path, method, body)
@@ -1742,7 +2581,7 @@ class TransportTests(unittest.TestCase):
         cases += [("actions/runs/123/attempts/2", method, {})
                   for method in ("POST", "PATCH", "PUT", "DELETE")]
         for path, method, body in cases:
-            with self.subTest(path=path, method=method), patch.object(rc.subprocess, "run") as command:
+            with self.subTest(path=path, method=method), patch.object(rc, "run_process") as command:
                 with self.assertRaises(rc.ReleaseError):
                     gh.request(path, method, body)
                 command.assert_not_called()
@@ -1752,7 +2591,7 @@ class TransportTests(unittest.TestCase):
         gh = rc.GitHub(REPO)
         body = {"body": "--hostname evil.com --clobber #label"}
         with patch.object(
-            rc.subprocess, "run", return_value=http_response()
+            rc, "run_process", return_value=http_response()
         ) as command:
             gh.api("")
             gh.api("releases", "POST", body)
@@ -1799,13 +2638,87 @@ class TransportTests(unittest.TestCase):
             f"compare/{SHA}...feature%2Fbranch",
         ]
         with patch.object(
-            rc.subprocess, "run", return_value=http_response()
+            rc, "run_process", return_value=http_response()
         ) as command:
             for path in paths:
                 gh.api(path)
             gh.api("git/refs", "POST", {"ref": f"refs/tags/{RC_TAG}", "sha": SHA})
             gh.api("releases/10", "PATCH", {"draft": False})
         self.assertEqual(command.call_count, len(paths) + 2)
+
+    @unittest.skipUnless(os.name == "posix", "the supervised asset downloader requires POSIX")
+    def test_download_asset_resolves_and_runs_real_gh_from_path(self):
+        payload = b"integration asset bytes"
+        with tempfile.TemporaryDirectory(prefix="release-fake-gh-") as temp:
+            root = Path(temp)
+            fake_bin = root / "bin"
+            fake_bin.mkdir()
+            gh_path = fake_bin / "gh"
+            argv_path = root / "argv.json"
+            gh_path.write_text(
+                f"#!{sys.executable}\n"
+                "import json,pathlib,sys\n"
+                f"pathlib.Path({str(argv_path)!r}).write_text(json.dumps(sys.argv[1:]))\n"
+                f"sys.stdout.buffer.write(b'HTTP/2 200 OK\\r\\nContent-Type: application/octet-stream\\r\\n\\r\\n' + {payload!r})\n"
+            )
+            gh_path.chmod(0o755)
+            destination = root / "asset.bin"
+            expected = {
+                "size": len(payload),
+                "sha256": hashlib.sha256(payload).hexdigest(),
+            }
+            with (
+                patch.dict(os.environ, {"PATH": f"{fake_bin}{os.pathsep}{os.environ.get('PATH', '')}"}),
+                patch.object(rc, "resolve_executable", async_process_module.resolve_executable),
+            ):
+                with destination.open("w+b", buffering=0) as output_file:
+                    writer = rc._AssetWriter(
+                        output_file, destination, expected, rc.DownloadBudget(len(payload)),
+                    )
+                    rc.GitHub(REPO).download_asset("releases/assets/42", writer)
+                    self.assertEqual(writer.identity(), expected)
+
+            self.assertEqual(destination.read_bytes(), payload)
+            self.assertEqual(
+                json.loads(argv_path.read_text()),
+                [
+                    "api", "--hostname", rc.GITHUB_HOSTNAME, "--include", "--method", "GET",
+                    "-H", "Accept: application/octet-stream", "--",
+                    f"repos/{REPO}/releases/assets/42",
+                ],
+            )
+
+    @unittest.skipUnless(os.name == "posix", "the supervised asset downloader requires POSIX")
+    def test_download_asset_real_gh_timeout_is_not_retried(self):
+        with tempfile.TemporaryDirectory(prefix="release-fake-gh-timeout-") as temp:
+            root = Path(temp)
+            fake_bin = root / "bin"
+            fake_bin.mkdir()
+            calls = root / "calls"
+            gh_path = fake_bin / "gh"
+            gh_path.write_text(
+                f"#!{sys.executable}\n"
+                "import pathlib,time\n"
+                f"with pathlib.Path({str(calls)!r}).open('a') as stream: stream.write('call\\n')\n"
+                "time.sleep(30)\n"
+            )
+            gh_path.chmod(0o755)
+            destination = root / "asset.bin"
+            payload = b"expected asset"
+            with (
+                patch.dict(os.environ, {"PATH": f"{fake_bin}{os.pathsep}{os.environ.get('PATH', '')}"}),
+                patch.object(rc, "resolve_executable", async_process_module.resolve_executable),
+                patch.object(rc, "ASSET_DOWNLOAD_TIMEOUT", 1.5),
+            ):
+                with destination.open("w+b", buffering=0) as output_file:
+                    writer = rc._AssetWriter(
+                        output_file, destination,
+                        {"size": len(payload), "sha256": hashlib.sha256(payload).hexdigest()},
+                        rc.DownloadBudget(len(payload)),
+                    )
+                    with self.assertRaisesRegex(rc.GitHubError, "asset download exceeded"):
+                        rc.GitHub(REPO).download_asset("releases/assets/42", writer)
+            self.assertEqual(calls.read_text().splitlines(), ["call"])
 
     def test_upload_rejects_tags_labels_symlinks_and_unstaged_paths(self):
         """Only a regular asset in the private staging directory can reach gh."""
@@ -1836,7 +2749,7 @@ class TransportTests(unittest.TestCase):
             for tag, path in invalid:
                 with (
                     self.subTest(tag=tag, path=path),
-                    patch.object(rc.subprocess, "run") as command,
+                    patch.object(rc, "run_process") as command,
                     self.assertRaises(rc.ReleaseError),
                 ):
                     gh.upload(tag, path, release_id=10)
@@ -1850,12 +2763,12 @@ class TransportTests(unittest.TestCase):
             asset.write_bytes(b"package")
             with (
                 patch.object(
-                    rc.subprocess,
-                    "run",
+                    rc, "run_process",
                     return_value=subprocess.CompletedProcess(
                         [], 1, stderr=b"HTTP 422 already_exists"
                     ),
                 ) as command,
+                patch.object(gh, "pages", return_value=[]),
                 self.assertRaises(rc.GitHubError),
             ):
                 gh.upload("v1.2.3", asset, release_id=10)
@@ -1875,7 +2788,6 @@ class TransportTests(unittest.TestCase):
                     "--",
                     f"https://uploads.github.com/repos/{REPO}/releases/10/assets?name=package.tar.gz",
                 ],
-                capture_output=True,
                 check=False,
                 timeout=rc.ASSET_UPLOAD_TIMEOUT,
             )
@@ -1899,7 +2811,7 @@ class TransportTests(unittest.TestCase):
                 ).encode(),
                 b"",
             )
-            with patch.object(rc.subprocess, "run", return_value=response) as command:
+            with patch.object(rc, "run_process", return_value=response) as command:
                 gh.upload(RC_TAG, asset, release_id=42)
             command.assert_called_once()
             args = command.call_args.args[0]
@@ -1919,7 +2831,7 @@ class TransportTests(unittest.TestCase):
             for release_id in (0, -1, True, "01", "42/assets?other=1", None):
                 with (
                     self.subTest(release_id=release_id),
-                    patch.object(rc.subprocess, "run") as command,
+                    patch.object(rc, "run_process") as command,
                 ):
                     with self.assertRaises(rc.ReleaseError):
                         rc.GitHub(REPO).upload(RC_TAG, asset, release_id=release_id)
@@ -1929,15 +2841,37 @@ class TransportTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="release-versioned-") as temp:
             asset = Path(temp) / "package.tar.gz"
             asset.write_bytes(b"package")
-            timeout = subprocess.TimeoutExpired(
-                ["private-path"], 900, output=b"private-body"
-            )
-            with patch.object(rc.subprocess, "run", side_effect=timeout) as command:
+            timeout = rc.ProcessTimeout(900, b"partial-private-body", b"")
+            gh = rc.GitHub(REPO)
+            with (
+                patch.object(rc, "run_process", side_effect=timeout) as command,
+                patch.object(gh, "pages", return_value=[]) as inventory,
+            ):
                 with self.assertRaises(rc.GitHubError) as caught:
-                    rc.GitHub(REPO).upload(RC_TAG, asset, release_id=42)
+                    gh.upload(RC_TAG, asset, release_id=42)
                 command.assert_called_once()
+                inventory.assert_called_once_with("releases/42/assets")
             self.assertNotIn("private", str(caught.exception))
             self.assertNotIn(temp, str(caught.exception))
+            self.assertIn("reconciliation=absent", str(caught.exception))
+
+    def test_upload_output_limit_uses_exact_asset_readback_without_retry(self):
+        with tempfile.TemporaryDirectory(prefix="release-versioned-") as temp:
+            asset = Path(temp) / "package.tar.gz"
+            payload = b"package"
+            asset.write_bytes(payload)
+            expected = {
+                "id": 91, "name": asset.name, "state": "uploaded", "size": len(payload),
+                "digest": "sha256:" + hashlib.sha256(payload).hexdigest(),
+            }
+            gh = rc.GitHub(REPO)
+            with (
+                patch.object(rc, "run_process", side_effect=rc.ProcessOutputLimit("too large")) as post,
+                patch.object(gh, "pages", return_value=[expected]) as inventory,
+            ):
+                gh.upload(RC_TAG, asset, release_id=42)
+            post.assert_called_once()
+            inventory.assert_called_once_with("releases/42/assets")
 
     def test_upload_requires_created_matching_complete_asset(self):
         with tempfile.TemporaryDirectory(prefix="release-versioned-") as temp:
@@ -1952,6 +2886,7 @@ class TransportTests(unittest.TestCase):
                 (201, {**expected, "state": "starter"}),
                 (201, {**expected, "size": 6}),
                 (201, {**expected, "size": True}),
+                (201, {**expected, "digest": "sha256:" + "0" * 64}),
             ]
             for status, body in variants:
                 response = subprocess.CompletedProcess(
@@ -1961,15 +2896,45 @@ class TransportTests(unittest.TestCase):
                     + json.dumps(body).encode(),
                     b"",
                 )
+                gh = rc.GitHub(REPO)
                 with (
                     self.subTest(status=status, body=body),
                     patch.object(
-                        rc.subprocess, "run", return_value=response
+                        rc, "run_process", return_value=response
                     ) as command,
+                    patch.object(gh, "pages", return_value=[]),
                 ):
                     with self.assertRaises(rc.ReleaseError):
-                        rc.GitHub(REPO).upload(RC_TAG, asset, release_id=42)
+                        gh.upload(RC_TAG, asset, release_id=42)
                     command.assert_called_once()
+
+    def test_success_status_cannot_hide_staged_file_mutation_during_post(self):
+        with tempfile.TemporaryDirectory(prefix="release-versioned-") as temp:
+            asset = Path(temp) / "package.tar.gz"
+            asset.write_bytes(b"package")
+            created = {"id": 91, "name": asset.name, "state": "uploaded", "size": 7}
+            response = subprocess.CompletedProcess(
+                [], 0,
+                b"HTTP/2.0 201 Created\r\n\r\n" + json.dumps(created).encode(),
+                b"",
+            )
+
+            def mutate_after_post(*_args, **_kwargs):
+                asset.write_bytes(b"changed")
+                return response
+
+            gh = rc.GitHub(REPO)
+            with (
+                patch.object(rc, "run_process", side_effect=mutate_after_post) as post,
+                patch.object(gh, "pages", return_value=[]) as inventory,
+                self.assertRaisesRegex(
+                    rc.GitHubError,
+                    "outcome=http-201-invalid-response.*reconciliation=failed",
+                ),
+            ):
+                gh.upload(RC_TAG, asset, release_id=42)
+            post.assert_called_once()
+            inventory.assert_called_once_with("releases/42/assets")
 
     def test_upload_parse_failure_keeps_draft_and_reports_safe_asset_context(self):
         """A committed upload with a broken response must not be retried or published."""
@@ -1991,12 +2956,12 @@ class TransportTests(unittest.TestCase):
                     gh, "upload", side_effect=accepted_upload_then_failed_response
                 ) as upload,
                 patch.object(
-                    rc.subprocess,
-                    "run",
+                    rc, "run_process",
                     return_value=subprocess.CompletedProcess(
                         [], 1, b"private response body", b"unexpected end of JSON input"
                     ),
                 ) as command,
+                patch.object(client, "pages", return_value=[]),
                 self.assertRaises(rc.GitHubError) as error,
             ):
                 rc.publish(gh, tag, SHA, Path(temp), True, "private release body")
@@ -2014,10 +2979,8 @@ class TransportTests(unittest.TestCase):
             self.assertNotIn("--clobber", command.call_args.args[0])
             self.assertNotIn(temp, str(error.exception))
             self.assertNotIn("private", str(error.exception))
-            self.assertEqual(
-                str(error.exception),
-                f"upload {tag} {asset.name}: unexpected end of JSON input",
-            )
+            self.assertIn("outcome=invalid-http-response", str(error.exception))
+            self.assertIn("reconciliation=absent", str(error.exception))
 
     def test_upload_unconfirmed_http_response_is_never_retried(self):
         """A successful CLI exit alone cannot confirm the committed asset."""
@@ -2026,18 +2989,400 @@ class TransportTests(unittest.TestCase):
             asset.write_bytes(b"package")
             for stdout in (None, b"private response body", b"HTTP/2.0 201 Created\r\n"):
                 response = subprocess.CompletedProcess([], 0, stdout, b"")
+                gh = rc.GitHub(REPO)
                 with (
                     self.subTest(stdout=stdout),
-                    patch.object(
-                        rc.subprocess, "run", return_value=response
-                    ) as command,
+                    patch.object(rc, "run_process", return_value=response) as command,
+                    patch.object(gh, "pages", return_value=[]),
                 ):
                     with self.assertRaises(rc.GitHubError) as error:
-                        rc.GitHub(REPO).upload(RC_TAG, asset, release_id=42)
+                        gh.upload(RC_TAG, asset, release_id=42)
                     command.assert_called_once()
                     self.assertIn(f"upload {RC_TAG} {asset.name}", str(error.exception))
                     self.assertNotIn("private response body", str(error.exception))
                     self.assertNotIn(temp, str(error.exception))
+
+    def test_malformed_201_is_confirmed_only_by_exact_matching_inventory(self):
+        with tempfile.TemporaryDirectory(prefix="release-versioned-") as temp:
+            asset = Path(temp) / "package.tar.gz"
+            asset.write_bytes(b"package")
+            entry = {
+                "id": 91, "name": asset.name, "state": "uploaded", "size": 7,
+                "digest": "sha256:" + rc.hashlib.sha256(b"package").hexdigest(),
+            }
+            gh = rc.GitHub(REPO)
+            with (
+                patch.object(rc, "run_process", return_value=subprocess.CompletedProcess(
+                    [], 0, b"HTTP/2.0 201 Created\r\n\r\n{malformed", b"")) as post,
+                patch.object(gh, "pages", return_value=[entry]) as inventory,
+            ):
+                gh.upload(RC_TAG, asset, release_id=42)
+            post.assert_called_once()
+            inventory.assert_called_once_with("releases/42/assets")
+
+    def test_upload_http_500_reconciles_matching_server_digest_without_retry(self):
+        with tempfile.TemporaryDirectory(prefix="release-versioned-") as temp:
+            asset = Path(temp) / "package.tar.gz"
+            asset.write_bytes(b"package")
+            entry = {
+                "id": 91, "name": asset.name, "state": "uploaded", "size": 7,
+                "digest": "sha256:" + rc.hashlib.sha256(b"package").hexdigest(),
+            }
+            gh = rc.GitHub(REPO)
+            with (
+                patch.object(rc, "run_process", return_value=http_response(500)) as post,
+                patch.object(gh, "pages", return_value=[entry]) as inventory,
+            ):
+                gh.upload(RC_TAG, asset, release_id=42)
+            post.assert_called_once()
+            inventory.assert_called_once_with("releases/42/assets")
+
+    def test_upload_http_500_absent_allows_one_retry_after_exact_inventory_read(self):
+        with tempfile.TemporaryDirectory(prefix="release-versioned-") as temp:
+            asset = Path(temp) / "package.tar.gz"
+            asset.write_bytes(b"package")
+            created = {
+                "id": 91, "name": asset.name, "state": "uploaded", "size": 7,
+            }
+            created_response = subprocess.CompletedProcess(
+                [], 0,
+                b"HTTP/2.0 201 Created\r\n\r\n" + json.dumps(created).encode(),
+                b"",
+            )
+            gh = rc.GitHub(REPO)
+            with (
+                patch.object(rc, "run_process", side_effect=[
+                    http_response(500), created_response,
+                ]) as post,
+                patch.object(gh, "pages", return_value=[]) as inventory,
+            ):
+                gh.upload(RC_TAG, asset, release_id=42)
+            self.assertEqual(post.call_count, 2)
+            self.assertEqual(post.call_args_list[0], post.call_args_list[1])
+            inventory.assert_called_once_with("releases/42/assets")
+
+    def test_delayed_first_commit_confirms_after_retry_conflict_without_overwrite(self):
+        with tempfile.TemporaryDirectory(prefix="release-versioned-") as temp:
+            asset = Path(temp) / "package.tar.gz"
+            asset.write_bytes(b"package")
+            entry = {
+                "id": 91, "name": asset.name, "state": "uploaded", "size": 7,
+                "digest": "sha256:" + rc.hashlib.sha256(b"package").hexdigest(),
+            }
+            gh = rc.GitHub(REPO)
+            with (
+                patch.object(rc, "run_process", side_effect=[
+                    http_response(500), http_response(422),
+                ]) as post,
+                patch.object(gh, "pages", side_effect=[[], [entry]]) as inventory,
+            ):
+                gh.upload(RC_TAG, asset, release_id=42)
+            self.assertEqual(post.call_count, 2)
+            self.assertEqual(inventory.call_count, 2)
+            self.assertTrue(all(call.args == ("releases/42/assets",)
+                                for call in inventory.call_args_list))
+
+    def test_matching_asset_on_later_inventory_page_confirms_upload(self):
+        with tempfile.TemporaryDirectory(prefix="release-versioned-") as temp:
+            asset = Path(temp) / "package.tar.gz"
+            asset.write_bytes(b"package")
+            entry = {"id": 91, "name": asset.name, "state": "uploaded", "size": 7,
+                     "digest": "sha256:" + rc.hashlib.sha256(b"package").hexdigest()}
+            later_page = http_response(stdout=json.dumps([entry]).encode()).stdout
+            first_page = http_response(
+                stdout=b"[]",
+                link=b'<https://api.github.com/repos/example/project/releases/42/assets?per_page=100&page=2>; rel="next"',
+            ).stdout
+            pages = first_page + b"\n" + later_page
+            gh = rc.GitHub(REPO)
+            with patch.object(rc, "run_process", side_effect=[
+                http_response(500),
+                subprocess.CompletedProcess([], 0, pages, b""),
+            ]) as command:
+                gh.upload(RC_TAG, asset, release_id=42)
+            self.assertEqual(command.call_count, 2)
+            self.assertIn("--paginate", command.call_args_list[1].args[0])
+
+    def test_later_inventory_page_failure_blocks_retry(self):
+        with tempfile.TemporaryDirectory(prefix="release-versioned-") as temp:
+            asset = Path(temp) / "package.tar.gz"
+            asset.write_bytes(b"package")
+            first_page = http_response(
+                stdout=b"[]",
+                link=b'<https://api.github.com/repos/example/project/releases/42/assets?per_page=100&page=2>; rel="next"',
+            ).stdout
+            denied_page = http_response(403, b'{"message":"private"}').stdout
+            pages = first_page + b"\n" + denied_page
+            gh = rc.GitHub(REPO)
+            with (
+                patch.object(rc, "run_process", side_effect=[
+                    http_response(502),
+                    subprocess.CompletedProcess([], 1, pages, b"HTTP 403 private"),
+                ]) as command,
+                self.assertRaisesRegex(rc.GitHubError, "reconciliation=failed"),
+            ):
+                gh.upload(RC_TAG, asset, release_id=42)
+            self.assertEqual(command.call_count, 2)
+            self.assertEqual(command.call_args_list[0].args[0][command.call_args_list[0].args[0].index("--method") + 1], "POST")
+            self.assertEqual(command.call_args_list[1].args[0][command.call_args_list[1].args[0].index("--method") + 1], "GET")
+
+    def test_upload_publish_path_never_patches_public_after_retry_is_unconfirmed(self):
+        gh = FakeGitHub()
+        client = rc.GitHub(REPO)
+
+        def reconcile_upload(tag, path, *, release_id):
+            client.upload(tag, path, release_id=release_id)
+
+        with tempfile.TemporaryDirectory(prefix="release-versioned-") as temp:
+            stage = Path(temp)
+            (stage / "package.bin").write_bytes(b"candidate bytes")
+            with (
+                patch.object(gh, "upload", side_effect=reconcile_upload),
+                patch.object(rc, "run_process", side_effect=[
+                    http_response(503), http_response(500),
+                ]) as posts,
+                patch.object(client, "pages", side_effect=[[], []]) as inventories,
+                self.assertRaisesRegex(rc.GitHubError,
+                                       "attempt 2.*outcome=http-500.*reconciliation=absent"),
+            ):
+                rc.publish(gh, "v1.2.3-beta.9", SHA, stage, True, "")
+            draft = next(item for item in gh.releases.values()
+                         if item["tag_name"] == "v1.2.3-beta.9")
+            self.assertTrue(draft["draft"])
+            self.assertFalse(any(write[1] == "PATCH" for write in gh.writes))
+            self.assertEqual(posts.call_count, 2)
+            self.assertEqual(inventories.call_count, 2)
+
+    def test_only_explicit_server_5xx_can_authorize_one_retry(self):
+        with tempfile.TemporaryDirectory(prefix="release-versioned-") as temp:
+            asset = Path(temp) / "package.tar.gz"
+            asset.write_bytes(b"package")
+            for status, expected_posts in ((500, 2), (502, 2), (503, 2), (504, 2),
+                                           (429, 1), (422, 1)):
+                with self.subTest(status=status):
+                    gh = rc.GitHub(REPO)
+                    responses = [http_response(status)]
+                    if expected_posts == 2:
+                        responses.append(http_response(422))
+                    with (
+                        patch.object(rc, "run_process", side_effect=responses) as post,
+                        patch.object(gh, "pages", return_value=[]),
+                        self.assertRaises(rc.GitHubError),
+                    ):
+                        gh.upload(RC_TAG, asset, release_id=42)
+                    self.assertEqual(post.call_count, expected_posts)
+
+    def test_upload_timeout_or_transport_absence_never_replays_post(self):
+        with tempfile.TemporaryDirectory(prefix="release-versioned-") as temp:
+            asset = Path(temp) / "package.tar.gz"
+            asset.write_bytes(b"package")
+            failures = (
+                subprocess.TimeoutExpired(["gh", "api"], 900),
+                subprocess.CompletedProcess(
+                    [], 1, b"", b"gh: connection reset by peer",
+                ),
+            )
+            for failure in failures:
+                with self.subTest(failure=type(failure).__name__):
+                    gh = rc.GitHub(REPO)
+                    with (
+                        patch.object(
+                            rc, "run_process",
+                            side_effect=failure if isinstance(failure, BaseException) else None,
+                            return_value=None if isinstance(failure, BaseException) else failure,
+                        ) as post,
+                        patch.object(gh, "pages", return_value=[]) as inventory,
+                        self.assertRaises(rc.GitHubError) as error,
+                    ):
+                        gh.upload(RC_TAG, asset, release_id=42)
+                    post.assert_called_once()
+                    inventory.assert_called_once_with("releases/42/assets")
+                    self.assertIn("reconciliation=absent", str(error.exception))
+
+    def test_upload_conflicting_existing_asset_stops_without_retry(self):
+        with tempfile.TemporaryDirectory(prefix="release-versioned-") as temp:
+            asset = Path(temp) / "package.tar.gz"
+            asset.write_bytes(b"package")
+            entry = {
+                "id": 91, "name": asset.name, "state": "uploaded", "size": 7,
+                "digest": "sha256:" + "0" * 64,
+            }
+            gh = rc.GitHub(REPO)
+            with (
+                patch.object(rc, "run_process", return_value=http_response(422)) as post,
+                patch.object(gh, "pages", return_value=[entry]) as inventory,
+                self.assertRaisesRegex(rc.GitHubError, "reconciliation=failed"),
+            ):
+                gh.upload(RC_TAG, asset, release_id=42)
+            post.assert_called_once()
+            inventory.assert_called_once_with("releases/42/assets")
+
+    def test_upload_rejects_casefold_name_collision(self):
+        with tempfile.TemporaryDirectory(prefix="release-versioned-") as temp:
+            asset = Path(temp) / "Package.tar.gz"
+            asset.write_bytes(b"package")
+            gh = rc.GitHub(REPO)
+            with (
+                patch.object(rc, "run_process", return_value=http_response(502)) as post,
+                patch.object(gh, "pages", return_value=[{
+                    "id": 91, "name": "package.tar.gz", "state": "uploaded", "size": 7,
+                }]),
+                self.assertRaises(rc.GitHubError),
+            ):
+                gh.upload(RC_TAG, asset, release_id=42)
+            post.assert_called_once()
+
+    def test_upload_malformed_inventory_fails_closed_without_retry(self):
+        with tempfile.TemporaryDirectory(prefix="release-versioned-") as temp:
+            asset = Path(temp) / "package.tar.gz"
+            asset.write_bytes(b"package")
+            malformed = [
+                [{"id": 91, "name": asset.name, "state": "uploaded", "size": 7,
+                  "digest": "sha256:invalid"}],
+                [{"id": 91, "name": asset.name, "state": "starter", "size": 7}],
+                [{"id": 91, "name": asset.name, "state": "uploaded", "size": 8}],
+                [{"id": 91, "name": asset.name, "state": "uploaded", "size": True}],
+                [{"id": 91, "name": "other.tar.gz", "state": "uploaded", "size": True}],
+                [{"id": 91, "name": "other.tar.gz", "state": "unknown", "size": 7}],
+                [{"id": 91, "name": "other.tar.gz", "state": "uploaded", "size": 7,
+                  "digest": "sha256:bad"}],
+                [{"id": 91, "name": asset.name, "state": "uploaded", "size": 7},
+                 {"id": 91, "name": "other.tar.gz", "state": "uploaded", "size": 7}],
+                [{"id": 91, "name": asset.name, "state": "uploaded", "size": 7},
+                 {"id": 92, "name": asset.name, "state": "uploaded", "size": 7}],
+            ]
+            for inventory_items in malformed:
+                with self.subTest(inventory=inventory_items):
+                    gh = rc.GitHub(REPO)
+                    with (
+                        patch.object(rc, "run_process", return_value=http_response(502)) as post,
+                        patch.object(gh, "pages", return_value=inventory_items),
+                        self.assertRaises(rc.GitHubError),
+                    ):
+                        gh.upload(RC_TAG, asset, release_id=42)
+                    post.assert_called_once()
+
+    def test_digestless_inventory_download_is_bound_to_captured_identity(self):
+        with tempfile.TemporaryDirectory(prefix="release-versioned-") as temp:
+            asset = Path(temp) / "package.tar.gz"
+            asset.write_bytes(b"package")
+            expected = {
+                "size": 7,
+                "sha256": rc.hashlib.sha256(b"package").hexdigest(),
+            }
+            item = {"id": 91, "name": asset.name, "state": "uploaded", "size": 7}
+
+            def mutate_during_download(_gh, _asset_id, _destination, *, expected, budget):
+                self.assertEqual(expected, {
+                    "size": 7,
+                    "sha256": rc.hashlib.sha256(b"package").hexdigest(),
+                })
+                asset.write_bytes(b"changed")
+                return expected
+
+            gh = rc.GitHub(REPO)
+            with (
+                patch.object(rc, "download_asset", side_effect=mutate_during_download),
+            ):
+                with self.assertRaisesRegex(rc.ReleaseError, "changed during upload readback"):
+                    rc.verify_uploaded_asset(
+                        gh, item, asset, budget=rc.DownloadBudget(21), expected=expected,
+                    )
+
+    def test_reconciliation_local_io_error_is_redacted_and_never_retries(self):
+        with tempfile.TemporaryDirectory(prefix="release-versioned-") as temp:
+            asset = Path(temp) / "package.tar.gz"
+            asset.write_bytes(b"package")
+            gh = rc.GitHub(REPO)
+
+            def remove_during_inventory(_endpoint):
+                asset.unlink()
+                return []
+
+            with (
+                patch.object(rc, "run_process", return_value=http_response(503)) as post,
+                patch.object(gh, "pages", side_effect=remove_during_inventory),
+                self.assertRaisesRegex(
+                    rc.GitHubError,
+                    "outcome=http-503; reconciliation=failed; draft remains unpublished",
+                ) as error,
+            ):
+                gh.upload(RC_TAG, asset, release_id=42)
+            post.assert_called_once()
+            self.assertNotIn(temp, str(error.exception))
+
+    def test_staged_file_change_between_attempts_blocks_second_post(self):
+        with tempfile.TemporaryDirectory(prefix="release-versioned-") as temp:
+            asset = Path(temp) / "package.tar.gz"
+            asset.write_bytes(b"package")
+            gh = rc.GitHub(REPO)
+            def absent_then_mutate(_endpoint):
+                asset.write_bytes(b"changed")
+                return []
+            with (
+                patch.object(rc, "run_process", return_value=http_response(503)) as post,
+                patch.object(gh, "pages", side_effect=absent_then_mutate),
+                self.assertRaisesRegex(rc.GitHubError, "reconciliation=failed"),
+            ):
+                gh.upload(RC_TAG, asset, release_id=42)
+            post.assert_called_once()
+
+    def test_upload_failure_reports_bounded_status_attempt_and_reconciliation(self):
+        with tempfile.TemporaryDirectory(prefix="release-versioned-") as temp:
+            asset = Path(temp) / "package.tar.gz"
+            asset.write_bytes(b"package")
+            gh = rc.GitHub(REPO)
+            with (
+                patch.object(rc, "run_process", side_effect=[
+                    http_response(502), http_response(503),
+                ]) as post,
+                patch.object(gh, "pages", return_value=[]),
+                self.assertRaises(rc.GitHubError) as caught,
+            ):
+                gh.upload(RC_TAG, asset, release_id=42)
+            self.assertEqual(post.call_count, 2)
+            message = str(caught.exception)
+            self.assertIn("attempt 2", message)
+            self.assertIn("outcome=http-503", message)
+            self.assertIn("reconciliation=absent", message)
+            self.assertNotIn("response body", message)
+
+    def test_upload_reconciliation_error_is_redacted_and_never_retried(self):
+        with tempfile.TemporaryDirectory(prefix="release-versioned-") as temp:
+            asset = Path(temp) / "package.tar.gz"
+            asset.write_bytes(b"package")
+            gh = rc.GitHub(REPO)
+            with (
+                patch.object(rc, "run_process", return_value=http_response(502)) as post,
+                patch.object(gh, "pages", side_effect=rc.GitHubError(
+                    "private response and signed URL"
+                )),
+                self.assertRaises(rc.GitHubError) as caught,
+            ):
+                gh.upload(RC_TAG, asset, release_id=42)
+            post.assert_called_once()
+            message = str(caught.exception)
+            self.assertIn("outcome=http-502", message)
+            self.assertIn("reconciliation=failed", message)
+            self.assertNotIn("private", message)
+            self.assertNotIn("signed URL", message)
+
+    def test_upload_without_api_digest_verifies_asset_bytes_before_accepting(self):
+        with tempfile.TemporaryDirectory(prefix="release-versioned-") as temp:
+            asset = Path(temp) / "package.tar.gz"
+            asset.write_bytes(b"package")
+            entry = {"id": 91, "name": asset.name, "state": "uploaded", "size": 7}
+            gh = rc.GitHub(REPO)
+            def stream_exact(_path, output):
+                output.write(b"package")
+            with (
+                patch.object(rc, "run_process", return_value=http_response(503)) as post,
+                patch.object(gh, "pages", return_value=[entry]),
+                patch.object(gh, "download_asset", side_effect=stream_exact) as download,
+            ):
+                gh.upload(RC_TAG, asset, release_id=42)
+            post.assert_called_once()
+            download.assert_called_once_with("releases/assets/91", unittest.mock.ANY)
 
     def test_canonical_numeric_fields_remain_ascii(self):
         """Reject Unicode digits after adopting concise regexes with ASCII flags."""
@@ -2157,7 +3502,7 @@ class OfflineValidationTests(unittest.TestCase):
                 data = b"release asset"
             return http_response(stdout=data)
 
-        with patch.object(rc.subprocess, "run", side_effect=service):
+        with patch.object(rc, "run_process", side_effect=service):
             self.assertEqual(gh.binary("actions/artifacts/40/zip"), b"zip archive")
             self.assertEqual(gh.binary("releases/assets/21"), b"release asset")
             with self.assertRaises(rc.ReleaseError):
@@ -2276,12 +3621,14 @@ class OfflineValidationTests(unittest.TestCase):
         """Pagination keeps gate on later pages."""
         gh = rc.GitHub(REPO)
         with patch.object(
-            rc.subprocess,
-            "run",
+            rc, "run_process",
             return_value=subprocess.CompletedProcess(
                 [],
                 0,
-                http_response(stdout=b'{"jobs":[{"name":"build"}]}').stdout
+                http_response(
+                    stdout=b'{"jobs":[{"name":"build"}]}',
+                    link=b'<https://api.github.com/repos/example/project/actions/runs/17/attempts/1/jobs?per_page=20&page=2>; rel=next',
+                ).stdout
                 + b"\n"
                 + http_response(stdout=b'{"jobs":[{"name":"Release gate"}]}').stdout,
             ),
@@ -2376,6 +3723,7 @@ class ExecutingRunStatusTests(unittest.TestCase):
         for call in pages.call_args_list:
             self.assertEqual(call.args, ("actions/runs/99/attempts/1/jobs", "jobs"))
         self.assertEqual(self.gh.writes, [])
+
 
     def test_run_and_gate_propagation_share_one_deadline(self):
         """Becoming active must not restart the five-minute publication wait."""
@@ -2484,9 +3832,9 @@ class ExecutingRunStatusTests(unittest.TestCase):
             with (
                 self.subTest(snapshot=snapshot),
                 patch.object(self.gh, "pages", return_value=snapshot),
-                self.assertRaises(rc.ReleaseError),
             ):
-                rc.validate_run(self.gh, run(), self.gh.info, SHA, 1, completed=True)
+                with self.assertRaises(rc.ReleaseError):
+                    rc.validate_run(self.gh, run(), self.gh.info, SHA, 1, completed=True)
         self.sleep.assert_not_called()
 
     def test_duplicate_gate_on_later_page_is_not_a_propagation_delay(self):
@@ -2824,7 +4172,7 @@ class SupersededCandidateTests(unittest.TestCase):
             f"?branch=main&event=push&head_sha={self.head}&per_page=100"
         )
         result = http_response(stdout=b'{"total_count":0,"workflow_runs":[]}')
-        with patch.object(rc.subprocess, "run", return_value=result) as command:
+        with patch.object(rc, "run_process", return_value=result) as command:
             client.api(path)
             self.assertEqual(command.call_args.args[0][-1], f"repos/{REPO}/{path}")
         for invalid in (
@@ -2966,9 +4314,11 @@ class CurrentAttemptFreshnessTests(unittest.TestCase):
 
     def test_fresh_attempt_uses_the_real_allowlisted_transport(self):
         """Exercise API shape validation as well as the execution-time guard."""
+        resolved_gh = "/reviewed/bin/gh"
         with (
             patch.dict(os.environ, {"RELEASE_REQUIRE_WORKFLOW_SCOPE": ""}),
-            patch.object(rc.subprocess, "run", return_value=http_response(
+            patch.object(rc, "resolve_executable", return_value=resolved_gh),
+            patch.object(rc, "run_process", return_value=http_response(
                 0, rc.json_bytes(self.detail)
             )) as command,
         ):
@@ -2976,7 +4326,7 @@ class CurrentAttemptFreshnessTests(unittest.TestCase):
             rc.require_current_attempt_jobs(gh, 123, SHA, 2, [self.job])
         command.assert_called_once()
         self.assertEqual(command.call_args.args[0], [
-            "gh", "api", "--hostname", "github.com", "--include", "--method", "GET",
+            resolved_gh, "api", "--hostname", "github.com", "--include", "--method", "GET",
             "--", f"repos/{REPO}/actions/runs/123/attempts/2",
         ])
         self.assertEqual(command.call_args.kwargs["timeout"], 30)
@@ -2994,8 +4344,108 @@ class CurrentAttemptFreshnessTests(unittest.TestCase):
         with self.assertRaisesRegex(rc.ReleaseError, 'predates'):
             self.check()
 
+    def recorded_job(self, **changes):
+        """The attempt-1 record Actions copies unchanged into the next attempt."""
+        recorded = {'name': 'checks / CI gate', 'head_sha': SHA, 'run_attempt': 1,
+                    'status': 'completed', 'conclusion': 'success',
+                    'started_at': '2026-11-03T01:01:00Z',
+                    'completed_at': '2026-11-03T01:05:00Z',
+                    'steps': [{'name': 'Check', 'status': 'completed', 'conclusion': 'success',
+                               'started_at': '2026-11-03T01:02:00Z',
+                               'completed_at': '2026-11-03T01:04:00Z'}]}
+        recorded.update(changes)
+        return recorded
+
+    def test_failed_only_rerun_accepts_the_execution_it_reports_unchanged(self):
+        recorded = self.recorded_job()
+        self.job.update(started_at=recorded['started_at'], completed_at=recorded['completed_at'],
+                        steps=deepcopy(recorded['steps']))
+        self.gh.pages.return_value = [recorded]
+        self.check()
+        self.gh.pages.assert_called_once_with('actions/runs/123/attempts/1/jobs', 'jobs')
+
+    def test_copied_success_accepts_a_record_without_attempt_number(self):
+        recorded = self.recorded_job()
+        del recorded['run_attempt']
+        self.job.update(started_at=recorded['started_at'], completed_at=recorded['completed_at'],
+                        steps=deepcopy(recorded['steps']))
+        self.gh.pages.return_value = [recorded]
+        self.check()
+
+    def test_copied_success_keeps_its_own_setup_timestamp_skew(self):
+        recorded = self.recorded_job(steps=[
+            {'name': 'Set up job', 'number': 1, 'status': 'completed', 'conclusion': 'success',
+             'started_at': '2026-11-03T01:00:59Z', 'completed_at': '2026-11-03T01:01:00Z'},
+            {'name': 'Check', 'number': 2, 'status': 'completed', 'conclusion': 'success',
+             'started_at': '2026-11-03T01:02:00Z', 'completed_at': '2026-11-03T01:04:00Z'}])
+        self.job.update(started_at=recorded['started_at'], completed_at=recorded['completed_at'],
+                        steps=deepcopy(recorded['steps']))
+        self.gh.pages.return_value = [recorded]
+        self.check()
+
+    def test_copied_success_must_match_its_recorded_steps_exactly(self):
+        recorded = self.recorded_job()
+        self.job.update(started_at=recorded['started_at'], completed_at=recorded['completed_at'],
+                        steps=[{**recorded['steps'][0], 'name': 'Run checks'}])
+        self.gh.pages.return_value = [recorded]
+        with self.assertRaisesRegex(rc.ReleaseError, 'predates'):
+            self.check()
+
+    def test_unrecorded_earlier_success_and_foreign_attempts_are_not_accepted(self):
+        recorded = self.recorded_job()
+        self.job.update(started_at=recorded['started_at'], completed_at=recorded['completed_at'],
+                        steps=deepcopy(recorded['steps']))
+        for reported in ([], [self.recorded_job(run_attempt=2)],
+                         [self.recorded_job(head_sha='b' * 40)],
+                         [self.recorded_job(conclusion='failure')], 'not a list'):
+            with self.subTest(reported=reported):
+                self.gh.pages.return_value = reported
+                with self.assertRaisesRegex(rc.ReleaseError, 'predates'):
+                    self.check()
+
     def test_old_steps_cannot_hide_under_new_job_timestamps(self):
         self.job['steps'][0].update(started_at='2026-11-03T01:01:00Z', completed_at='2026-11-03T01:05:00Z')
+        with self.assertRaisesRegex(rc.ReleaseError, 'outside'):
+            self.check()
+
+    def setup_boundary_fixture(self):
+        """Reproduce the runner setup timestamps observed in a completed job."""
+        self.detail['run_started_at'] = '2026-11-08T17:30:00Z'
+        self.job.update(started_at='2026-11-08T18:46:21Z', completed_at='2026-11-08T18:47:27Z')
+        self.job['steps'] = [{'name': 'Set up job', 'number': 1, 'status': 'completed',
+                             'conclusion': 'success', 'started_at': '2026-11-08T18:46:20Z',
+                             'completed_at': '2026-11-08T18:46:21Z'}]
+
+    def test_first_setup_step_may_cross_exact_one_second_job_boundary(self):
+        self.setup_boundary_fixture()
+        self.check()
+
+    def test_setup_boundary_exception_cannot_admit_other_steps_or_intervals(self):
+        for change in ({'started_at': '2026-11-08T18:46:19Z'},
+                       {'completed_at': '2026-11-08T18:46:20.500Z'},
+                       {'name': 'Run checks'},
+                       {'number': 2}, {'number': True}, {'number': '1'},
+                       {'completed_at': '2026-11-08T18:46:20Z'},
+                       {'completed_at': '2026-11-08T18:47:28Z'}, {'status': 'in_progress'}):
+            with self.subTest(change=change):
+                self.setup_boundary_fixture()
+                self.job['steps'][0].update(change)
+                with self.assertRaises(rc.ReleaseError):
+                    self.check()
+        self.setup_boundary_fixture()
+        self.job['steps'].insert(0, {'conclusion': 'skipped'})
+        with self.assertRaisesRegex(rc.ReleaseError, 'outside'):
+            self.check()
+
+    def test_setup_boundary_never_crosses_the_attempt_start(self):
+        self.setup_boundary_fixture()
+        self.detail['run_started_at'] = '2026-11-08T18:46:21Z'
+        with self.assertRaisesRegex(rc.ReleaseError, 'outside'):
+            self.check()
+
+    def test_regular_step_still_requires_exact_job_interval(self):
+        self.setup_boundary_fixture()
+        self.job['steps'].append({**self.job['steps'][0], 'name': 'Check', 'number': 2})
         with self.assertRaisesRegex(rc.ReleaseError, 'outside'):
             self.check()
 
@@ -3021,6 +4471,10 @@ class CurrentAttemptFreshnessTests(unittest.TestCase):
         self.job['steps'] = [{'status': 'completed', 'conclusion': 'skipped'}]
         with self.assertRaisesRegex(rc.ReleaseError, "lacks successful execution steps"):
             self.check()
+
+    def test_attempt_jobs_endpoint_allows_omitted_optional_run_attempt(self):
+        self.job.pop("run_attempt")
+        self.check([self.job])
 
     def test_wrong_successful_job_identity_is_rejected(self):
         for key, value in [('head_sha', 'b' * 40), ('run_attempt', 1), ('head_sha', None)]:
@@ -3049,6 +4503,540 @@ class CurrentAttemptFreshnessTests(unittest.TestCase):
                         {'steps': [{'conclusion': 'success', 'status': 'queued'}]}, {'steps': [None]}]:
             with self.subTest(changes=changes), self.assertRaises(rc.ReleaseError):
                 self.check([self.job | changes])
+
+
+
+
+class CheckRunExecutionTests(unittest.TestCase):
+    """Official check-run identity can resolve stale aggregate status offline."""
+
+    setUp = ExecutingRunStatusTests.setUp
+    advance = ExecutingRunStatusTests.advance
+
+    def execution(self):
+        """Return synthetic same-attempt observations with deliberately distinct IDs."""
+        current = {**run(99, False), "status": "queued",
+                   "run_started_at": "2026-01-01T00:00:00Z"}
+        job = {"id": 700, "run_id": 99, "run_attempt": 1, "head_sha": SHA,
+               "check_run_url": f"https://api.github.com/repos/{REPO}/check-runs/800",
+               "runner_id": 900, "runner_name": "runner-example", "name": "Display (matrix)",
+               "status": "in_progress", "conclusion": None, "completed_at": None,
+               "started_at": "2026-01-01T00:00:01Z", "steps": [
+                   {"number": 1, "status": "in_progress", "conclusion": None,
+                    "started_at": "2026-01-01T00:00:02Z", "completed_at": None}]}
+        self.enterContext(patch.dict(os.environ, {
+            "RELEASE_EXECUTION_CHECK_RUN_ID": "800", "RUNNER_NAME": "runner-example",
+            "GITHUB_JOB": "logical-job-id",}))
+        return current, job
+
+    def wait(self, proof=None, gate=False):
+        """Use the real execution guards and a synthetic API only."""
+        return rc.wait_for_executing_run(
+            self.gh, 99, "stable", self.gh.info, SHA, 1, gate=gate, execution_proof=proof)
+
+    def test_stale_run_returns_raw_status_and_separate_proof(self):
+        current, job = self.execution()
+        proof = []
+        with patch.object(self.gh, "api", return_value=current), \
+                patch.object(self.gh, "pages", return_value=[job]):
+            observed = self.wait(proof)
+        self.assertEqual(observed, current)
+        self.assertEqual(observed["status"], "queued")
+        self.assertEqual(proof, [rc.ExecutionJobProof(700, 800, 900, "runner-example")])
+        self.assertNotIn("_execution_job_id", observed)
+        self.assertEqual(self.gh.writes, [])
+
+    def test_exact_attempt_jobs_endpoint_allows_optional_attempt_field_omission(self):
+        current, job = self.execution()
+        job.pop("run_attempt")
+        with patch.object(self.gh, "pages", return_value=[job]):
+            proof = rc.current_execution_job(self.gh, current, 800)
+        self.assertEqual(proof, rc.ExecutionJobProof(700, 800, 900, "runner-example"))
+
+    def test_successful_gate_rejects_publisher_proof_if_job_is_now_terminal(self):
+        current, publisher = self.execution()
+        publisher.update(status="completed", conclusion="success",
+                         completed_at="2026-01-01T00:01:00Z")
+        gate = {"id": 701, "run_id": 99, "head_sha": SHA,
+                "name": "Release gate", "status": "completed", "conclusion": "success"}
+        proof = rc.ExecutionJobProof(700, 800, 900, "runner-example")
+        with patch.object(self.gh, "api", return_value=current), \
+                patch.object(self.gh, "pages", return_value=[gate, publisher]), \
+                self.assertRaisesRegex(rc.ReleaseError, "not executing"):
+            rc.release_gate_ready(
+                self.gh, 99, SHA, 1,
+                publisher_proof=proof,
+                publisher_run=current,
+            )
+
+    def test_successful_gate_accepts_current_publisher_proof_and_omitted_attempt(self):
+        current, publisher = self.execution()
+        publisher.pop("run_attempt")
+        gate = {"id": 701, "run_id": 99, "head_sha": SHA,
+                "name": "Release gate", "status": "completed", "conclusion": "success"}
+        with patch.object(self.gh, "api", return_value=current), \
+                patch.object(self.gh, "pages", return_value=[gate, publisher]):
+            self.assertTrue(rc.release_gate_ready(
+                self.gh, 99, SHA, 1,
+                publisher_proof=rc.ExecutionJobProof(700, 800, 900, "runner-example"),
+                publisher_run=current,
+            ))
+
+    def test_live_publisher_rejects_terminal_exact_attempt_despite_stale_active_snapshot(self):
+        """Fresh attempt metadata wins over a previously active publisher snapshot."""
+        current, publisher = self.execution()
+        current["run_attempt"] = 2
+        current["status"] = "in_progress"
+        current["run_started_at"] = "2026-01-01T00:00:00Z"
+        current["event"] = "workflow_dispatch"
+        publisher.update(run_attempt=2)
+        gate = {"id": 701, "run_id": 99, "run_attempt": 2, "head_sha": SHA,
+                "name": "Release gate", "status": "completed", "conclusion": "success"}
+        terminal = {
+            "id": 99, "run_attempt": 2, "head_sha": SHA,
+            "path": rc.WORKFLOW, "event": "workflow_dispatch",
+            "status": "completed", "conclusion": "cancelled",
+            "run_started_at": "2026-01-01T00:00:00Z",
+        }
+        with patch.object(self.gh, "api", return_value=terminal), \
+                patch.object(self.gh, "pages", return_value=[gate, publisher]), \
+                self.assertRaisesRegex(rc.ReleaseError, "not active"):
+            rc.release_gate_ready(
+                self.gh, 99, SHA, 2,
+                publisher_proof=rc.ExecutionJobProof(700, 800, 900, "runner-example"),
+                publisher_run=current,
+            )
+
+    def test_successful_gate_waits_for_pending_publisher_steps_when_allowed(self):
+        current, publisher = self.pending_step_job()
+        gate = {"id": 701, "run_id": 99, "head_sha": SHA,
+                "name": "Release gate", "status": "completed", "conclusion": "success"}
+        proof = rc.ExecutionJobProof(700, 800, 900, "runner-example")
+        with patch.object(self.gh, "api", return_value=current), \
+                patch.object(self.gh, "pages", return_value=[gate, publisher]):
+            self.assertFalse(rc.release_gate_ready(
+                self.gh, 99, SHA, 1, allow_pending=True,
+                publisher_proof=proof, publisher_run=current,
+            ))
+
+        with patch.object(self.gh, "api", return_value=current), \
+                patch.object(self.gh, "pages", return_value=[gate, publisher]), \
+                self.assertRaisesRegex(rc.ReleaseError, "Exactly one executing step"):
+            rc.release_gate_ready(
+                self.gh, 99, SHA, 1,
+                publisher_proof=proof, publisher_run=current,
+            )
+
+    def test_attempt_in_progress_is_used_without_rewriting_aggregate(self):
+        current, _ = self.execution()
+        active = {**current, "status": "in_progress"}
+        with patch.object(self.gh, "api", side_effect=[current, active]), \
+                patch.object(self.gh, "pages") as jobs:
+            observed = self.wait()
+        self.assertIs(observed, active)
+        self.assertEqual(current["status"], "queued")
+        jobs.assert_not_called()
+
+    def test_normal_active_admission_captures_proof_for_later_readback(self):
+        current, job = self.execution()
+        current["status"] = "in_progress"
+        proof = []
+        with patch.object(self.gh, "api", return_value=current), \
+                patch.object(self.gh, "pages", side_effect=[[], [job]]):
+            self.wait(proof)
+        self.assertEqual(proof[0].job_id, 700)
+        self.assertEqual(self.now, 2)
+
+    def test_missing_and_consistent_pending_job_wait_without_authorizing(self):
+        current, job = self.execution()
+        pending = {**job, "status": "queued", "runner_id": 0, "runner_name": ""}
+        proof = []
+        with patch.object(self.gh, "api", return_value=current), \
+                patch.object(self.gh, "pages", side_effect=[[], [pending], [job]]):
+            self.wait(proof)
+        self.assertEqual(self.now, 4)
+        self.assertEqual(len(proof), 1)
+
+    def test_current_job_does_not_replace_the_required_gate(self):
+        current, job = self.execution()
+        with patch.object(self.gh, "api", return_value=current), \
+                patch.object(self.gh, "pages", return_value=[job]), \
+                patch.object(rc, "release_gate_ready", return_value=False), \
+                self.assertRaisesRegex(rc.ReleaseError, "within 300 seconds"):
+            self.wait([], gate=True)
+        self.assertEqual(self.now, 300)
+
+    def test_attempt_terminal_or_identity_conflict_stops_before_jobs(self):
+        current, _ = self.execution()
+        for change in ({"status": "completed"}, {"conclusion": "cancelled"},
+                       {"run_attempt": 2}, {"head_sha": "b" * 40},
+                       {"repository": {"full_name": "other/repository"}}):
+            with self.subTest(change=change), \
+                    patch.object(self.gh, "api", side_effect=[current, {**current, **change}]), \
+                    patch.object(self.gh, "pages") as jobs, \
+                    self.assertRaises(rc.ReleaseError):
+                self.wait([])
+            jobs.assert_not_called()
+
+    def test_late_attempt_or_jobs_cannot_extend_the_same_deadline(self):
+        current, job = self.execution()
+        for late in ("attempt", "jobs"):
+            self.now = 0
+            def read(path):
+                if late == "attempt" and "/attempts/" in path:
+                    self.now = 301
+                return current
+            def pages(*_args):
+                self.now = 301
+                return [job]
+            with self.subTest(late=late), patch.object(self.gh, "api", side_effect=read), \
+                    patch.object(self.gh, "pages", side_effect=pages), \
+                    self.assertRaisesRegex(rc.ReleaseError, "within 300 seconds"):
+                self.wait([])
+
+    def test_hostile_job_identity_status_runner_and_timing_fail_closed(self):
+        current, job = self.execution()
+        changes = [{"id": True}, {"run_id": 100}, {"run_attempt": True},
+                   {"run_attempt": None},
+                   {"head_sha": "b" * 40}, {"runner_id": 0}, {"runner_name": "other"},
+                   {"check_run_url": "https://foreign.test/check-runs/800"},
+                   {"status": "completed"}, {"conclusion": "failure"},
+                   {"started_at": "2025-12-31T23:59:59Z"}, {"steps": []}]
+        for change in changes:
+            with self.subTest(change=change), self.assertRaises(rc.ReleaseError):
+                rc.require_executing_job({**job, **change}, current, REPO, 800)
+
+    def test_duplicate_id_or_check_identity_is_not_a_pending_job(self):
+        current, job = self.execution()
+        for jobs in ([job, job], [job, {**job, "id": 701}]):
+            with self.subTest(jobs=jobs), patch.object(self.gh, "pages", return_value=jobs), \
+                    self.assertRaises(rc.ReleaseError):
+                rc.current_execution_job(self.gh, current, 800)
+
+    def test_empty_context_keeps_strict_status_and_invalid_id_fails(self):
+        for context in ("", "0", "01", "-1", "1.0", "true"):
+            with self.subTest(context=context), patch.dict(os.environ, {
+                "RELEASE_EXECUTION_CHECK_RUN_ID": context,
+            }):
+                if context:
+                    with self.assertRaises(rc.ReleaseError):
+                        rc.execution_check_run_id()
+                else:
+                    self.assertIsNone(rc.execution_check_run_id())
+
+    def test_repository_case_is_compatible_but_other_url_components_are_strict(self):
+        current, job = self.execution()
+        self.assertEqual(rc.require_executing_job(job, current, REPO.upper(), 800).job_id, 700)
+        for url in (f"https://api.github.com/repos/{REPO}/check-runs/800?extra=1",
+                    f"https://api.github.com/repos/{REPO}/check-runs/800#fragment",
+                    f"https://api.github.com/repos/{REPO}/check-runs/800?",
+                    f"https://api.github.com/repos/{REPO}/check-runs/800#",
+                    f" https://api.github.com/repos/{REPO}/check-runs/800",
+                    f"https://api.github.com/repos/{REPO}/check-runs/800\n",
+                    f"https:\n//api.github.com/repos/{REPO}/check-runs/800",
+                    "https://api.github.com/repos/foreign/repo/check-runs/800",
+                    f"https://user@api.github.com/repos/{REPO}/check-runs/800"):
+            with self.subTest(url=url), self.assertRaises(rc.ReleaseError):
+                rc.require_executing_job({**job, "check_run_url": url}, current, REPO, 800)
+
+    def test_insecure_scheme_is_rejected_with_other_execution_identity_unchanged(self):
+        current, job = self.execution()
+        self.assertEqual(rc.require_executing_job(job, current, REPO, 800).job_id, 700)
+        accepted = urlsplit(job["check_run_url"])
+        # Mutate only the scheme of an otherwise accepted route, without sending it.
+        rejected = accepted._replace(scheme="http")
+        self.assertEqual(rejected.scheme, "http")
+        self.assertEqual(rejected._replace(scheme=accepted.scheme), accepted)
+        rejected_job = {**job, "check_run_url": rejected.geturl()}
+        with self.assertRaisesRegex(rc.ReleaseError, "Invalid execution check-run URL"):
+            rc.require_executing_job(rejected_job, current, REPO, 800)
+
+    def pending_step_job(self):
+        """Model step propagation while the exact current job already runs."""
+        current, job = self.execution()
+        job["steps"] = [
+            {"number": 1, "status": "completed", "conclusion": "success",
+             "started_at": "2026-01-01T00:00:01Z", "completed_at": "2026-01-01T00:00:02Z"},
+            {"number": 2, "status": "queued", "conclusion": None,
+             "started_at": None, "completed_at": None},
+        ]
+        return current, job
+
+    def test_valid_queued_steps_are_unresolved_and_not_an_execution_proof(self):
+        current, job = self.pending_step_job()
+        with patch.object(self.gh, "pages", return_value=[job]):
+            self.assertIsNone(rc.current_execution_job(self.gh, current, 800))
+
+    def test_first_setup_step_one_second_before_job_start_is_allowed_for_pending_job(self):
+        current, job = self.pending_step_job()
+        current["run_started_at"] = "2026-01-01T00:00:00Z"
+        job["started_at"] = "2026-01-01T00:00:01Z"
+        job["steps"][0].update(
+            name="Set up job", number=1,
+            started_at="2026-01-01T00:00:00Z", completed_at="2026-01-01T00:00:01Z",
+        )
+        with patch.object(self.gh, "pages", return_value=[job]):
+            self.assertIsNone(rc.current_execution_job(self.gh, current, 800))
+
+    def test_setup_step_offset_still_cannot_cross_attempt_or_exceed_one_second(self):
+        current, job = self.pending_step_job()
+        job["started_at"] = "2026-01-01T00:00:02Z"
+        job["steps"][0].update(
+            name="Set up job", number=1,
+            started_at="2026-01-01T00:00:00Z", completed_at="2026-01-01T00:00:01Z",
+        )
+        with patch.object(self.gh, "pages", return_value=[job]), \
+                self.assertRaisesRegex(rc.ReleaseError, "outside"):
+            rc.current_execution_job(self.gh, current, 800)
+        current["run_started_at"] = "2026-01-01T00:00:01Z"
+        job["started_at"] = "2026-01-01T00:00:01Z"
+        with patch.object(self.gh, "pages", return_value=[job]), \
+                self.assertRaisesRegex(rc.ReleaseError, "outside"):
+            rc.current_execution_job(self.gh, current, 800)
+
+    def test_step_becoming_active_uses_the_original_wait_budget(self):
+        current, pending = self.pending_step_job()
+        active = deepcopy(pending)
+        active["steps"][1].update(status="in_progress", started_at="2026-01-01T00:00:03Z")
+        proof = []
+        with patch.object(self.gh, "api", return_value=current), \
+                patch.object(self.gh, "pages", side_effect=[[pending], [active]]):
+            self.wait(proof)
+        self.assertEqual(self.now, 2)
+        self.assertEqual(proof, [rc.ExecutionJobProof(700, 800, 900, "runner-example")])
+
+    def test_never_visible_active_step_expires_without_a_proof(self):
+        current, job = self.pending_step_job()
+        proof = []
+        with patch.object(self.gh, "api", return_value=current), \
+                patch.object(self.gh, "pages", return_value=[job]), \
+                self.assertRaisesRegex(rc.ReleaseError, "within 300 seconds"):
+            self.wait(proof)
+        self.assertEqual(self.now, 300)
+        self.assertEqual(proof, [])
+
+    def test_direct_execution_validator_keeps_pending_steps_strict(self):
+        current, job = self.pending_step_job()
+        with self.assertRaisesRegex(rc.ReleaseError, "Exactly one executing step"):
+            rc.require_executing_job(job, current, REPO, 800)
+
+    def test_invalid_zero_active_steps_are_fatal_not_delayed(self):
+        current, job = self.pending_step_job()
+        completed, pending = job["steps"]
+        invalid = [[], [completed], [pending, pending],
+                   [{**pending, "status": "unknown"}],
+                   [{**pending, "started_at": "2026-01-01T00:00:03Z"}],
+                   [{**pending, "conclusion": "failure"}],
+                   [{**completed, "started_at": "2025-12-31T23:59:59Z"}, pending],
+                   [{**completed, "completed_at": "2999-01-01T00:00:00Z"}, pending],
+                   [{**completed, "conclusion": "failure"}, pending]]
+        for steps in invalid:
+            with self.subTest(steps=steps), patch.object(self.gh, "pages", return_value=[{**job, "steps": steps}]), \
+                    self.assertRaises(rc.ReleaseError):
+                rc.current_execution_job(self.gh, current, 800)
+
+    def test_waiting_steps_cannot_mask_wrong_job_source_or_runner(self):
+        current, job = self.pending_step_job()
+        for change in ({"head_sha": "b" * 40}, {"run_attempt": 2}, {"runner_name": "other"},
+                       {"runner_id": 0}, {"status": "completed"}):
+            with self.subTest(change=change), \
+                    patch.object(self.gh, "pages", return_value=[{**job, **change}]), \
+                    self.assertRaises(rc.ReleaseError):
+                rc.current_execution_job(self.gh, current, 800)
+
+
+class PublishBoundaryOrderingTests(unittest.TestCase):
+    def _publish_package(self, client, *, confirm_publish=None, confirm_final_publish=None):
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            (directory / "package.bin").write_bytes(b"package")
+            with (
+                patch.object(rc, "verify_required_signatures"),
+                patch.object(rc, "reject_restricted_assets"),
+                patch.object(rc, "ensure_absent"),
+                patch.object(rc, "check_workflow_publication"),
+                patch.object(rc, "verify_uploaded_asset"),
+            ):
+                rc._publish_prepared(
+                    client, "v1.2.3", SHA, directory, True, "notes",
+                    confirm_publish=confirm_publish,
+                    confirm_final_publish=confirm_final_publish,
+                )
+
+    def test_final_exact_publisher_read_after_tag_blocks_patch_if_terminal(self):
+        """A publisher ending during the final tag GET blocks the public PATCH."""
+        events = []
+        deadlines = []
+
+        class Client:
+            repo = REPO
+            tag_sha = SHA
+            tag_reads = 0
+            publisher_status = "in_progress"
+
+            def api(self, path, method="GET", body=None):
+                events.append((path, method))
+                if path == "git/refs" and method == "POST":
+                    return {"ref": "refs/tags/v1.2.3"}
+                if path == "releases" and method == "POST":
+                    return {"id": 20, "tag_name": "v1.2.3", "draft": True}
+                if path == "git/ref/tags/v1.2.3":
+                    self.tag_reads += 1
+                    if self.tag_reads == 1:
+                        self.publisher_status = "completed"
+                    deadlines.append(rc._API_READ_DEADLINE.get())
+                    return {"ref": "refs/tags/v1.2.3",
+                            "object": {"type": "commit", "sha": self.tag_sha}}
+                if path == "actions/runs/99/attempts/1":
+                    deadlines.append(rc._API_READ_DEADLINE.get())
+                    conclusion = None if self.publisher_status == "in_progress" else "cancelled"
+                    return {"id": 99, "run_attempt": 1, "head_sha": SHA,
+                            "path": rc.WORKFLOW, "event": "workflow_dispatch",
+                            "status": self.publisher_status, "conclusion": conclusion}
+                raise AssertionError(f"Unexpected API call {method} {path}")
+
+            def upload(self, *_args, **_kwargs):
+                events.append(("upload", "POST"))
+
+            def pages(self, path, *_args, **_kwargs):
+                events.append((path, "GET"))
+                return [{"name": "package.bin"}]
+
+        def confirm_publish():
+            events.append(("full-publisher-validation", "GET"))
+            client.pages("actions/runs/99/attempts/1/jobs")
+
+        def confirm_final_publish():
+            events.append(("confirm-publisher-attempt", "GET"))
+            current = client.api("actions/runs/99/attempts/1")
+            rc.require_active_attempt(current, current)
+
+        client = Client()
+        with self.assertRaisesRegex(rc.ReleaseError, "Execution attempt is not active"):
+            self._publish_package(
+                client, confirm_publish=confirm_publish,
+                confirm_final_publish=confirm_final_publish,
+            )
+
+        self.assertEqual(events[-5:], [
+            ("full-publisher-validation", "GET"),
+            ("actions/runs/99/attempts/1/jobs", "GET"),
+            ("git/ref/tags/v1.2.3", "GET"),
+            ("confirm-publisher-attempt", "GET"),
+            ("actions/runs/99/attempts/1", "GET"),
+        ])
+        self.assertEqual(len(deadlines), 2)
+        self.assertIsInstance(deadlines[0], float)
+        self.assertEqual(deadlines[0], deadlines[1])
+        self.assertFalse(any(event == ("releases/20", "PATCH") for event in events))
+
+    def test_full_publish_confirmation_precedes_final_tag_and_move_blocks_patch(self):
+        events = []
+
+        class Client:
+            repo = REPO
+            tag_sha = SHA
+
+            def api(self, path, method="GET", body=None):
+                events.append((path, method))
+                if path == "git/refs" and method == "POST":
+                    return {"ref": "refs/tags/v1.2.3"}
+                if path == "releases" and method == "POST":
+                    return {"id": 20, "tag_name": "v1.2.3", "draft": True}
+                if path == "git/ref/tags/v1.2.3":
+                    return {"ref": "refs/tags/v1.2.3", "object": {"type": "commit", "sha": self.tag_sha}}
+                if path == "releases/20" and method == "PATCH":
+                    return {"id": 20, "html_url": "https://example.invalid/release"}
+                raise AssertionError(f"Unexpected API call {method} {path}")
+
+            def upload(self, *_args, **_kwargs):
+                events.append(("upload", "POST"))
+
+            def pages(self, *_args, **_kwargs):
+                return [{"name": "package.bin"}]
+
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            (directory / "package.bin").write_bytes(b"package")
+
+            def confirm_publish():
+                events.append(("full-confirm", "READ"))
+                self.assertNotIn(("releases/20", "PATCH"), events)
+                # The tag can move while source/publisher checks are running;
+                # the tag read after this full callback must catch it.
+                client.tag_sha = "b" * 40
+
+            def confirm_final_publish():
+                events.append(("exact-attempt-confirm", "READ"))
+
+            client = Client()
+            with (
+                patch.object(rc, "verify_required_signatures"),
+                patch.object(rc, "reject_restricted_assets"),
+                patch.object(rc, "ensure_absent"),
+                patch.object(rc, "check_workflow_publication"),
+                patch.object(rc, "verify_uploaded_asset"),
+                self.assertRaisesRegex(rc.ReleaseError, "Tag moved before publication"),
+            ):
+                rc._publish_prepared(
+                    client, "v1.2.3", SHA, directory, True, "notes",
+                    confirm_publish=confirm_publish,
+                    confirm_final_publish=confirm_final_publish,
+                )
+        self.assertEqual(events[-2:], [
+            ("full-confirm", "READ"),
+            ("git/ref/tags/v1.2.3", "GET"),
+        ])
+        self.assertNotIn(("exact-attempt-confirm", "READ"), events)
+        self.assertNotIn(("releases/20", "PATCH"), events)
+
+    def test_tag_moved_during_final_publish_confirmation_blocks_patch(self):
+        """Recheck the release tag after final publisher/source reads."""
+        events = []
+
+        class Client:
+            repo = REPO
+            tag_sha = SHA
+            tag_reads = 0
+
+            def api(self, path, method="GET", body=None):
+                events.append((path, method))
+                if path == "git/refs" and method == "POST":
+                    return {"ref": "refs/tags/v1.2.3"}
+                if path == "releases" and method == "POST":
+                    return {"id": 20, "tag_name": "v1.2.3", "draft": True}
+                if path == "git/ref/tags/v1.2.3":
+                    self.tag_reads += 1
+                    return {"ref": "refs/tags/v1.2.3",
+                            "object": {"type": "commit", "sha": self.tag_sha}}
+                raise AssertionError(f"Unexpected API call {method} {path}")
+
+            def upload(self, *_args, **_kwargs):
+                events.append(("upload", "POST"))
+
+            def pages(self, path, *_args, **_kwargs):
+                events.append((path, "GET"))
+                return [{"name": "package.bin"}]
+
+        client = Client()
+
+        def confirm_final_publish():
+            events.append(("final-source-ref-read", "GET"))
+            # Simulate the tag moving during the final attempt/branch/source
+            # observations, after the first check in the bounded window.
+            self.assertEqual(client.tag_reads, 1)
+            client.tag_sha = "b" * 40
+
+        with self.assertRaisesRegex(rc.ReleaseError, "Tag moved before publication"):
+            self._publish_package(client, confirm_final_publish=confirm_final_publish)
+
+        self.assertEqual(client.tag_reads, 2)
+        self.assertEqual(events[-3:], [
+            ("git/ref/tags/v1.2.3", "GET"),
+            ("final-source-ref-read", "GET"),
+            ("git/ref/tags/v1.2.3", "GET"),
+        ])
+        self.assertNotIn(("releases/20", "PATCH"), events)
 
 
 if __name__ == "__main__":

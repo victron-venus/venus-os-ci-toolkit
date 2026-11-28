@@ -13,6 +13,11 @@ check the archive hash, and extract it into a new directory. The Python tools
 require Python 3.12 or newer. Create an environment and install the included
 generator and secret-adapter test dependencies before running the contracts:
 
+The release process supervisor has a narrower runtime matrix: Linux requires
+Python 3.12 or newer, while macOS requires Python 3.13 or newer because
+`waitid(WNOWAIT)` is unavailable on macOS Python 3.12. See the [verified GitHub
+CLI and supervisor profile](release-github-cli.md#qualified-github-cli-for-release-operations).
+
 ```sh
 cd venus-os-ci-toolkit
 python3.12 -m venv .venv

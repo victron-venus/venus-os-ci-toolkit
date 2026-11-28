@@ -350,5 +350,40 @@ class PublicResolutionTests(unittest.TestCase):
         self.assertEqual(list(self.output.parent.glob("closed-public-*")), [])
 
 
+
+class CompactPublicResolutionTests(unittest.TestCase):
+    setUp = PublicResolutionTests.setUp
+    resolve = PublicResolutionTests.resolve
+    promote = PublicResolutionTests.promote
+    promotion_archive = PublicResolutionTests.promotion_archive
+    def test_compact_context_keeps_stable_tag_rc_plan_and_promotion_binding(self):
+        record = self.promote()
+        candidate, raw, compact, _ = fixtures.compact_published_fixture(self.fixture)
+        with patch.dict(self.gh.runs[101], status="in_progress", conclusion=None):
+            recorded = closed.release_promotion.record(self.gh, self.gh.info, self.gh.runs[101],
+                                                       candidate["tag"], self.fixture.root / "compact-promotion.json")
+        self.assertEqual(recorded, record)
+        self.assertEqual(record["rc_manifest_sha256"], fixtures.rc.digest(raw))
+        context = self.resolve()
+        self.assertEqual(context["release_tag"], compact["tag"])
+        self.assertEqual(context["promotion"], record)
+        self.assertEqual(set(context["payloads"]), {item["name"] for item in compact["assets"]})
+        self.assertEqual(json.loads((self.output / "version-plan.json").read_bytes()), candidate["version_plan"])
+        self.assertEqual(self.gh.writes, [])
+
+    def test_compact_missing_promotion_or_rc_evidence_leaves_no_output(self):
+        self.promote()
+        fixtures.compact_published_fixture(self.fixture)
+        original = copy.deepcopy(self.gh)
+        for run in (100, 101):
+            self.gh = copy.deepcopy(original)
+            self.gh.evidence_by_run[run][0]["expired"] = True
+            with self.subTest(run=run), self.assertRaises((ValueError, fixtures.rc.ReleaseError)):
+                self.resolve()
+            self.assertFalse(self.output.exists())
+            self.assertEqual(list(self.output.parent.glob("closed-public-*")), [])
+            self.assertEqual(self.gh.writes, [])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -165,7 +165,7 @@ class GeneratorTest(unittest.TestCase):
                 cwd=root, capture_output=True, text=True, check=False, timeout=30,
             )
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            self.assertIn("Ran 17 tests", result.stderr)
+            self.assertIn("Ran 35 tests", result.stderr)
 
     def test_runner_preflight_is_vendored_without_rewriting_build_adapter(self):
         """Consumers get the helper/tests; owned packaging integration stays explicit."""
@@ -591,9 +591,23 @@ jobs:
         self.assertTrue(any(installer.CONTRACT_REQUIREMENTS in command for command in commands))
         self.assertFalse(any("requirements-github-lock.txt" in command for command in commands))
 
+    def test_toolkit_quality_runs_python_discovery_once_and_keeps_ruff(self):
+        files = installer.render(installer.ROOT)
+        quality = installer.yaml.load(files[".github/workflows/quality-gate.yml"], Loader=installer.WorkflowLoader)
+        adapter_path = ".github/workflows/contract-tests.yml"
+        adapter = installer.yaml.load((installer.ROOT / adapter_path).read_text(), Loader=installer.WorkflowLoader)
+        contracts = next(job for job in quality["jobs"].values() if job.get("uses") == f"./{adapter_path}")
+        release = quality["jobs"]["release-contracts"]
+        self.assertEqual(contracts["if"], release["if"])
+        self.assertIn("release-contracts", quality["jobs"]["gate"]["needs"])
+        lint = adapter["jobs"]["python-typecheck-contract"]
+        self.assertEqual(lint["name"], "Workflow contracts")
+        self.assertIn("python3 -m ruff check --config ruff.toml .", [step.get("run") for step in lint["steps"]])
+        suite = "unittest discover -s tests -p 'test_*.py'"
+        self.assertEqual(sum(suite in step.get("run", "") for job in (release, lint) for step in job["steps"]), 1)
+
     def test_exported_workflow_tests_run_without_the_generator(self):
         """A consumer's mandatory regression suite is self-contained after rendering."""
-        exported = ".github/workflow-tests/test_workflow_yaml_contracts.py"
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             shutil.copytree(installer.ROOT / ".github/workflows", root / ".github/workflows")
@@ -601,13 +615,31 @@ jobs:
             # The canonical toolkit is itself a fuzz-enabled release consumer.
             shutil.copyfile(installer.ROOT / ".github/fuzz.json", root / ".github/fuzz.json")
             files = installer.render(root)
-            for name in ("test_release_control.py", "test_version_plan.py", "test_versioned_release.py",
+            for name in ("test_release_control.py", "test_github_missing_status.py",
+                         "test_version_plan.py", "test_versioned_release.py",
                          "test_release_create.py"):
                 self.assertIn(".github/release-tests/" + name, tuple(files))
-            for name in ("scripts/workflow_contracts.py", exported):
-                path = root / name
-                path.parent.mkdir(parents=True, exist_ok=True)
-                path.write_text(files[name])
+            pagination_test = ".github/release-tests/test_github_missing_status.py"
+            rendered = subprocess.run(
+                [sys.executable, str(installer.ROOT / "scripts/install_release.py"),
+                 str(root)],
+                cwd=installer.ROOT,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=30,
+            )
+            self.assertEqual(rendered.returncode, 0, rendered.stdout + rendered.stderr)
+            self.assertEqual(
+                (root / pagination_test).read_bytes(),
+                files[pagination_test].encode("utf-8"),
+            )
+            self.assertEqual(
+                files[pagination_test],
+                installer.consumer_python(
+                    (installer.ROOT / "tests/test_github_http_transport.py").read_text()
+                ),
+            )
             run = subprocess.run(
                 [sys.executable, "-m", "unittest", "discover", "-s",
                  ".github/workflow-tests", "-p", "test_*.py", "-v"],
@@ -620,10 +652,49 @@ jobs:
             self.assertIn("test_docker_actions_require_full_content_digest", run.stderr)
             # Exercise the new transport tests with only the generated consumer
             # bundle on sys.path, including its adapted lifecycle dependencies.
-            for name, content in files.items():
-                target = root / name
-                target.parent.mkdir(parents=True, exist_ok=True)
-                target.write_text(content)
+            check = subprocess.run(
+                [sys.executable, str(installer.ROOT / "scripts/install_release.py"),
+                 str(root), "--check"],
+                cwd=installer.ROOT,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=30,
+            )
+            self.assertEqual(check.returncode, 0, check.stdout + check.stderr)
+            generated_pagination = root / pagination_test
+            original_bytes = generated_pagination.read_bytes()
+            crlf_bytes = original_bytes.replace(b"\n", b"\r\n")
+            self.assertNotEqual(original_bytes, crlf_bytes)
+            generated_pagination.write_bytes(crlf_bytes)
+            newline_checkout = subprocess.run(
+                [sys.executable, str(installer.ROOT / "scripts/install_release.py"),
+                 str(root), "--check"],
+                cwd=installer.ROOT,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=30,
+            )
+            self.assertEqual(
+                newline_checkout.returncode, 0,
+                newline_checkout.stdout + newline_checkout.stderr,
+            )
+            generated_pagination.write_bytes(original_bytes)
+            generated_pagination.write_text(
+                generated_pagination.read_text().replace("paged_wire", "page_wire", 1)
+            )
+            drift = subprocess.run(
+                [sys.executable, str(installer.ROOT / "scripts/install_release.py"),
+                 str(root), "--check"],
+                cwd=installer.ROOT,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=30,
+            )
+            self.assertNotEqual(drift.returncode, 0)
+            self.assertIn(pagination_test, drift.stderr)
             created = subprocess.run(
                 [sys.executable, "-B", "-m", "unittest", "discover", "-s",
                  ".github/release-tests", "-p", "test_release_create.py", "-v"],
@@ -671,6 +742,11 @@ jobs:
         self.assertEqual(jobs["final"]["environment"], "release")
         self.assertIn("build == 'true'", jobs["final"]["if"])
         self.assertIn("build == 'false'", jobs["stable"]["if"])
+        setup_python = next(
+            step for step in jobs["stable"]["steps"]
+            if step.get("uses", "").startswith("actions/setup-python@")
+        )
+        self.assertEqual(setup_python["with"]["python-version"], "3.13")
         self.assertNotIn("environment", jobs["candidate"])
         self.assertTrue(
             any(
@@ -691,6 +767,11 @@ jobs:
                 for step in workflow["jobs"]["stable"]["steps"]
             )
         )
+        setup_python = next(
+            step for step in workflow["jobs"]["stable"]["steps"]
+            if step.get("uses", "").startswith("actions/setup-python@")
+        )
+        self.assertEqual(setup_python["with"]["python-version"], "3.13")
         self.assertFalse(
             any(
                 "version_plan" in step.get("run", "")

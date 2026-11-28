@@ -1,0 +1,50 @@
+{
+  "name": "renovate",
+  "version": "44.215.0",
+  "license": "AGPL-3.0-only",
+  "upstream": "https://github.com/renovatebot/renovate",
+  "distribution": "https://registry.npmjs.org/renovate/44.215.0",
+  "source": "Exact unmodified files copied from previously installed npm renovate44.215.0; runtime patch independently checks exact hashes before any preload/API operation. Fixtures used only for isolated offline tests.",
+  "files": [
+    {
+      "path": "license",
+      "sha256": "8486a10c4393cee1c25392769ddd3b2d6c242d6ec7928e1414efff7dfb2f07ef",
+      "bytes": 34523
+    },
+    {
+      "path": "package.json.fixture",
+      "sha256": "9ba9b7f632051db3a9008b7f8cccda07d8c736e48e3d270fd132c45e9f763848",
+      "bytes": 12613,
+      "upstream_path": "package.json",
+      "reason": "Preserve upstream bytes without exposing a production npm dependency manifest; tests materialize only in disposable directory"
+    },
+    {
+      "path": "dist/logger/renovate-logger.js",
+      "sha256": "7de39b2044ba5b4515d7be467488c379d633f62cf1f06404798bb489b78d2e94",
+      "bytes": 3390
+    },
+    {
+      "path": "dist/workers/repository/update/branch/index.js",
+      "sha256": "3238fb0f87b7a32da4f54ba610f7b33f844241c50e7724a2e5a63c493949db1d",
+      "bytes": 22206
+    },
+    {
+      "path": "dist/workers/repository/update/branch/get-updated.js",
+      "sha256": "29f130e5c7d7cfe081b070870ed04c46a50cc30dcf18b99a26ee67c7551a00ec",
+      "bytes": 19846
+    },
+    {
+      "path": "dist/workers/repository/update/branch/commit.js",
+      "sha256": "c44b975f041d0258123aeabe42c6b359b01c3cc2e24905c5dbf751a4b391b3a8",
+      "bytes": 2440
+    }
+  ],
+  "copyright": "Upstream file contents and full license retained without changes; package.json retains upstream author/repository/license metadata.",
+  "installation_lock": {
+    "version": "44.215.0",
+    "resolved": "https://registry.npmjs.org/renovate/-/renovate-44.215.0.tgz",
+    "integrity": "sha512-Ctp7PBdBEYpg3U5gXngf2Mr/J5cwClttfcYXb4ooWiQStIDNkSpPNm7WeDaLsgAcmRiTSAYmHleCXFnnlitsEg==",
+    "license": "AGPL-3.0-only"
+  },
+  "registry_metadata_refresh": "Optional fresh metadata GET failed TLS handshake timeout; installed lock/package/file identities retained; no successful network verification claim"
+}

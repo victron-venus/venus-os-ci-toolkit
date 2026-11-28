@@ -1,6 +1,6 @@
 # Fail-closed Scorecard scanner
 
-Build with Go 1.27.3 and run with Git available on PATH:
+Build with Go 1.27.4 and run with Git available on PATH:
 
 ```sh
 go build -mod=readonly -o scorecard-scan .
@@ -40,6 +40,11 @@ wrong commit. Any scan error, missing check, invalid score or commit mismatch
 removes stale output and returns an error. SARIF is written atomically only after
 validation and formatting succeed. The scanner exits with an error after a 15-minute deadline even when an upstream
 rate-limit wait ignores context cancellation. A late scan result cannot write SARIF.
+
+OpenTelemetry SDK and trace dependencies are updated to `1.47.0` for
+[GHSA-q7gw-24fr-5p69](https://github.com/open-telemetry/opentelemetry-go/security/advisories/GHSA-q7gw-24fr-5p69).
+The regression test checks that valid replacement characters count toward a
+configured attribute length limit, together with ASCII and Unicode controls.
 
 Dependencies are locked by `go.mod` and `go.sum`. OSV Scanner is updated to 2.6.0
 to replace the obsolete whole Docker module with the maintained Moby client/API

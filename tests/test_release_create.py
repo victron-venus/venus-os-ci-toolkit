@@ -2,6 +2,7 @@
 
 import base64
 import copy
+import os
 # Only CompletedProcess/TimeoutExpired fixtures; every subprocess.run is mocked.
 import subprocess  # nosec B404
 import unittest
@@ -21,12 +22,14 @@ def wire(status, body):
 
 class CreateTransportTests(unittest.TestCase):
     def setUp(self):
+        self.enterContext(patch.dict(os.environ, {"RELEASE_REQUIRE_WORKFLOW_SCOPE": ""}))
+        self.enterContext(patch.object(rc, "resolve_executable", side_effect=lambda name: name))
         self.gh = rc.GitHub(REPO)
 
     def call(self, status, content=b'{}', code=0, stderr=b''):
         raw = wire(status, content) if status else content
         result = subprocess.CompletedProcess([], code, raw, stderr)
-        with patch.object(rc.subprocess, "run", return_value=result) as call:
+        with patch.object(rc, "run_process", return_value=result) as call:
             try:
                 return self.gh.create_release_once({"draft": True})
             finally:
@@ -61,10 +64,17 @@ class CreateTransportTests(unittest.TestCase):
             self.assertNotIsInstance(caught.exception, rc.AmbiguousCreate)
 
     def test_timeout_is_not_a_write_retry_and_denial_vetoes(self):
-        for diagnostic in (b'', b'permission denied'):
-            error = subprocess.TimeoutExpired(['gh'], 120, stderr=diagnostic)
+        cases = (
+            subprocess.TimeoutExpired(['gh'], 120, stderr=b''),
+            subprocess.TimeoutExpired(['gh'], 120, stderr=b'permission denied'),
+            rc.ProcessTimeout(120, b'', b''),
+            rc.ProcessTimeout(120, b'', b'permission denied'),
+        )
+        for error in cases:
+            diagnostic = error.stderr or b''
             expected = rc.GitHubError if diagnostic else rc.AmbiguousCreate
-            with patch.object(rc.subprocess, 'run', side_effect=error) as call:
+            with self.subTest(error=type(error).__name__, diagnostic=diagnostic), \
+                    patch.object(rc, 'run_process', side_effect=error) as call:
                 with self.assertRaises(expected) as caught:
                     self.gh.create_release_once({"draft": True})
                 call.assert_called_once()
@@ -75,12 +85,13 @@ class CreateTransportTests(unittest.TestCase):
 class ReadbackTests(unittest.TestCase):
     def setUp(self):
         self.reader = rc.CreateReadback(REPO)
+        self.enterContext(patch.object(rc, "resolve_executable", side_effect=lambda name: name))
 
     def test_fixed_get_and_remaining_budget(self):
         self.reader.deadline = 115
         response = subprocess.CompletedProcess([], 0, wire(200, b'{"id":42}'), b'')
         with (patch.object(rc.time, 'monotonic', side_effect=[100, 101]),
-              patch.object(rc.subprocess, 'run', return_value=response) as call):
+              patch.object(rc, 'run_process', return_value=response) as call):
             self.assertEqual(self.reader.json('releases/42'), {'id': 42})
         args, kwargs = call.call_args
         self.assertEqual(args[0][args[0].index('--method') + 1], 'GET')
@@ -89,6 +100,19 @@ class ReadbackTests(unittest.TestCase):
         self.assertEqual(self.reader.deadline, 115)
         call.assert_called_once()
 
+    def test_zero_budget_rejects_before_launch_and_output_limit_maps_to_release_error(self):
+        self.reader.remaining = 0
+        with patch.object(rc, "run_process") as run:
+            with self.assertRaisesRegex(rc.ReleaseError, "response limit"):
+                self.reader.json("releases/42")
+        run.assert_not_called()
+
+        self.reader.remaining = 100
+        with patch.object(rc, "run_process", side_effect=rc.ProcessOutputLimit("too large")) as run:
+            with self.assertRaisesRegex(rc.GitHubError, "response limit"):
+                self.reader.json("releases/42")
+        run.assert_called_once()
+
     def test_explicit_pagination_and_duplicate_refusal(self):
         header = f'Link: <https://api.github.com/repos/{REPO}/releases?per_page=100&page=2>; rel="next"\r\n'.encode()
         with patch.object(self.reader, 'get', side_effect=[([{'id': 1}], header), ([{'id': 2}], b'')]):
@@ -96,6 +120,35 @@ class ReadbackTests(unittest.TestCase):
         with patch.object(self.reader, 'get', side_effect=[([{'id': 1}], header), ([{'id': 1}], b'')]):
             with self.assertRaisesRegex(rc.ReleaseError, 'Duplicate'):
                 self.reader.pages('releases')
+
+    def test_named_pagination_accepts_canonical_case_and_reconstructs_routes(self):
+        repo = 'Example/Project'
+        for path in ('releases', 'releases/42/assets'):
+            with self.subTest(path=path):
+                header = (f'Link: <https://api.github.com/repos/example/project/{path}'
+                          '?per_page=100&page=2>; rel="next"\r\n').encode()
+                first = b'HTTP/2.0 200 OK\r\n' + header + b'\r\n[{"id":1}]'
+                responses = [subprocess.CompletedProcess([], 0, raw, b'')
+                             for raw in (first, wire(200, b'[{"id":2}]'))]
+                with patch.object(rc, 'run_process', side_effect=responses) as run:
+                    self.assertEqual(rc.CreateReadback(repo).pages(path), [{'id': 1}, {'id': 2}])
+                self.assertEqual([call.args[0][-1] for call in run.call_args_list], [
+                    f'repos/{repo}/{path}?per_page=100&page=1',
+                    f'repos/{repo}/{path}?per_page=100&page=2',
+                ])
+
+    def test_named_pagination_keeps_repository_and_route_boundaries_strict(self):
+        for path in ('/repos/example/other/releases', '/repos/ex%61mple/project/releases',
+                     '/Repos/example/project/releases', '/repos/example/project/Releases',
+                     '/repos/example/project/releases/42/assets'):
+            with self.subTest(path=path):
+                header = (f'Link: <https://api.github.com{path}'
+                          '?per_page=100&page=2>; rel="next"\r\n').encode()
+                reader = rc.CreateReadback('Example/Project')
+                with patch.object(reader, 'get', return_value=([{'id': 1}], header)) as get:
+                    with self.assertRaisesRegex(rc.ReleaseError, 'Unexpected create pagination path'):
+                        reader.pages('releases')
+                get.assert_called_once()
 
     def test_foreign_skipped_and_duplicate_next_links_fail(self):
         urls = [f'https://evil.test/repos/{REPO}/releases?per_page=100&page=2',
@@ -119,22 +172,22 @@ class ReadbackTests(unittest.TestCase):
 
     def test_one_clock_request_and_byte_bounds(self):
         with patch.object(rc.time, 'monotonic', return_value=self.reader.deadline):
-            with patch.object(rc.subprocess, 'run') as call, self.assertRaises(rc.ReleaseError):
+            with patch.object(rc, 'run_process') as call, self.assertRaises(rc.ReleaseError):
                 self.reader.json('releases')
             call.assert_not_called()
         self.reader.calls = 100
-        with patch.object(rc.subprocess, 'run') as call, self.assertRaises(rc.ReleaseError):
+        with patch.object(rc, 'run_process') as call, self.assertRaises(rc.ReleaseError):
             self.reader.json('releases')
         call.assert_not_called()
         self.reader.calls = 0
         self.reader.remaining = 1
-        with patch.object(rc.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0, wire(200, b'[]'), b'')):
+        with patch.object(rc, 'run_process', return_value=subprocess.CompletedProcess([], 0, wire(200, b'[]'), b'')):
             with self.assertRaisesRegex(rc.ReleaseError, 'response limit'):
                 self.reader.json('releases')
 
     def test_read_error_never_returns_partial_data_or_retries(self):
         for raw in (b'HTTP/2.0 200 OK\r\n', wire(503, b'[]'), wire(200, b'[{"id":')):
-            with self.subTest(raw=raw), patch.object(rc.subprocess, 'run', return_value=
+            with self.subTest(raw=raw), patch.object(rc, 'run_process', return_value=
                     subprocess.CompletedProcess([], 1, raw, b'EOF')) as call:
                 with self.assertRaises(rc.ReleaseError):
                     self.reader.pages('releases')
@@ -189,13 +242,13 @@ class ReadbackTests(unittest.TestCase):
         reader = rc.CreateReadback(REPO)
         reader.deadline = 10
         with (patch.object(rc.time, 'monotonic', side_effect=[1, 2, 10]),
-              patch.object(rc.subprocess, 'run', return_value=result) as run):
+              patch.object(rc, 'run_process', return_value=result) as run):
             with self.assertRaisesRegex(rc.ReleaseError, 'deadline'):
                 reader.pages('releases')
         run.assert_called_once()
         reader = rc.CreateReadback(REPO)
         reader.calls = 99
-        with patch.object(rc.subprocess, 'run', return_value=result) as run:
+        with patch.object(rc, 'run_process', return_value=result) as run:
             with self.assertRaisesRegex(rc.ReleaseError, 'request limit'):
                 reader.pages('releases')
         run.assert_called_once()
@@ -204,11 +257,13 @@ class ReadbackTests(unittest.TestCase):
         page = b'HTTP/2.0 200 OK\r\nLink: <https://api.github.com/repositories/17/releases?per_page=100&page=2>; rel="next"\r\n\r\n[{"id":1}]'
         metadata = wire(200, b'{"id":17,"full_name":"example/project"}')
         self.reader.remaining = len(page) + len(metadata) - 1
-        with patch.object(rc.subprocess, 'run', side_effect=[
-                subprocess.CompletedProcess([], 0, raw, b'') for raw in (page, metadata)]) as run:
+        with patch.object(rc, 'run_process', side_effect=[
+                subprocess.CompletedProcess([], 0, page, b''),
+                rc.ProcessOutputLimit("too large")]) as run:
             with self.assertRaisesRegex(rc.ReleaseError, 'response limit'):
                 self.reader.pages('releases')
         self.assertEqual(run.call_count, 2)
+        self.assertEqual(run.call_args_list[1].kwargs["max_output_bytes"], len(metadata) - 1)
         self.assertIsNone(self.reader.repository_id)
 
     def test_cached_numeric_identity_rejects_a_later_different_id(self):
@@ -223,7 +278,7 @@ class ReadbackTests(unittest.TestCase):
         header = b'HTTP/2.0 200 OK\r\nLink: <https://api.github.com/repositories/17/releases?per_page=100&page=2>; rel="next"\r\n\r\n[{"id":1}]'
         responses = [header, wire(200, b'{"id":17,"full_name":"example/project"}'),
                      wire(200, b'[]'), header, wire(200, b'[]')]
-        with patch.object(rc.subprocess, 'run', side_effect=[
+        with patch.object(rc, 'run_process', side_effect=[
                 subprocess.CompletedProcess([], 0, raw, b'') for raw in responses]) as run:
             self.assertEqual(self.reader.pages('releases'), [{'id': 1}])
             self.assertEqual(self.reader.pages('releases'), [{'id': 1}])
@@ -256,6 +311,60 @@ class ReconciliationTests(unittest.TestCase):
         self.assertEqual(self.reconcile()['id'], 42)
         self.assertEqual(self.confirm.call_count, 2)
         self.assertEqual(self.gh.mock_calls, [])
+
+    def test_release_url_preserves_identity_across_repository_case(self):
+        for label, repo, api_repo in (
+            ('owner-only', 'Example/Project', 'example/Project'),
+            ('repository-only', 'Example/Project', 'Example/project'),
+            ('both', 'Example/Project', 'example/project'),
+            ('exact', 'Example/Project', 'Example/Project'),
+            ('canonical-api-case', REPO, 'Example/Project'),
+        ):
+            with self.subTest(label=label):
+                self.gh.repo = repo
+                self.release['url'] = f'https://api.github.com/repos/{api_repo}/releases/42'
+                self.confirm.reset_mock()
+                self.reader.reset_mock()
+                self.assertEqual(self.reconcile(), self.release)
+                self.assertEqual(self.gh.repo, repo)
+                self.assertEqual(self.confirm.call_count, 2)
+                self.assertEqual(self.gh.mock_calls, [])
+                self.assertEqual([call.args[0] for call in self.reader.json.call_args_list],
+                                 ['releases/42', 'git/ref/tags/v1.2.3-beta.1', 'releases/42'])
+
+    def test_release_url_case_matching_keeps_origin_path_and_id_strict(self):
+        self.gh.repo = 'Example/Project'
+        valid = 'https://api.github.com/repos/example/project/releases/42'
+        invalid = (
+            None, 42, '',
+            valid.replace('https:', 'http:'),
+            valid.replace('api.github.com', 'evil.test'),
+            valid.replace('api.github.com', 'api.github.com.evil.test'),
+            valid.replace('api.github.com', 'user@api.github.com'),
+            valid.replace('api.github.com', 'api.github.com:443'),
+            valid.replace('/repos/', '/Repos/'),
+            valid.replace('/releases/', '/Releases/'),
+            valid.replace('/example/', '/another/'),
+            valid.replace('/project/', '/different/'),
+            valid.replace('/42', '/43'),
+            valid.replace('/42', '/042'),
+            valid.replace('/42', '/%34%32'),
+            valid.replace('/example/', '/%65xample/'),
+            valid.replace('/example/project/', '/example%2Fproject/'),
+            valid.replace('/example/project/', '/example/./project/'),
+            valid.replace('/example/', '/examplе/'),  # Cyrillic final letter is not ASCII case.
+            valid + '/', valid + '?page=1', valid + '#fragment',
+            '\n' + valid, valid.replace('api.github.com', 'api.github.\tcom'),
+        )
+        for url in invalid:
+            with self.subTest(url=url):
+                self.release['url'] = url
+                self.reader.reset_mock()
+                with self.assertRaisesRegex(rc.ReleaseError, 'exact request'):
+                    self.reconcile()
+                self.assertEqual(self.gh.repo, 'Example/Project')
+                self.assertEqual(self.gh.mock_calls, [])
+                self.reader.json.assert_not_called()
 
     def test_identity_and_state_mismatch(self):
         for key, value in [('body', 'older nonce'), ('target_commitish', 'b' * 40),
@@ -313,6 +422,104 @@ class ConfirmationTests(unittest.TestCase):
         ledger['content'] = base64.b64encode(b'changed').decode()
         with self.assertRaisesRegex(rc.ReleaseError, 'ledger changed'):
             confirm(reader)
+
+
+class CreateTransportEnvironmentTests(unittest.TestCase):
+    def test_constructor_is_offline_with_inherited_workflow_scope_and_restores_environment(self):
+        with patch.dict(os.environ, {
+            "RELEASE_REQUIRE_WORKFLOW_SCOPE": "true",
+            # Synthetic fixture; subprocess is mocked, never used for authentication.
+            "GH_TOKEN": "offline-token-fixture",  # nosec B105
+        }):
+            inherited = {key: os.environ[key] for key in ("RELEASE_REQUIRE_WORKFLOW_SCOPE", "GH_TOKEN")}
+            fixture = CreateTransportTests(methodName="test_normal_create")
+            try:
+                with patch.object(rc, "run_process", side_effect=AssertionError("unexpected permission probe")) as command:
+                    fixture.setUp()
+                    self.assertEqual(os.environ["RELEASE_REQUIRE_WORKFLOW_SCOPE"], "")
+                    self.assertEqual(os.environ["GH_TOKEN"], inherited["GH_TOKEN"])
+                    command.assert_not_called()
+            finally:
+                fixture.doCleanups()
+            self.assertEqual({key: os.environ[key] for key in inherited}, inherited)
+
+
+
+
+class ExecutingJobConfirmationTests(unittest.TestCase):
+    """Same-call readback must freshly confirm an initially bound running job."""
+
+    def setUp(self):
+        self.enterContext(patch.dict(os.environ, {"RUNNER_NAME": "fixture-runner"}))
+        self.run = {"id": 99, "run_attempt": 1, "head_sha": SHA,
+                    "path": rc.WORKFLOW, "event": "push", "head_branch": "main",
+                    "repository": {"full_name": REPO}, "head_repository": {"full_name": REPO},
+                    "run_started_at": "2026-01-01T00:00:00Z", "status": "in_progress",
+                    "conclusion": None}
+        self.current = {**self.run, "status": "queued"}
+        self.job = {"id": 700, "run_id": 99, "run_attempt": 1, "head_sha": SHA,
+                    "check_run_url": f"https://api.github.com/repos/{REPO}/check-runs/800",
+                    "runner_id": 900, "runner_name": "fixture-runner",
+                    "status": "in_progress", "conclusion": None, "completed_at": None,
+                    "started_at": "2026-01-01T00:00:01Z", "steps": [
+                        {"number": 1, "status": "in_progress", "conclusion": None,
+                         "started_at": "2026-01-01T00:00:02Z", "completed_at": None}]}
+        self.proof = rc.require_executing_job(self.job, self.run, REPO, 800)
+        self.source = {"object": {"sha": SHA}}
+        self.ledger = b'{"consumed":true}'
+        self.reader = Mock(repo=REPO)
+        self.reader.json.side_effect = self.read
+
+    def read(self, path):
+        """Only these exact bounded readback routes are expected."""
+        return {
+            "actions/runs/99/attempts/1": self.current,
+            "actions/jobs/700": self.job,
+            "": {"default_branch": "main"},
+            "git/ref/heads/main": self.source,
+            "contents/release-version-state.json?ref=release-version-state": {
+                "type": "file", "encoding": "base64",
+                "content": base64.b64encode(self.ledger).decode()},
+        }[path]
+
+    def confirm(self, proof):
+        return lifecycle.create_confirmation(
+            self.run, ("git/ref/heads/main", self.source), self.ledger, proof)(self.reader)
+
+    def test_initially_running_attempt_can_be_stale_at_confirmation(self):
+        self.confirm(self.proof)
+        self.assertIn(unittest.mock.call("actions/jobs/700"), self.reader.json.call_args_list)
+        self.assertEqual(self.run["status"], "in_progress")
+        self.assertEqual(self.current["status"], "queued")
+
+    def test_new_job_read_cannot_reuse_previous_execution_or_other_runner(self):
+        for change in ({"status": "completed"}, {"status": "queued"}, {"id": 701},
+                       {"runner_id": 901}, {"runner_name": "other"}, {"run_attempt": 2},
+                       {"head_sha": "b" * 40}, {"check_run_url": "https://foreign.test/800"},
+                       {"steps": [{"number": 1, "status": "queued", "conclusion": None,
+                                   "started_at": None, "completed_at": None}]}):
+            before = copy.deepcopy(self.job)
+            self.job.update(change)
+            with self.subTest(change=change), self.assertRaises(rc.ReleaseError):
+                self.confirm(self.proof)
+            self.job = before
+
+    def test_current_attempt_identity_and_provenance_cannot_change(self):
+        for change in ({"status": "completed"}, {"conclusion": "success"},
+                       {"head_sha": "b" * 40}, {"run_attempt": 2}, {"head_branch": "other"},
+                       {"repository": {"full_name": "foreign/repo"}},
+                       {"run_started_at": "2026-01-01T00:01:00Z"}):
+            before = copy.deepcopy(self.current)
+            self.current.update(change)
+            with self.subTest(change=change), self.assertRaises(rc.ReleaseError):
+                self.confirm(self.proof)
+            self.current = before
+
+    def test_no_api_annotation_or_untyped_record_can_supply_local_authority(self):
+        self.current["_execution_job_id"] = 700
+        for proof in (None, self.proof._asdict(), rc.ExecutionJobProof(True, 800, 900, "fixture-runner")):
+            with self.subTest(proof=proof), self.assertRaises(rc.ReleaseError):
+                self.confirm(proof)
 
 
 if __name__ == '__main__':

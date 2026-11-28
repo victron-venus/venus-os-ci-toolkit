@@ -12,6 +12,7 @@ import os
 from pathlib import Path
 import re
 import tempfile
+from typing import cast
 
 if __package__:
     from . import release_control as rc, release_versioned as lifecycle, release_promotion, version_plan
@@ -118,6 +119,54 @@ def promotion_context(gh: rc.GitHub, info: dict, published: tuple, manifest: dic
     return None
 
 
+def _resolve_distribution(gh: rc.GitHub, tag: str, raw: bytes, output: Path,
+                          info: dict, current_sha: str, current_run_id: int) -> dict:
+    """Stage shipped bytes only after the complete retained RC is authenticated."""
+    if __package__:
+        from .release_distribution import parse_distribution
+    else:
+        from release_distribution import parse_distribution
+    compact = parse_distribution(raw, gh.repo, tag)
+    rc.require(compact["rc_evidence"]["run_id"] != current_run_id,
+               "Public release must come from a different run")
+    initial = lifecycle.published_plan_snapshot(gh, tag, compact["source_sha"], False)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="closed-public-", dir=output.parent) as temporary:
+        stage = Path(temporary) / "context"
+        payloads = stage / "payloads"
+        payloads.mkdir(parents=True)
+        manifest, candidate_raw, _ = lifecycle.read_verified_distribution(
+            gh, tag, raw, info, stage=payloads)
+        snapshot = cast(dict[str, object], manifest["source_policy"])
+        policy = cast(dict[str, object], snapshot["data"])
+        plan = cast(dict[str, object], manifest["version_plan"])
+        source, run_id = cast(str, manifest["source_sha"]), cast(int, manifest["run_id"])
+        rc.require_current_fuzzing(gh, policy, current_sha)
+        promotion = promotion_context(gh, info, initial, manifest, candidate_raw)
+        # Receipt and embedded-metadata checks already used the entire retained
+        # RC. A compact payload stage intentionally does not contain its receipts.
+        lifecycle.verify_scheduled_reuse(gh, info, snapshot, plan, run_id, cast(str, manifest["tag"]))
+        rc.require(rc.snapshot_identity(initial) == rc.snapshot_identity(
+            lifecycle.published_plan_snapshot(gh, tag, source, False)),
+            "Public release changed during transfer")
+        rc.require(promotion_context(gh, info, initial, manifest, candidate_raw) == promotion,
+                   "Public promotion changed during transfer")
+        context = {
+            "schema": 1, "repository": gh.repo, "workflow": rc.WORKFLOW,
+            "run_id": str(run_id), "run_attempt": str(manifest["run_attempt"]),
+            "source_sha": source, "plan_sha256": version_plan.plan_digest(plan),
+            "payloads": {item["name"]: {key: item[key] for key in ("sha256", "size")}
+                         for item in compact["assets"]},
+            "mode": "published", "release_tag": tag,
+        }
+        if promotion is not None:
+            context["promotion"] = promotion
+        (stage / "context.json").write_bytes(rc.json_bytes(context))
+        (stage / "version-plan.json").write_bytes(rc.json_bytes(plan))
+        stage.rename(output)
+    return context
+
+
 def resolve(gh: rc.GitHub, tag: str, output: Path, current_sha: str, current_run_id: int) -> dict:
     """Verify retained qualification and download exact public bytes atomically."""
     if not TAG.fullmatch(tag) or output.exists() or output.is_symlink():
@@ -134,6 +183,8 @@ def resolve(gh: rc.GitHub, tag: str, output: Path, current_sha: str, current_run
     rc.require(len(raw) <= 2_000_000, "Public release manifest is oversized")
     manifest = rc.parse_json(raw, "public release manifest")
     rc.require(isinstance(manifest, dict), "Invalid public manifest")
+    if isinstance(manifest, dict) and type(manifest.get("schema")) is int and manifest["schema"] == 2:
+        return _resolve_distribution(gh, tag, raw, output, info, current_sha, current_run_id)
     source = manifest.get("source_sha")
     rc.require(isinstance(source, str) and rc.SHA_RE.fullmatch(source), "Invalid public source")
     snapshot = rc.source_policy_snapshot(gh, source)

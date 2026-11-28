@@ -52,6 +52,7 @@ def render(source):
             "timeout-minutes": 10,
             "permissions": {
                 "contents": "read",
+                "actions": "read",
                 **({} if fork else {"id-token": "write"}),
             },
             "env": {
@@ -71,11 +72,19 @@ def render(source):
                     "run": setup,
                 },
                 {
-                    "name": "Download this attempt's report",
+                    "name": "Resolve the same-run producer artifact",
+                    "id": "artifact",
+                    "shell": "bash",
+                    "env": {"GITHUB_TOKEN": "${{ github.token }}"},
+                    "run": 'python3 -I "$RUNNER_TEMP/coverage_reports.py" artifact',
+                },
+                {
+                    "name": "Download the selected producer report",
                     "uses": "actions/download-artifact@"
                     + pins["actions/download-artifact"],
                     "with": {
-                        "name": "${{ steps.contract.outputs.artifact_name }}",
+                        "artifact-ids": "${{ steps.artifact.outputs.artifact_id }}",
+                        "merge-multiple": True,
                         "path": "${{ runner.temp }}/coverage-report",
                     },
                 },

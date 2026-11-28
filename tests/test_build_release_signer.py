@@ -16,6 +16,21 @@ import build_release_signer as builder
 
 
 class BuildSignerTests(unittest.TestCase):
+    def test_qualification_and_generated_jobs_use_the_reviewed_compiler(self):
+        import release_signing_workflow
+
+        root = Path(__file__).resolve().parents[1]
+        workflow = yaml.safe_load((root / '.github/workflows/contract-tests.yml').read_text())
+        setup = [step for step in workflow['jobs']['release-signer-contract']['steps']
+                 if step.get('uses', '').startswith('actions/setup-go@')]
+        self.assertEqual(len(setup), 1)
+        self.assertEqual(setup[0]['with']['go-version'], builder.GO_VERSION.removeprefix('go'))
+        generated = release_signing_workflow.installer({
+            'actions/checkout': 'actions/checkout@' + 'a' * 40,
+            'actions/setup-go': 'actions/setup-go@' + 'b' * 40,
+        })
+        self.assertEqual(generated[1]['with']['go-version'], builder.GO_VERSION.removeprefix('go'))
+
     def test_qualified_export_is_scoped_and_follows_successful_checks(self):
         root = Path(__file__).resolve().parents[1]
         workflow = yaml.safe_load((root / '.github/workflows/contract-tests.yml').read_text())
@@ -82,7 +97,7 @@ class BuildSignerTests(unittest.TestCase):
     def test_bad_source_and_toolchain_never_execute_build(self):
         for responses, reason in [(["wrong"], "source commit"),
                                   ([builder.SOURCE, " M main.go"], "must be clean"),
-                                  ([builder.SOURCE, "", "go1.27.2"], "Go 1.27.3")]:
+                                  ([builder.SOURCE, "", "go1.27.3"], "Go 1.27.4")]:
             with self.subTest(reason=reason), tempfile.TemporaryDirectory() as d:
                 root = Path(d)
                 (root / "src").mkdir()

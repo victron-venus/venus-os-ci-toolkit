@@ -209,7 +209,9 @@ class ArcOttplayTests(unittest.TestCase):
         lock = json.loads((CONFIG / "buildtools/package-lock.json").read_text())
         self.assertTrue(package["private"])
         self.assertNotIn("scripts", package)
-        self.assertEqual(package["dependencies"], {"playwright": "1.63.0"})
+        self.assertEqual(set(package["dependencies"]), {"playwright"})
+        version = package["dependencies"]["playwright"]
+        self.assertRegex(version, re.compile(r"^\d+\.\d+\.\d+$", re.ASCII))
         self.assertEqual(lock["lockfileVersion"], 3)
         self.assertEqual(lock["packages"][""]["dependencies"], package["dependencies"])
         self.assertEqual(
@@ -218,10 +220,10 @@ class ArcOttplayTests(unittest.TestCase):
         )
         for name in ("playwright", "playwright-core"):
             entry = lock["packages"][f"node_modules/{name}"]
-            self.assertEqual(entry["version"], "1.63.0")
+            self.assertEqual(entry["version"], version)
             self.assertEqual(
                 entry["resolved"],
-                f"https://registry.npmjs.org/{name}/-/{name}-1.63.0.tgz",
+                f"https://registry.npmjs.org/{name}/-/{name}-{version}.tgz",
             )
             self.assertRegex(entry["integrity"], r"^sha512-[A-Za-z0-9+/]{86}==$")
         dockerfile = (CONFIG / "Dockerfile").read_text()

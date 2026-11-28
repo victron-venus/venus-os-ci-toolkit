@@ -29,6 +29,50 @@ extend an uploaded report's retention. When
 qualification receipt retain 14 days, including successful targets. Artifact
 names, contents, upload conditions and qualification checks are unchanged.
 
+### Recover a transient evidence upload failure
+
+`browser-evidence-upload-retry` is an opt-in for reusable-workflow callers; it is
+`false` by default. When enabled, the browser job takes a bounded snapshot of the
+evidence tree after application checks, attempts the normal immutable upload, and
+retries that upload at most once if the first upload step fails. It then downloads
+the exact artifact name for the current workflow run and attempt and compares the
+complete file list, sizes and SHA-256 hashes with both the snapshot and the original
+evidence directory. The job remains failed if that read-back is missing, incomplete,
+or differs. A snapshot that cannot be taken (an unsupported tree or an exceeded
+limit) does not by itself suppress the upload: the job rechecks the same tree for
+symlinks, hard-linked or special files, an empty result and the file and byte bounds,
+uploads it when that check passes, and fails afterwards with an explicit message that
+says whether the evidence was preserved without exact verification or was not uploaded.
+The upload action follows directory symlinks, so this recheck is what keeps a rejected
+tree from being published. Upload finalisation can precede indexing and can finish an
+artifact whose step still reports failure, so the read-back is attempted even when both
+upload attempts failed; only an artifact that stays missing or differs fails the job.
+A failed read-back is not repeated immediately: the job pauses for 30 seconds and then
+repeats the same exact-name download once. It does not poll the run's artifacts API,
+because listing artifacts needs `actions: read`, which this reusable workflow does not
+request from its callers; an artifact that never becomes downloadable still fails the
+job. The option does not retry tests or change the browser verdict contract.
+
+The recovery path rejects symlinks, hard-linked or special files, empty trees,
+concurrent source changes, more than 4,096 files, 8,192 total files/directories,
+more than 512 MiB, a snapshot over 4 MiB, and directory nesting deeper than 32
+levels. With recovery enabled, the helper, snapshot and tree-recheck steps each have a
+one-minute limit, each upload attempt has three minutes instead of the ordinary 35, each
+read-back download has three minutes, and the indexing pause and the final exact
+requirement each have one minute. It does not overwrite or delete an artifact. The
+recovery steps also publish a job summary that lists the outcome of the snapshot,
+both upload attempts and both read-back attempts, together with the identified cause
+(an unavailable snapshot or tree recheck, an artifact not downloadable by its exact
+name after the pause, downloaded bytes that differ from the snapshot, or a verified
+read-back). Leave
+the option off unless a caller needs to tolerate a transient upload-service failure;
+default workflow behavior and artifact retention remain unchanged.
+
+```yaml
+with:
+  browser-evidence-upload-retry: true
+```
+
 ## Prepare a consumer
 
 From a reviewed toolkit checkout, prepare the separate browser toolchain locks:
@@ -251,6 +295,13 @@ audits with an empty release channel do not claim release qualification.
 Re-run the complete qualification workflow after a failure: results from an older
 run attempt are deliberately rejected, even if an individual old target passed.
 
+The pinned download action flattens a singleton pattern match. For that case,
+the verdict also downloads the exact admitted artifact name into separate
+staging and requires both complete regular-file trees and SHA-256 hashes to
+match before restoring the artifact-named directory. Missing exact-name evidence,
+extra artifacts, mixed layouts, links and oversized trees still fail. Both stock
+downloads retain digest verification; multiple-target handling is unchanged.
+
 ## Application acceptance contract
 
 ![The admitted candidate and target plan are compared with every runtime and application result before an aggregate release verdict is accepted](assets/browser-evidence-contract.svg)
@@ -355,6 +406,19 @@ does not prepare video playback. Installer failures fail the job, and the
 application's actual decoded-playback assertions remain required. This setup
 does not claim support for DRM or additional media codecs.
 
+Hosted Linux bundled-WebKit jobs remove a preferred Ubuntu archive mirror only
+when the image-provided mirror list has the exact Azure endpoint or the exact
+`us-east-2.ec2.archive.ubuntu.com` endpoint at priority 1 and the already
+provisioned `https://archive.ubuntu.com/ubuntu/` fallback at priority 2. The
+workflow preserves that HTTPS fallback and every unrelated mirror entry; an
+ambiguous or unrecognized list is left unchanged and does not qualify the job.
+This narrowly addresses the observed slow regional mirror path and does not
+promise mirror throughput. Linux WebKit dependency installation and browser
+download are separate fatal steps bounded to ten and five minutes respectively
+inside the existing 35-minute browser-job budget. Either timeout fails the
+browser target; runtime identity, application scenarios, evidence and the
+selected-scope/release gates still have to pass.
+
 GitHub-hosted systems remain the default. Only `ubuntu-latest` targets may select
 the existing, opt-in, isolated Linux reserve via `CI_RUNNER_MODE`. The planner
 uses that same reserve policy. Forks and untrusted events stay hosted. Fixed
@@ -381,8 +445,32 @@ Those stages alone consume the former 25-minute budget. The additional ten
 minutes allow for checkout, runtime validation and artifacts without depending
 on a prewarmed runner. Application assertions and their timeouts are unchanged.
 
+Recovery is best-effort within the existing 35-minute browser job ceiling. The
+helper, snapshot and final comparison each have a one-minute cap; each upload
+and the read-back have a three-minute cap. These transport limits do not extend
+application test deadlines, and an exhausted budget remains a failed
+qualification.
+
 References: [Playwright browser and branded-channel differences](https://playwright.dev/docs/browsers),
 [CI platform setup](https://playwright.dev/docs/ci), and
 [Safari WebDriver](https://developer.apple.com/documentation/webkit/testing-with-webdriver-in-safari).
 The Windows prerequisite is implemented by
 [Playwright's dependency installer](https://github.com/microsoft/playwright/blob/main/packages/playwright-core/src/server/registry/dependencies.ts).
+
+## Explicit Windows runtime qualification
+
+`browser-platform-scope: windows` selects only the Windows portion of the
+unchanged, validated 35-target inventory. Beta/nightly baseline selection is the
+current Windows Chromium required target (two required targets with the
+historical Windows Firefox profile). RC/stable selection is all 11 Windows
+targets: three engines across three generations, plus current Chrome and Edge.
+
+The verdict records `platformCoverage: windows-only`,
+`fullPlatformQualified: false`, the exact selected target IDs, and the omitted
+platforms (24 targets for RC/stable). This is Windows runtime evidence, not
+35-target or macOS/Linux qualification. Default `all` and the explicit reduced
+Linux budget policy retain their existing behavior. Windows scope rejects a
+disabled-hosted configuration instead of substituting a Linux runner. Artifact
+identity, actual runtime versions, application assertions, and same-source/run/
+attempt verification remain mandatory. This setting does not select or remove
+release packages; package inventory remains the consumer's separate policy.

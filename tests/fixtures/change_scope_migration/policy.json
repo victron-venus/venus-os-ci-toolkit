@@ -1,0 +1,101 @@
+{
+  "validation_workflows": [
+    "ci.yml",
+    "release-security.yml",
+    "codeql.yml",
+    "dependency-review.yml",
+    "container-repeatability.yml"
+  ],
+  "artifact_pattern": "release-assets*",
+  "local_checks": [
+    "bash scripts/ci.sh",
+    "bash scripts/ci.sh security"
+  ],
+  "notes": [
+    "Hardware-free checks do not validate a live Venus OS device, D-Bus firmware ABI, physical sensors or in-place device upgrades.",
+    "Candidate overlays identify beta/nightly packages; RC packages retain the base version so stable promotes the exact verified bytes.",
+    "OCI container assets are verified and promoted with the GitHub release. Registry and PyPI deployment must use a separately reviewed promotion adapter; CI does not update latest."
+  ],
+  "version_file": "pyproject.toml",
+  "container_assets": {
+    "dbus-event-log-container.oci.tar": "ghcr.io/victron-venus/dbus-event-log"
+  },
+  "mode": "release",
+  "repository": "victron-venus/dbus-event-log",
+  "visibility": "public",
+  "versioning": {
+    "schema": 1,
+    "promotion": "promote-bytes",
+    "files": [
+      {
+        "path": "pyproject.toml",
+        "format": "toml",
+        "value": "package",
+        "field": "project.version",
+        "ecosystem": "pep440"
+      },
+      {
+        "path": "uv.lock",
+        "format": "uv-lock",
+        "value": "package",
+        "package": "dbus-event-log",
+        "ecosystem": "pep440"
+      },
+      {
+        "path": "src/dbus_event_log/__init__.py",
+        "format": "python",
+        "value": "package",
+        "field": "__version__",
+        "ecosystem": "pep440"
+      }
+    ],
+    "artifacts": [
+      {
+        "path": "dbus_event_log-*.whl",
+        "format": "wheel",
+        "value": "package",
+        "package": "dbus-event-log",
+        "ecosystem": "pep440"
+      },
+      {
+        "path": "dbus_event_log-*.tar.gz",
+        "format": "sdist",
+        "value": "package",
+        "package": "dbus-event-log",
+        "ecosystem": "pep440"
+      },
+      {
+        "path": "dbus-event-log-container.oci.tar",
+        "format": "oci",
+        "field": [
+          "config",
+          "Labels",
+          "org.opencontainers.image.version"
+        ],
+        "value": "package"
+      }
+    ],
+    "toolkit_revision": "5e413f80a4353d328b4529eae57992ac3987e2dd",
+    "required_build_receipts": [
+      "release-inputs-package.json",
+      "release-inputs-signature.json"
+    ]
+  },
+  "single_entry_ci": true,
+  "release_notes": "CHANGELOG.md",
+  "toolkit_revision": "5e413f80a4353d328b4529eae57992ac3987e2dd",
+  "sign_releases": true,
+  "detached_provenance": [
+    {
+      "image": "dbus-event-log-container.oci.tar",
+      "sidecar": "dbus-event-log-container.provenance.json",
+      "platforms": [
+        "linux/amd64",
+        "linux/arm64"
+      ]
+    }
+  ],
+  "fuzzing": {
+    "toolkit_ref": "2439b9eb60cdbcd02edf43b62c551a357be3accc"
+  }
+}

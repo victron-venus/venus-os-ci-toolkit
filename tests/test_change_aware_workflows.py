@@ -43,6 +43,133 @@ def rendered(data):
     return yaml.safe_load(installer.dump(data))
 
 
+class ConsumerOwnedContractStepTests(unittest.TestCase):
+    """Consumer-owned checks follow the reviewed policy, not one repository layout."""
+
+    DOCS = "Validate documentation with the locked compiler"
+    RETRIES = "Test bounded release CLI download retries"
+    DOCS_FILES = {"prepare": "tools/render-docs.cjs", "test": "test/docs.cjs"}
+    RETRY_FILES = {"files": ["cli/download.go", "cli/download_test.go"]}
+
+    @staticmethod
+    def render(directory, consumer_checks=None):
+        config = policy()
+        if consumer_checks is not None:
+            config["consumer_checks"] = consumer_checks
+        return rendered({
+            "jobs": {
+                "contracts": installer.workflow_contract_job(directory, config),
+                "release": installer.release_contract_job(config, directory),
+            }
+        })["jobs"]
+
+    @staticmethod
+    def touch(root, *paths):
+        for path in paths:
+            target = root / path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text("")
+
+    @staticmethod
+    def names(job):
+        return [step.get("name") for step in job["steps"]]
+
+    def test_declared_consumer_files_enable_docs_and_release_cli_checks(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            self.touch(root, *self.DOCS_FILES.values(), *self.RETRY_FILES["files"])
+            jobs = self.render(root, {"documentation": self.DOCS_FILES,
+                                      "release_cli_retry": self.RETRY_FILES})
+        docs = [s for s in jobs["contracts"]["steps"] if s.get("name") == self.DOCS]
+        retries = [s for s in jobs["release"]["steps"] if s.get("name") == self.RETRIES]
+        self.assertEqual(len(docs), 1)
+        self.assertEqual(len(retries), 1)
+        self.assertIn("node tools/render-docs.cjs", docs[0]["run"])
+        self.assertTrue(docs[0]["run"].endswith("node test/docs.cjs\n"))
+        self.assertIn(
+            'NODE_PATH="$RUNNER_TEMP/docs-validation/node_modules"', docs[0]["run"]
+        )
+        self.assertIn(
+            "-timeout=60s cli/download.go cli/download_test.go", retries[0]["run"]
+        )
+        for job, action in (("contracts", "actions/setup-node"),
+                            ("release", "actions/setup-go")):
+            uses = [
+                step["uses"] for step in jobs[job]["steps"]
+                if step.get("uses", "").startswith(action + "@")
+            ]
+            self.assertEqual(len(uses), 1)
+            self.assertRegex(uses[0], r"^" + action + r"@[0-9a-f]{40}$")
+        node = next(
+            step for step in jobs["contracts"]["steps"]
+            if step.get("uses", "").startswith("actions/setup-node@")
+        )
+        self.assertIs(node["with"]["package-manager-cache"], False)
+
+    def test_committed_files_without_a_declaration_add_nothing(self):
+        """A consumer layout alone must never select these optional steps."""
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            self.touch(root, "scripts/prepare-docs-validation.cjs",
+                       "tests/test_readme_docs.cjs", "scripts/download_release_gh.go",
+                       "scripts/download_release_gh_test.go")
+            jobs = self.render(root)
+        self.assertNotIn(self.DOCS, self.names(jobs["contracts"]))
+        self.assertNotIn(self.RETRIES, self.names(jobs["release"]))
+
+    def test_declared_consumer_file_must_exist(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            self.touch(root, *self.RETRY_FILES["files"])
+            with self.assertRaisesRegex(ValueError, "declares missing files.*tools/render-docs"):
+                self.render(root, {"documentation": self.DOCS_FILES})
+            self.touch(root, *self.DOCS_FILES.values())
+            missing = {"files": ["cli/download.go", "cli/download_test.go"]}
+            (root / "cli/download_test.go").unlink()
+            with self.assertRaisesRegex(ValueError, "declares missing files.*download_test"):
+                self.render(root, {"release_cli_retry": missing})
+
+    def test_canonical_toolkit_never_runs_consumer_checks(self):
+        jobs = self.render(ROOT, {"documentation": self.DOCS_FILES,
+                                  "release_cli_retry": self.RETRY_FILES})
+        self.assertNotIn(self.DOCS, self.names(jobs["contracts"]))
+        self.assertNotIn(self.RETRIES, self.names(jobs["release"]))
+
+    def test_declarations_for_absent_jobs_are_rejected(self):
+        """A check must not be declared when its shared job is not generated."""
+        cases = (
+            (policy(single_entry_ci=False,
+                    consumer_checks={"documentation": self.DOCS_FILES}),
+             "single_entry_ci"),
+            (policy(mode="validation-only",
+                    consumer_checks={"release_cli_retry": self.RETRY_FILES}),
+             "mode=release"),
+        )
+        for config, message in cases:
+            with self.subTest(message=message):
+                with self.assertRaisesRegex(ValueError, message):
+                    installer.consumer_checks_policy(config)
+
+    def test_invalid_declarations_are_rejected(self):
+        """Unknown keys, unsafe paths and malformed file lists fail review."""
+        cases = (
+            ({"unknown": self.DOCS_FILES}, "only documentation"),
+            ({"documentation": {"prepare": "docs.cjs"}}, "prepare and test"),
+            ({"documentation": {"prepare": "a.cjs", "test": "a.cjs"}}, "must differ"),
+            ({"documentation": {"prepare": "/a.cjs", "test": "b.cjs"}}, "safe relative"),
+            ({"documentation": {"prepare": "a/../a.cjs", "test": "b.cjs"}}, "safe relative"),
+            ({"documentation": {"prepare": "a/*.cjs", "test": "b.cjs"}}, "safe relative"),
+            ({"release_cli_retry": {"files": []}}, "nonempty list"),
+            ({"release_cli_retry": {"files": ["cli/download.go"]}}, "one _test.go"),
+            ({"release_cli_retry": {"files": ["a_test.go", "a_test.go"]}}, "must be unique"),
+            ({"release_cli_retry": {"files": ["a.go"], "extra": []}}, "files list"),
+        )
+        for consumer_checks, message in cases:
+            with self.subTest(consumer_checks=consumer_checks):
+                with self.assertRaisesRegex(ValueError, message):
+                    installer.consumer_checks_policy(policy(consumer_checks=consumer_checks))
+
+
 def job_runs(job, needs, *, ancestor_results=(), workflow_cancelled=False, value_only=False, **context):
     """Evaluate only rendered job conditions; fail on unsupported expression syntax.
 
@@ -624,49 +751,48 @@ class GeneratedReleaseScopeExecution(unittest.TestCase):
                 if name == "prepare" or name.startswith("check-"):
                     self.assertTrue(job_runs(job, values), name)
 
-    def test_explicit_empty_scope_enables_builtin_docs_classification(self):
-        """An explicit empty object is an opt-in to the documented default paths."""
-        for renderer in (installer.quality, installer.release):
-            jobs = rendered(renderer(policy(change_scope={})))["jobs"]
-            self.assertEqual(
-                self.scope(jobs["scope"]),
-                {"run": "false", "reason": "documentation-only"},
-            )
+    def test_explicit_scope_reduces_quality_but_preserves_full_release(self):
+        """PR optimization must not turn a successor release into a no-op."""
+        jobs = rendered(installer.quality(policy(change_scope={})))['jobs']
+        self.assertEqual(self.scope(jobs['scope']),
+                         {'run': 'false', 'reason': 'documentation-only'})
+        jobs = rendered(installer.release(policy(change_scope={})))['jobs']
+        self.assertEqual(self.scope(jobs['scope']),
+                         {'run': 'true', 'reason': 'forced'})
 
-    def test_docs_push_stops_before_legacy_resolution_or_versioned_allocation(self):
-        """Prove that a docs push skips every job capable of allocating a version."""
+    def test_docs_push_retains_preparation_and_full_security_qualification(self):
+        """A successor still reaches the existing release engine and real checks."""
         for versioned in (False, True):
             with self.subTest(versioned=versioned):
-                jobs = self.release(versioned)["jobs"]
-                self.assertEqual(next(iter(jobs)), "scope")
-                self.assertEqual(jobs["prepare"]["needs"], "scope")
+                jobs = self.release(versioned)['jobs']
                 values = {
-                    "scope": {"result": "success", "outputs": self.scope(jobs["scope"])}
+                    'scope': {'result': 'success', 'outputs': self.scope(jobs['scope'])}
                 }
-                self.assertEqual(
-                    values["scope"]["outputs"],
-                    {"run": "false", "reason": "documentation-only"},
-                )
-                for name, job in jobs.items():
-                    if name == "scope":
-                        continue
-                    self.assertFalse(
-                        job_runs(
-                            job, values, vars={"RELEASE_CHANNELS_ENABLED": "true"}
-                        ),
-                        name,
-                    )
-                    values[name] = {"result": "skipped", "outputs": {}}
-                metadata = next(
-                    step
-                    for step in jobs["prepare"]["steps"]
-                    if step.get("id") == "metadata"
-                )
-                self.assertIn(
-                    "release_versioned.py prepare" if versioned else "'resolve'",
-                    metadata["run"],
-                )
-                self.assertFalse((self.repo / ".release-plan.json").exists())
+                self.assertEqual(values['scope']['outputs'],
+                                 {'run': 'true', 'reason': 'forced'})
+                self.assertTrue(job_runs(jobs['prepare'], values))
+                values['prepare'] = {'result': 'success', 'outputs': {
+                    'channel': 'beta', 'build': 'true', 'status': 'prepared'}}
+                self.assertTrue(job_runs(jobs['checks'], values))
+                self.assertIs(jobs['checks']['with']['force-full'], True)
+                metadata = next(step for step in jobs['prepare']['steps']
+                                if step.get('id') == 'metadata')
+                self.assertIn('release_versioned.py prepare' if versioned else "'resolve'",
+                              metadata['run'])
+
+    def test_toolkit_release_notes_change_keeps_contract_validation(self):
+        """Declared release notes are parsed input even though they are Markdown."""
+        config = json.loads((ROOT / '.release-policy.json').read_text())
+        notes = self.repo / config['release_notes']
+        notes.parent.mkdir(parents=True, exist_ok=True)
+        notes.write_text('Invalid release notes still require the real parser.\n')
+        head = self.commit()
+        self.event.write_text(json.dumps({'before': self.base, 'after': head}))
+        jobs = rendered(installer.quality(config))['jobs']
+        outputs = self.scope(jobs['scope'])
+        self.assertEqual(outputs['run'], 'true')
+        values = {'scope': {'result': 'success', 'outputs': outputs}}
+        self.assertTrue(job_runs(jobs['release-contracts'], values))
 
     def test_release_qualification_forces_real_checks_even_for_documentation_commit(
         self,
@@ -725,9 +851,12 @@ class GeneratedReleaseScopeExecution(unittest.TestCase):
     def test_required_documentation_override_reaches_prepare(self):
         """Treat documentation declared as a build input as a real release change."""
         config = policy(change_scope={"required_paths": ["README.md"]})
+        quality = rendered(installer.quality(config))["jobs"]
+        self.assertEqual(self.scope(quality["scope"]),
+                         {"run": "true", "reason": "required-path-change"})
         jobs = rendered(installer.release(config))["jobs"]
         outputs = self.scope(jobs["scope"])
-        self.assertEqual(outputs, {"run": "true", "reason": "required-path-change"})
+        self.assertEqual(outputs, {"run": "true", "reason": "forced"})
         self.assertTrue(
             job_runs(
                 jobs["prepare"], {"scope": {"result": "success", "outputs": outputs}}
@@ -832,9 +961,13 @@ class ToolkitValidationPolicy(unittest.TestCase):
             if job.get("uses") == "./.github/workflows/ci.yml"
         )
 
+    def security_job(self):
+        return next(name for name, job in self.jobs.items()
+                    if job.get("uses") == "./.github/workflows/security-required.yml")
+
     def results(self, full=False):
         """Model the expected real toolkit jobs for one scope decision."""
-        always = {"scope", "workflow-contracts", self.codeql}
+        always = {"scope", "workflow-contracts", self.codeql, self.security_job()}
         values = {
             name: {"result": "success" if full or name in always else "skipped"}
             for name in self.jobs
@@ -857,12 +990,14 @@ class ToolkitValidationPolicy(unittest.TestCase):
             timeout=10,
         )
 
-    def test_documentation_runs_codeql_without_contracts_or_trivy(self):
-        """Keep actual CodeQL analysis required while skipping unrelated heavy jobs."""
+    def test_documentation_runs_security_without_heavy_contracts(self):
+        """Keep actual security analysis required while skipping unrelated builds."""
+        policy = json.loads((ROOT / ".release-policy.json").read_text())
+        self.assertIn("security-required.yml", policy["change_scope"]["always_validate_workflows"])
         values = self.results()
         self.assertTrue(job_runs(self.jobs[self.codeql], values))
         self.assertTrue(job_runs(self.jobs["workflow-contracts"], values))
-        for filename in ("contract-tests.yml", "security-required.yml"):
+        for filename in ("contract-tests.yml",):
             jobs = [
                 job
                 for job in self.jobs.values()
@@ -870,6 +1005,7 @@ class ToolkitValidationPolicy(unittest.TestCase):
             ]
             self.assertEqual(len(jobs), 1)
             self.assertFalse(job_runs(jobs[0], values))
+        self.assertTrue(job_runs(self.jobs[self.security_job()], values))
         workflow = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
         self.assertEqual(set(workflow["jobs"]), {"analyze", "analyze-go"})
         for job in workflow["jobs"].values():
@@ -882,13 +1018,26 @@ class ToolkitValidationPolicy(unittest.TestCase):
         result = self.run_gate(values)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
-    def test_documentation_cannot_skip_or_fail_required_codeql(self):
+    def test_documentation_cannot_skip_or_fail_required_security(self):
         """Reject the missing security result that would leave branch rules pending."""
-        for conclusion in ("skipped", "failure", "cancelled"):
-            with self.subTest(conclusion=conclusion):
-                values = self.results()
-                values[self.codeql]["result"] = conclusion
-                self.assertNotEqual(self.run_gate(values).returncode, 0)
+        for name in (self.codeql, self.security_job()):
+            for conclusion in ("skipped", "failure", "cancelled"):
+                with self.subTest(job=name, conclusion=conclusion):
+                    values = self.results()
+                    values[name]["result"] = conclusion
+                    self.assertNotEqual(self.run_gate(values).returncode, 0)
+
+    def test_nested_security_scan_really_runs_for_documentation(self):
+        directory = ROOT / ".github/workflows"
+        adapter = yaml.load((directory / "security-required.yml").read_text(), Loader=yaml.BaseLoader)
+        reusable = yaml.load((directory / "security-scan.yml").read_text(), Loader=yaml.BaseLoader)
+        job = adapter["jobs"]["trivy"]
+        self.assertEqual(job["uses"], "./.github/workflows/security-scan.yml")
+        inputs = job["with"]
+        self.assertEqual(inputs["run-trivy"], "true")
+        self.assertEqual(inputs["strict-trivy"], "true")
+        default = reusable["on"]["workflow_call"]["inputs"]["force-full"]["default"]
+        self.assertEqual(inputs.get("force-full", default), "true")
 
     def test_full_validation_requires_every_real_validator(self):
         """Full runs cannot silently omit the newly separated contract workflow."""

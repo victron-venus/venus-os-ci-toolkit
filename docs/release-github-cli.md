@@ -9,7 +9,7 @@ were inspected with `go version -m`. Source commit:
 `7948e8056e45ac3c729b829e0eafe2d0797a95c6`. The upstream MIT notice is retained in
 `.github/gh/LICENSE`; `gh licenses` lists the binary's dependency notices.
 
-The installer requires Go 1.27.3 to run a small standard-library-only HTTPS
+The installer requires Go 1.27.4 to run a small standard-library-only HTTPS
 downloader under `GODEBUG=fips140=on`. It rejects HTTP, HTTPS downgrade redirects,
 more than ten redirects, oversized responses and errors. No operator credential
 is sent to the download endpoint. The installer checks the archive, reads exactly
@@ -18,6 +18,47 @@ version, and atomically replaces the selected output only after validation.
 `--check` needs no Go compiler: the exact binary hash identifies the inspected
 Go build and requires the same FIPS runtime setting. Unsupported platforms fail.
 
+The downloader compiler is pinned separately from the retained CLI executable.
+Go 1.27.4 includes the standard-library fix for GO-2026-6859; changing this
+bootstrap compiler does not change or requalify the official CLI binaries above.
+
+The downloader makes at most three top-level GET attempts for HTTP 429, 500,
+502, 503 or 504. One 60-second deadline covers all attempts, redirects, response
+bodies and retry waits. Failed responses close before the next attempt. The
+minimum waits are one and two seconds; a valid `Retry-After` can increase a wait
+only if it fits the remaining deadline. Malformed or excessive values fail.
+Transport, TLS, response-body, size, other HTTP status and later checksum or
+version failures are not retried. Publication writes keep their separate
+single-attempt policy.
+
+The release process supervisor supports Linux with Python 3.12 or newer and
+macOS with Python 3.13 or newer. macOS Python 3.12 does not expose the
+`waitid(WNOWAIT)` capability needed to retain process-group identity during
+cleanup. Unsupported operating-system/runtime combinations fail closed before
+starting a process. The supervisor starts a fixed internal wrapper as the
+process-group leader and sends the target argv over a private bounded pipe, not
+the wrapper command line. It captures stdout and stderr under one aggregate
+byte limit. The wrapper stays alive after reporting the target exit status; the
+parent signals the group before draining inherited output pipes and reaping the
+wrapper, so a reused PID is never used as a process-group ID. Timeout,
+cancellation and output-limit cleanup use the same ordering. On ordinary target
+exit, the wrapper waits for and reaps the target before reporting its status. On
+timeout, cancellation or output-limit cleanup, the parent kills the still-live
+wrapper's owned process group; the target may consequently be reparented to
+init/launchd instead of being waitpid-reaped by the wrapper. Successful group
+signaling means the kernel accepted SIGKILL for at least one eligible member
+of the owned process group while the wrapper pinned its identity; it does not
+prove every group member exited. Bounded wrapper reap and pipe EOF bound the
+local call, not every descendant's lifetime. Processes that deliberately move
+into another group/session, cannot be signaled, or remain uninterruptible
+require an outer process/container cleanup boundary. A systemd
+`KillMode=control-group` boundary exists only when this helper runs inside that
+unit; otherwise the caller must provide an equivalent. A signal-permission
+failure or other unverified group-signal error fails closed and is not proof
+that descendants stopped. Windows browser checks do not invoke this helper.
+The caller's command timeout starts after `Popen` returns, so time spent inside
+the operating system's process-creation call is outside that deadline.
+
 `--archive FILE --output PATH` installs an already downloaded archive without
 network access or a Go compiler. The same size, archive hash, native executable
 hash, FIPS runtime setting, version and atomic replacement checks still apply;
@@ -25,7 +66,7 @@ an invalid archive never falls back to downloading. Private runner image builds
 use this mode after a bounded, unauthenticated HTTPS download. This does not
 change the online installer's Go-based FIPS transport profile.
 
-For local release helper use, select Go 1.27.3 on PATH, then:
+For local release helper use, select Go 1.27.4 on PATH, then:
 
 ```sh
 export GODEBUG=fips140=on
@@ -66,11 +107,18 @@ conservative authorization-diagnostic veto can then prevent a retry even for
 HTTP 503. Keep that veto intact; API debug traces are for diagnosis, not normal
 automated read recovery.
 
-POST, PATCH, PUT and uploads are never replayed. Large streamed downloads retain
-their separate 900-second limit, expected size/hash, cumulative byte budget and
-free-space floor. They remain single attempts: restarting them requires an
-explicit budget for transferred-and-discarded bytes. Recovery does not relax
-source, manifest, signature, provenance or payload validation.
+POST, PATCH and PUT writes are never replayed. An upload POST may be retried once
+only after an explicit HTTP 500/502/503/504 and a complete exact-release inventory
+proves that asset absent; timeouts and other outcomes never authorize a retry.
+Any matching asset still needs exact identity and byte verification. See the
+[release workflow upload-recovery rule](release-workflow.md#stable-promotion).
+
+Large streamed downloads retain their separate 900-second limit, expected
+size/hash, cumulative byte budget and free-space floor. Recognized transient GET
+connection or server failures may retry the whole asset up to three times;
+transfer timeouts remain terminal. Discarded bytes stay charged to the same
+budget. Recovery does not relax source, manifest, signature, provenance or
+payload validation.
 
 ## Scoped dependency assessment — 2026-10-22
 

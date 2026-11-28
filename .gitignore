@@ -73,3 +73,4 @@ operator-config/
 
 # Local source candidate build output.
 /release-dist/
+A*S.md

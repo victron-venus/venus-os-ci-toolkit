@@ -27,7 +27,7 @@ jobs:
       reason: ${{ steps.scope.outputs.reason }}
     steps:
       - name: Harden the runner (Audit all outbound calls)
-        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.23.0
         with:
           egress-policy: audit
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -37,8 +37,8 @@ jobs:
       - id: scope
         name: Classify documentation and build inputs
         env:
-          DOCUMENTATION_PATHS: '[]'
-          REQUIRED_PATHS: '[]'
+          DOCUMENTATION_PATHS: '["GOVERNANCE.md", "TERRAFORM_IMPORT.md"]'
+          REQUIRED_PATHS: '["CHANGELOG.md"]'
           FORCE_FULL: ${{ inputs.force-full && 'true' || 'false' }}
         run: |
           args=()
@@ -62,7 +62,6 @@ jobs:
     needs:
       - scope
       - workflow-contracts
-    if: ${{ needs.scope.outputs.run == 'true' }}
   check-2:
     uses: ./.github/workflows/contract-tests.yml
     permissions:
@@ -81,7 +80,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Harden the runner (Audit all outbound calls)
-        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.23.0
         with:
           egress-policy: audit
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -97,7 +96,16 @@ jobs:
             .github/requirements-workflow-contracts.txt
       - run: 'python3 -m pip install --require-hashes --only-binary=:all: -r .github/requirements-workflow-contracts.txt'
       - run: python3 scripts/workflow_contracts.py
+      - name: Validate the required source package inventory
+        run: |
+          python3 - <<'PY_INVENTORY'
+          from pathlib import Path
+          from scripts.toolkit_source import inventory
+          inventory(Path.cwd())
+          PY_INVENTORY
       - run: python3 -m unittest discover -s tests -p 'test_workflow_yaml_contracts.py'
+      - name: Verify the documented scope regeneration procedure
+        run: python3 -m unittest discover -s tests -p 'test_change_scope_runbook.py' -v
       - name: Replay relevant Python fuzz seeds and verify instrumentation
         id: fuzz_preflight
         if: ${{ github.event.repository.private == false && needs.scope.outputs.run == 'true' }}
@@ -121,7 +129,7 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Harden the runner (Audit all outbound calls)
-        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.23.0
         with:
           egress-policy: audit
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -131,7 +139,7 @@ jobs:
         with:
           python-version: '3.12'
       - name: Install uv for locked dependency contracts
-        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
         with:
           version: 0.13.4
       - run: 'python3 -m pip install --require-hashes --only-binary=:all: -r .github/requirements-generator.txt
@@ -159,7 +167,7 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Harden the runner (Audit all outbound calls)
-        uses: step-security/harden-runner@46b06cea07f9e64621fdf066ba77ac6915163d43 # v2.22.3
+        uses: step-security/harden-runner@aebdcf6156ab6691adf63218240e476564a1ed4c # v2.23.0
         with:
           egress-policy: audit
       - name: Require every validation workflow
@@ -170,7 +178,7 @@ jobs:
           import json, os
           results = json.loads(os.environ['RESULTS'])
           expected = ['check-0', 'check-1', 'check-2', 'release-contracts', 'scope', 'workflow-contracts']
-          always = ['check-0', 'scope', 'workflow-contracts']
+          always = ['check-0', 'check-1', 'scope', 'workflow-contracts']
           if set(results) != set(expected):
               raise SystemExit('Validation job inventory differs')
           scope = results['scope']

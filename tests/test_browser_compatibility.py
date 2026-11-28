@@ -57,6 +57,72 @@ class BrowserCompatibilityTests(unittest.TestCase):
             env=self.env | env, capture_output=True, text=True, check=False,
         )
 
+    def prepare_recovery(self):
+        self.env.update({
+            "BROWSER_EVIDENCE_DIRECTORY": ".compatibility/chromium-current-linux",
+            "BROWSER_EVIDENCE_SNAPSHOT": str(self.root / "browser-evidence-chromium-current-linux.json"),
+            "BROWSER_EVIDENCE_READBACK": str(self.root / "browser-evidence-readback-chromium-current-linux"),
+            "BROWSER_EVIDENCE_TARGET_ID": "chromium-current-linux",
+            "BROWSER_EVIDENCE_HELPER": str(self.root / "browser-evidence-recovery-chromium-current-linux.cjs"),
+            "GITHUB_WORKSPACE": str(self.root),
+        })
+        self.env["RUNNER_TEMP"] = str(self.root)
+        result = subprocess.run(
+            ["bash", "-e", "-o", "pipefail", "-c", next(
+                step["run"] for step in WORKFLOW["jobs"]["browser"]["steps"]
+                if step.get("name") == "Prepare bounded browser evidence recovery helper"
+            )],
+            cwd=self.root, env=self.env, capture_output=True, text=True, check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        evidence = self.root / self.env["BROWSER_EVIDENCE_DIRECTORY"]
+        evidence.mkdir(parents=True)
+        (evidence / "runtime.json").write_text('{"target":"linux"}\n')
+        (evidence / ".hidden").write_bytes(b"hidden")
+        nested = evidence / "trace"
+        nested.mkdir()
+        (nested / "one.bin").write_bytes(bytes(range(32)))
+        return evidence
+
+    def run_recovery(self, command):
+        return subprocess.run(
+            ["node", self.env["BROWSER_EVIDENCE_HELPER"], command],
+            cwd=self.root, env=self.env, capture_output=True, text=True, check=False,
+        )
+
+    def run_final_evidence_check(self, outcome, upload_outcome="success", upload_retry_outcome="success"):
+        step = next(
+            step for step in WORKFLOW["jobs"]["browser"]["steps"]
+            if step.get("name") == "Require exact browser evidence read-back"
+        )
+        env = self.env.copy()
+        for name, value in step["env"].items():
+            if value == "${{ steps.evidence_upload.outcome }}":
+                env[name] = upload_outcome
+            elif value == "${{ steps.evidence_upload_retry.outcome }}":
+                env[name] = upload_retry_outcome
+            elif value == "${{ steps.evidence_readback.outcome }}":
+                env[name] = outcome
+            elif value == "${{ steps.evidence_readback_retry.outcome }}":
+                env[name] = "skipped"
+            elif value == "${{ github.workspace }}":
+                env[name] = str(self.root)
+            elif value == ".compatibility/${{ matrix.id }}":
+                env[name] = ".compatibility/chromium-current-linux"
+            elif value.startswith("${{ runner.temp }}/"):
+                suffix = value.removeprefix("${{ runner.temp }}/").replace(
+                    "${{ matrix.id }}", "chromium-current-linux"
+                )
+                env[name] = str(self.root / suffix)
+            elif value == "${{ matrix.id }}":
+                env[name] = "chromium-current-linux"
+            else:
+                self.fail(f"Unexpected recovery verifier environment binding: {name}={value}")
+        return subprocess.run(
+            ["bash", "-e", "-o", "pipefail", "-c", step["run"]], cwd=self.root,
+            env=env, capture_output=True, text=True, check=False,
+        )
+
     def output(self, name="matrix"):
         return json.loads(dict(line.split("=", 1) for line in (self.root / "output").read_text().splitlines())[name])
 
@@ -183,6 +249,172 @@ class BrowserCompatibilityTests(unittest.TestCase):
                           ("browser-verdict", "Verify the exact release target set and evidence identity")):
             step = next(row for row in WORKFLOW["jobs"][job]["steps"] if row.get("name") == name)
             self.assertEqual(step["env"]["BROWSER_REQUIRED_PROFILE"], "${{ inputs.browser-required-profile }}")
+
+    def test_windows_scope_preserves_inventory_and_reports_only_actual_windows_coverage(self):
+        import shutil
+        for profile in ("baseline", "windows-firefox-1.62.1"):
+            for channel in ("beta", "rc", "stable"):
+                with self.subTest(profile=profile, channel=channel):
+                    shutil.rmtree(self.root / "evidence", ignore_errors=True)
+                    (self.root / "output").unlink(missing_ok=True)
+                    full = channel in ("rc", "stable")
+                    inventory = self.regression_targets() if profile != "baseline" else self.release_targets()
+                    result = self.plan(inventory, BROWSER_PLATFORM_SCOPE="windows", BROWSER_REQUIRED_PROFILE=profile,
+                                       BROWSER_RELEASE_CHANNEL=channel, BROWSER_EXTENDED=str(full).lower())
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    coverage = self.output("coverage")
+                    selected = self.output()["include"]
+                    self.assertEqual(len(selected), 11 if full else 2 if profile != "baseline" else 1)
+                    self.assertTrue(all(row["os"] == "windows-2022" for row in selected))
+                    self.assertEqual(len(coverage["skippedTargets"]), 24 if full else 4)
+                    rows, directory = self.release_evidence(channel, selected)
+                    env = {"BROWSER_PLATFORM_SCOPE": "windows", "BROWSER_REQUIRED_PROFILE": profile,
+                           "BROWSER_COVERAGE": json.dumps(coverage)}
+                    result = self.verdict(rows, directory, channel=channel, **env)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    receipt = json.loads((self.root / "verdict.json").read_text())
+                    self.assertEqual(receipt["platformCoverage"], "windows-only")
+                    self.assertFalse(receipt["fullPlatformQualified"])
+                    self.assertEqual(len(receipt["targets"]), len(selected))
+                    self.assertNotEqual(self.verdict(rows, directory, channel=channel).returncode, 0)
+
+    def test_windows_scope_rejects_incomplete_inventory_unknown_scope_and_linux_fallback(self):
+        rows = self.release_targets()
+        for changed in (rows[:-1], rows[:-1] + [rows[0]]):
+            self.assertNotEqual(self.plan(changed, BROWSER_PLATFORM_SCOPE="windows", BROWSER_RELEASE_CHANNEL="rc",
+                                          BROWSER_EXTENDED="true").returncode, 0)
+        for scope in ("Windows", "windows-only", "", "linux"):
+            self.assertNotEqual(self.plan(rows, BROWSER_PLATFORM_SCOPE=scope, BROWSER_RELEASE_CHANNEL="rc",
+                                          BROWSER_EXTENDED="true").returncode, 0)
+        self.assertNotEqual(self.plan(rows, BROWSER_PLATFORM_SCOPE="windows", BROWSER_RELEASE_CHANNEL="rc",
+                                      BROWSER_EXTENDED="true", **self.reserve_env()).returncode, 0)
+
+    def test_windows_verdict_rejects_forged_coverage_and_stale_or_failed_results(self):
+        result = self.plan(self.release_targets(), BROWSER_PLATFORM_SCOPE="windows", BROWSER_RELEASE_CHANNEL="rc",
+                           BROWSER_EXTENDED="true")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        coverage = self.output("coverage")
+        rows, directory = self.release_evidence(rows=self.output()["include"])
+        env = {"BROWSER_PLATFORM_SCOPE": "windows", "BROWSER_COVERAGE": json.dumps(coverage)}
+        for changed in ({}, coverage | {"platformScope": "all"}, coverage | {"requestedScope": "all"},
+                        coverage | {"hostedRunnersEnabled": False}, coverage | {"skippedTargets": []},
+                        coverage | {"selectedTargetIds": list(reversed(coverage["selectedTargetIds"]))}):
+            self.assertNotEqual(self.verdict(rows, directory, **(env | {"BROWSER_COVERAGE": json.dumps(changed)})).returncode, 0)
+        self.assertNotEqual(self.verdict(rows, directory, **(env | {"CI_HOSTED_RUNNERS_ENABLED": "false"})).returncode, 0)
+        self.assertNotEqual(self.verdict(rows[:-1], directory, **env).returncode, 0)
+        mixed = copy.deepcopy(rows)
+        mixed[0]["os"] = "ubuntu-latest"
+        self.assertNotEqual(self.verdict(mixed, directory, **env).returncode, 0)
+        file = directory / f"browser-release-{rows[0]['id']}-2" / "result.json"
+        original = json.loads(file.read_text())
+        for changed in ({"sourceSha": "b" * 40}, {"runAttempt": "1"}, {"testsFailed": 1}):
+            file.write_text(json.dumps(original | changed))
+            self.assertNotEqual(self.verdict(rows, directory, **env).returncode, 0)
+        file.write_text(json.dumps(original))
+        self.assertEqual(self.verdict(rows, directory, **env).returncode, 0)
+
+    def singleton_evidence(self):
+        import shutil
+        result = self.plan(self.release_targets(), BROWSER_PLATFORM_SCOPE="windows",
+                           BROWSER_RELEASE_CHANNEL="beta", BROWSER_EXTENDED="false")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        rows, directory = self.release_evidence("beta", self.output()["include"])
+        folder = directory / f"browser-release-{rows[0]['id']}-2"
+        exact = self.root / "exact-singleton"
+        shutil.copytree(folder, exact)
+        # download-artifact@9000827 extracts a single pattern match directly here.
+        for file in folder.iterdir():
+            file.rename(directory / file.name)
+        folder.rmdir()
+        return rows, directory, exact, {
+            "BROWSER_PLATFORM_SCOPE": "windows", "BROWSER_COVERAGE": json.dumps(self.output("coverage")),
+            "BROWSER_SINGLETON_EVIDENCE_DIRECTORY": str(exact),
+        }
+
+    def test_singleton_pattern_download_is_normalized_only_after_exact_named_readback(self):
+        import hashlib
+        rows, directory, exact, env = self.singleton_evidence()
+        digest = hashlib.sha256((directory / "result.json").read_bytes()).hexdigest()
+        result = self.verdict(rows, directory, channel="beta", **env)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        receipt = json.loads((self.root / "verdict.json").read_text())
+        self.assertEqual(receipt["targets"][0]["evidenceSha256"], digest)
+        self.assertEqual(receipt["sourceSha"], "a" * 40)
+        self.assertEqual(receipt["runId"], "123")
+        self.assertEqual(receipt["runAttempt"], "2")
+        self.assertEqual(receipt["candidateArtifactId"], "456")
+        self.assertEqual(sorted(path.name for path in directory.iterdir()), [f"browser-release-{rows[0]['id']}-2"])
+        self.assertTrue((exact / "result.json").is_file())
+
+    def test_singleton_requires_exact_named_download_and_rejects_extra_or_mixed_payloads(self):
+        import shutil
+        rows, directory, exact, env = self.singleton_evidence()
+        wrong_name = self.root / "wrong-artifact-name"
+        exact.rename(wrong_name)
+        # A matching payload under a wrong artifact name cannot replace the absent exact-name download.
+        self.assertNotEqual(self.verdict(rows, directory, channel="beta", **env).returncode, 0)
+        wrong_name.rename(exact)
+        multiple = self.root / "two-matches"
+        multiple.mkdir()
+        shutil.copytree(exact, multiple / f"browser-release-{rows[0]['id']}-2")
+        shutil.copytree(exact, multiple / "browser-release-unexpected-2")
+        self.assertNotEqual(self.verdict(rows, multiple, channel="beta", **env).returncode, 0)
+        for extra in ("unexpected.json", f"browser-release-{rows[0]['id']}-2"):
+            path = directory / extra
+            if extra.endswith(".json"):
+                path.write_text("{}")
+            else:
+                shutil.copytree(exact, path)
+            self.assertNotEqual(self.verdict(rows, directory, channel="beta", **env).returncode, 0)
+            if path.is_dir():
+                shutil.rmtree(path)
+            else:
+                path.unlink()
+        original = (exact / "result.json").read_bytes()
+        (exact / "result.json").write_bytes(original + b" ")
+        self.assertNotEqual(self.verdict(rows, directory, channel="beta", **env).returncode, 0)
+        self.assertTrue((directory / "result.json").is_file(), "Failed normalization must not move the evidence")
+
+    def test_singleton_rejects_links_and_out_of_bound_evidence(self):
+        rows, directory, exact, env = self.singleton_evidence()
+        link = directory / "linked.json"
+        link.symlink_to(exact / "result.json")
+        self.assertNotEqual(self.verdict(rows, directory, channel="beta", **env).returncode, 0)
+        link.unlink()
+        for root in (directory, exact):
+            with (root / "oversize.bin").open("wb") as stream:
+                stream.truncate(512 * 1024 * 1024 + 1)
+        self.assertNotEqual(self.verdict(rows, directory, channel="beta", **env).returncode, 0)
+
+    def test_singleton_identical_downloads_do_not_bypass_release_identity_or_results(self):
+        import shutil
+        rows, directory, exact, env = self.singleton_evidence()
+        original = json.loads((directory / "result.json").read_text())
+        for changed in ({"runAttempt": "1"}, {"runId": "122"}, {"sourceSha": "b" * 40},
+                        {"candidateArtifactId": "455"}, {"target": "wrong"}, {"testsFailed": 1}):
+            with self.subTest(changed=changed):
+                sample = self.root / "sample"
+                shutil.copytree(exact, sample)
+                for root in (sample, exact):
+                    (root / "result.json").write_text(json.dumps(original | changed))
+                self.assertNotEqual(self.verdict(rows, sample, channel="beta", **env).returncode, 0)
+                shutil.rmtree(sample)
+        (exact / "result.json").write_text(json.dumps(original))
+
+    def test_singleton_transport_uses_exact_name_and_same_run_without_new_permissions(self):
+        steps = WORKFLOW["jobs"]["browser-verdict"]["steps"]
+        broad = next(step for step in steps if step.get("name") == "Download qualification evidence from this run and attempt")
+        exact = next(step for step in steps if step.get("name") == "Bind a singleton download to its exact artifact name")
+        self.assertEqual(exact["uses"], broad["uses"])
+        self.assertEqual(exact["if"], "${{ fromJSON(needs.browser-plan.outputs.matrix).include[1] == null }}")
+        self.assertEqual(exact["with"], {
+            "name": "${{ format('{0}-{1}-{2}', inputs.browser-evidence-prefix, fromJSON(needs.browser-plan.outputs.matrix).include[0].id, github.run_attempt) }}",
+            "path": "${{ runner.temp }}/browser-release-singleton",
+            "digest-mismatch": "error",
+        })
+        self.assertNotIn("continue-on-error", exact)
+        self.assertEqual(broad["with"]["merge-multiple"], "false")
+        self.assertEqual(broad["with"]["pattern"], "${{ inputs.browser-evidence-prefix }}-*-${{ github.run_attempt }}")
 
     def test_historical_profile_preserves_all_baseline_targets_and_full_release_inventory(self):
         rows = self.regression_targets()
@@ -617,12 +849,16 @@ class BrowserCompatibilityTests(unittest.TestCase):
     def test_prepared_reserve_does_not_install_system_packages(self):
         steps = WORKFLOW["jobs"]["browser"]["steps"]
         installers = [step for step in steps if "cli.js\" install" in step.get("run", "")]
-        self.assertEqual(len(installers), 3)
-        hosted = next(step for step in installers if "--with-deps" in step["run"])
+        self.assertEqual(len(installers), 5)
+        hosted = next(step for step in installers if step.get("name") == "Install selected browser and hosted system dependencies")
         reserve = next(step for step in installers if "self-hosted" in step["if"])
-        self.assertEqual(hosted["if"], "runner.environment == 'github-hosted'")
+        linux_webkit = [step for step in installers if "Linux WebKit" in step.get("name", "")]
+        self.assertEqual(hosted["if"], "${{ runner.environment == 'github-hosted' && !(runner.os == 'Linux' && matrix.engine == 'webkit' && matrix.channel == '') }}")
+        self.assertEqual(len(linux_webkit), 2)
+        self.assertTrue(all(step["if"] == "${{ runner.environment == 'github-hosted' && runner.os == 'Linux' && matrix.engine == 'webkit' && matrix.channel == '' }}" for step in linux_webkit))
         self.assertEqual(reserve["if"], "${{ runner.environment == 'self-hosted' && matrix.channel == '' }}")
         self.assertNotIn("sudo", reserve["run"])
+        self.assertNotIn("--with-deps", reserve["run"])
 
     def test_windows_webkit_installs_only_locked_media_dependencies_and_propagates_failure(self):
         steps = WORKFLOW["jobs"]["browser"]["steps"]
@@ -656,6 +892,360 @@ class BrowserCompatibilityTests(unittest.TestCase):
                       if step.get("uses", "").startswith("actions/upload-artifact@"))
         self.assertEqual(upload["with"]["name"],
                          "${{ inputs.browser-evidence-prefix }}-${{ matrix.id }}-${{ github.run_attempt }}")
+
+    def test_upload_recovery_is_opt_in_same_run_and_non_overwriting(self):
+        inputs = WORKFLOW["on"]["workflow_call"]["inputs"]
+        self.assertEqual(inputs["browser-evidence-upload-retry"]["type"], "boolean")
+        self.assertEqual(inputs["browser-evidence-upload-retry"]["default"], "false")
+        steps = WORKFLOW["jobs"]["browser"]["steps"]
+        uploads = [step for step in steps if step.get("uses", "").startswith("actions/upload-artifact@")]
+        self.assertEqual(len(uploads), 2)
+        primary, retry = uploads
+        self.assertEqual(primary["id"], "evidence_upload")
+        self.assertEqual(primary["continue-on-error"], "${{ inputs.browser-evidence-upload-retry }}")
+        self.assertEqual(primary["timeout-minutes"], "${{ inputs.browser-evidence-upload-retry && 3 || 35 }}")
+        self.assertIn("steps.evidence_upload.outcome == 'failure'", retry["if"])
+        self.assertEqual(retry["continue-on-error"], "true")
+        self.assertEqual(retry["timeout-minutes"], "3")
+        self.assertEqual(primary["with"], retry["with"])
+        self.assertEqual(primary["with"]["overwrite"], "false")
+        self.assertEqual(primary["with"]["name"],
+                         "${{ inputs.browser-evidence-prefix }}-${{ matrix.id }}-${{ github.run_attempt }}")
+        self.assertEqual(primary["with"]["path"], "${{ inputs.working-directory }}/.compatibility/${{ matrix.id }}/")
+        self.assertEqual(primary["with"]["include-hidden-files"], "true")
+        self.assertEqual(primary["with"]["if-no-files-found"], "error")
+
+        recovery = next(step for step in steps if step.get("id") == "evidence_readback")
+        self.assertEqual(recovery["uses"].split()[0], "actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333")
+        self.assertEqual(recovery["with"]["name"], primary["with"]["name"])
+        self.assertEqual(recovery["with"]["path"], "${{ runner.temp }}/browser-evidence-readback-${{ matrix.id }}")
+        self.assertNotIn("run-id", recovery["with"])
+        self.assertNotIn("github-token", recovery["with"])
+        self.assertEqual(recovery["timeout-minutes"], "3")
+        self.assertEqual(recovery["continue-on-error"], "true")
+        self.assertEqual(recovery["if"], "${{ always() && inputs.browser-evidence-upload-retry && steps.evidence_snapshot.outcome == 'success' && steps.lock.outcome == 'success' }}")
+
+    def test_upload_recovery_waits_for_artifact_indexing_before_named_readback(self):
+        """An immediate read-back can outrun artifact indexing after upload.
+
+        The wait must not list artifacts over REST: that needs "actions: read",
+        which reusable-workflow callers are not required to grant.
+        """
+        steps = WORKFLOW["jobs"]["browser"]["steps"]
+        ids = [step.get("id") for step in steps]
+        self.assertNotIn("evidence_visibility", ids)
+        self.assertLess(ids.index("evidence_readback"), ids.index("evidence_readback_wait"))
+        self.assertLess(ids.index("evidence_readback_wait"), ids.index("evidence_readback_retry"))
+        wait = next(step for step in steps if step.get("id") == "evidence_readback_wait")
+        self.assertEqual(wait["timeout-minutes"], "1")
+        self.assertIn("steps.evidence_readback.outcome == 'failure'", wait["if"])
+        self.assertIn("sleep 30", wait["run"])
+        retry = next(step for step in steps if step.get("id") == "evidence_readback_retry")
+        self.assertEqual(retry["uses"].split()[0], "actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333")
+        self.assertEqual(retry["with"]["name"],
+                         "${{ inputs.browser-evidence-prefix }}-${{ matrix.id }}-${{ github.run_attempt }}")
+        self.assertEqual(retry["with"]["path"], "${{ runner.temp }}/browser-evidence-readback-${{ matrix.id }}")
+        recovery = next(step for step in steps if step.get("id") == "evidence_readback")
+        self.assertEqual(recovery["with"], retry["with"])
+        for step in (recovery, retry):
+            self.assertEqual(step["continue-on-error"], "true")
+            self.assertNotIn("github-token", step["with"])
+            self.assertNotIn("run-id", step["with"])
+        self.assertEqual(WORKFLOW["permissions"], {"contents": "read"})
+        for job in WORKFLOW["jobs"].values():
+            self.assertNotIn("actions", job.get("permissions", {}))
+        self.assertFalse([step for step in steps if "gh api" in step.get("run", "")])
+
+    def test_upload_recovery_snapshots_and_reads_back_the_exact_hidden_tree(self):
+        evidence = self.prepare_recovery()
+        result = self.run_recovery("snapshot")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        readback = Path(self.env["BROWSER_EVIDENCE_READBACK"])
+        (readback / "runtime.json").write_text((evidence / "runtime.json").read_text())
+        (readback / ".hidden").write_bytes((evidence / ".hidden").read_bytes())
+        (readback / "trace").mkdir()
+        (readback / "trace/one.bin").write_bytes((evidence / "trace/one.bin").read_bytes())
+        result = self.run_final_evidence_check("success")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Verified exact browser evidence artifact", result.stdout)
+
+    def test_upload_recovery_fails_closed_for_source_or_artifact_drift(self):
+        cases = ("missing", "extra", "different", "source-changed")
+        for case in cases:
+            with self.subTest(case=case):
+                temporary = tempfile.TemporaryDirectory()
+                self.addCleanup(temporary.cleanup)
+                old_root = self.root
+                old_env = self.env
+                self.root = Path(temporary.name)
+                self.env = {**old_env, "RUNNER_TEMP": self.root.as_posix()}
+                evidence = self.prepare_recovery()
+                self.assertEqual(self.run_recovery("snapshot").returncode, 0)
+                readback = Path(self.env["BROWSER_EVIDENCE_READBACK"])
+                for source in evidence.rglob("*"):
+                    relative = source.relative_to(evidence)
+                    target = readback / relative
+                    if source.is_dir():
+                        target.mkdir(parents=True, exist_ok=True)
+                    else:
+                        target.parent.mkdir(parents=True, exist_ok=True)
+                        if case != "missing" or relative.as_posix() != ".hidden":
+                            target.write_bytes(source.read_bytes())
+                if case == "extra":
+                    (readback / "unexpected").write_bytes(b"extra")
+                elif case == "different":
+                    (readback / ".hidden").write_bytes(b"modified")
+                elif case == "source-changed":
+                    (evidence / "runtime.json").write_text("changed")
+                result = self.run_final_evidence_check("success")
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("does not exactly match", result.stderr) if case != "source-changed" else self.assertIn("original evidence changed", result.stderr)
+                self.root = old_root
+                self.env = old_env
+
+    def test_upload_recovery_rejects_symlinks_and_empty_evidence(self):
+        evidence = self.prepare_recovery()
+        (evidence / "runtime.json").unlink()
+        (evidence / "trace/one.bin").unlink()
+        (evidence / ".hidden").unlink()
+        (evidence / "linked").symlink_to(evidence / "trace", target_is_directory=True)
+        result = self.run_recovery("snapshot")
+        self.assertNotEqual(result.returncode, 0)
+        (evidence / "linked").unlink()
+        result = self.run_recovery("snapshot")
+        self.assertNotEqual(result.returncode, 0)
+
+    def test_upload_recovery_rejects_symlinked_checkout_ancestors(self):
+        evidence = self.prepare_recovery()
+        compatibility = evidence.parent
+        outside = self.root / "outside"
+        compatibility.rename(outside)
+        compatibility.symlink_to(outside, target_is_directory=True)
+        result = self.run_recovery("snapshot")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("symlinked evidence paths", result.stderr)
+
+    def test_upload_recovery_helper_never_overwrites_an_existing_temp_file(self):
+        helper_path = self.root / "browser-evidence-recovery-chromium-current-linux.cjs"
+        helper_path.write_text("preserve this file\n")
+        self.env.update({
+            "RUNNER_TEMP": str(self.root),
+            "BROWSER_EVIDENCE_HELPER": str(helper_path),
+            "BROWSER_EVIDENCE_TARGET_ID": "chromium-current-linux",
+            "GITHUB_WORKSPACE": str(self.root),
+        })
+        step = next(
+            step for step in WORKFLOW["jobs"]["browser"]["steps"]
+            if step.get("name") == "Prepare bounded browser evidence recovery helper"
+        )
+        result = subprocess.run(
+            ["bash", "-e", "-o", "pipefail", "-c", step["run"]],
+            cwd=self.root, env=self.env, capture_output=True, text=True, check=False,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(helper_path.read_text(), "preserve this file\n")
+
+    def test_upload_recovery_manifest_must_be_regular_and_bounded(self):
+        self.prepare_recovery()
+        self.assertEqual(self.run_recovery("snapshot").returncode, 0)
+        snapshot = Path(self.env["BROWSER_EVIDENCE_SNAPSHOT"])
+        valid = snapshot.read_bytes()
+        snapshot.unlink()
+        target = self.root / "manifest-target.json"
+        target.write_bytes(valid)
+        snapshot.symlink_to(target)
+        result = self.run_final_evidence_check("success")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("manifest file is unsafe", result.stderr)
+
+        snapshot.unlink()
+        with snapshot.open("wb") as stream:
+            stream.truncate(4 * 1024 * 1024 + 1)
+        result = self.run_final_evidence_check("success")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("manifest file is unsafe", result.stderr)
+
+    def test_upload_recovery_enforces_file_byte_and_depth_limits(self):
+        evidence = self.prepare_recovery()
+        for index in range(4096):
+            (evidence / f"extra-{index:04}.txt").touch()
+        result = self.run_recovery("snapshot")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("file or byte limits", result.stderr)
+
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        old_root, old_env = self.root, self.env
+        self.root = Path(temporary.name)
+        self.env = {**old_env, "RUNNER_TEMP": self.root.as_posix()}
+        evidence = self.prepare_recovery()
+        oversized = evidence / "oversized.bin"
+        with oversized.open("wb") as stream:
+            stream.truncate(512 * 1024 * 1024 + 1)
+        result = self.run_recovery("snapshot")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("file or byte limits", result.stderr)
+
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.env = {**old_env, "RUNNER_TEMP": self.root.as_posix()}
+        evidence = self.prepare_recovery()
+        deep = evidence
+        for index in range(33):
+            deep = deep / f"d{index}"
+        deep.mkdir(parents=True)
+        (deep / "file").write_text("depth")
+        result = self.run_recovery("snapshot")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("depth exceeds", result.stderr)
+        self.root, self.env = old_root, old_env
+
+    def test_upload_recovery_readback_failure_remains_a_required_failure(self):
+        self.prepare_recovery()
+        self.assertEqual(self.run_recovery("snapshot").returncode, 0)
+        result = self.run_final_evidence_check("failure")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("could not be read back", result.stderr)
+
+    def test_upload_recovery_preserves_evidence_when_the_snapshot_fails(self):
+        """A permanent snapshot failure must not cancel a safe evidence upload."""
+        steps = WORKFLOW["jobs"]["browser"]["steps"]
+        by_id = {step.get("id"): step for step in steps}
+        self.assertEqual(
+            by_id["evidence_upload"]["if"],
+            "${{ always() && steps.lock.outcome == 'success' && (inputs.browser-evidence-upload-retry != true || steps.evidence_snapshot.outcome == 'success' || steps.evidence_tree_check.outcome == 'success') }}",
+        )
+        self.assertEqual(by_id["evidence_upload_retry"]["if"],
+                         "${{ always() && inputs.browser-evidence-upload-retry && steps.lock.outcome == 'success' && steps.evidence_upload.outcome == 'failure' }}")
+        for name in ("evidence_readback", "evidence_readback_wait", "evidence_readback_retry"):
+            self.assertIn("steps.evidence_snapshot.outcome == 'success'", by_id[name]["if"])
+
+        order = [step.get("id") for step in steps if step.get("id")]
+        self.assertLess(order.index("evidence_snapshot"), order.index("evidence_tree_check"))
+        self.assertLess(order.index("evidence_tree_check"), order.index("evidence_upload"))
+        self.assertLess(order.index("evidence_upload_retry"), order.index("evidence_snapshot_failure"))
+        recheck = by_id["evidence_tree_check"]
+        self.assertEqual(recheck["continue-on-error"], "true")
+        self.assertEqual(recheck["timeout-minutes"], "1")
+        self.assertEqual(recheck["run"], 'node "$BROWSER_EVIDENCE_HELPER" check')
+        failure = by_id["evidence_snapshot_failure"]
+        self.assertEqual(failure["timeout-minutes"], "1")
+        self.assertEqual(
+            failure["if"],
+            "${{ always() && inputs.browser-evidence-upload-retry && steps.lock.outcome == 'success' && steps.evidence_snapshot.outcome != 'success' }}",
+        )
+
+        def run(tree, upload, retry):
+            return subprocess.run(
+                ["bash", "-e", "-o", "pipefail", "-c", failure["run"]],
+                env=self.env | {"EVIDENCE_SNAPSHOT_OUTCOME": "failure",
+                                "EVIDENCE_TREE_CHECK_OUTCOME": tree,
+                                "EVIDENCE_UPLOAD_OUTCOME": upload,
+                                "EVIDENCE_UPLOAD_RETRY_OUTCOME": retry},
+                capture_output=True, text=True, check=False,
+            )
+
+        preserved = run("success", "success", "skipped")
+        self.assertEqual(preserved.returncode, 1)
+        self.assertIn("recovery snapshot did not succeed (failure)", preserved.stderr)
+        self.assertIn("preserved without exact verification", preserved.stderr)
+        lost = run("success", "failure", "failure")
+        self.assertEqual(lost.returncode, 1)
+        self.assertIn("no artifact was preserved", lost.stderr)
+        rejected = run("failure", "skipped", "skipped")
+        self.assertEqual(rejected.returncode, 1)
+        self.assertIn("did not pass the link and bounds check", rejected.stderr)
+
+    def test_upload_recovery_tree_recheck_keeps_link_rejection_before_upload(self):
+        """The upload action follows directory symlinks, so the recheck must run."""
+        evidence = self.prepare_recovery()
+        result = self.run_recovery("check")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("Evidence tree is uploadable", result.stdout)
+        (evidence / "escape").symlink_to(self.root / "outside.json")
+        result = self.run_recovery("check")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("symbolic links are not permitted", result.stderr)
+
+    def test_upload_recovery_reports_the_actual_failure_cause(self):
+        self.prepare_recovery()
+        self.assertEqual(self.run_recovery("snapshot").returncode, 0)
+        upload_failed = self.run_final_evidence_check(
+            "failure", upload_outcome="failure", upload_retry_outcome="failure"
+        )
+        self.assertNotEqual(upload_failed.returncode, 0)
+        self.assertIn("Both browser evidence upload attempts reported failure", upload_failed.stderr)
+        readback_failed = self.run_final_evidence_check("failure")
+        self.assertNotEqual(readback_failed.returncode, 0)
+        self.assertIn("could not be read back by its exact name", readback_failed.stderr)
+
+        evidence = self.root / ".compatibility/chromium-current-linux"
+        readback = Path(self.env["BROWSER_EVIDENCE_READBACK"])
+        for source in evidence.rglob("*"):
+            target = readback / source.relative_to(evidence)
+            if source.is_dir():
+                target.mkdir(parents=True, exist_ok=True)
+            else:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(source.read_bytes())
+        committed = self.run_final_evidence_check(
+            "success", upload_outcome="failure", upload_retry_outcome="failure"
+        )
+        self.assertEqual(committed.returncode, 0, committed.stderr)
+        self.assertIn("Verified exact browser evidence artifact", committed.stdout)
+
+    def test_upload_recovery_summary_lists_outcomes_and_the_cause(self):
+        step = next(step for step in WORKFLOW["jobs"]["browser"]["steps"]
+                    if step.get("id") == "evidence_recovery_summary")
+        self.assertEqual(
+            step["if"],
+            "${{ always() && inputs.browser-evidence-upload-retry && steps.lock.outcome == 'success' }}",
+        )
+        self.assertEqual(step["timeout-minutes"], "1")
+        cases = (
+            ({"EVIDENCE_SNAPSHOT_OUTCOME": "failure", "EVIDENCE_TREE_CHECK_OUTCOME": "failure",
+              "EVIDENCE_UPLOAD_OUTCOME": "skipped", "EVIDENCE_UPLOAD_RETRY_OUTCOME": "skipped",
+              "EVIDENCE_READBACK_OUTCOME": "skipped", "EVIDENCE_READBACK_RETRY_OUTCOME": "skipped",
+              "EVIDENCE_VERIFIED": ""},
+             "the recovery snapshot was unavailable (failure) and the evidence tree did not pass the link and bounds check, so nothing was uploaded"),
+            ({"EVIDENCE_SNAPSHOT_OUTCOME": "failure", "EVIDENCE_TREE_CHECK_OUTCOME": "success",
+              "EVIDENCE_UPLOAD_OUTCOME": "success", "EVIDENCE_UPLOAD_RETRY_OUTCOME": "skipped",
+              "EVIDENCE_READBACK_OUTCOME": "skipped", "EVIDENCE_READBACK_RETRY_OUTCOME": "skipped",
+              "EVIDENCE_VERIFIED": ""},
+             "the recovery snapshot was unavailable (failure); evidence preservation depended on the upload alone"),
+            ({"EVIDENCE_SNAPSHOT_OUTCOME": "success", "EVIDENCE_TREE_CHECK_OUTCOME": "skipped",
+              "EVIDENCE_UPLOAD_OUTCOME": "failure", "EVIDENCE_UPLOAD_RETRY_OUTCOME": "failure",
+              "EVIDENCE_READBACK_OUTCOME": "failure", "EVIDENCE_READBACK_RETRY_OUTCOME": "failure",
+              "EVIDENCE_VERIFIED": ""},
+             "the uploaded artifact could not be read back by its exact name after the indexing pause"),
+            ({"EVIDENCE_SNAPSHOT_OUTCOME": "success", "EVIDENCE_TREE_CHECK_OUTCOME": "skipped",
+              "EVIDENCE_UPLOAD_OUTCOME": "success", "EVIDENCE_UPLOAD_RETRY_OUTCOME": "skipped",
+              "EVIDENCE_READBACK_OUTCOME": "success", "EVIDENCE_READBACK_RETRY_OUTCOME": "skipped",
+              "EVIDENCE_VERIFIED": ""},
+             "the downloaded artifact did not match the snapshotted evidence"),
+            ({"EVIDENCE_SNAPSHOT_OUTCOME": "success", "EVIDENCE_TREE_CHECK_OUTCOME": "skipped",
+              "EVIDENCE_UPLOAD_OUTCOME": "success", "EVIDENCE_UPLOAD_RETRY_OUTCOME": "skipped",
+              "EVIDENCE_READBACK_OUTCOME": "success", "EVIDENCE_READBACK_RETRY_OUTCOME": "skipped",
+              "EVIDENCE_VERIFIED": "true"},
+             "the exact evidence read-back verified"),
+        )
+        for outcomes, cause in cases:
+            with self.subTest(cause=cause):
+                summary = self.root / "recovery-summary.md"
+                summary.write_text("")
+                result = subprocess.run(
+                    ["bash", "-e", "-o", "pipefail", "-c", step["run"]],
+                    env=self.env | outcomes | {"GITHUB_STEP_SUMMARY": str(summary)},
+                    capture_output=True, text=True, check=False,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn(cause, result.stdout)
+                text = summary.read_text()
+                for row in ("| Snapshot |", "| Upload |", "| Upload retry |",
+                            "| Read-back |", "| Read-back retry |"):
+                    self.assertIn(row, text)
+                self.assertIn(f"Cause: {cause}", text)
 
     def test_successful_report_retention_is_bounded_before_browser_jobs(self):
         definition = WORKFLOW["on"]["workflow_call"]["inputs"]["browser-success-report-retention-days"]
@@ -698,7 +1288,7 @@ class BrowserCompatibilityTests(unittest.TestCase):
         self.assertEqual(json.loads(result.stdout), [
             days if channel == "" else 14
             for status, channel, days in cases])
-        self.assertEqual(upload["if"], "${{ always() && steps.lock.outcome == 'success' }}")
+        self.assertEqual(upload["if"], "${{ always() && steps.lock.outcome == 'success' && (inputs.browser-evidence-upload-retry != true || steps.evidence_snapshot.outcome == 'success' || steps.evidence_tree_check.outcome == 'success') }}")
         verdict = next(step for step in WORKFLOW["jobs"]["browser-verdict"]["steps"]
                        if step.get("uses", "").startswith("actions/upload-artifact@"))
         self.assertEqual(verdict["with"]["retention-days"], "14")
@@ -904,6 +1494,7 @@ class BrowserCompatibilityTests(unittest.TestCase):
 class HostedUbuntuMirrorTests(unittest.TestCase):
     STEP_NAME = "Prefer the provisioned Ubuntu archive fallback"
     AZURE = "http://azure.archive.ubuntu.com/ubuntu/\tpriority:1\n"
+    AWS = "http://us-east-2.ec2.archive.ubuntu.com/ubuntu/\tpriority:1\n"
     FALLBACK = "https://archive.ubuntu.com/ubuntu/\tpriority:2\n"
 
     def setUp(self):
@@ -942,6 +1533,21 @@ class HostedUbuntuMirrorTests(unittest.TestCase):
         self.assertEqual(self.mirrors.read_bytes(), expected.encode())
         self.assertIn("leaving APT unchanged", result.stdout)
 
+    def test_only_exact_aws_regional_line_removed_and_other_bytes_and_mode_preserved(self):
+        others = ("# Mirrors provisioned by the runner image\n" + self.FALLBACK +
+                  "https://security.ubuntu.com/ubuntu/\tpriority:3\n")
+        original = "# Keep this header\n" + self.AWS + others
+        expected = "# Keep this header\n" + others
+        self.mirrors.write_bytes(original.encode())
+        self.mirrors.chmod(0o640)
+        result = self.execute()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.mirrors.read_bytes(), expected.encode())
+        self.assertEqual(self.mirrors.stat().st_mode & 0o777, 0o640)
+        self.assertIn("us-east-2.ec2.archive.ubuntu.com", result.stdout)
+        self.assertEqual(self.execute().returncode, 0)
+        self.assertEqual(self.mirrors.read_bytes(), expected.encode())
+
     def test_whitespace_and_crlf_preserved(self):
         azure = " \t" + self.AZURE.rstrip("\n") + "  \r\n"
         fallback = "  " + self.FALLBACK.rstrip("\n") + " \r\n"
@@ -954,6 +1560,9 @@ class HostedUbuntuMirrorTests(unittest.TestCase):
     def test_no_azure_and_lookalike_uris_are_untouched(self):
         original = ("# " + self.AZURE + "http://azure.archive.ubuntu.com/ubuntu-other/ priority:1\n" +
                     "http://azure.archive.ubuntu.com.example.invalid/ubuntu/ priority:1\n" +
+                    "http://us-east-2.ec2.archive.ubuntu.com.example.invalid/ubuntu/ priority:1\n" +
+                    "http://us-east-2.ec2.archive.ubuntu.com/ubuntu-other/ priority:1\n" +
+                    "https://us-east-2.ec2.archive.ubuntu.com/ubuntu/ priority:1\n" +
                     "https://azure.archive.ubuntu.com/ubuntu/ priority:1\n" + self.FALLBACK)
         self.mirrors.write_bytes(original.encode())
         result = self.execute()
@@ -962,12 +1571,19 @@ class HostedUbuntuMirrorTests(unittest.TestCase):
 
     def test_unrecognized_source_shapes_warn_without_any_write(self):
         for original in (
-            self.AZURE, self.AZURE + self.FALLBACK.replace("https:", "http:"),
+            self.AZURE, self.AWS, self.AZURE + self.FALLBACK.replace("https:", "http:"),
+            self.AWS + self.FALLBACK.replace("https:", "http:"),
             self.AZURE + self.FALLBACK.replace("priority:2", "priority:1"),
+            self.AWS + self.FALLBACK.replace("priority:2", "priority:1"),
             self.AZURE.replace("priority:1", "priority:2") + self.FALLBACK,
+            self.AWS.replace("priority:1", "priority:2") + self.FALLBACK,
             self.AZURE + self.FALLBACK.replace("priority:2", "priority:2 arch:amd64"),
+            self.AWS + self.FALLBACK.replace("priority:2", "priority:2 arch:amd64"),
             self.AZURE.replace("priority:1", "priority:1 arch:amd64") + self.FALLBACK,
+            self.AWS.replace("priority:1", "priority:1 arch:amd64") + self.FALLBACK,
             self.AZURE * 2 + self.FALLBACK, self.AZURE + self.FALLBACK * 2,
+            self.AWS * 2 + self.FALLBACK, self.AWS + self.FALLBACK * 2,
+            self.AZURE + self.AWS + self.FALLBACK, self.AWS + self.AZURE + self.FALLBACK,
             self.AZURE.replace("priority:1", "priority:2") + self.FALLBACK.replace("priority:2", "priority:1"),
             self.AZURE + self.FALLBACK.rstrip("\n") + " # official fallback\n",
         ):
@@ -1029,6 +1645,21 @@ class HostedUbuntuMirrorTests(unittest.TestCase):
         self.assertEqual(install["run"],
                          'node "$CI_PLAYWRIGHT_MODULE/cli.js" install --with-deps '
                          '"${CI_BROWSER_CHANNEL:-$CI_BROWSER_ENGINE}"')
+        steps = WORKFLOW["jobs"]["browser"]["steps"]
+        linux_webkit_deps = next(step for step in steps
+                                 if step.get("name") == "Install hosted Linux WebKit system dependencies")
+        linux_webkit_browser = next(step for step in steps
+                                    if step.get("name") == "Install hosted Linux WebKit browser")
+        self.assertEqual(linux_webkit_deps["timeout-minutes"], "10")
+        self.assertEqual(linux_webkit_deps["run"], 'node "$CI_PLAYWRIGHT_MODULE/cli.js" install-deps webkit')
+        self.assertEqual(linux_webkit_browser["timeout-minutes"], "5")
+        self.assertEqual(linux_webkit_browser["run"], 'node "$CI_PLAYWRIGHT_MODULE/cli.js" install webkit')
+        self.assertLess(steps.index(self.step), steps.index(linux_webkit_deps))
+        self.assertLess(steps.index(linux_webkit_deps), steps.index(linux_webkit_browser))
+        self.assertLess(steps.index(linux_webkit_browser), steps.index(install))
+        for step in (linux_webkit_deps, linux_webkit_browser, install):
+            self.assertNotIn("continue-on-error", step)
+        self.assertEqual(WORKFLOW["jobs"]["browser"]["timeout-minutes"], "35")
 
     def test_python_ci_does_not_force_the_browser_mirror_workaround(self):
         workflow = yaml.load(

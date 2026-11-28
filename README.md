@@ -17,6 +17,8 @@ For bug reports, proposed changes and local verification, see
 [CONTRIBUTING.md](CONTRIBUTING.md). Security reports use the private process in
 [SECURITY.md](SECURITY.md). The toolkit is distributed under the [MIT license](LICENSE).
 
+Docs index: [docs/README.md](docs/README.md).
+
 [CI dependency updates](docs/DEPENDENCY_UPDATES.md): Renovate updates related
 actions and reusable workflows together, with required consistency checks.
 
@@ -28,7 +30,7 @@ and run attempt and become part of the candidate's release inventory.
 
 ![Public RC fuzzing process and repair loop](docs/images/rc-fuzzing/process.svg)
 
-Explore the [illustrated release process and verified rollout results](docs/rc-fuzzing-results.md), with SVG diagrams and links to the accepted RC reports.
+Explore the [historical release process and rollout snapshot dated 2026-10-17](https://github.com/victron-venus/venus-os-ci-toolkit/blob/32859e5dfecc1fd182eb009611449e7081042b9d/docs/rc-fuzzing-results.md), with SVG diagrams and links to the accepted RC reports.
 
 ## Operator inventories
 
@@ -71,11 +73,23 @@ Dependabot PRs are approved as `github-actions[bot]` using the caller's automati
 
 For other trusted authors, including `4alvit`, forward `BOT_PAT` explicitly. Approval still prefers the independent reviewer behind `BOT_PAT` and applies to the current commit. For a PR authored by the account behind `BOT_PAT`, a separate reviewer's `APPROVAL_PAT` takes precedence. A same-repository PR from the configured bot account `californiantiramisu` can fall back to `GITHUB_TOKEN` as the independent `github-actions[bot]` reviewer, but only after verifying that `BOT_PAT` belongs to that author. Forks, other authors and manual recovery do not use this fallback; the workflow never approves as the PR author. Missing credentials fail with a configuration error instead of silently skipping an expected approval. Merging continues to use `BOT_PAT` for all authors, preserving PAT-triggered downstream workflows; its account needs repository write access and native auto-merge must be enabled.
 
+When a same-repository PR authored by `californiantiramisu` retains a PAT review of the current head and checked base, but GitHub still reports `REVIEW_REQUIRED`, the workflow can add a supplementary `github-actions[bot]` approval. This narrow path requires the PAT reviewer to match the event's `GITHUB_ACTOR`, rechecks the same repository, head and base, and is disabled for forks, other authors and manual recovery. It preserves the PAT review needed by CODEOWNERS instead of replacing it.
+
+These are trusted automation approvals from distinct authenticated identities, **not evidence of independent human code inspection**. Do not advertise bot reviews alone as human review in security attestations or badges. CI, CodeRabbit findings and any human review remain separate checks. Do not adopt this automatic approval policy where a person must inspect the code after every push.
+
+The account behind `BOT_PAT` must have a verified email and **Keep my email addresses private** enabled in GitHub email settings before using native auto-merge. Native requests use GitHub's account-default email selection: the workflow validates the authenticated user but omits an explicit author email because GitHub can reject an explicit noreply address when enabling auto-merge even for a verified account. Direct merges still pass the authenticated account's canonical noreply address. GitHub may retain a different original PR author for squash commits; successful request acceptance does not guarantee every resulting commit identity. Verify the actual merge author and committer when a repository enforces an email boundary. The workflow does not read private email addresses or inspect the account's email-privacy setting.
+
 For a classic `BOT_PAT` that merges workflow changes, include the [`workflow` scope](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/scopes-for-oauth-apps#available-scopes) alongside the appropriate repository scope. Repository write access alone does not grant this token permission. GitHub can reject a merge that combines workflow changes even when the bot successfully approved the PR.
 
 If GitHub requires reapproval after the base branch changes, rerun the approval workflow. An existing same-head approval is refreshed only when GitHub reports `REVIEW_REQUIRED`; each reviewer records both the default-branch tip and GitHub's observed PR base commit to avoid repeating an approval for the same head and base context. The workflow rechecks both branch tips and PR eligibility before submitting a review, and does not repeat an approval when GitHub reports `CHANGES_REQUESTED`.
 
 Before requesting native auto-merge, the workflow waits for the latest attempt of each reported check to pass, including optional checks, for up to two hours. It then requests GitHub native auto-merge for the verified head. Existing review requirements, CODEOWNERS, branch protection, and merge rules remain in force. If a check fails or the wait expires, fix or rerun that check and rerun the merge workflow. A new commit, label change, or ready transition starts a fresh evaluation.
+
+An explicit GitHub `UNKNOWN` merge state gets at most four metadata reads with three four-second waits, inside the existing job timeout. Every read rechecks PR identity, head, base, eligibility and absence of an existing request; the legacy checked path also retains its exact successful-check fingerprint. Missing or invalid metadata, API errors and mutation failures are never retried.
+
+Native waiting paths use an exact-head GraphQL enable request and recheck eligibility after the response. If withdrawal happened while enable was in flight, cleanup applies only to the acknowledged request with unchanged PR identity, request settings and current withdrawal state. Existing requests, replacements and restored opt-in are preserved. Callers must retain independent withdrawal groups and use `cancel-in-progress: false` so a later positive event cannot abort this cleanup; pending positive evaluations may still coalesce.
+
+GitHub exposes no request ID or conditional disable operation. The final read and disable are not atomic, and a request may merge before cleanup, an API response may be lost, or a user may cancel the workflow. These cases are not covered by an atomic withdrawal guarantee. Immediate protected merges keep exact-head matching and are reported separately from enabling native auto-merge.
 
 GitHub can retain an enabled native auto-merge request when a contributor with write access pushes another commit. That existing request follows repository requirements and can merge before optional checks finish. Before updating such a PR, disable its old request with `gh pr merge PR_NUMBER --repo OWNER/REPO --disable-auto`, then push the new commit. The fresh workflow run will request auto-merge after checking the new head.
 
@@ -189,10 +203,13 @@ JSON manifests and Actions evidence ZIPs use the existing metadata reader.
 ## Updating consumers
 
 The optional [CodeRabbit Autofix caller](docs/CODERABBIT.md#request-autofix-after-a-completed-review)
-asks `californiantiramisu` to post `@coderabbitai autofix` after a completed review
-with unresolved findings. It uses the existing `BOT_PAT`, checks the current head,
-deduplicates requests and limits automatic fix/review cycles to three per PR.
-Install it only in public repositories alongside the review-request caller.
+asks `californiantiramisu` to request a one-off stacked fix PR after a completed
+review with unresolved findings. It uses the existing `BOT_PAT`, checks the current
+head, deduplicates requests and limits requests to three per PR, including legacy
+requests. Proposed changes require review and applicable CI; the request does not
+authorize direct ongoing edits to the original PR branch or provide an atomic
+reviewed-head execution guarantee. Install it only in public repositories
+alongside the review-request caller.
 
 The [optional runner switch](docs/RUNNERS.md) keeps GitHub-hosted runners by
 default and routes eligible jobs to explicitly configured self-hosted pools.

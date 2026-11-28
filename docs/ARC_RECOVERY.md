@@ -98,11 +98,23 @@ The adapter must retain the default `SIGCHLD` handler and be the sole reaper of
 its children. The supervisor observes completion without reaping leaders until
 their process groups have been terminated; this preserves group identity while
 cleaning up descendants that hold inherited pipes. An escaped process group
-still needs the outer systemd unit's `KillMode=control-group` boundary.
-On macOS, where signaling a group containing only zombies can return `EPERM`,
-the supervisor uses a bounded `/bin/ps` PID/group/state projection to verify
-that no live member remains. Missing, incomplete or failed inspection is a
-cleanup failure, not permission to ignore an unconfirmed process.
+still needs an outer boundary: systemd's `KillMode=control-group` applies only
+when this helper runs inside that unit; otherwise the caller must supply an
+equivalent process/container cleanup boundary.
+The process-group leader is a fixed supervisor wrapper that stays live after
+the target exits. The parent signals the group while that leader still owns its
+PID, then drains captured output and reaps it. This avoids interpreting macOS
+`EPERM` for a zombie-only group as success. On normal target exit, the wrapper
+waits for and reaps the target before reporting completion. On timeout,
+cancellation or output-limit cleanup, killing the still-live wrapper's group
+may reparent the target to init/launchd instead of letting the wrapper reap it.
+Successful `killpg(SIGKILL)` means the kernel accepted the signal for at least
+one eligible member while the wrapper pinned its process-group identity; it
+does not prove every member exited. Bounded wrapper reap and pipe EOF bound the
+local call, not every descendant's lifetime. A target or descendant that moves
+into another group/session, cannot be signaled, or remains uninterruptible
+requires the outer cleanup boundary described above. Permission failures and
+other unverified group-signal errors fail closed.
 
 1. **Prepare from trusted metadata.** Supply a JSON list containing each original's
    `name`, `path`, `bytes` and `sha256`. Names are unique short identifiers; paths

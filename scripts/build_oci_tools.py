@@ -189,7 +189,7 @@ def download_native_package(spec, item, target, *, archive_selected=False):
 
 
 def validate_locks(manifest):
-    require(manifest["schema"] == 1 and manifest["go_version"] == "go1.27.3",
+    require(manifest["schema"] == 1 and manifest["go_version"] == "go1.27.4",
             "Unexpected recipe schema/toolchain")
     require(set(manifest["components"]) == {"buildkit", "runc"}, "Unexpected component set")
     require(type(manifest["locks_reviewed"]) is bool, "Explicit lock review status required")
@@ -204,7 +204,7 @@ def validate_locks(manifest):
         require(len(spec["commit"]) == 40 and all(c in "0123456789abcdef" for c in spec["commit"]),
                 "Full source commit required")
         require(spec["root"] == name + "-" + spec["commit"], "Unexpected source root")
-        require(spec["downstream_version"] == spec["release_tag"] + "+victron.security.1",
+        require(spec["downstream_version"] == spec["release_tag"] + "+victron.security.2",
                 "Candidate must identify downstream modifications")
         binding = json.loads((INPUTS / name / "inputs.json").read_text())
         require(binding == {"go_version": manifest["go_version"], "source": spec},
@@ -258,8 +258,8 @@ def prepare_locks(stage, arch, manifest):
 def install_native(stage, arch, manifest):
     """Install an explicit closure of hash-pinned Ubuntu packages; no apt fetch."""
     spec = json.loads((INPUTS / f"native-{arch}.json").read_text())
-    _, binding, files = header_review.load_policy(INPUTS, manifest["header_disposition_sha256"],
-                                                  arch, spec["packages"])
+    _, binding, files, _ = header_review.load_policy(INPUTS, manifest["header_disposition_sha256"],
+                                                     arch, spec["packages"])
     require(spec["architecture"] == arch, "Wrong native package architecture")
     os_release = Path("/etc/os-release").read_text()
     require('ID=ubuntu' in os_release and 'VERSION_ID="24.04"' in os_release,
@@ -397,12 +397,12 @@ def commands(name, spec, output):
     common = ["go", "build", "-mod=vendor", "-p", "2", "-trimpath", "-buildvcs=false"]
     if name == "runc":
         flags = ("-linkmode external -extldflags -static "
-                 f"-X main.gitCommit={spec['commit']} -X main.extraVersion=victron.security.1")
+                 f"-X main.gitCommit={spec['commit']} -X main.extraVersion=victron.security.2")
         return {"runc": common + ["-x", "-tags", TAGS[name], "-ldflags", flags,
                                   "-o", str(output / "runc"), "."]}
     prefix = "github.com/moby/buildkit/version."
     flags = (f"-X {prefix}Version={spec['downstream_version']} "
-             f"-X {prefix}Revision={spec['commit']}+victron.security.1 "
+             f"-X {prefix}Revision={spec['commit']}+victron.security.2 "
              f"-X {prefix}Package=github.com/moby/buildkit")
     return {tool: common + ["-tags", TAGS[name], "-ldflags", flags,
                            "-o", str(output / tool), "./cmd/" + tool]
@@ -411,9 +411,16 @@ def commands(name, spec, output):
 
 def build_component(name, spec, stage, arch, manifest):
     env = environment(name, arch)
+    require(os.geteuid() != 0, "Source compilation and unit tests must be unprivileged")
+    cache = None
+    if name == "runc":
+        # Go does not reliably invalidate cached Cgo objects when external
+        # headers/libraries change. Never restore or reuse an ambient cache.
+        cache = stage / "runc-go-build-cache"
+        cache.mkdir(mode=0o700)
+        env["GOCACHE"] = str(cache)
     require(run(["go", "version"], env=env).split()[2] == manifest["go_version"],
             "Unexpected Go toolchain")
-    require(os.geteuid() != 0, "Source compilation and unit tests must be unprivileged")
     source = stage / "source" / name
     archive = stage / (name + ".tar.gz")
     download(f"https://codeload.github.com/{spec['repository']}/tar.gz/{spec['commit']}",
@@ -461,6 +468,10 @@ def build_component(name, spec, stage, arch, manifest):
     write_json(evidence / "provenance.json", {
         "source": spec, "architecture": arch, "go_version": manifest["go_version"],
         "commands": builds, "tests": tests,
+        "go_build_cache": None if cache is None else {
+            "fresh": True, "relative_path": str(cache.relative_to(stage)),
+            "native_inputs_sha256": manifest["native_locks"][arch],
+        },
         "binaries": {tool: digest(bins / tool) for tool in builds},
         "openpgp": {tool: [p["ImportPath"] for p in packages if p["ImportPath"].startswith(OPENPGP)]
                     for tool, packages in graphs.items()},
@@ -551,11 +562,12 @@ def scan(stage, arch, manifest):
                         if label == "native" else None)
             raw_failures = trivy_failures(data, label, expected)
             if label == "native":
-                policy, binding, _ = header_review.load_policy(
+                policy, binding, _, reviewed_severities = header_review.load_policy(
                     INPUTS, manifest["header_disposition_sha256"], arch, expected)
                 receipt = json.loads((stage / "output/evidence/installed-header-verification.json").read_text())
                 not_affected = header_review.classify(data, policy, binding, receipt,
-                                                      manifest["header_disposition_sha256"])
+                                                      manifest["header_disposition_sha256"],
+                                                      reviewed_severities)
                 write_json(evidence / "header-applicability.json", {
                     "reviewed": policy["reviewed"], "raw_blocking_count": len(raw_failures),
                     "not_affected": not_affected, "policy_sha256": manifest["header_disposition_sha256"],
@@ -603,7 +615,8 @@ def main():
     elif args.action == "harden":
         require(os.geteuid() == 0, "Hosted metadata hardening requires root")
         packages = json.loads((INPUTS / f"native-{arch}.json").read_text())["packages"]
-        _, binding, files = header_review.load_policy(INPUTS, manifest["header_disposition_sha256"], arch, packages)
+        _, binding, files, _ = header_review.load_policy(
+            INPUTS, manifest["header_disposition_sha256"], arch, packages)
         archive = json.loads((INPUTS / f"linux-libc-dev-archive-{arch}.json").read_text())
         actions = []
         try:
