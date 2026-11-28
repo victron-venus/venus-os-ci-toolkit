@@ -4,6 +4,7 @@
 
 ### Changed
 
+- tests: report an incomplete local test environment once with the hash-locked install command instead of one import error per module, read pinned CA constraints through the host's openssl (including LibreSSL), and skip the release-process contracts on runtimes without the supervised runner.
 - dependency updates: hold fleet Python runtime images at their pinned interpreter in the shared preset, so only digest and patch refreshes of that interpreter arrive automatically and moving the interpreter stays a reviewed project change.
 - release: publish a failed-only rerun from the earlier attempts of its own run: the collector keeps each artifact's newest attempt, package and fuzz receipts may come from an attempt at or before the current one, and a recorded successful job may be reported unchanged.
 - release: use docker credential helpers when publishing containers (#518).

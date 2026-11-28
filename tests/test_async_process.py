@@ -17,6 +17,21 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 import async_process
 
 
+def release_runner_supported() -> bool:
+    """Whether the supervised release runner may start on this host."""
+    try:
+        async_process._require_supported_runtime()
+    except NotImplementedError:
+        return False
+    return True
+
+
+RELEASE_PROCESS_RUNNER = unittest.skipUnless(
+    release_runner_supported(),
+    "release process runner requires Linux Python 3.12+ or macOS Python 3.13+ with waitid(WNOWAIT)",
+)
+
+
 async def cancel_test_task(task, timeout=5):
     """Drain an owned test task without catching cancellation of its caller."""
     task.cancel()
@@ -50,6 +65,7 @@ def descendant_pipe_fixture(directory: str, after_start: str) -> tuple[Path, Pat
     return started, pid_file, survived, parent
 
 
+@RELEASE_PROCESS_RUNNER
 class AsyncProcessTests(unittest.TestCase):
     def assert_process_stopped(self, pid_file: Path, timeout: float = 3.0) -> None:
         pid = int(pid_file.read_text())
@@ -925,6 +941,7 @@ class AsyncProcessTests(unittest.TestCase):
         self.assertTrue(sleeps, "empty selector loop spun without sleeping")
 
 
+@RELEASE_PROCESS_RUNNER
 @unittest.skipUnless(os.name == "posix", "process-group cleanup is POSIX-specific")
 class AsyncCancellationTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
@@ -1248,6 +1265,7 @@ class AsyncCancellationTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(process.killed)
 
 
+@RELEASE_PROCESS_RUNNER
 class AsyncRunnerShutdownTests(unittest.TestCase):
     def test_asyncio_run_shutdown_waits_for_executor_before_caller_finalizes(self):
         worker_started = threading.Event()
