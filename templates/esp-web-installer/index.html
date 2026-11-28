@@ -3,7 +3,9 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta name="referrer" content="no-referrer">
+  <!-- Cross-origin requests send only the origin, which Cloudflare Web Analytics
+       requires: its RUM endpoint drops beacons that carry no Referer. -->
+  <meta name="referrer" content="strict-origin-when-cross-origin">
   <title>__TITLE__ — USB installer</title>
   <link rel="stylesheet" href="style.css">
   <script type="module" src="app.mjs"></script>
