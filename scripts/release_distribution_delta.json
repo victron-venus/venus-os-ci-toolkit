@@ -2256,6 +2256,22 @@
               "after": "        offset = 0\n        cleanup_deadline = time.monotonic() + CLEANUP_TIMEOUT_SECONDS\n        caller_deadline_wins = deadline is not None and deadline <= cleanup_deadline\n        while offset < len(frame):\n            now = time.monotonic()\n            active_deadline = deadline if caller_deadline_wins else cleanup_deadline\n            remaining = active_deadline - now\n            if remaining <= 0 or not selector.select(remaining):\n                if caller_deadline_wins:\n                    raise ProcessTimeout(timeout or 0, b\"\", b\"\")\n                raise ProcessCleanupError(\"Release helper supervisor did not accept command metadata\")\n"
             }
           ]
+        },
+        {
+          "before_sha256": "3366087fbb937aa15a48c880fddb714d416eeb5faa03399203d8e73e1353fc18",
+          "after_sha256": "96fcf2454ad3031a0e1d2a6f226e9b5e598a4dffc3bf4ca54a1c1fc3a4d1f4b0",
+          "canonical_source_before_sha256": "2a047c9add926e96f589d3d9f04e911d0a755beb087f772c187b8f16efa3bd26",
+          "canonical_source_sha256": "2720acf6a9b9af62bcc98520cd49bd0ee6e8d8d3440de5404f387eb3d949ea7a",
+          "source_hunks": [
+            {
+              "before": "\n\ndef _kill_owned_process(process: subprocess.Popen[bytes]) -> OSError | None:\n    \"\"\"Signal an owned group without using a possibly recycled leader PID.\"\"\"\n",
+              "after": "\n\ndef _live_group_members(pgid: int) -> set[int] | None:\n    \"\"\"Live members of pgid, or None when the host cannot list them.\"\"\"\n    try:\n        listing = subprocess.run(\n            [\"ps\", \"-o\", \"pid=,stat=\", \"-g\", str(pgid)],\n            capture_output=True, text=True, timeout=CLEANUP_TIMEOUT_SECONDS, check=False,\n        )\n    except (OSError, subprocess.TimeoutExpired):\n        return None\n    if listing.returncode != 0:\n        return None\n    members = set()\n    for line in listing.stdout.splitlines():\n        fields = line.split()\n        if not fields or not fields[0].isdigit():\n            continue\n        if len(fields) > 1 and fields[1].startswith(\"Z\"):\n            # Zombies hold no execution resources and cannot outlive this leader.\n            continue\n        members.add(int(fields[0]))\n    return members\n\n\ndef _kill_owned_process(process: subprocess.Popen[bytes]) -> OSError | None:\n    \"\"\"Signal an owned group without using a possibly recycled leader PID.\"\"\"\n"
+            },
+            {
+              "before": "        return None\n    except OSError as error:\n        # Failed group signaling is unverified; a PGID-only listing cannot prove\n        # that same-session descendants are absent.\n        _kill_live_owned_leader(process, leader_exited)\n        return error\n",
+              "after": "        return None\n    except OSError as error:\n        # Darwin reports EPERM for a group whose only member is the leader we still\n        # hold unreaped: a group with a signalable member accepts the signal, so an\n        # empty listing here proves the group is already gone. Anything unproven,\n        # including a listing the host refuses, stays a fail-closed error.\n        if leader_exited and _live_group_members(process.pid) == set():\n            return None\n        _kill_live_owned_leader(process, leader_exited)\n        return error\n"
+            }
+          ]
         }
       ]
     },
@@ -2426,6 +2442,22 @@
             {
               "before": "class AsyncRunnerShutdownTests(unittest.TestCase):",
               "after": "@RELEASE_PROCESS_RUNNER\nclass AsyncRunnerShutdownTests(unittest.TestCase):"
+            }
+          ]
+        },
+        {
+          "before_sha256": "6c696200b3b287380327540116b2a73fea8353bb570f69c44271b1c571344112",
+          "after_sha256": "4d3650d17ee6d063549fc10e605fabe00f351dbb8b96a973a91959957b5cbf11",
+          "canonical_source_before_sha256": "9417edd1c1a1d5081b65343e1ac2515937e39c0292e96ea612a1a998434f4805",
+          "canonical_source_sha256": "d91f2931b29dca286c7f763836725d32c81bdeb21e75b621f4915a6e047da59b",
+          "source_hunks": [
+            {
+              "before": "import asyncio\nimport contextvars\nimport gc\nimport os\n",
+              "after": "import asyncio\nimport contextvars\nimport errno\nimport gc\nimport os\n"
+            },
+            {
+              "before": "\n\n@RELEASE_PROCESS_RUNNER\n@unittest.skipUnless(os.name == \"posix\", \"process-group cleanup is POSIX-specific\")\n",
+              "after": "\n\nclass GroupSignalClearingTests(unittest.TestCase):\n    \"\"\"A denied group signal must clear only when the group holds no live member.\n\n    Darwin reports EPERM for a group whose only remaining member is the leader we\n    still hold unreaped, while Linux reports success or ESRCH in that state.\n    \"\"\"\n\n    class FakeProcess:\n        pid = 4242\n\n        def __init__(self):\n            self.direct_kills = 0\n\n        def kill(self):\n            self.direct_kills += 1\n\n    def settle(self, *, leader_exited, members):\n        process = self.FakeProcess()\n        with patch.object(async_process, \"_process_has_exited\", return_value=leader_exited), \\\n                patch.object(async_process, \"_live_group_members\", return_value=members), \\\n                patch.object(async_process.os, \"killpg\",\n                             side_effect=PermissionError(errno.EPERM, \"denied\")) as killpg:\n            error = async_process._kill_owned_process(process)\n        killpg.assert_called_once_with(process.pid, signal.SIGKILL)\n        return error, process\n\n    def test_denied_group_signal_with_only_the_exited_leader_is_complete(self):\n        error, process = self.settle(leader_exited=True, members=set())\n        self.assertIsNone(error)\n        self.assertEqual(process.direct_kills, 0)\n\n    def test_denied_group_signal_with_a_live_member_fails_closed(self):\n        error, _process = self.settle(leader_exited=True, members={4343})\n        self.assertIsInstance(error, PermissionError)\n\n    def test_denied_group_signal_without_a_group_listing_fails_closed(self):\n        error, _process = self.settle(leader_exited=True, members=None)\n        self.assertIsInstance(error, PermissionError)\n\n    def test_denied_group_signal_with_a_live_leader_fails_closed(self):\n        error, process = self.settle(leader_exited=False, members=set())\n        self.assertIsInstance(error, PermissionError)\n        self.assertEqual(process.direct_kills, 1)\n\n\n@RELEASE_PROCESS_RUNNER\n@unittest.skipUnless(os.name == \"posix\", \"process-group cleanup is POSIX-specific\")\n"
             }
           ]
         }
