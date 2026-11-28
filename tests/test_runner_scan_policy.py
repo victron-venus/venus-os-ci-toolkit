@@ -173,6 +173,22 @@ class ScanPolicyCheckTests(unittest.TestCase):
         self.assertGreater(check.version_key('6.8.0-151.151'), check.version_key('6.8.0-147.147'))
         self.assertGreater(check.version_key('2.8.4ubuntu0.1'), check.version_key('2.8.3'))
         self.assertEqual(check.version_key('6.8.0-147.147'), check.version_key('6.8.0-147.147'))
+        self.assertEqual(max(['6.8.0-151.151', '6.8.0-147.147'], key=check.version_key),
+                         '6.8.0-151.151')
+
+    def test_tilde_sorts_before_the_release_as_dpkg_orders_it(self):
+        self.assertLess(check.version_key('1.0~rc1'), check.version_key('1.0'))
+        self.assertGreater(check.version_key('1.0'), check.version_key('1.0~rc1'))
+        self.assertLess(check.version_key('1.0~rc1'), check.version_key('1.0~rc2'))
+        self.assertLess(check.version_key('1.0~~'), check.version_key('1.0~'))
+        self.assertGreater(check.version_key('1.0a'), check.version_key('1.0'))
+        self.assertLess(check.version_key('1.0'), check.version_key('1.0.1'))
+        self.assertEqual(max(['1.0~rc1', '1.0'], key=check.version_key), '1.0')
+        self.assertGreater(check.version_key('1:0.1'), check.version_key('2.0'))
+        self.assertEqual(check.version_key('1.01'), check.version_key('1.1'))
+        self.assertEqual(check.version_key('1.0'), check.version_key('1.0-0'))
+        self.assertGreater(check.version_key('1.001'), check.version_key('1.0'))
+        self.assertLess(check.version_key('1a'), check.version_key('1a1'))
 
 
 if __name__ == '__main__':

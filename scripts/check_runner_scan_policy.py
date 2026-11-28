@@ -22,7 +22,6 @@ import gzip
 import json
 import lzma
 from pathlib import Path
-import re
 import sys
 import urllib.request
 
@@ -46,37 +45,118 @@ APPLICABILITY = ROOT / 'docs/RUNNER_SCAN_APPLICABILITY.json'
 DOCKERFILE = ROOT / 'deploy/runner-reserve/Dockerfile'
 
 
+def split_epoch(version):
+    """Split `[epoch:]version`, treating an absent epoch as 0."""
+    epoch, separator, remainder = version.partition(':')
+    if not separator:
+        return 0, version
+    return (int(epoch) if epoch.isdigit() else 0), remainder
+
+
 def split_version(version):
     """Split `[epoch:]upstream[-revision]` as apt reports it in SrcVersion/SrcRelease."""
-    _, separator, remainder = version.partition(':')
-    remainder = remainder if separator else version
+    _, remainder = split_epoch(version)
     upstream, separator, revision = remainder.partition('-')
     return upstream, revision if separator else None
 
 
-def fragment_key(fragment):
-    """Order the version fragments this policy uses (dotted numbers and suffixes)."""
-    key = []
-    for part in re.findall(r'\d+|[A-Za-z]+|~|.', fragment):
-        if part == '~':
-            key.append((-1, 0, ''))
-        elif part.isdigit():
-            key.append((1, int(part), ''))
-        else:
-            key.append((0, 0, part))
-    return key
+def character_order(character):
+    """dpkg's character order: a tilde sorts before the end of the fragment."""
+    if character is None:
+        return 0
+    if '0' <= character <= '9':
+        return 0
+    if character == '~':
+        return -1
+    if character.isascii() and character.isalpha():
+        return ord(character)
+    return ord(character) + 256
+
+
+def digit_run(text, index):
+    """Return the digit run at `index` and the index after it."""
+    start = index
+    while index < len(text) and '0' <= text[index] <= '9':
+        index += 1
+    return text[start:index].lstrip('0'), index
+
+
+def compare_fragment(left, right):
+    """Compare one version fragment as dpkg does: characters, then numeric runs.
+
+    Numeric runs compare by value, so leading zeros do not change the order and
+    `1.01` equals `1.1`. A tilde sorts before the end of a fragment, which `1.0`
+    sorts before `1.0a`.
+    """
+    left_index = right_index = 0
+    while left_index < len(left) or right_index < len(right):
+        while ((left_index < len(left) and not '0' <= left[left_index] <= '9') or
+               (right_index < len(right) and not '0' <= right[right_index] <= '9')):
+            left_order = character_order(left[left_index] if left_index < len(left) else None)
+            right_order = character_order(right[right_index] if right_index < len(right) else None)
+            if left_order != right_order:
+                return -1 if left_order < right_order else 1
+            left_index += 1
+            right_index += 1
+        left_run, left_index = digit_run(left, left_index)
+        right_run, right_index = digit_run(right, right_index)
+        if len(left_run) != len(right_run):
+            return -1 if len(left_run) < len(right_run) else 1
+        if left_run != right_run:
+            return -1 if left_run < right_run else 1
+    return 0
+
+
+def compare_versions(left, right):
+    """Compare complete Ubuntu versions, including epoch and Debian revision."""
+    left_epoch, left_remainder = split_epoch(left)
+    right_epoch, right_remainder = split_epoch(right)
+    if left_epoch != right_epoch:
+        return -1 if left_epoch < right_epoch else 1
+    left_upstream, left_revision = split_version(left_remainder)
+    right_upstream, right_revision = split_version(right_remainder)
+    result = compare_fragment(left_upstream, right_upstream)
+    if result:
+        return result
+    return compare_fragment(left_revision or '', right_revision or '')
+
+
+class VersionKey:
+    """Total order over Ubuntu versions, as `dpkg --compare-versions` defines it."""
+
+    __slots__ = ('version',)
+
+    def __init__(self, version):
+        self.version = version
+
+    def _compare(self, other):
+        return compare_versions(self.version, other.version)
+
+    def __eq__(self, other):
+        return isinstance(other, VersionKey) and self._compare(other) == 0
+
+    def __lt__(self, other):
+        return self._compare(other) < 0
+
+    def __le__(self, other):
+        return self._compare(other) <= 0
+
+    def __gt__(self, other):
+        return self._compare(other) > 0
+
+    def __ge__(self, other):
+        return self._compare(other) >= 0
+
+    def __hash__(self):
+        return hash(self.version)
+
+    def __repr__(self):
+        return 'VersionKey(' + self.version + ')'
 
 
 def version_key(version):
-    """Order Ubuntu versions closely enough to pick a candidate among pockets."""
-    epoch, separator, remainder = version.partition(':')
-    if not separator:
-        epoch, remainder = '0', version
-    upstream, separator, revision = remainder.rpartition('-')
-    if not separator:
-        upstream, revision = remainder, ''
-    return (int(epoch) if epoch.isdigit() else 0,
-            fragment_key(upstream), fragment_key(revision))
+    """Order Ubuntu versions exactly as dpkg does; `1.0~rc1` sorts before `1.0`."""
+    return VersionKey(version)
 
 
 def policy_pins(policy):
